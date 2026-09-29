@@ -53,16 +53,20 @@ contract ArithmeticTest is ProtocolFixture {
     function test_ratioSaturatesWhenOnlyFractionOverflows() public {
         // The whole part fits, but adding 50 exceeds the 35 remaining uint256 units.
         uint256 collateral = 2 * (type(uint256).max / 100) + 1;
+        vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
         oracle.grantRights(alice, 2);
+        vm.stopPrank();
         _open(alice, collateral, 2);
         assertEq(vault.collateralRatio(alice), type(uint256).max);
     }
 
     function test_largestWholeRatioBelowSaturationIsExact() public {
         uint256 collateral = type(uint256).max / 100;
+        vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
         oracle.grantRights(alice, 1);
+        vm.stopPrank();
         _open(alice, collateral, 1);
         assertEq(vault.collateralRatio(alice), collateral * 100);
     }

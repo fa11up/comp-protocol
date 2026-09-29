@@ -33,8 +33,10 @@ contract ProtocolSequencesTest is ProtocolFixture {
         uint256 previousCustody = imd.balanceOf(address(vault));
         uint256 previousWallet = imd.balanceOf(alice);
         uint256 previousRights = oracle.mintingRights(alice);
+        vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
         oracle.grantRights(alice, debt);
+        vm.stopPrank();
 
         vm.startPrank(alice);
         // Exercise finite allowances as well as the fixture's infinite approvals.
@@ -80,8 +82,10 @@ contract ProtocolSequencesTest is ProtocolFixture {
     function testFuzz_oneWeiBeyondBorrowAndWithdrawalLimitsReverts(uint128 rawDebt) public {
         uint256 debt = bound(uint256(rawDebt), 1, type(uint128).max);
         uint256 collateral = (debt * 150 + 99) / 100;
+        vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
         oracle.grantRights(alice, debt + 1);
+        vm.stopPrank();
         _open(alice, collateral, debt);
         uint256 rights = oracle.mintingRights(alice);
         uint256 balance = imd.balanceOf(alice);

@@ -17,6 +17,7 @@ contract BoundaryPathsTest is ProtocolFixture {
     function test_mintRejectsMissingOracleEvenWhenTokenIsLinked() public {
         CompToken token = new CompToken();
         CDPVault fresh = new CDPVault(address(imd), address(token), address(0));
+        vm.prank(OPERATOR);
         token.setVault(address(fresh));
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
@@ -27,8 +28,10 @@ contract BoundaryPathsTest is ProtocolFixture {
         CompToken token = new CompToken();
         CDPVault fresh = new CDPVault(address(imd), address(token), address(0));
         MockWorkOracle freshOracle = new MockWorkOracle(address(fresh));
+        vm.startPrank(OPERATOR);
         fresh.setOracle(address(freshOracle));
         token.setVault(address(vault));
+        vm.stopPrank();
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
         assertEq(token.totalSupply(), 0);
@@ -49,6 +52,7 @@ contract BoundaryPathsTest is ProtocolFixture {
     }
 
     function test_repaidWorkCreditsCannotBeUsedToBorrowAgain() public {
+        vm.prank(OPERATOR);
         imd.mint(alice, 500 ether);
         _open(alice, 1500 ether, 1000 ether);
         vm.startPrank(alice);
@@ -109,9 +113,11 @@ contract BoundaryPathsTest is ProtocolFixture {
     }
 
     function test_oracleRightsOverflowRevertsWithoutErasingRights() public {
+        vm.startPrank(OPERATOR);
         oracle.grantRights(alice, type(uint256).max - 1000 ether);
         vm.expectRevert(stdError.arithmeticError);
         oracle.grantRights(alice, 1);
+        vm.stopPrank();
         assertEq(oracle.mintingRights(alice), type(uint256).max);
         vm.prank(address(vault));
         oracle.consumeRights(alice, type(uint256).max);
@@ -120,7 +126,9 @@ contract BoundaryPathsTest is ProtocolFixture {
 
     function test_debtAdditionOverflowRevertsAtomically() public {
         _open(alice, 2, 1);
-        oracle.grantRights(alice, type(uint256).max - oracle.mintingRights(alice));
+        uint256 remainingRights = oracle.mintingRights(alice);
+        vm.prank(OPERATOR);
+        oracle.grantRights(alice, type(uint256).max - remainingRights);
         vm.prank(alice);
         vm.expectRevert(stdError.arithmeticError);
         vault.mintCOMP(type(uint256).max);
@@ -131,14 +139,17 @@ contract BoundaryPathsTest is ProtocolFixture {
 
     function test_tokenSupplyOverflowRevertsAtomically() public {
         MockIMD freshIMD = new MockIMD();
+        vm.startPrank(OPERATOR);
         freshIMD.mint(alice, type(uint256).max);
         vm.expectRevert(stdError.arithmeticError);
         freshIMD.mint(bob, 1);
+        vm.stopPrank();
         assertEq(freshIMD.totalSupply(), type(uint256).max);
         assertEq(freshIMD.balanceOf(alice), type(uint256).max);
         assertEq(freshIMD.balanceOf(bob), 0);
 
         CompToken freshCOMP = new CompToken();
+        vm.prank(OPERATOR);
         freshCOMP.setVault(address(this));
         freshCOMP.mint(alice, type(uint256).max);
         vm.expectRevert(stdError.arithmeticError);
@@ -150,6 +161,7 @@ contract BoundaryPathsTest is ProtocolFixture {
 
     function test_zeroTokenMintAndBurnRemainStandardERC20Operations() public {
         uint256 imdSupply = imd.totalSupply();
+        vm.prank(OPERATOR);
         imd.mint(alice, 0);
         vm.startPrank(address(vault));
         comp.mint(alice, 0);

@@ -162,8 +162,10 @@ contract LiquidationTest is ProtocolFixture {
         uint256 deposit = (debt * 150 + 99) / 100;
         uint256 payout = repayment * 110 / 100;
         uint256 collateral = bound(uint256(rawCollateral), payout, deposit - 1);
+        vm.startPrank(OPERATOR);
         imd.mint(alice, deposit);
         oracle.grantRights(alice, debt);
+        vm.stopPrank();
         _open(alice, deposit, debt);
         // The liquidator also has a debt position, which must remain untouched.
         _open(bob, 300 ether, 100 ether);
