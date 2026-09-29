@@ -107,8 +107,10 @@ contract LiquidationTest is ProtocolFixture {
         uint256 deposit = debt + (debt + 1) / 2;
         uint256 payout = debt * 110 / 100;
         remaining = bound(remaining, payout, deposit - 1);
+        vm.startPrank(OPERATOR);
         imd.mint(alice, deposit);
         oracle.grantRights(alice, debt);
+        vm.stopPrank();
         _open(alice, deposit, debt);
         vm.prank(alice);
         comp.transfer(bob, debt);

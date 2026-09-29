@@ -2,9 +2,10 @@
 pragma solidity 0.8.26;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
 
 /// @notice Elastic-supply COMP; starts with zero supply and has no configured supply cap.
-/// @dev The deployer registers CDPVault once, permanently discarding its initialization authority.
+/// @dev The workflow's approved operator registers CDPVault once, discarding its initialization authority.
 /// There are no ownership, upgrade, pause, rescue, or role-management functions.
 contract CompToken is ERC20 {
     error Unauthorized();
@@ -17,7 +18,7 @@ contract CompToken is ERC20 {
     address private _initializer;
 
     constructor() ERC20("Compute Money", "COMP") {
-        _initializer = msg.sender;
+        _initializer = APPROVED_OPERATOR;
     }
 
     modifier onlyVault() {
@@ -25,7 +26,7 @@ contract CompToken is ERC20 {
         _;
     }
 
-    /// @notice Irreversibly register the deployed CDPVault; callable once by this token's deployer.
+    /// @notice Irreversibly register CDPVault; callable once by the workflow's approved operator.
     function setVault(address vault_) external {
         if (_initializer == address(0)) revert AlreadyInitialized();
         if (msg.sender != _initializer) revert Unauthorized();

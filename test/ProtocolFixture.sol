@@ -8,6 +8,7 @@ import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 
 abstract contract ProtocolFixture is Test {
+    address internal constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
     MockIMD internal imd;
     CompToken internal comp;
     MockWorkOracle internal oracle;
@@ -20,12 +21,14 @@ abstract contract ProtocolFixture is Test {
         comp = new CompToken();
         vault = new CDPVault(address(imd), address(comp), address(0));
         oracle = new MockWorkOracle(address(vault));
+        vm.startPrank(OPERATOR);
         comp.setVault(address(vault));
         vault.setOracle(address(oracle));
         imd.mint(alice, 1000 ether);
         imd.mint(bob, 1000 ether);
         oracle.grantRights(alice, 1000 ether);
         oracle.grantRights(bob, 1000 ether);
+        vm.stopPrank();
         vm.prank(alice);
         imd.approve(address(vault), type(uint256).max);
         vm.prank(bob);

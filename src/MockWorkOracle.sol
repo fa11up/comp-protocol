@@ -2,9 +2,10 @@
 pragma solidity 0.8.26;
 
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
+import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
 
 /// @notice Sepolia work-credit faucet, not a verifier of actual compute work.
-/// @dev The deploying account permanently retains only the ability to add credits.
+/// @dev The workflow's approved operator permanently retains only the ability to add credits.
 contract MockWorkOracle is IWorkOracle {
     error Unauthorized();
     error InvalidVault();
@@ -15,13 +16,14 @@ contract MockWorkOracle is IWorkOracle {
     event RightsGranted(address indexed account, uint256 amount);
     event RightsConsumed(address indexed account, uint256 amount);
 
+    /// @notice Workflow deployer/operator, independent of the factory that executes CREATE/CREATE2.
     address public immutable deployer;
     address public immutable vault;
     mapping(address account => uint256 amount) public override mintingRights;
 
     constructor(address vault_) {
         if (vault_.code.length == 0) revert InvalidVault();
-        deployer = msg.sender;
+        deployer = APPROVED_OPERATOR;
         vault = vault_;
     }
 

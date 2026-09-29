@@ -14,8 +14,10 @@ contract ArithmeticTest is ProtocolFixture {
         comp = new CompToken();
         vault = new CDPVault(address(imd), address(comp), address(0));
         oracle = new MockWorkOracle(address(vault));
+        vm.startPrank(OPERATOR);
         comp.setVault(address(vault));
         vault.setOracle(address(oracle));
+        vm.stopPrank();
         vm.prank(alice);
         imd.approve(address(vault), type(uint256).max);
     }
@@ -23,8 +25,10 @@ contract ArithmeticTest is ProtocolFixture {
     function test_maxUintCollateralSupportsBorrowingWithoutProductOverflow() public {
         uint256 collateral = type(uint256).max;
         uint256 debt = Math.mulDiv(collateral, 2, 3);
+        vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
         oracle.grantRights(alice, type(uint256).max);
+        vm.stopPrank();
         _open(alice, collateral, debt);
         assertEq(vault.collateralRatio(alice), 150);
         vm.startPrank(alice);
@@ -38,8 +42,10 @@ contract ArithmeticTest is ProtocolFixture {
     }
 
     function test_unrepresentableRatioSaturates() public {
+        vm.startPrank(OPERATOR);
         imd.mint(alice, type(uint256).max);
         oracle.grantRights(alice, 1);
+        vm.stopPrank();
         _open(alice, type(uint256).max, 1);
         assertEq(vault.collateralRatio(alice), type(uint256).max);
     }
@@ -47,8 +53,10 @@ contract ArithmeticTest is ProtocolFixture {
     function testFuzz_ratioMatchesWideMultiplication(uint256 collateral, uint256 debt) public {
         collateral = bound(collateral, 2, type(uint256).max / 100);
         debt = bound(debt, 1, collateral * 2 / 3);
+        vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
         oracle.grantRights(alice, debt);
+        vm.stopPrank();
         _open(alice, collateral, debt);
         assertEq(vault.collateralRatio(alice), collateral * 100 / debt);
     }

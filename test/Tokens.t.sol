@@ -15,7 +15,7 @@ contract TokensTest is ProtocolFixture {
         assertEq(freshIMD.symbol(), "IMD");
         assertEq(freshIMD.decimals(), 18);
         assertEq(freshIMD.totalSupply(), 0);
-        assertEq(freshIMD.deployer(), address(this));
+        assertEq(freshIMD.deployer(), OPERATOR);
         assertEq(freshCOMP.name(), "Compute Money");
         assertEq(freshCOMP.symbol(), "COMP");
         assertEq(freshCOMP.decimals(), 18);
@@ -27,9 +27,11 @@ contract TokensTest is ProtocolFixture {
         vm.prank(alice);
         vm.expectRevert(MockIMD.Unauthorized.selector);
         imd.mint(alice, 1);
+        vm.startPrank(OPERATOR);
         vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InvalidReceiver.selector, address(0)));
         imd.mint(address(0), 1);
         imd.mint(alice, 50 ether);
+        vm.stopPrank();
         assertEq(imd.balanceOf(alice), 1050 ether);
         assertEq(imd.totalSupply(), 2050 ether);
     }
@@ -39,6 +41,7 @@ contract TokensTest is ProtocolFixture {
         vm.prank(alice);
         vm.expectRevert(CompToken.Unauthorized.selector);
         fresh.setVault(address(vault));
+        vm.startPrank(OPERATOR);
         vm.expectRevert(CompToken.InvalidVault.selector);
         fresh.setVault(address(0));
         vm.expectRevert(CompToken.InvalidVault.selector);
@@ -49,6 +52,7 @@ contract TokensTest is ProtocolFixture {
         assertEq(fresh.vault(), address(vault));
         vm.expectRevert(CompToken.AlreadyInitialized.selector);
         fresh.setVault(address(vault));
+        vm.stopPrank();
         vm.prank(alice);
         vm.expectRevert(CompToken.AlreadyInitialized.selector);
         fresh.setVault(address(0));
@@ -61,7 +65,7 @@ contract TokensTest is ProtocolFixture {
         vm.expectRevert(CompToken.Unauthorized.selector);
         fresh.burn(alice, 1);
         _open(alice, 150 ether, 100 ether);
-        address[3] memory callers = [address(this), alice, bob];
+        address[4] memory callers = [address(this), OPERATOR, alice, bob];
         for (uint256 i; i < callers.length; ++i) {
             vm.startPrank(callers[i]);
             vm.expectRevert(CompToken.Unauthorized.selector);

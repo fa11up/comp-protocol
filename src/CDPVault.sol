@@ -7,6 +7,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {CompToken} from "./CompToken.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
+import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
 
 /// @notice Collateralized COMP borrowing against consumable work credits on Sepolia.
 /// @dev PRICE ASSUMPTION: 1 IMD == 1 COMP, fixed for this testnet demonstration. Both use 18 decimals.
@@ -59,13 +60,14 @@ contract CDPVault is ReentrancyGuard {
         imdToken = IERC20(imdToken_);
         compToken = CompToken(compToken_);
         if (oracle_ == address(0)) {
-            _initializer = msg.sender;
+            _initializer = APPROVED_OPERATOR;
         } else {
             _setOracle(oracle_);
         }
     }
 
     /// @notice Finish deferred initialization once; all initialization authority is then erased.
+    /// @dev Only the workflow's approved operator may call, including after factory deployment.
     function setOracle(address oracle_) external {
         if (_initializer == address(0)) revert AlreadyInitialized();
         if (msg.sender != _initializer) revert Unauthorized();

@@ -9,6 +9,7 @@ import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 
 contract ProtocolHandler is Test {
+    address private constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
     MockIMD public imd;
     CompToken public comp;
     MockWorkOracle public oracle;
@@ -23,11 +24,15 @@ contract ProtocolHandler is Test {
         comp = new CompToken();
         vault = new CDPVault(address(imd), address(comp), address(0));
         oracle = new MockWorkOracle(address(vault));
+        vm.startPrank(OPERATOR);
         comp.setVault(address(vault));
         vault.setOracle(address(oracle));
+        vm.stopPrank();
         for (uint256 i; i < actors.length; ++i) {
+            vm.startPrank(OPERATOR);
             imd.mint(actors[i], 1e30);
             oracle.grantRights(actors[i], 1e30);
+            vm.stopPrank();
             vm.prank(actors[i]);
             imd.approve(address(vault), type(uint256).max);
         }

@@ -33,6 +33,7 @@ contract CDPVaultTest is ProtocolFixture {
         vm.prank(alice);
         vm.expectRevert(CDPVault.Unauthorized.selector);
         fresh.setOracle(address(oracle));
+        vm.startPrank(OPERATOR);
         vm.expectRevert(CDPVault.InvalidOracle.selector);
         fresh.setOracle(address(0));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
@@ -43,6 +44,7 @@ contract CDPVaultTest is ProtocolFixture {
         assertEq(address(fresh.oracle()), address(oracle));
         vm.expectRevert(CDPVault.AlreadyInitialized.selector);
         fresh.setOracle(address(oracle));
+        vm.stopPrank();
         vm.prank(alice);
         vm.expectRevert(CDPVault.AlreadyInitialized.selector);
         fresh.setOracle(address(0));
@@ -51,6 +53,7 @@ contract CDPVaultTest is ProtocolFixture {
     function test_constructorOracleLocksInitialization() public {
         CDPVault fresh = new CDPVault(address(imd), address(comp), address(oracle));
         assertEq(address(fresh.oracle()), address(oracle));
+        vm.prank(OPERATOR);
         vm.expectRevert(CDPVault.AlreadyInitialized.selector);
         fresh.setOracle(address(oracle));
     }
@@ -60,6 +63,7 @@ contract CDPVaultTest is ProtocolFixture {
         CDPVault fresh = new CDPVault(address(imd), address(freshComp), address(0));
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
+        vm.prank(OPERATOR);
         fresh.setOracle(address(oracle));
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
@@ -123,6 +127,7 @@ contract CDPVaultTest is ProtocolFixture {
     }
 
     function test_mintRejectsInsufficientRightsWithNoStateChange() public {
+        vm.prank(OPERATOR);
         imd.mint(alice, 2000 ether);
         _open(alice, 3000 ether, 0);
         vm.prank(alice);
@@ -172,6 +177,21 @@ contract CDPVaultTest is ProtocolFixture {
         vm.prank(bob);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vault.withdrawCollateral(1);
+    }
+
+    function test_unsafeWithdrawalCannotEnableLiquidation() public {
+        _open(alice, 200 ether, 100 ether);
+        vm.startPrank(alice);
+        comp.transfer(bob, 100 ether);
+        vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
+        vault.withdrawCollateral(70 ether);
+        vm.stopPrank();
+        vm.prank(bob);
+        vm.expectRevert(CDPVault.HealthyPosition.selector);
+        vault.liquidate(alice, 50 ether);
+        _assertPosition(alice, 200 ether, 100 ether);
+        assertEq(comp.balanceOf(bob), 100 ether);
+        assertEq(imd.balanceOf(address(vault)), 200 ether);
     }
 
     function test_partialAndFullRepaymentWithoutApprovalDoesNotRestoreRights() public {
@@ -234,8 +254,10 @@ contract CDPVaultTest is ProtocolFixture {
         c = bound(c, 2, 1e36);
         d = bound(d, 1, c * 2 / 3);
         r = bound(r, 0, d);
+        vm.startPrank(OPERATOR);
         imd.mint(alice, c);
         oracle.grantRights(alice, d);
+        vm.stopPrank();
         _open(alice, c, d);
         vm.startPrank(alice);
         if (r != 0) vault.repayCOMP(r);

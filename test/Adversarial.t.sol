@@ -105,8 +105,10 @@ contract AdversarialTest is Test {
         comp = new CompToken();
         vault = new CDPVault(address(collateral), address(comp), address(0));
         oracle = new AdversarialOracle(vault, alice);
+        vm.startPrank(0x5167D014a056E43883e1BBEa5530c3c0dC993281);
         comp.setVault(address(vault));
         vault.setOracle(address(oracle));
+        vm.stopPrank();
         vm.prank(alice);
         collateral.approve(address(vault), type(uint256).max);
     }

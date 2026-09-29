@@ -7,19 +7,19 @@ The JSON files in `docs/abi/` contain complete Solidity ABI arrays, including co
 | LaunchToken, MockIMD, CompToken | `name`, `symbol`, `decimals`, `totalSupply`, `balanceOf`, `allowance` | Public ERC-20 views |
 | LaunchToken, MockIMD, CompToken | `transfer(to, amount)`, `approve(spender, amount)`, `transferFrom(from, to, amount)` | Standard ERC-20 behavior; return bool |
 | MockIMD | `deployer()` | Permanent faucet authority |
-| MockIMD | `mint(account, amount)` | Deployer only; increases balance and supply |
+| MockIMD | `mint(account, amount)` | Approved workflow operator only; increases balance and supply |
 | CompToken | `vault()` | Registered vault or zero before initialization |
-| CompToken | `setVault(vault)` | Actual deployer, once; requires deployed code |
+| CompToken | `setVault(vault)` | Approved workflow operator, once; requires deployed code |
 | CompToken | `mint(account, amount)`, `burn(account, amount)` | Registered vault only; burn does not spend allowance |
 | IWorkOracle, MockWorkOracle | `mintingRights(account)` | Remaining spendable rights |
 | IWorkOracle, MockWorkOracle | `consumeRights(account, amount)` | Associated vault only; reduces remaining rights |
 | MockWorkOracle | `deployer()`, `vault()` | Immutable authority and associated consumer |
-| MockWorkOracle | `grantRights(account, amount)` | Deployer only; adds to existing rights |
+| MockWorkOracle | `grantRights(account, amount)` | Approved workflow operator only; adds to existing rights |
 | CDPVault | `imdToken()`, `compToken()`, `oracle()` | Linked contract addresses |
 | CDPVault | `MIN_COLLATERAL_RATIO()`, `LIQUIDATION_BONUS_PERCENT()` | 150 and 10 |
 | CDPVault | `positions(account)` | Tuple `(collateral, debt)` |
 | CDPVault | `collateralRatio(account)` | Integer percent; uint256.max for no debt or unrepresentably large ratio |
-| CDPVault | `setOracle(oracle)` | Deployer once if constructed with zero oracle; otherwise always reverts |
+| CDPVault | `setOracle(oracle)` | Approved workflow operator once if constructed with zero oracle; otherwise always reverts |
 | CDPVault | `depositCollateral(amount)` | Moves caller's approved IMD into their position |
 | CDPVault | `withdrawCollateral(amount)` | Returns caller's IMD if remaining position stays at least 150% |
 | CDPVault | `mintCOMP(amount)` | Consumes caller's rights, increases debt, mints COMP to caller |
@@ -27,6 +27,8 @@ The JSON files in `docs/abi/` contain complete Solidity ABI arrays, including co
 | CDPVault | `liquidate(owner, debtToRepay)` | Burns caller's COMP against an unhealthy owner's debt and pays caller IMD |
 
 `LaunchToken()` takes no constructor arguments and mints exactly 10^27 minor units to its deployer. Its metadata is `COMP Launch` / `CPL` / 18 decimals. Its public functions are only the standard ERC-20 views, transfers, and approval; it has no mint/burn or administration API. Use `docs/abi/LaunchToken.json` for the launch asset and `docs/abi/CompToken.json` for the stablecoin borrowed from CDPVault.
+
+The four application constructor signatures are unchanged: `MockIMD()`, `CompToken()`, `CDPVault(imdToken, compToken, oracle)`, and `MockWorkOracle(vault)`. Initialization and faucet authority is the explicit workflow operator `0x5167D014a056E43883e1BBEa5530c3c0dC993281`, pinned in `src/DeploymentConfig.sol`. The mock `deployer()` getters return that operator even when a factory creates the contracts. After construction the operator calls `setVault` and (with zero constructor oracle) `setOracle` once; the factory and transaction origin gain no permissions. No public function, event, error, or ABI constructor input changed in this revision.
 
 Events:
 

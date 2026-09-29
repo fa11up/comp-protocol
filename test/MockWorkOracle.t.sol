@@ -8,7 +8,7 @@ import {IWorkOracle} from "../src/interfaces/IWorkOracle.sol";
 contract MockWorkOracleTest is ProtocolFixture {
     function test_constructorAndInterface() public view {
         assertEq(oracle.vault(), address(vault));
-        assertEq(oracle.deployer(), address(this));
+        assertEq(oracle.deployer(), OPERATOR);
         assertEq(IWorkOracle(address(oracle)).mintingRights(address(0xF00)), 0);
     }
 
@@ -20,10 +20,12 @@ contract MockWorkOracleTest is ProtocolFixture {
     }
 
     function test_grantIsAdditiveAndEmitsEvent() public {
+        vm.startPrank(OPERATOR);
         vm.expectEmit(true, false, false, true, address(oracle));
         emit MockWorkOracle.RightsGranted(alice, 42);
         oracle.grantRights(alice, 42);
         oracle.grantRights(alice, 7);
+        vm.stopPrank();
         assertEq(oracle.mintingRights(alice), 1000 ether + 49);
     }
 
@@ -31,10 +33,12 @@ contract MockWorkOracleTest is ProtocolFixture {
         vm.prank(alice);
         vm.expectRevert(MockWorkOracle.Unauthorized.selector);
         oracle.grantRights(alice, 1);
+        vm.startPrank(OPERATOR);
         vm.expectRevert(MockWorkOracle.InvalidAccount.selector);
         oracle.grantRights(address(0), 1);
         vm.expectRevert(MockWorkOracle.ZeroAmount.selector);
         oracle.grantRights(alice, 0);
+        vm.stopPrank();
     }
 
     function test_consumeOnlyVaultAndInsufficientRightsReverts() public {
