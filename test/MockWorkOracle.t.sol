@@ -17,6 +17,22 @@ contract MockWorkOracleTest is ProtocolFixture {
         new MockWorkOracle(address(0));
         vm.expectRevert(MockWorkOracle.InvalidVault.selector);
         new MockWorkOracle(alice);
+        vm.prank(alice);
+        vm.expectRevert(MockWorkOracle.InvalidVault.selector);
+        new MockWorkOracle(bob);
+    }
+
+    function test_constructorAcceptsItsCreatorAsVault() public {
+        // Models a CDPVault creating the oracle from its own constructor, before it has code.
+        MockWorkOracle created = new MockWorkOracle(address(this));
+        assertEq(created.vault(), address(this));
+        vm.prank(OPERATOR);
+        created.grantRights(alice, 3);
+        vm.prank(alice);
+        vm.expectRevert(MockWorkOracle.Unauthorized.selector);
+        created.consumeRights(alice, 1);
+        created.consumeRights(alice, 1);
+        assertEq(created.mintingRights(alice), 2);
     }
 
     function test_grantIsAdditiveAndEmitsEvent() public {

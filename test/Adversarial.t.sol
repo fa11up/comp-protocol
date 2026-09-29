@@ -102,7 +102,7 @@ contract AdversarialTest is Test {
 
     function setUp() public {
         collateral = new AdversarialCollateral(alice);
-        comp = new CompToken();
+        comp = new CompToken(address(0));
         vault = new CDPVault(address(collateral), address(comp), address(0));
         oracle = new AdversarialOracle(vault, alice);
         vm.startPrank(0x5167D014a056E43883e1BBEa5530c3c0dC993281);

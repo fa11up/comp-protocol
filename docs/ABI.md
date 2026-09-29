@@ -9,7 +9,7 @@ The JSON files in `docs/abi/` contain complete Solidity ABI arrays, including co
 | MockIMD | `deployer()` | Permanent faucet authority |
 | MockIMD | `mint(account, amount)` | Approved workflow operator only; increases balance and supply |
 | CompToken | `vault()` | Registered vault or zero before initialization |
-| CompToken | `setVault(vault)` | Approved workflow operator, once; requires deployed code |
+| CompToken | `setVault(vault)` | Approved workflow operator, once, if constructed with a zero vault; requires a deployed vault whose `compToken()` is this token |
 | CompToken | `mint(account, amount)`, `burn(account, amount)` | Registered vault only; burn does not spend allowance |
 | IWorkOracle, MockWorkOracle | `mintingRights(account)` | Remaining spendable rights |
 | IWorkOracle, MockWorkOracle | `consumeRights(account, amount)` | Associated vault only; reduces remaining rights |
@@ -19,7 +19,7 @@ The JSON files in `docs/abi/` contain complete Solidity ABI arrays, including co
 | CDPVault | `MIN_COLLATERAL_RATIO()`, `LIQUIDATION_BONUS_PERCENT()` | 150 and 10 |
 | CDPVault | `positions(account)` | Tuple `(collateral, debt)` |
 | CDPVault | `collateralRatio(account)` | Integer percent; uint256.max for no debt or unrepresentably large ratio |
-| CDPVault | `setOracle(oracle)` | Approved workflow operator once if constructed with zero oracle; otherwise always reverts |
+| CDPVault | `setOracle(oracle)` | Approved workflow operator once if constructed with a supplied token and zero oracle; otherwise always reverts. Requires an IWorkOracle whose `vault()`, if present, is this vault |
 | CDPVault | `depositCollateral(amount)` | Moves caller's approved IMD into their position |
 | CDPVault | `withdrawCollateral(amount)` | Returns caller's IMD if remaining position stays at least 150% |
 | CDPVault | `mintCOMP(amount)` | Consumes caller's rights, increases debt, mints COMP to caller |
@@ -28,17 +28,17 @@ The JSON files in `docs/abi/` contain complete Solidity ABI arrays, including co
 
 `LaunchToken()` takes no constructor arguments and mints exactly 10^27 minor units to its deployer. Its metadata is `COMP Launch` / `CPL` / 18 decimals. Its public functions are only the standard ERC-20 views, transfers, and approval; it has no mint/burn or administration API. Use `docs/abi/LaunchToken.json` for the launch asset and `docs/abi/CompToken.json` for the stablecoin borrowed from CDPVault.
 
-The four application constructor signatures are unchanged: `MockIMD()`, `CompToken()`, `CDPVault(imdToken, compToken, oracle)`, and `MockWorkOracle(vault)`. Initialization and faucet authority is the explicit workflow operator `0x5167D014a056E43883e1BBEa5530c3c0dC993281`, pinned in `src/DeploymentConfig.sol`. The mock `deployer()` getters return that operator even when a factory creates the contracts. After construction the operator calls `setVault` and (with zero constructor oracle) `setOracle` once; the factory and transaction origin gain no permissions. No public function, event, error, or ABI constructor input changed in this revision.
+The application constructor signatures are `MockIMD()`, `CompToken(vault)`, `CDPVault(imdToken, compToken, oracle)`, and `MockWorkOracle(vault)`. `CompToken(vault)` is the only ABI change in this revision: zero defers the one-time `setVault`, while a nonzero vault is validated (or recognized as the creating contract) and locked at construction. `CDPVault(imd, 0x0, 0x0)` creates and binds its own CompToken and MockWorkOracle, so the factory launch needs no call after construction; read them from `compToken()` and `oracle()`. Deferred initialization and faucet authority is the explicit workflow operator `0x5167D014a056E43883e1BBEa5530c3c0dC993281`, pinned in `src/DeploymentConfig.sol`. The mock `deployer()` getters return that operator even when a factory or the vault creates the contracts. The factory and transaction origin gain no permissions. No event or error name changed.
 
 Events:
 
 - All three tokens emit standard `Transfer` and `Approval`; mint/burn use the zero-address convention. LaunchToken emits its only mint during construction.
-- CompToken emits `VaultSet(vault)` with indexed vault once.
+- CompToken emits `VaultSet(vault)` with indexed vault once, during construction or the one-time `setVault`.
 - MockWorkOracle emits `RightsGranted(account, amount)` and `RightsConsumed(account, amount)` with indexed account.
 - CDPVault emits `OracleSet(oracle)`, `CollateralDeposited(account, amount)`, `CollateralWithdrawn(account, amount)`, `COMPMinted(account, amount)`, and `COMPRepaid(account, amount)` with indexed addresses.
 - `Liquidated(owner, liquidator, debtRepaid, collateralSeized)` indexes owner and liquidator. Actual payout is included, so consumers need not reconstruct rounded amounts.
 
-Custom errors have no arguments unless indicated in the generated ABI. `Unauthorized` indicates a caller outside the permitted authority; `AlreadyInitialized` indicates permanently closed setup. Invalid contract addresses produce `InvalidToken`, `InvalidVault`, or `InvalidOracle`. `NotInitialized` means the vault's borrowing links are incomplete. MockWorkOracle additionally uses `InvalidAccount` for zero recipients.
+Custom errors have no arguments unless indicated in the generated ABI. `Unauthorized` indicates a caller outside the permitted authority; `AlreadyInitialized` indicates permanently closed setup. Invalid contract addresses, and targets that fail the reciprocal-link checks, produce `InvalidToken`, `InvalidVault`, or `InvalidOracle` without consuming initialization authority. `NotInitialized` means the vault's borrowing links are incomplete. MockWorkOracle additionally uses `InvalidAccount` for zero recipients.
 
 Vault operation errors are `ZeroAmount`, `InsufficientCollateral`, `InsufficientRights`, `UnsafeCollateralRatio`, `HealthyPosition`, `ExcessRepayment`, and `UnexpectedCollateralReceived`. The last detects an unsupported short collateral deposit. External token/oracle reverts propagate; ERC-20 custom errors include balances and allowances. SafeERC20 false returns produce `SafeERC20FailedOperation(token)`. Reentry produces `ReentrancyGuardReentrantCall`. A reverted transaction rolls back position changes, work credits, token supply, and emitted events together.
 

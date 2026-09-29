@@ -6,11 +6,25 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
+import {CDPVault} from "../src/CDPVault.sol";
+
+/// @dev Stands in for a vault that creates its COMP token from its own constructor.
+contract CompTokenCreator {
+    CompToken public immutable token;
+
+    constructor() {
+        token = new CompToken(address(this));
+    }
+
+    function mint(address account, uint256 amount) external {
+        token.mint(account, amount);
+    }
+}
 
 contract TokensTest is ProtocolFixture {
     function test_metadataAndZeroGenesisSupply() public {
         MockIMD freshIMD = new MockIMD();
-        CompToken freshCOMP = new CompToken();
+        CompToken freshCOMP = new CompToken(address(0));
         assertEq(freshIMD.name(), "Identity MD");
         assertEq(freshIMD.symbol(), "IMD");
         assertEq(freshIMD.decimals(), 18);
@@ -37,29 +51,59 @@ contract TokensTest is ProtocolFixture {
     }
 
     function test_setVaultDeployerOnlyAndIrreversible() public {
-        CompToken fresh = new CompToken();
+        CompToken fresh = new CompToken(address(0));
+        CDPVault freshVault = new CDPVault(address(imd), address(fresh), address(0));
         vm.prank(alice);
         vm.expectRevert(CompToken.Unauthorized.selector);
-        fresh.setVault(address(vault));
+        fresh.setVault(address(freshVault));
         vm.startPrank(OPERATOR);
         vm.expectRevert(CompToken.InvalidVault.selector);
         fresh.setVault(address(0));
         vm.expectRevert(CompToken.InvalidVault.selector);
         fresh.setVault(alice);
+        // A vault bound to a different COMP token, and contracts without compToken(), are rejected
+        // without consuming the one-time initialization authority.
+        vm.expectRevert(CompToken.InvalidVault.selector);
+        fresh.setVault(address(vault));
+        vm.expectRevert(CompToken.InvalidVault.selector);
+        fresh.setVault(address(imd));
+        vm.expectRevert(CompToken.InvalidVault.selector);
+        fresh.setVault(address(oracle));
+        assertEq(fresh.vault(), address(0));
         vm.expectEmit(true, false, false, true, address(fresh));
-        emit CompToken.VaultSet(address(vault));
-        fresh.setVault(address(vault));
-        assertEq(fresh.vault(), address(vault));
+        emit CompToken.VaultSet(address(freshVault));
+        fresh.setVault(address(freshVault));
+        assertEq(fresh.vault(), address(freshVault));
         vm.expectRevert(CompToken.AlreadyInitialized.selector);
-        fresh.setVault(address(vault));
+        fresh.setVault(address(freshVault));
         vm.stopPrank();
         vm.prank(alice);
         vm.expectRevert(CompToken.AlreadyInitialized.selector);
         fresh.setVault(address(0));
     }
 
+    function test_constructorVaultIsValidatedAndLockedImmediately() public {
+        vm.expectRevert(CompToken.InvalidVault.selector);
+        new CompToken(alice);
+        vm.expectRevert(CompToken.InvalidVault.selector);
+        new CompToken(address(vault));
+        vm.expectRevert(CompToken.InvalidVault.selector);
+        new CompToken(address(imd));
+        // The creating contract may bind itself while it is still under construction.
+        CompTokenCreator creator = new CompTokenCreator();
+        CompToken created = creator.token();
+        assertEq(created.vault(), address(creator));
+        vm.prank(OPERATOR);
+        vm.expectRevert(CompToken.AlreadyInitialized.selector);
+        created.setVault(address(vault));
+        vm.expectRevert(CompToken.Unauthorized.selector);
+        created.mint(alice, 1);
+        creator.mint(alice, 5);
+        assertEq(created.balanceOf(alice), 5);
+    }
+
     function test_compMintAndBurnOnlyVaultBeforeAndAfterInitialization() public {
-        CompToken fresh = new CompToken();
+        CompToken fresh = new CompToken(address(0));
         vm.expectRevert(CompToken.Unauthorized.selector);
         fresh.mint(alice, 1);
         vm.expectRevert(CompToken.Unauthorized.selector);

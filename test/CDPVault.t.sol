@@ -6,6 +6,16 @@ import {CDPVault} from "../src/CDPVault.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {IWorkOracle} from "../src/interfaces/IWorkOracle.sol";
+
+/// @dev A drop-in IWorkOracle without MockWorkOracle's `vault()` view; must stay acceptable to the vault.
+contract PlainOracle is IWorkOracle {
+    mapping(address => uint256) public override mintingRights;
+
+    function consumeRights(address account, uint256 amount) external override {
+        mintingRights[account] -= amount;
+    }
+}
 
 contract CDPVaultTest is ProtocolFixture {
     function test_configuration() public view {
@@ -26,24 +36,39 @@ contract CDPVaultTest is ProtocolFixture {
         new CDPVault(address(imd), address(imd), address(0));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
         new CDPVault(address(imd), address(comp), alice);
+        vm.expectRevert(CDPVault.InvalidOracle.selector);
+        new CDPVault(address(imd), address(comp), address(imd));
+        // A MockWorkOracle bound to a different vault is rejected at construction as well.
+        vm.expectRevert(CDPVault.InvalidOracle.selector);
+        new CDPVault(address(imd), address(comp), address(oracle));
     }
 
     function test_oracleInitializationOnlyDeployerOnce() public {
         CDPVault fresh = new CDPVault(address(imd), address(comp), address(0));
+        MockWorkOracle freshOracle = new MockWorkOracle(address(fresh));
         vm.prank(alice);
         vm.expectRevert(CDPVault.Unauthorized.selector);
-        fresh.setOracle(address(oracle));
+        fresh.setOracle(address(freshOracle));
         vm.startPrank(OPERATOR);
         vm.expectRevert(CDPVault.InvalidOracle.selector);
         fresh.setOracle(address(0));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
         fresh.setOracle(alice);
+        // Contracts that are not IWorkOracle, and mock oracles bound to another vault, are rejected
+        // without consuming the one-time initialization authority.
+        vm.expectRevert(CDPVault.InvalidOracle.selector);
+        fresh.setOracle(address(imd));
+        vm.expectRevert(CDPVault.InvalidOracle.selector);
+        fresh.setOracle(address(comp));
+        vm.expectRevert(CDPVault.InvalidOracle.selector);
+        fresh.setOracle(address(oracle));
+        assertEq(address(fresh.oracle()), address(0));
         vm.expectEmit(true, false, false, true, address(fresh));
-        emit CDPVault.OracleSet(address(oracle));
-        fresh.setOracle(address(oracle));
-        assertEq(address(fresh.oracle()), address(oracle));
+        emit CDPVault.OracleSet(address(freshOracle));
+        fresh.setOracle(address(freshOracle));
+        assertEq(address(fresh.oracle()), address(freshOracle));
         vm.expectRevert(CDPVault.AlreadyInitialized.selector);
-        fresh.setOracle(address(oracle));
+        fresh.setOracle(address(freshOracle));
         vm.stopPrank();
         vm.prank(alice);
         vm.expectRevert(CDPVault.AlreadyInitialized.selector);
@@ -51,22 +76,70 @@ contract CDPVaultTest is ProtocolFixture {
     }
 
     function test_constructorOracleLocksInitialization() public {
-        CDPVault fresh = new CDPVault(address(imd), address(comp), address(oracle));
-        assertEq(address(fresh.oracle()), address(oracle));
+        PlainOracle plain = new PlainOracle();
+        CDPVault fresh = new CDPVault(address(imd), address(comp), address(plain));
+        assertEq(address(fresh.oracle()), address(plain));
         vm.prank(OPERATOR);
         vm.expectRevert(CDPVault.AlreadyInitialized.selector);
-        fresh.setOracle(address(oracle));
+        fresh.setOracle(address(plain));
+        // The same drop-in oracle is also accepted through deferred setup.
+        CDPVault deferred = new CDPVault(address(imd), address(comp), address(0));
+        vm.prank(OPERATOR);
+        deferred.setOracle(address(plain));
+        assertEq(address(deferred.oracle()), address(plain));
     }
 
     function test_mintRequiresBothLinksInitialized() public {
-        CompToken freshComp = new CompToken();
+        CompToken freshComp = new CompToken(address(0));
         CDPVault fresh = new CDPVault(address(imd), address(freshComp), address(0));
+        MockWorkOracle freshOracle = new MockWorkOracle(address(fresh));
+        vm.prank(alice);
+        imd.approve(address(fresh), 150 ether);
+        vm.prank(alice);
+        fresh.depositCollateral(150 ether);
+        vm.prank(alice);
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
         vm.prank(OPERATOR);
-        fresh.setOracle(address(oracle));
+        fresh.setOracle(address(freshOracle));
+        vm.prank(alice);
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
+        vm.startPrank(OPERATOR);
+        freshComp.setVault(address(fresh));
+        freshOracle.grantRights(alice, 1);
+        vm.stopPrank();
+        vm.prank(alice);
+        fresh.mintCOMP(1);
+        assertEq(freshComp.balanceOf(alice), 1);
+    }
+
+    function test_selfContainedConstructorCreatesAndLocksBothLinks() public {
+        CDPVault fresh = new CDPVault(address(imd), address(0), address(0));
+        CompToken createdComp = fresh.compToken();
+        MockWorkOracle createdOracle = MockWorkOracle(address(fresh.oracle()));
+        assertTrue(address(createdComp) != address(0) && address(createdComp) != address(comp));
+        assertTrue(address(createdOracle) != address(0) && address(createdOracle) != address(oracle));
+        assertEq(createdComp.vault(), address(fresh));
+        assertEq(createdComp.totalSupply(), 0);
+        assertEq(createdComp.symbol(), "COMP");
+        assertEq(createdOracle.vault(), address(fresh));
+        assertEq(createdOracle.deployer(), OPERATOR);
+        vm.startPrank(OPERATOR);
+        vm.expectRevert(CompToken.AlreadyInitialized.selector);
+        createdComp.setVault(address(fresh));
+        vm.expectRevert(CDPVault.AlreadyInitialized.selector);
+        fresh.setOracle(address(createdOracle));
+        vm.stopPrank();
+        // Self-contained mode with a supplied oracle validates and locks that oracle instead of creating one.
+        PlainOracle plain = new PlainOracle();
+        CDPVault withPlain = new CDPVault(address(imd), address(0), address(plain));
+        assertEq(address(withPlain.oracle()), address(plain));
+        assertEq(withPlain.compToken().vault(), address(withPlain));
+        vm.expectRevert(CDPVault.InvalidOracle.selector);
+        new CDPVault(address(imd), address(0), address(oracle));
+        vm.expectRevert(CDPVault.InvalidToken.selector);
+        new CDPVault(address(0), address(0), address(0));
     }
 
     function test_depositAndWithdrawWithoutDebt() public {

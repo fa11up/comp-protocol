@@ -11,7 +11,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 contract ArithmeticTest is ProtocolFixture {
     function setUp() public override {
         imd = new MockIMD();
-        comp = new CompToken();
+        comp = new CompToken(address(0));
         vault = new CDPVault(address(imd), address(comp), address(0));
         oracle = new MockWorkOracle(address(vault));
         vm.startPrank(OPERATOR);

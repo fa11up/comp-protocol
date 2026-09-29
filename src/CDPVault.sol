@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {CompToken} from "./CompToken.sol";
+import {MockWorkOracle} from "./MockWorkOracle.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
 
@@ -13,6 +14,13 @@ import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
 /// @dev PRICE ASSUMPTION: 1 IMD == 1 COMP, fixed for this testnet demonstration. Both use 18 decimals.
 /// No market feed, interest, stability fee, or peg redemption is implemented. A production feed is out of scope.
 /// The oracle is selected once; there is no owner, upgrade, emergency withdrawal, or mutable parameter authority.
+///
+/// Two constructor modes resolve the token/vault/oracle dependency cycle:
+/// - Assembled (workflow order): `compToken_` is a deployed CompToken. A zero `oracle_` defers the one-time
+///   `setOracle` call to the approved operator; a nonzero `oracle_` is validated and locked immediately.
+/// - Self-contained (constructor-only factories): `compToken_` is zero. The vault creates `CompToken(this)`
+///   and, when `oracle_` is also zero, `MockWorkOracle(this)`, so every link is complete and locked when the
+///   constructor returns and no call is needed from any account afterwards.
 contract CDPVault is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -51,23 +59,32 @@ contract CDPVault is ReentrancyGuard {
     mapping(address account => Position position) public positions;
 
     /// @param imdToken_ Deployed, nonrebasing, fee-free MockIMD collateral (18 decimals).
-    /// @param compToken_ Deployed CompToken whose vault must be set to this contract before borrowing.
-    /// @param oracle_ Zero for deferred one-time setup; a deployed oracle configures and locks it immediately.
+    /// @param compToken_ Deployed CompToken whose vault must be set to this contract before borrowing, or zero
+    /// to have this vault create and permanently bind its own CompToken (self-contained mode).
+    /// @param oracle_ Zero defers one-time setup in assembled mode and creates a bound MockWorkOracle in
+    /// self-contained mode; a deployed IWorkOracle is validated and locked immediately in either mode.
     constructor(address imdToken_, address compToken_, address oracle_) {
-        if (imdToken_.code.length == 0 || compToken_.code.length == 0 || imdToken_ == compToken_) {
-            revert InvalidToken();
-        }
+        if (imdToken_.code.length == 0 || imdToken_ == compToken_) revert InvalidToken();
         imdToken = IERC20(imdToken_);
-        compToken = CompToken(compToken_);
-        if (oracle_ == address(0)) {
-            _initializer = APPROVED_OPERATOR;
+        if (compToken_ == address(0)) {
+            compToken = new CompToken(address(this));
+            if (oracle_ == address(0)) {
+                oracle_ = address(new MockWorkOracle(address(this)));
+            }
         } else {
-            _setOracle(oracle_);
+            if (compToken_.code.length == 0) revert InvalidToken();
+            compToken = CompToken(compToken_);
+            if (oracle_ == address(0)) {
+                _initializer = APPROVED_OPERATOR;
+                return;
+            }
         }
+        _setOracle(oracle_);
     }
 
     /// @notice Finish deferred initialization once; all initialization authority is then erased.
-    /// @dev Only the workflow's approved operator may call, including after factory deployment.
+    /// @dev Only the workflow's approved operator may call, including after factory deployment. A rejected
+    /// target leaves initialization available; only a successful call erases the authority.
     function setOracle(address oracle_) external {
         if (_initializer == address(0)) revert AlreadyInitialized();
         if (msg.sender != _initializer) revert Unauthorized();
@@ -154,8 +171,17 @@ contract CDPVault is ReentrancyGuard {
         return scaled + fraction;
     }
 
+    /// @dev Accepts only a deployed contract that answers `mintingRights(address)` as IWorkOracle requires.
+    /// If the target additionally exposes `vault()` (as MockWorkOracle does), that consumer must be this vault;
+    /// an oracle without that view is accepted so a drop-in IWorkOracle implementation remains compatible.
     function _setOracle(address oracle_) private {
         if (oracle_.code.length == 0) revert InvalidOracle();
+        (bool ok, bytes memory data) = oracle_.staticcall(abi.encodeCall(IWorkOracle.mintingRights, (address(this))));
+        if (!ok || data.length != 32) revert InvalidOracle();
+        (ok, data) = oracle_.staticcall(abi.encodeWithSignature("vault()"));
+        if (ok && data.length == 32 && abi.decode(data, (uint256)) != uint256(uint160(address(this)))) {
+            revert InvalidOracle();
+        }
         oracle = IWorkOracle(oracle_);
         emit OracleSet(oracle_);
     }

@@ -21,8 +21,10 @@ contract MockWorkOracle is IWorkOracle {
     address public immutable vault;
     mapping(address account => uint256 amount) public override mintingRights;
 
+    /// @param vault_ The only consumer of rights: a deployed CDPVault, or the CDPVault creating this
+    /// oracle from its own constructor (it has no code yet, so it is recognized as the creator).
     constructor(address vault_) {
-        if (vault_.code.length == 0) revert InvalidVault();
+        if (vault_ != msg.sender && vault_.code.length == 0) revert InvalidVault();
         deployer = APPROVED_OPERATOR;
         vault = vault_;
     }

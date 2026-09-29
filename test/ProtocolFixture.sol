@@ -18,7 +18,7 @@ abstract contract ProtocolFixture is Test {
 
     function setUp() public virtual {
         imd = new MockIMD();
-        comp = new CompToken();
+        comp = new CompToken(address(0));
         vault = new CDPVault(address(imd), address(comp), address(0));
         oracle = new MockWorkOracle(address(vault));
         vm.startPrank(OPERATOR);

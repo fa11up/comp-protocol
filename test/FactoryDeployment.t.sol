@@ -9,20 +9,32 @@ import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 
 /// @dev Models both factory creation modes; deliberately has no application-call capability.
 contract ApplicationConstructionFactory {
+    /// @notice Workflow (assembled) order: four contracts, then two operator calls are still required.
     function deploy(bool useCreate2)
         external
         returns (MockIMD imd, CompToken comp, CDPVault vault, MockWorkOracle oracle)
     {
         if (useCreate2) {
             imd = new MockIMD{salt: bytes32(uint256(1))}();
-            comp = new CompToken{salt: bytes32(uint256(2))}();
+            comp = new CompToken{salt: bytes32(uint256(2))}(address(0));
             vault = new CDPVault{salt: bytes32(uint256(3))}(address(imd), address(comp), address(0));
             oracle = new MockWorkOracle{salt: bytes32(uint256(4))}(address(vault));
         } else {
             imd = new MockIMD();
-            comp = new CompToken();
+            comp = new CompToken(address(0));
             vault = new CDPVault(address(imd), address(comp), address(0));
             oracle = new MockWorkOracle(address(vault));
+        }
+    }
+
+    /// @notice Constructor-only (self-contained) order: two contracts, no calls afterwards.
+    function deploySelfContained(bool useCreate2) external returns (MockIMD imd, CDPVault vault) {
+        if (useCreate2) {
+            imd = new MockIMD{salt: bytes32(uint256(5))}();
+            vault = new CDPVault{salt: bytes32(uint256(6))}(address(imd), address(0), address(0));
+        } else {
+            imd = new MockIMD();
+            vault = new CDPVault(address(imd), address(0), address(0));
         }
     }
 }
@@ -55,6 +67,18 @@ contract FactoryDeploymentTest is Test {
         _exerciseWorkflow();
     }
 
+    function test_selfContainedFactoryDeploymentBorrowsWithoutAnyInitializationCall() public {
+        vm.prank(RELAYER, ORIGIN);
+        (imd, vault) = factory.deploySelfContained(false);
+        _exerciseSelfContained();
+    }
+
+    function test_selfContainedCreate2DeploymentBorrowsWithoutAnyInitializationCall() public {
+        vm.prank(RELAYER, ORIGIN);
+        (imd, vault) = factory.deploySelfContained(true);
+        _exerciseSelfContained();
+    }
+
     function _exerciseWorkflow() private {
         assertEq(imd.deployer(), OPERATOR);
         assertEq(oracle.deployer(), OPERATOR);
@@ -64,6 +88,38 @@ contract FactoryDeploymentTest is Test {
         vm.startPrank(OPERATOR);
         comp.setVault(address(vault));
         vault.setOracle(address(oracle));
+        vm.stopPrank();
+        _borrowRepayWithdraw();
+    }
+
+    function _exerciseSelfContained() private {
+        comp = vault.compToken();
+        oracle = MockWorkOracle(address(vault.oracle()));
+        assertEq(address(vault.imdToken()), address(imd));
+        assertEq(comp.vault(), address(vault));
+        assertEq(oracle.vault(), address(vault));
+        assertEq(comp.totalSupply(), 0);
+        assertEq(imd.deployer(), OPERATOR);
+        assertEq(oracle.deployer(), OPERATOR);
+        // Every initialization selector is already closed, for the operator and everyone else.
+        address[4] memory callers = [OPERATOR, address(factory), RELAYER, ORIGIN];
+        for (uint256 i; i < callers.length; ++i) {
+            vm.startPrank(callers[i]);
+            vm.expectRevert(CompToken.AlreadyInitialized.selector);
+            comp.setVault(address(vault));
+            vm.expectRevert(CDPVault.AlreadyInitialized.selector);
+            vault.setOracle(address(oracle));
+            vm.expectRevert(CompToken.Unauthorized.selector);
+            comp.mint(BORROWER, 1);
+            vm.expectRevert(MockWorkOracle.Unauthorized.selector);
+            oracle.consumeRights(BORROWER, 1);
+            vm.stopPrank();
+        }
+        _borrowRepayWithdraw();
+    }
+
+    function _borrowRepayWithdraw() private {
+        vm.startPrank(OPERATOR);
         imd.mint(BORROWER, 150 ether);
         oracle.grantRights(BORROWER, 100 ether);
         vm.stopPrank();
