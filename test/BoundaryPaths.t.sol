@@ -15,7 +15,7 @@ contract BoundaryPathsTest is ProtocolFixture {
     error TokenUnavailable();
 
     function test_mintRejectsMissingOracleEvenWhenTokenIsLinked() public {
-        CompToken token = new CompToken();
+        CompToken token = new CompToken(address(0));
         CDPVault fresh = new CDPVault(address(imd), address(token), address(0));
         vm.prank(OPERATOR);
         token.setVault(address(fresh));
@@ -25,13 +25,15 @@ contract BoundaryPathsTest is ProtocolFixture {
     }
 
     function test_mintRejectsTokenLinkedToDifferentVault() public {
-        CompToken token = new CompToken();
+        CompToken token = new CompToken(address(0));
         CDPVault fresh = new CDPVault(address(imd), address(token), address(0));
+        CDPVault registeredVault = new CDPVault(address(imd), address(token), address(0));
         MockWorkOracle freshOracle = new MockWorkOracle(address(fresh));
         vm.startPrank(OPERATOR);
         fresh.setOracle(address(freshOracle));
-        token.setVault(address(vault));
+        token.setVault(address(registeredVault));
         vm.stopPrank();
+        assertEq(token.vault(), address(registeredVault));
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
         assertEq(token.totalSupply(), 0);
@@ -148,12 +150,16 @@ contract BoundaryPathsTest is ProtocolFixture {
         assertEq(freshIMD.balanceOf(alice), type(uint256).max);
         assertEq(freshIMD.balanceOf(bob), 0);
 
-        CompToken freshCOMP = new CompToken();
+        CompToken freshCOMP = new CompToken(address(0));
+        CDPVault tokenVault = new CDPVault(address(imd), address(freshCOMP), address(0));
         vm.prank(OPERATOR);
-        freshCOMP.setVault(address(this));
+        freshCOMP.setVault(address(tokenVault));
+        // Isolate ERC-20 supply arithmetic using the registered vault as caller.
+        vm.startPrank(address(tokenVault));
         freshCOMP.mint(alice, type(uint256).max);
         vm.expectRevert(stdError.arithmeticError);
         freshCOMP.mint(bob, 1);
+        vm.stopPrank();
         assertEq(freshCOMP.totalSupply(), type(uint256).max);
         assertEq(freshCOMP.balanceOf(alice), type(uint256).max);
         assertEq(freshCOMP.balanceOf(bob), 0);
