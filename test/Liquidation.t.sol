@@ -11,6 +11,24 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 contract LiquidationTest is ProtocolFixture {
     using stdStorage for StdStorage;
 
+    function test_withdrawalCannotCreateLiquidatablePosition() public {
+        _open(alice, 200 ether, 100 ether);
+        vm.startPrank(alice);
+        comp.transfer(bob, 100 ether);
+        vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
+        vault.withdrawCollateral(70 ether);
+        vm.stopPrank();
+        vm.prank(bob);
+        vm.expectRevert(CDPVault.HealthyPosition.selector);
+        vault.liquidate(alice, 50 ether);
+        _assertPosition(alice, 200 ether, 100 ether);
+        assertEq(imd.balanceOf(address(vault)), 200 ether);
+        assertEq(imd.balanceOf(alice), 800 ether);
+        assertEq(imd.balanceOf(bob), 1000 ether);
+        assertEq(comp.balanceOf(bob), 100 ether);
+        assertEq(comp.totalSupply(), 100 ether);
+    }
+
     function _injectCollateralLoss(uint256 remaining) internal {
         (uint256 original,) = vault.positions(alice);
         stdstore.target(address(vault)).sig("positions(address)").with_key(alice).depth(0).checked_write(remaining);
@@ -123,5 +141,73 @@ contract LiquidationTest is ProtocolFixture {
         assertEq(comp.balanceOf(bob), 0);
         assertEq(imd.balanceOf(bob), 1000 ether + payout);
         assertEq(imd.balanceOf(address(vault)), remaining - payout);
+    }
+
+    /// forge-config: default.fuzz.runs = 1000
+    function testFuzz_partialLiquidationUint128(uint128 rawDebt, uint128 rawRepayment, uint128 rawCollateral) public {
+        _checkPartialLiquidation(rawDebt, rawRepayment, rawCollateral);
+    }
+
+    function test_liquidationOfOneMinorUnitRoundsBonusDown() public {
+        _checkPartialLiquidation(1, 1, 1);
+    }
+
+    function test_partialLiquidationAtFirstNonzeroBonus() public {
+        _checkPartialLiquidation(11, 10, 11);
+    }
+
+    function _checkPartialLiquidation(uint128 rawDebt, uint128 rawRepayment, uint128 rawCollateral) private {
+        uint256 debt = bound(uint256(rawDebt), 1, type(uint128).max);
+        uint256 repayment = bound(uint256(rawRepayment), 1, debt);
+        uint256 deposit = (debt * 150 + 99) / 100;
+        uint256 payout = repayment * 110 / 100;
+        uint256 collateral = bound(uint256(rawCollateral), payout, deposit - 1);
+        imd.mint(alice, deposit);
+        oracle.grantRights(alice, debt);
+        _open(alice, deposit, debt);
+        // The liquidator also has a debt position, which must remain untouched.
+        _open(bob, 300 ether, 100 ether);
+        vm.prank(alice);
+        comp.transfer(bob, debt);
+        _injectCollateralLoss(collateral);
+        assertLt(vault.collateralRatio(alice), 150);
+        uint256 ownerBalance = imd.balanceOf(alice);
+        uint256 liquidatorBalance = imd.balanceOf(bob);
+        uint256 liquidatorCOMP = comp.balanceOf(bob);
+        uint256 rights = oracle.mintingRights(alice);
+
+        vm.prank(bob);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit CDPVault.Liquidated(alice, bob, repayment, payout);
+        vault.liquidate(alice, repayment);
+
+        _assertPosition(alice, collateral - payout, debt - repayment);
+        _assertPosition(bob, 300 ether, 100 ether);
+        assertEq(imd.balanceOf(bob) - liquidatorBalance, repayment * 110 / 100, "exact liquidation payout");
+        assertEq(imd.balanceOf(alice), ownerBalance);
+        assertEq(imd.balanceOf(address(vault)), collateral - payout + 300 ether);
+        assertEq(comp.balanceOf(bob), liquidatorCOMP - repayment);
+        assertEq(comp.balanceOf(alice), 0);
+        assertEq(comp.totalSupply(), debt - repayment + 100 ether);
+        assertEq(comp.allowance(bob, address(vault)), 0);
+        assertEq(oracle.mintingRights(alice), rights);
+        assertEq(oracle.mintingRights(bob), 900 ether);
+    }
+
+    function test_repeatedPartialLiquidationsStopWhenHealthIsRestored() public {
+        _unhealthy(120 ether);
+        vm.startPrank(bob);
+        for (uint256 i = 1; i <= 3; ++i) {
+            vault.liquidate(alice, 25 ether);
+            uint256 repaid = i * 25 ether;
+            uint256 seized = repaid * 110 / 100;
+            _assertPosition(alice, 120 ether - seized, 100 ether - repaid);
+            assertEq(imd.balanceOf(bob), 1000 ether + seized);
+            assertEq(comp.totalSupply(), 100 ether - repaid);
+        }
+        assertEq(vault.collateralRatio(alice), 150);
+        vm.expectRevert(CDPVault.HealthyPosition.selector);
+        vault.liquidate(alice, 1);
+        vm.stopPrank();
     }
 }
