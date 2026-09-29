@@ -1,0 +1,40 @@
+{
+  "kind": "evm_project",
+  "token": {
+    "contract": "LaunchToken",
+    "name": "COMP Launch",
+    "symbol": "CPL",
+    "decimals": 18
+  },
+  "contracts": [
+    {
+      "contract": "MockIMD",
+      "constructorArgs": []
+    },
+    {
+      "contract": "CompToken",
+      "constructorArgs": []
+    },
+    {
+      "contract": "CDPVault",
+      "constructorArgs": [
+        "$contract:MockIMD",
+        "$contract:CompToken",
+        "0x0000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "contract": "MockWorkOracle",
+      "constructorArgs": [
+        "$contract:CDPVault"
+      ]
+    }
+  ],
+  "pool": {
+    "pairedCurrency": "0x0000000000000000000000000000000000000000",
+    "fee": 3000,
+    "tickSpacing": 60,
+    "initialPrice": "79228162514264337593543950336"
+  },
+  "notes": "Sepolia COMP proof of concept with a fixed testnet accounting price of 1 IMD = 1 COMP. LaunchToken (CPL) is the launch asset; CompToken (COMP) is the vault's elastic-supply debt token. The pool pairs CPL with native ETH and has no hook. The factory supplies the LP and MerkleDistributor. Review findings in the accepted source: constructor-only deployment leaves CompToken.vault and CDPVault.oracle unset, so mintCOMP reverts NotInitialized. CompToken.setVault and CDPVault.setOracle are required by the implementation after construction, conflicting with the launch's no-initialization-call requirement. MockWorkOracle requires an already-deployed vault, preventing a nonzero oracle backward reference in CDPVault's constructor. DeploymentConfig.sol hard-codes the initializer and retained mock-faucet authority; the application constructors expose no policy-owner parameter. This conflicts with ownership derived exclusively from policy via $owner. These source and authorization conflicts require resolution before admission; this manifest describes the accepted constructors and does not authorize initialization calls or a privileged wallet. Services own policy, signed artifact linkage, source publication, attestation, admission, deployment and frontend startup. The manifest initialPrice is decimal sqrtPriceX96; a pinned policy with initialMarketCapWei determines the effective opening price."
+}
