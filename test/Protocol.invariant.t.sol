@@ -201,8 +201,8 @@ contract ProtocolHandler is Test {
         (uint256 timestamp, uint256 grace, bool marked) = vault.liquidationMarks(owner);
         if (!marked || block.timestamp < timestamp + grace) return;
         (uint256 collateral, uint256 debt) = vault.positions(owner);
-        // At every generated price, half the collateral bounds an affordable repayment.
-        uint256 available = _min(_min(debt, comp.balanceOf(caller)), collateral / 2);
+        // The fixed 110/100 collateral payout bounds repayment independently of market price.
+        uint256 available = _min(_min(debt, comp.balanceOf(caller)), collateral * 100 / 110);
         if (available == 0) return;
         amount = bound(amount, 1, available);
         _executeLiquidation(owner, caller, amount);
@@ -219,8 +219,7 @@ contract ProtocolHandler is Test {
         assertEq(comp.balanceOf(caller), beforeCOMP - amount, "liquidator pays its own COMP");
         assertEq(remainingDebt, debt - amount, "liquidation retires debt");
         assertEq(collateral - remainingCollateral, received, "seized collateral reaches liquidator");
-        // Non-unit payout policy is reported separately; conservation is independent of that policy.
-        if (_price() == 1 ether) assertEq(received, amount * 110 / 100, "exact liquidation bonus");
+        assertEq(received, amount * 110 / 100, "exact liquidation bonus at every price");
         debtLiquidated[owner] += amount;
         collateralSeized[owner] += received;
         collateralReceived[caller] += received;
@@ -462,6 +461,26 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         assertEq(handler.successfulMarks(), 2);
         assertEq(handler.successfulRecoveries(), 1);
         invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
+        afterInvariant();
+    }
+
+    function test_handlerLiquidationExecutesAtEveryMarketPrice() public {
+        uint256 debtToRepay = 25 ether + 9;
+        for (uint256 priceSeed; priceSeed < 3; ++priceSeed) {
+            // All three prices leave a fresh 150/100 position below the NHI-derived 200% minimum.
+            handler.setMarket(priceSeed, 0.5 ether);
+            handler.markOrClear(priceSeed);
+            address liquidator = handler.actors(priceSeed + 1);
+            uint256 beforeCollateral = handler.imd().balanceOf(liquidator);
+            handler.liquidate(priceSeed, priceSeed + 1, debtToRepay);
+            assertEq(
+                handler.imd().balanceOf(liquidator) - beforeCollateral,
+                debtToRepay * 110 / 100,
+                "price-independent payout including rounding"
+            );
+            invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
+        }
+        assertEq(handler.successfulLiquidations(), 3, "each market price reaches liquidation");
         afterInvariant();
     }
 }
