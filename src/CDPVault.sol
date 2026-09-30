@@ -11,9 +11,10 @@ import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 
 /// @notice Price-aware COMP borrowing and independent work-credit minting on Sepolia.
-/// @dev Both existing tokens use 18 decimals; price is COMP per IMD scaled by 1e18.
+/// @dev Both tokens use 18 decimals; price is COMP per IMD scaled by 1e18.
 /// NHI alone determines collateral requirements and liquidation grace. There is no parameter admin.
-/// Tokens are never created here. Their requester must separately authorize this vault to mint/burn COMP.
+/// Zero COMP and oracle arguments create permanently bound contracts with no post-deployment setup.
+/// The requester has no initialization authority in this mode; the operator retains only the mock faucets.
 contract CDPVault is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -68,18 +69,22 @@ contract CDPVault is ReentrancyGuard {
     mapping(address account => LiquidationMark mark) public liquidationMarks;
 
     /// @param imdToken_ Deployed, nonrebasing, fee-free MockIMD collateral (18 decimals).
-    /// @param compToken_ Existing CompToken to be authorized separately; zero is never accepted.
+    /// @param compToken_ Zero creates a fresh CompToken bound to this vault; otherwise an existing token
+    /// to be authorized separately through its reciprocal setVault check.
     /// @param oracle_ Zero creates a fresh MockWorkOracle bound to this vault during construction.
     /// A supplied oracle must already be deployed and, if it exposes vault(), bound to this vault.
     /// @param priceFeed_ Immutable collateral price feed, scaled by 1e18.
     /// @param nhiFeed_ Immutable network health feed, scaled by 1e18.
     constructor(address imdToken_, address compToken_, address oracle_, address priceFeed_, address nhiFeed_) {
-        if (imdToken_.code.length == 0 || compToken_.code.length == 0 || imdToken_ == compToken_) {
+        if (
+            imdToken_.code.length == 0 || (compToken_ != address(0) && compToken_.code.length == 0)
+                || imdToken_ == compToken_
+        ) {
             revert InvalidToken();
         }
         if (priceFeed_.code.length == 0 || nhiFeed_.code.length == 0 || priceFeed_ == nhiFeed_) revert InvalidFeed();
         imdToken = IERC20(imdToken_);
-        compToken = CompToken(compToken_);
+        compToken = compToken_ == address(0) ? new CompToken(address(this)) : CompToken(compToken_);
         priceFeed = ISwarmFeed(priceFeed_);
         nhiFeed = ISwarmFeed(nhiFeed_);
         if (oracle_ == address(0)) {
