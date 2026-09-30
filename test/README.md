@@ -30,6 +30,8 @@ Additional properties reconcile COMP wallet balances, collateral custody includi
 
 Liquidation tests make positions underwater through price or NHI changes after valid borrowing. They do not inject vault storage or manufacture COMP. Tests cover one second before and exactly at grace expiry, the final actionable timestamp and one second afterward, zero grace, both NHI directions during an existing window, repeat marking, deposit/repayment recovery and keeper-observed feed recovery. Rounding and sequence properties use 1,000 fuzz cases through inline configuration.
 
+The handler models the accepted implementation's upward rounding of the NHI-derived minimum ratio. A deterministic sequence covers marking, rejected actions, maximum borrowing, maximum withdrawal and liquidation after a one-wei NHI decline. A separate liquidation regression crosses from a 170% minimum to 171% with no price movement and verifies that the 12,959-second grace snapshot survives a later NHI update. These regressions prevent the former floor-rounded handler from misclassifying underwater positions or generating unsafe calls.
+
 ## Reported payout defect
 
 The supplied implementation divides the liquidation payout by price, violating the assignment's exact `debtToRepay * 110 / 100` requirement. Deposit 300 collateral, borrow 100 COMP at price 1, lower the price to 0.4, mark and wait six hours, then liquidate 100 debt. The liquidator must receive **110 collateral**, leaving **190**; actual results are **275** and **25**. With 120 collateral borrowed against at price 2 then marked at 0.8, repaying 100 should pay 110 and succeed, but instead reverts `InsufficientCollateral`.

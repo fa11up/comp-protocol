@@ -309,7 +309,8 @@ contract ProtocolHandler is Test {
         (uint256 nhi,) = nhiFeed.latestValue();
         if (nhi >= 0.85 ether) return 150;
         if (nhi <= 0.6 ether) return 200;
-        return 150 + (0.85 ether - nhi) * 50 / 0.25 ether;
+        // Round up so the handler never permits a ratio below the linear NHI requirement.
+        return 150 + ((0.85 ether - nhi) * 50 + 0.25 ether - 1) / 0.25 ether;
     }
 
     function _healthy(address actor) private view returns (bool) {
@@ -519,6 +520,35 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         handler.advanceTime(3 hours);
         handler.liquidate(0, 1, 10 ether);
         assertEq(handler.successfulLiquidations(), 1, "refreshed mark becomes executable");
+        invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
+        afterInvariant();
+    }
+
+    function test_handlerFractionalNhiThresholdPreservesActionPreconditions() public {
+        // A one-wei NHI decline raises the whole-percent minimum from 150 to 151.
+        handler.setMarket(1, 0.85 ether - 1);
+        assertEq(handler.vault().minCR(), 151);
+        handler.markOrClear(0);
+        assertEq(handler.successfulMarks(), 1, "150% position becomes underwater");
+        handler.attemptPrematureLiquidation(0, 1);
+        handler.attemptUnsafeMint(0);
+        handler.attemptUnsafeWithdrawal(0);
+
+        // Give a different actor headroom, then exercise both sides of each action limit.
+        handler.deposit(1, 10 ether);
+        handler.attemptUnsafeMint(1);
+        handler.attemptUnsafeWithdrawal(1);
+        handler.withdraw(1, type(uint256).max);
+        (uint256 collateral, uint256 debt) = handler.vault().positions(handler.actors(1));
+        assertEq(collateral, 151 ether);
+        assertEq(debt, 100 ether);
+        handler.deposit(1, 10 ether);
+        handler.mintDebt(1, type(uint256).max);
+        assertEq(handler.successfulDebtMints(), 1);
+
+        handler.advanceTime(6 hours);
+        handler.liquidate(0, 1, 10 ether);
+        assertEq(handler.successfulLiquidations(), 1);
         invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
         afterInvariant();
     }

@@ -275,6 +275,43 @@ contract LiquidationTest is ProtocolFixture {
         assertEq(imd.balanceOf(bob), 1110 ether);
     }
 
+    function test_oneWeiNhiDeclineAcrossFractionalThresholdKeepsGraceSnapshot() public {
+        _open(alice, 170 ether, 100 ether);
+        vm.prank(alice);
+        comp.transfer(bob, 100 ether);
+        nhiFeed.setValue(0.75 ether);
+        assertEq(vault.minCR(), 170);
+        vm.expectRevert(CDPVault.HealthyPosition.selector);
+        vault.markUnderwater(alice);
+
+        nhiFeed.setValue(0.75 ether - 1);
+        assertEq(vault.minCR(), 171, "fractional threshold rounds up");
+        assertEq(vault.collateralRatio(alice), 170, "collateral value has not changed");
+        vault.markUnderwater(alice);
+        (uint256 markedAt,,) = vault.liquidationMarks(alice);
+        _assertMark(alice, markedAt, 12959, true);
+
+        vm.warp(markedAt + 1 hours);
+        nhiFeed.setValue(0.7 ether);
+        vault.markUnderwater(alice);
+        _assertMark(alice, markedAt, 12959, true);
+        vm.warp(markedAt + 12958);
+        vm.prank(bob);
+        vm.expectRevert(CDPVault.GracePeriodNotElapsed.selector);
+        vault.liquidate(alice, 100 ether);
+        vm.warp(markedAt + 12959);
+        uint256 beforeBalance = imd.balanceOf(bob);
+        vm.prank(bob);
+        vault.liquidate(alice, 100 ether);
+
+        assertEq(imd.balanceOf(bob) - beforeBalance, 100 ether * 110 / 100);
+        (uint256 price,) = priceFeed.latestValue();
+        assertEq(price, 1 ether, "only NHI moved");
+        _assertPosition(alice, 60 ether, 0);
+        _assertMark(alice, 0, 0, false);
+        assertEq(comp.totalSupply(), vault.totalWorkMinted());
+    }
+
     function test_nhiRecoveryDuringGraceClearsMarkWithoutPriceMovement() public {
         _open(alice, 170 ether, 100 ether);
         vm.prank(alice);
