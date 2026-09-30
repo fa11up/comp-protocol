@@ -8,6 +8,10 @@
   },
   "contracts": [
     {
+      "contract": "MockIMD",
+      "constructorArgs": []
+    },
+    {
       "contract": "PriceFeed",
       "constructorArgs": [
         "0x5598aa9146215bc13eb26f2c692ad1461fd32982",
@@ -40,8 +44,8 @@
     {
       "contract": "CDPVault",
       "constructorArgs": [
-        "0x5e223eb2ea5d55b4a8d4190e94df3524b58dfc79",
-        "0x70bc53314feac5251274ef65e49fd11c0d679bfe",
+        "$contract:MockIMD",
+        "0x0",
         "0x0",
         "$contract:PriceFeed",
         "$contract:NhiFeed"
@@ -54,5 +58,5 @@
     "tickSpacing": 60,
     "initialPrice": "79228162514264337593543950336"
   },
-  "notes": "Sepolia (11155111) deployment: LaunchToken is COMP Launch (CPL), separate from the existing elastic CompToken. PriceFeed and NhiFeed are distinct concrete SwarmFeed implementations, deployed before CDPVault. Both feeds use the approved attester, $owner as sole relayer and reporter, payload chainId 1 (Ethereum mainnet), answerType 1 (uint256), quorum 1, maxAge 86400 seconds and maxDeviationBps 2000. The consumer EIP-712 domain uses the deployment chain and each feed address. The feeds cannot identify which question an attestation answers; the relayer must check it, including the first value and stale re-anchors. NhiFeed has no validated oracle question this round and uses reporter updates alone; its attestation path is live but unused. Feeds start unseeded and require accepted updates before feed-dependent vault operations. $owner must resolve to the workflow-approved operator. MockWorkOracle retains its source-pinned grantRights operator; this policy/source authority alignment remains a review requirement. CDPVault references the approved existing Sepolia MockIMD and CompToken addresses. Its zero oracle argument creates and permanently binds a fresh MockWorkOracle during construction. After deployment, the requester alone must authorize the new vault through the existing CompToken.setVault(newVault); COMP minting requires this separate action. The factory performs no initialization calls. The pool pairs CPL with native ETH, with fee 3000, tickSpacing 60, decimal sqrtPriceX96 initialPrice and no hook. The factory supplies the LP and MerkleDistributor. These notes do not grant deployment authority. Services own policy, source publication, signed artifact linkage, attestation, admission, deployment and frontend startup; this manifest does not attest that those checks have passed."
+  "notes": "Sepolia (11155111) deployment: LaunchToken is COMP Launch (CPL), separate from the elastic CompToken created by CDPVault. MockIMD, PriceFeed and NhiFeed deploy before CDPVault; every contract dependency is deployed by this launch. The vault's zero CompToken and oracle arguments create and permanently bind a fresh CompToken and MockWorkOracle during construction. CompToken.setVault is already closed and the vault's oracle is immutable when construction returns. No post-deployment initialization transaction exists, and the requester has no initialization authority. The source-pinned operator retains only the MockIMD mint and MockWorkOracle grantRights test faucets. Both feeds use the approved attester, $owner as sole relayer and reporter, payload chainId 1 (Ethereum mainnet), answerType 1 (uint256), quorum 1, maxAge 86400 seconds and maxDeviationBps 2000. The consumer EIP-712 domain uses the deployment chain and each feed address. The feeds cannot identify which question an attestation answers; the relayer must check it, including the first value and stale re-anchors. NhiFeed has no validated oracle question this round and uses reporter updates alone; its attestation path is live but unused. Feeds start unseeded and require accepted updates before feed-dependent vault operations. $owner resolves exclusively from policy and must match the workflow-approved operator; policy/source authority alignment remains a review requirement. The factory performs no initialization calls. The pool pairs CPL with native ETH, with fee 3000, tickSpacing 60, decimal sqrtPriceX96 initialPrice and no hook. The factory supplies the LP and MerkleDistributor. These notes do not grant deployment authority. Services own policy, source publication, signed artifact linkage, attestation, admission, deployment and frontend startup; this manifest does not attest that those checks have passed."
 }
