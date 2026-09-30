@@ -20,7 +20,7 @@ abstract contract SwarmFeedTest is Test {
     function setUp() public {
         vm.chainId(11155111);
         vm.warp(10 days);
-        feed = _deployFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
     }
 
     function test_quorumMedianRoundAndFreshnessBoundary() public {
@@ -129,7 +129,7 @@ abstract contract SwarmFeedTest is Test {
     }
 
     function test_evenQuorumMeanDoesNotOverflow() public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
         _report(REPORTER_A, type(uint256).max);
         _report(REPORTER_B, type(uint256).max - 1);
         (uint256 value,) = feed.latestValue();
@@ -189,6 +189,138 @@ abstract contract SwarmFeedTest is Test {
         assertTrue(feed.isStale());
     }
 
+    function test_attestationAcceptsSuccessiveQuestionHashesAndEmitsAcceptedHash() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        vm.expectEmit(true, false, false, true, address(feed));
+        emit SwarmFeed.AttestationAccepted(a.requestId, a.questionHash);
+        feed.submitAttestation(a, sig);
+
+        vm.warp(block.timestamp + 1);
+        a = _attestation();
+        a.requestId = keccak256("request-2");
+        a.questionHash = keccak256("same question with a new pinned block window");
+        a.figure = 1.1 ether;
+        sig = _sign(a, SIGNER_KEY);
+        vm.expectEmit(true, false, false, true, address(feed));
+        emit SwarmFeed.AttestationAccepted(a.requestId, a.questionHash);
+        feed.submitAttestation(a, sig);
+        (uint256 value, uint64 updatedAt) = feed.latestValue();
+        assertEq(value, a.figure);
+        assertEq(updatedAt, a.issuedAt);
+        assertTrue(feed.usedRequests(keccak256("request-1")));
+        assertTrue(feed.usedRequests(a.requestId));
+        assertEq(feed.round(), 3);
+    }
+
+    function test_attestationRelayerGateProtectsFirstValueAndStaleReanchor() public {
+        address relayer = address(0xCAFE);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), relayer, 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        _report(REPORTER_A, 1 ether);
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        vm.prank(vm.addr(SIGNER_KEY));
+        vm.expectRevert(SwarmFeed.UnauthorizedRelayer.selector);
+        feed.submitAttestation(a, sig);
+        assertFalse(feed.usedRequests(a.requestId));
+        assertEq(feed.reportCount(), 1);
+        assertEq(feed.round(), 1);
+        assertTrue(feed.isStale());
+
+        vm.prank(relayer);
+        feed.submitAttestation(a, sig);
+        assertTrue(feed.usedRequests(a.requestId));
+        assertEq(feed.reportCount(), 0);
+        assertFalse(feed.isStale());
+
+        vm.warp(block.timestamp + 1 hours + 1);
+        a = _attestation();
+        a.requestId = keccak256("request-2");
+        a.figure = 10 ether;
+        sig = _sign(a, SIGNER_KEY);
+        vm.prank(REPORTER_A);
+        vm.expectRevert(SwarmFeed.UnauthorizedRelayer.selector);
+        feed.submitAttestation(a, sig);
+        assertFalse(feed.usedRequests(a.requestId));
+        assertTrue(feed.isStale());
+        (uint256 value,) = feed.latestValue();
+        assertEq(value, 1 ether);
+        vm.prank(relayer);
+        feed.submitAttestation(a, sig);
+        (value,) = feed.latestValue();
+        assertEq(value, a.figure);
+        assertFalse(feed.isStale());
+    }
+
+    function test_attestationZeroRelayerAllowsDifferentSubmitters() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        vm.prank(address(0xCAFE));
+        feed.submitAttestation(a, sig);
+        a.requestId = keccak256("request-2");
+        sig = _sign(a, SIGNER_KEY);
+        vm.prank(address(0xBEEF));
+        feed.submitAttestation(a, sig);
+        assertTrue(feed.usedRequests(keccak256("request-1")));
+        assertTrue(feed.usedRequests(a.requestId));
+        assertEq(feed.round(), 3);
+    }
+
+    function test_attestationRejectsSignedWrongChainOrTypeThenAcceptsConfiguredPolicy() public {
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 10, 2, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        a.chainId = block.chainid;
+        a.answerType = 2;
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.InvalidAttestationChain.selector);
+        feed.submitAttestation(a, sig);
+        assertFalse(feed.usedRequests(a.requestId));
+        assertTrue(feed.isStale());
+        assertEq(feed.round(), 1);
+
+        a.chainId = 10;
+        a.answerType = 1;
+        sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.InvalidAnswerType.selector);
+        feed.submitAttestation(a, sig);
+        assertFalse(feed.usedRequests(a.requestId));
+        assertTrue(feed.isStale());
+        assertEq(feed.round(), 1);
+
+        a.answerType = 2;
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        assertTrue(feed.usedRequests(a.requestId));
+        (uint256 value,) = feed.latestValue();
+        assertEq(value, a.figure);
+    }
+
+    function test_attestationDomainBindsDeploymentChainAndFeed() public {
+        assertEq(feed.DOMAIN_SEPARATOR(), _domain(block.chainid, address(feed)));
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        _assertInvalidSignature(a, _signWithDomain(a, SIGNER_KEY, _domain(1, address(0))));
+        _assertInvalidSignature(a, _signWithDomain(a, SIGNER_KEY, _domain(1, address(feed))));
+
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        SwarmFeed originalFeed = feed;
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        assertNotEq(feed.DOMAIN_SEPARATOR(), originalFeed.DOMAIN_SEPARATOR());
+        _assertInvalidSignature(a, sig);
+        originalFeed.submitAttestation(a, sig);
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        assertTrue(originalFeed.usedRequests(a.requestId));
+        assertTrue(feed.usedRequests(a.requestId));
+    }
+
+    function test_attestationDomainRemainsBoundToDeploymentChain() public {
+        bytes32 deploymentDomain = _domain(block.chainid, address(feed));
+        vm.chainId(1);
+        assertEq(feed.DOMAIN_SEPARATOR(), deploymentDomain);
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        _assertInvalidSignature(a, _signWithDomain(a, SIGNER_KEY, _domain(block.chainid, address(feed))));
+        feed.submitAttestation(a, _signWithDomain(a, SIGNER_KEY, deploymentDomain));
+        assertTrue(feed.usedRequests(a.requestId));
+    }
+
     function test_attestationRejectsTamperedQuestionExpiredFutureAndStaleData() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
         a.questionHash = keccak256("wrong question");
@@ -225,10 +357,11 @@ abstract contract SwarmFeedTest is Test {
 
     function test_realFeedsExpireDuringGraceAndMustRefreshBeforeLiquidation() public {
         address operator = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
-        PriceFeed price =
-            new PriceFeed(vm.addr(SIGNER_KEY), QUESTION, address(this), address(0), address(0), 1, 1 hours, 10000);
+        PriceFeed price = new PriceFeed(
+            vm.addr(SIGNER_KEY), address(0), 1, 1, address(this), address(0), address(0), 1, 1 hours, 10000
+        );
         NhiFeed nhi = new NhiFeed(
-            vm.addr(SIGNER_KEY), keccak256("NHI"), address(this), address(0), address(0), 1, 1 hours, 10000
+            vm.addr(SIGNER_KEY), address(0), 1, 1, address(this), address(0), address(0), 1, 1 hours, 10000
         );
         price.report(1.5 ether);
         nhi.report(0.85 ether);
@@ -268,27 +401,27 @@ abstract contract SwarmFeedTest is Test {
     function test_constructorRejectsInvalidConfiguration() public {
         address attester = vm.addr(SIGNER_KEY);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(address(0), QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        _deployFeed(address(0), address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 0, 1 hours, 1000);
+        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 0, 1 hours, 1000);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, QUESTION, REPORTER_A, address(0), address(0), 2, 1 hours, 1000);
+        _deployFeed(attester, address(0), 1, 1, REPORTER_A, address(0), address(0), 2, 1 hours, 1000);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, QUESTION, address(0), address(0), address(0), 1, 1 hours, 1000);
+        _deployFeed(attester, address(0), 1, 1, address(0), address(0), address(0), 1, 1 hours, 1000);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 3, 0, 1000);
+        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 0, 1000);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 10001);
+        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 10001);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_A, REPORTER_C, 2, 1 hours, 1000);
+        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_A, REPORTER_C, 2, 1 hours, 1000);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_A, 2, 1 hours, 1000);
+        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_A, 2, 1 hours, 1000);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_B, 2, 1 hours, 1000);
+        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_B, 2, 1 hours, 1000);
     }
 
     function test_singleReporterQuorumAllowsNewRoundAndRejectsUnlistedReporter() public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, address(0), address(0), 1, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, address(0), address(0), 1, 1 hours, 1000);
         vm.expectRevert(SwarmFeed.UnauthorizedReporter.selector);
         _report(REPORTER_B, 1 ether);
         _report(REPORTER_A, 1 ether);
@@ -304,7 +437,7 @@ abstract contract SwarmFeedTest is Test {
 
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_evenQuorumFloorsMean(uint256 a, uint256 b) public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
         a = bound(a, 1, type(uint256).max);
         b = bound(b, 1, type(uint256).max);
         _report(REPORTER_B, b);
@@ -445,7 +578,17 @@ abstract contract SwarmFeedTest is Test {
         else if (field == 8) a.requestId = keccak256("changed request");
         else if (field == 9) a.issuedAt -= 1;
         else a.expiresAt += 1;
-        _assertInvalidSignature(a, sig);
+        if (field == 0 || field == 1) {
+            vm.expectRevert(
+                field == 0 ? SwarmFeed.InvalidAttestationChain.selector : SwarmFeed.InvalidAnswerType.selector
+            );
+            feed.submitAttestation(a, sig);
+            assertFalse(feed.usedRequests(a.requestId));
+            assertTrue(feed.isStale());
+            assertEq(feed.round(), 1);
+        } else {
+            _assertInvalidSignature(a, sig);
+        }
     }
 
     function _assertInvalidSignature(SwarmFeed.OracleAttestation memory a, bytes memory sig) private {
@@ -458,7 +601,9 @@ abstract contract SwarmFeedTest is Test {
 
     function _deployFeed(
         address attester,
-        bytes32 question,
+        address relayer,
+        uint256 attestationChainId,
+        uint8 attestationAnswerType,
         address reporter0,
         address reporter1,
         address reporter2,
@@ -488,9 +633,19 @@ abstract contract SwarmFeedTest is Test {
     }
 
     function _sign(SwarmFeed.OracleAttestation memory a, uint256 key) private view returns (bytes memory) {
-        // Use the deployment's configured domain for otherwise-valid fixtures. Domain isolation and
-        // question/relayer policy defects are reported separately, not asserted as correct here.
         return _signWithDomain(a, key, feed.DOMAIN_SEPARATOR());
+    }
+
+    function _domain(uint256 chainId, address consumer) private pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("IdentityMD Oracle"),
+                keccak256("1"),
+                chainId,
+                consumer
+            )
+        );
     }
 
     function _signWithDomain(SwarmFeed.OracleAttestation memory a, uint256 key, bytes32 domain)
@@ -523,7 +678,9 @@ abstract contract SwarmFeedTest is Test {
 contract PriceFeedTest is SwarmFeedTest {
     function _deployFeed(
         address attester,
-        bytes32 question,
+        address relayer,
+        uint256 attestationChainId,
+        uint8 attestationAnswerType,
         address reporter0,
         address reporter1,
         address reporter2,
@@ -531,7 +688,18 @@ contract PriceFeedTest is SwarmFeedTest {
         uint256 maxAge,
         uint256 maxDeviationBps
     ) internal override returns (SwarmFeed) {
-        return new PriceFeed(attester, question, reporter0, reporter1, reporter2, quorum, maxAge, maxDeviationBps);
+        return new PriceFeed(
+            attester,
+            relayer,
+            attestationChainId,
+            attestationAnswerType,
+            reporter0,
+            reporter1,
+            reporter2,
+            quorum,
+            maxAge,
+            maxDeviationBps
+        );
     }
 }
 
@@ -539,7 +707,9 @@ contract PriceFeedTest is SwarmFeedTest {
 contract NhiFeedTest is SwarmFeedTest {
     function _deployFeed(
         address attester,
-        bytes32 question,
+        address relayer,
+        uint256 attestationChainId,
+        uint8 attestationAnswerType,
         address reporter0,
         address reporter1,
         address reporter2,
@@ -547,6 +717,17 @@ contract NhiFeedTest is SwarmFeedTest {
         uint256 maxAge,
         uint256 maxDeviationBps
     ) internal override returns (SwarmFeed) {
-        return new NhiFeed(attester, question, reporter0, reporter1, reporter2, quorum, maxAge, maxDeviationBps);
+        return new NhiFeed(
+            attester,
+            relayer,
+            attestationChainId,
+            attestationAnswerType,
+            reporter0,
+            reporter1,
+            reporter2,
+            quorum,
+            maxAge,
+            maxDeviationBps
+        );
     }
 }

@@ -51,6 +51,17 @@ contract CDPVaultTest is ProtocolFixture {
         new CDPVault(address(imd), address(comp), address(oracle), address(priceFeed), address(nhiFeed));
     }
 
+    function test_constructorRejectsSharedPriceAndNhiFeed() public {
+        // A valid price of 0.5 must never implicitly become the NHI through an aliased feed.
+        priceFeed.setValue(0.5 ether);
+        vm.expectRevert(CDPVault.InvalidFeed.selector);
+        new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(priceFeed));
+        vm.expectRevert(CDPVault.InvalidFeed.selector);
+        new CDPVault(address(imd), address(comp), address(0), address(nhiFeed), address(nhiFeed));
+        assertEq(vault.minCR(), 150, "distinct NHI remains independent of the price change");
+        assertEq(vault.gracePeriod(), 6 hours);
+    }
+
     function test_constructorAcceptsPlainOracleAndCreatesBoundOracleWhenZero() public {
         PlainOracle plain = new PlainOracle();
         CDPVault supplied =

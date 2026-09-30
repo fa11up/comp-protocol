@@ -11,10 +11,10 @@ Dependencies are already vendored. The submitted suite needs no network, RPC, en
 
 | Area | Tests |
 | --- | --- |
-| Independent debt/work mint channels, zero-rights borrowing, authorization, rollback, stale-feed gates, deposits/repayment/withdrawal | `CDPVault.t.sol`, `BoundaryPaths.t.sol` |
+| Independent debt/work mint channels, zero-rights borrowing, authorization, rollback, shared-feed constructor rejection, stale-feed gates, deposits/repayment/withdrawal | `CDPVault.t.sol`, `BoundaryPaths.t.sol` |
 | Price-driven full, partial, repeated and self liquidation; cascade across positions; exact payouts at prices 0.5, 1 and 2 including floor rounding; insufficient collateral rollback; grace and mark-expiry boundaries; recovery; NHI-only triggers; snapshot preservation | `Liquidation.t.sol` |
 | Random debt and work minting, transfers, deposits, withdrawals, repayments, donations, feed shocks, staleness, elapsed time, marking, recovery and liquidation | `Protocol.invariant.t.sol` |
-| Both concrete PriceFeed and NhiFeed: reporter quorum, median, zero-value rollback, deviation, round expiry, staleness boundaries and attestation acceptance/rejection | `SwarmFeed.t.sol` |
+| Both concrete PriceFeed and NhiFeed: reporter quorum, median, zero-value rollback, deviation, round expiry, staleness boundaries, consumer-domain isolation, relayer/data-chain/answer-type gates, changing signed window hashes and attestation acceptance/rejection | `SwarmFeed.t.sol` |
 | Real PriceFeed/NhiFeed-to-vault liquidation, including feed expiry during grace and mandatory refresh of both feeds | `SwarmFeed.t.sol` |
 | Reentrant callbacks across all eight vault actions, failed oracle/token calls, short incoming transfers, failed outgoing liquidation transfer rollback | `Adversarial.t.sol` |
 | Full-range uint128 lifecycle properties and arithmetic saturation/boundaries | `ProtocolSequences.t.sol`, `Arithmetic.t.sol` |
@@ -32,10 +32,10 @@ Liquidation tests make positions underwater through price or NHI changes after v
 
 The handler models the accepted implementation's upward rounding of the NHI-derived minimum ratio. A deterministic sequence covers marking, rejected actions, maximum borrowing, maximum withdrawal and liquidation after a one-wei NHI decline. A separate liquidation regression crosses from a 170% minimum to 171% with no price movement and verifies that the 12,959-second grace snapshot survives a later NHI update. These regressions prevent the former floor-rounded handler from misclassifying underwater positions or generating unsafe calls.
 
-## Reported source defects
+## Revision coverage
 
 The approved price-divided liquidation formula passes. The previous fixed-payout requirement at non-unit prices is withdrawn and is not a defect.
 
-The supplied source still has the old constant signature domain, immutable question-hash gate, and no rejection of a shared price/NHI feed. These conflict with the approved workflow and are reported in `.imd-findings.json` with executable proofs. The passing attestation fixtures sign against the deployed feed's exposed domain to isolate signature integrity, freshness, replay and deviation behavior; they do not certify that domain or the old question gate as correct. Consumer-domain acceptance, cross-feed isolation, changing window hashes, relayer/payload restrictions and the shared-feed constructor rejection remain source-fix requirements. Reproduce a finding by saving its `proof` string as a Foundry test under `test/scratch/` and running `forge test --match-path` against that file.
+The revised sources replace the constant signature domain and immutable question-hash gate with a deployment-specific consumer domain and relayer/data-chain/answer-type policy, and reject a shared price/NHI feed. Regressions exercise these fixes in addition to the preserved reporter, signature integrity, freshness, replay and deviation tests. Both concrete feeds run the same inherited coverage. Signed question hashes may change between requests; signature validation still rejects tampering with them.
 
 Local test feeds make value/freshness changes independently controllable and expose a finite one-day `maxAge` for mark expiry; the real-feed integration complements those isolated vault tests. These are offline tests, not live Sepolia or fork validation. They do not establish the deployed tokens' authorization state or constitute the independent launch review.
