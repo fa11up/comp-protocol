@@ -58,6 +58,21 @@ abstract contract SwarmFeedTest is Test {
         assertEq(value, 2 ether);
     }
 
+    function test_pendingQuorumCompletesAtExactMaxAgeWithoutRenewingFreshness() public {
+        uint256 startedAt = block.timestamp;
+        _report(REPORTER_A, 1.1 ether);
+        _report(REPORTER_B, 0.9 ether);
+        vm.warp(startedAt + 1 hours);
+        _report(REPORTER_C, 1 ether);
+        (uint256 value, uint64 updatedAt) = feed.latestValue();
+        assertEq(value, 1 ether);
+        assertEq(updatedAt, startedAt);
+        assertFalse(feed.isStale());
+        assertEq(feed.reportCount(), 0);
+        vm.warp(block.timestamp + 1);
+        assertTrue(feed.isStale());
+    }
+
     function test_deviationAtLimitAcceptedAndBeyondRejectedAtomically() public {
         _report(REPORTER_A, 1 ether);
         _report(REPORTER_B, 1 ether);
@@ -134,6 +149,28 @@ abstract contract SwarmFeedTest is Test {
         assertTrue(feed.usedRequests(a.requestId));
         vm.expectRevert(SwarmFeed.ReplayedAttestation.selector);
         feed.submitAttestation(a, sig);
+    }
+
+    function test_attestationDiscardedVotesCannotCompleteNextRound() public {
+        _report(REPORTER_A, 99 ether);
+        _report(REPORTER_B, 99 ether);
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        vm.warp(block.timestamp + 1);
+        uint256 newRoundStartedAt = block.timestamp;
+        _report(REPORTER_C, 1.1 ether);
+        (uint256 value, uint64 updatedAt) = feed.latestValue();
+        assertEq(value, a.figure, "discarded votes cannot publish another value");
+        assertEq(updatedAt, a.issuedAt);
+        assertEq(feed.reportCount(), 1);
+        _report(REPORTER_A, 1.1 ether);
+        vm.expectRevert(SwarmFeed.AlreadyReported.selector);
+        _report(REPORTER_A, 1.1 ether);
+        _report(REPORTER_B, 1.1 ether);
+        (value, updatedAt) = feed.latestValue();
+        assertEq(value, 1.1 ether);
+        assertEq(updatedAt, newRoundStartedAt);
+        assertEq(feed.reportCount(), 0);
     }
 
     function test_attestationRejectsWrongDomainSignerAndTamperedFigure() public {
