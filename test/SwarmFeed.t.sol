@@ -3,11 +3,13 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {SwarmFeed} from "src/SwarmFeed.sol";
+import {PriceFeed} from "src/PriceFeed.sol";
+import {NhiFeed} from "src/NhiFeed.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 
-contract SwarmFeedTest is Test {
+abstract contract SwarmFeedTest is Test {
     uint256 private constant SIGNER_KEY = 0x12345;
     bytes32 private constant QUESTION = keccak256("collateral price");
     address private constant REPORTER_A = address(0xA);
@@ -18,7 +20,7 @@ contract SwarmFeedTest is Test {
     function setUp() public {
         vm.chainId(11155111);
         vm.warp(10 days);
-        feed = new SwarmFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
     }
 
     function test_quorumMedianRoundAndFreshnessBoundary() public {
@@ -54,6 +56,21 @@ contract SwarmFeedTest is Test {
         _report(REPORTER_A, 1 ether);
         (uint256 value,) = feed.latestValue();
         assertEq(value, 2 ether);
+    }
+
+    function test_pendingQuorumCompletesAtExactMaxAgeWithoutRenewingFreshness() public {
+        uint256 startedAt = block.timestamp;
+        _report(REPORTER_A, 1.1 ether);
+        _report(REPORTER_B, 0.9 ether);
+        vm.warp(startedAt + 1 hours);
+        _report(REPORTER_C, 1 ether);
+        (uint256 value, uint64 updatedAt) = feed.latestValue();
+        assertEq(value, 1 ether);
+        assertEq(updatedAt, startedAt);
+        assertFalse(feed.isStale());
+        assertEq(feed.reportCount(), 0);
+        vm.warp(block.timestamp + 1);
+        assertTrue(feed.isStale());
     }
 
     function test_deviationAtLimitAcceptedAndBeyondRejectedAtomically() public {
@@ -99,30 +116,30 @@ contract SwarmFeedTest is Test {
 
         SwarmFeed.OracleAttestation memory a = _attestation();
         a.figure = 0;
-        bytes memory sig = _sign(a, SIGNER_KEY, 1);
+        bytes memory sig = _sign(a, SIGNER_KEY);
         vm.expectRevert(SwarmFeed.ZeroValue.selector);
         feed.submitAttestation(a, sig);
         assertFalse(feed.usedRequests(a.requestId));
         assertEq(feed.reportCount(), 1, "failed attestation preserves pending votes");
         assertTrue(feed.isStale());
         a.figure = 1 ether;
-        feed.submitAttestation(a, _sign(a, SIGNER_KEY, 1));
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         assertTrue(feed.usedRequests(a.requestId));
         assertFalse(feed.isStale());
     }
 
     function test_evenQuorumMeanDoesNotOverflow() public {
-        feed = new SwarmFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
         _report(REPORTER_A, type(uint256).max);
         _report(REPORTER_B, type(uint256).max - 1);
         (uint256 value,) = feed.latestValue();
         assertEq(value, type(uint256).max - 1);
     }
 
-    function test_attestationAcceptsLiteralMainnetDomainOnSepoliaAndRejectsReplay() public {
+    function test_attestationPublishesSignedFigureDiscardsPendingRoundAndRejectsReplay() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
         _report(REPORTER_A, 99 ether);
-        bytes memory sig = _sign(a, SIGNER_KEY, 1);
+        bytes memory sig = _sign(a, SIGNER_KEY);
         vm.prank(address(0xCAFE));
         feed.submitAttestation(a, sig);
         (uint256 value, uint64 updatedAt) = feed.latestValue();
@@ -134,15 +151,37 @@ contract SwarmFeedTest is Test {
         feed.submitAttestation(a, sig);
     }
 
+    function test_attestationDiscardedVotesCannotCompleteNextRound() public {
+        _report(REPORTER_A, 99 ether);
+        _report(REPORTER_B, 99 ether);
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        vm.warp(block.timestamp + 1);
+        uint256 newRoundStartedAt = block.timestamp;
+        _report(REPORTER_C, 1.1 ether);
+        (uint256 value, uint64 updatedAt) = feed.latestValue();
+        assertEq(value, a.figure, "discarded votes cannot publish another value");
+        assertEq(updatedAt, a.issuedAt);
+        assertEq(feed.reportCount(), 1);
+        _report(REPORTER_A, 1.1 ether);
+        vm.expectRevert(SwarmFeed.AlreadyReported.selector);
+        _report(REPORTER_A, 1.1 ether);
+        _report(REPORTER_B, 1.1 ether);
+        (value, updatedAt) = feed.latestValue();
+        assertEq(value, 1.1 ether);
+        assertEq(updatedAt, newRoundStartedAt);
+        assertEq(feed.reportCount(), 0);
+    }
+
     function test_attestationRejectsWrongDomainSignerAndTamperedFigure() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
-        bytes memory sig = _sign(a, SIGNER_KEY, block.chainid);
+        bytes memory sig = _signWithDomain(a, SIGNER_KEY, keccak256("unrelated domain"));
         vm.expectRevert(SwarmFeed.InvalidSignature.selector);
         feed.submitAttestation(a, sig);
-        sig = _sign(a, SIGNER_KEY + 1, 1);
+        sig = _sign(a, SIGNER_KEY + 1);
         vm.expectRevert(SwarmFeed.InvalidSignature.selector);
         feed.submitAttestation(a, sig);
-        sig = _sign(a, SIGNER_KEY, 1);
+        sig = _sign(a, SIGNER_KEY);
         ++a.figure;
         vm.expectRevert(SwarmFeed.InvalidSignature.selector);
         feed.submitAttestation(a, sig);
@@ -150,25 +189,26 @@ contract SwarmFeedTest is Test {
         assertTrue(feed.isStale());
     }
 
-    function test_attestationRejectsWrongQuestionExpiredFutureAndStaleData() public {
+    function test_attestationRejectsTamperedQuestionExpiredFutureAndStaleData() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
         a.questionHash = keccak256("wrong question");
-        bytes memory sig = _sign(a, SIGNER_KEY, 1);
-        vm.expectRevert(SwarmFeed.InvalidQuestion.selector);
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        a.questionHash = QUESTION;
+        vm.expectRevert(SwarmFeed.InvalidSignature.selector);
         feed.submitAttestation(a, sig);
         a = _attestation();
         a.expiresAt = uint64(block.timestamp - 1);
-        sig = _sign(a, SIGNER_KEY, 1);
+        sig = _sign(a, SIGNER_KEY);
         vm.expectRevert(SwarmFeed.ExpiredAttestation.selector);
         feed.submitAttestation(a, sig);
         a = _attestation();
         a.issuedAt = uint64(block.timestamp + 1);
-        sig = _sign(a, SIGNER_KEY, 1);
+        sig = _sign(a, SIGNER_KEY);
         vm.expectRevert(SwarmFeed.InvalidTimestamp.selector);
         feed.submitAttestation(a, sig);
         a = _attestation();
         a.issuedAt = uint64(block.timestamp - 1 hours - 1);
-        sig = _sign(a, SIGNER_KEY, 1);
+        sig = _sign(a, SIGNER_KEY);
         vm.expectRevert(SwarmFeed.StaleAttestation.selector);
         feed.submitAttestation(a, sig);
     }
@@ -177,7 +217,7 @@ contract SwarmFeedTest is Test {
         SwarmFeed.OracleAttestation memory a = _attestation();
         a.issuedAt = uint64(block.timestamp - 1 hours);
         a.expiresAt = uint64(block.timestamp);
-        feed.submitAttestation(a, _sign(a, SIGNER_KEY, 1));
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         assertFalse(feed.isStale());
         vm.warp(block.timestamp + 1);
         assertTrue(feed.isStale());
@@ -185,9 +225,9 @@ contract SwarmFeedTest is Test {
 
     function test_realFeedsExpireDuringGraceAndMustRefreshBeforeLiquidation() public {
         address operator = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
-        SwarmFeed price =
-            new SwarmFeed(vm.addr(SIGNER_KEY), QUESTION, address(this), address(0), address(0), 1, 1 hours, 10000);
-        SwarmFeed nhi = new SwarmFeed(
+        PriceFeed price =
+            new PriceFeed(vm.addr(SIGNER_KEY), QUESTION, address(this), address(0), address(0), 1, 1 hours, 10000);
+        NhiFeed nhi = new NhiFeed(
             vm.addr(SIGNER_KEY), keccak256("NHI"), address(this), address(0), address(0), 1, 1 hours, 10000
         );
         price.report(1.5 ether);
@@ -225,6 +265,208 @@ contract SwarmFeedTest is Test {
         assertEq(debt, 0);
     }
 
+    function test_constructorRejectsInvalidConfiguration() public {
+        address attester = vm.addr(SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
+        _deployFeed(address(0), QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
+        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 0, 1 hours, 1000);
+        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
+        _deployFeed(attester, QUESTION, REPORTER_A, address(0), address(0), 2, 1 hours, 1000);
+        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
+        _deployFeed(attester, QUESTION, address(0), address(0), address(0), 1, 1 hours, 1000);
+        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
+        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 3, 0, 1000);
+        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
+        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 10001);
+        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
+        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_A, REPORTER_C, 2, 1 hours, 1000);
+        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
+        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_A, 2, 1 hours, 1000);
+        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
+        _deployFeed(attester, QUESTION, REPORTER_A, REPORTER_B, REPORTER_B, 2, 1 hours, 1000);
+    }
+
+    function test_singleReporterQuorumAllowsNewRoundAndRejectsUnlistedReporter() public {
+        feed = _deployFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, address(0), address(0), 1, 1 hours, 1000);
+        vm.expectRevert(SwarmFeed.UnauthorizedReporter.selector);
+        _report(REPORTER_B, 1 ether);
+        _report(REPORTER_A, 1 ether);
+        (uint256 value,) = feed.latestValue();
+        assertEq(value, 1 ether);
+        assertEq(feed.round(), 2);
+        _report(REPORTER_A, 1.1 ether);
+        (value,) = feed.latestValue();
+        assertEq(value, 1.1 ether);
+        assertEq(feed.round(), 3);
+        assertEq(feed.reportCount(), 0);
+    }
+
+    /// forge-config: default.fuzz.runs = 1000
+    function testFuzz_evenQuorumFloorsMean(uint256 a, uint256 b) public {
+        feed = _deployFeed(vm.addr(SIGNER_KEY), QUESTION, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
+        a = bound(a, 1, type(uint256).max);
+        b = bound(b, 1, type(uint256).max);
+        _report(REPORTER_B, b);
+        (uint256 unpublished,) = feed.latestValue();
+        assertEq(unpublished, 0);
+        _report(REPORTER_A, a);
+        (uint256 actual,) = feed.latestValue();
+        assertEq(actual, a / 2 + b / 2 + (a % 2 + b % 2) / 2);
+    }
+
+    function test_reportRejectsUnrepresentableTimestampWithoutConsumingVote() public {
+        vm.warp(uint256(type(uint64).max) + 1);
+        vm.expectRevert(SwarmFeed.InvalidTimestamp.selector);
+        _report(REPORTER_A, 1 ether);
+        assertEq(feed.reportCount(), 0);
+        assertEq(feed.lastReportedRound(REPORTER_A), 0);
+        assertTrue(feed.isStale());
+    }
+
+    function test_staleValueCanReanchorThroughReporterQuorum() public {
+        _report(REPORTER_A, 1 ether);
+        _report(REPORTER_B, 1 ether);
+        _report(REPORTER_C, 1 ether);
+        vm.warp(block.timestamp + 1 hours);
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        _report(REPORTER_A, 3 ether);
+        vm.warp(block.timestamp + 1);
+        assertTrue(feed.isStale());
+        _report(REPORTER_A, 3 ether);
+        _report(REPORTER_B, 3 ether);
+        assertTrue(feed.isStale());
+        _report(REPORTER_C, 3 ether);
+        (uint256 value, uint64 updatedAt) = feed.latestValue();
+        assertEq(value, 3 ether);
+        assertEq(updatedAt, block.timestamp);
+        assertFalse(feed.isStale());
+    }
+
+    function test_attestationDeviationRejectedAtomicallyAndBoundaryAccepted() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        _report(REPORTER_A, 1 ether);
+        uint256 pendingRound = feed.round();
+        uint64 initialTime = a.issuedAt;
+        vm.warp(block.timestamp + 1);
+        a = _attestation();
+        a.requestId = keccak256("request-2");
+        a.figure = 1.1 ether + 1;
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        feed.submitAttestation(a, sig);
+        a.figure = 0.9 ether - 1;
+        sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        feed.submitAttestation(a, sig);
+        (uint256 value, uint64 updatedAt) = feed.latestValue();
+        assertEq(value, 1 ether);
+        assertEq(updatedAt, initialTime);
+        assertFalse(feed.usedRequests(a.requestId));
+        assertEq(feed.reportCount(), 1);
+        assertEq(feed.round(), pendingRound);
+        a.figure = 0.9 ether;
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        (value, updatedAt) = feed.latestValue();
+        assertEq(value, a.figure);
+        assertEq(updatedAt, a.issuedAt);
+        assertTrue(feed.usedRequests(a.requestId));
+        assertEq(feed.reportCount(), 0);
+        assertEq(feed.round(), pendingRound + 1);
+    }
+
+    function test_staleValueCanReanchorThroughFreshAttestation() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        vm.warp(block.timestamp + 1 hours + 1);
+        assertTrue(feed.isStale());
+        a = _attestation();
+        a.requestId = keccak256("request-2");
+        a.figure = 10 ether;
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        (uint256 value, uint64 updatedAt) = feed.latestValue();
+        assertEq(value, 10 ether);
+        assertEq(updatedAt, block.timestamp);
+        assertFalse(feed.isStale());
+    }
+
+    function test_attestationRejectsOlderIssueTimeWithoutConsumingRequest() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        a.requestId = keccak256("request-2");
+        --a.issuedAt;
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.StaleAttestation.selector);
+        feed.submitAttestation(a, sig);
+        assertFalse(feed.usedRequests(a.requestId));
+        ++a.issuedAt;
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        assertTrue(feed.usedRequests(a.requestId), "equal issue times are valid for distinct requests");
+    }
+
+    function test_attestationRejectsMalformedAndMalleableSignatures() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        _assertInvalidSignature(a, bytes(""));
+        _assertInvalidSignature(a, new bytes(64));
+        _assertInvalidSignature(a, new bytes(66));
+        _assertInvalidSignature(a, abi.encodePacked(bytes32(0), bytes32(0), uint8(27)));
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        uint8 originalV = uint8(sig[64]);
+        sig[64] = bytes1(uint8(29));
+        _assertInvalidSignature(a, sig);
+        bytes32 r;
+        bytes32 s;
+        assembly ("memory-safe") {
+            r := mload(add(sig, 32))
+            s := mload(add(sig, 64))
+        }
+        uint256 curveOrder = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141;
+        _assertInvalidSignature(
+            a, abi.encodePacked(r, bytes32(curveOrder - uint256(s)), uint8(originalV == 27 ? 28 : 27))
+        );
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        assertTrue(feed.usedRequests(a.requestId), "invalid signatures must not consume the request");
+    }
+
+    /// forge-config: default.fuzz.runs = 1000
+    function testFuzz_attestationRejectsTamperedSignedPayload(uint8 field) public {
+        field = uint8(bound(field, 0, 10));
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        if (field == 0) a.chainId += 1;
+        else if (field == 1) a.answerType += 1;
+        else if (field == 2) a.answer = bytes("changed answer");
+        else if (field == 3) a.figure += 1;
+        else if (field == 4) a.fromBlock += 1;
+        else if (field == 5) a.toBlock += 1;
+        else if (field == 6) a.blockHash = keccak256("changed block");
+        else if (field == 7) a.panelJobId = keccak256("changed panel");
+        else if (field == 8) a.requestId = keccak256("changed request");
+        else if (field == 9) a.issuedAt -= 1;
+        else a.expiresAt += 1;
+        _assertInvalidSignature(a, sig);
+    }
+
+    function _assertInvalidSignature(SwarmFeed.OracleAttestation memory a, bytes memory sig) private {
+        vm.expectRevert(SwarmFeed.InvalidSignature.selector);
+        feed.submitAttestation(a, sig);
+        assertFalse(feed.usedRequests(a.requestId));
+        assertTrue(feed.isStale());
+        assertEq(feed.round(), 1);
+    }
+
+    function _deployFeed(
+        address attester,
+        bytes32 question,
+        address reporter0,
+        address reporter1,
+        address reporter2,
+        uint8 quorum,
+        uint256 maxAge,
+        uint256 maxDeviationBps
+    ) internal virtual returns (SwarmFeed);
+
     function _report(address reporter, uint256 value) private {
         vm.prank(reporter);
         feed.report(value);
@@ -245,20 +487,17 @@ contract SwarmFeedTest is Test {
         a.expiresAt = uint64(block.timestamp + 1 hours);
     }
 
-    function _sign(SwarmFeed.OracleAttestation memory a, uint256 key, uint256 domainChainId)
+    function _sign(SwarmFeed.OracleAttestation memory a, uint256 key) private view returns (bytes memory) {
+        // Use the deployment's configured domain for otherwise-valid fixtures. Domain isolation and
+        // question/relayer policy defects are reported separately, not asserted as correct here.
+        return _signWithDomain(a, key, feed.DOMAIN_SEPARATOR());
+    }
+
+    function _signWithDomain(SwarmFeed.OracleAttestation memory a, uint256 key, bytes32 domain)
         private
         pure
         returns (bytes memory)
     {
-        bytes32 domain = keccak256(
-            abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("IdentityMD Oracle"),
-                keccak256("1"),
-                domainChainId,
-                address(0)
-            )
-        );
         bytes32 body = keccak256(
             bytes.concat(
                 abi.encode(
@@ -277,5 +516,37 @@ contract SwarmFeedTest is Test {
         );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, keccak256(abi.encodePacked("\x19\x01", domain, body)));
         return abi.encodePacked(r, s, v);
+    }
+}
+
+/// forge-config: default.fuzz.runs = 1000
+contract PriceFeedTest is SwarmFeedTest {
+    function _deployFeed(
+        address attester,
+        bytes32 question,
+        address reporter0,
+        address reporter1,
+        address reporter2,
+        uint8 quorum,
+        uint256 maxAge,
+        uint256 maxDeviationBps
+    ) internal override returns (SwarmFeed) {
+        return new PriceFeed(attester, question, reporter0, reporter1, reporter2, quorum, maxAge, maxDeviationBps);
+    }
+}
+
+/// forge-config: default.fuzz.runs = 1000
+contract NhiFeedTest is SwarmFeedTest {
+    function _deployFeed(
+        address attester,
+        bytes32 question,
+        address reporter0,
+        address reporter1,
+        address reporter2,
+        uint8 quorum,
+        uint256 maxAge,
+        uint256 maxDeviationBps
+    ) internal override returns (SwarmFeed) {
+        return new NhiFeed(attester, question, reporter0, reporter1, reporter2, quorum, maxAge, maxDeviationBps);
     }
 }
