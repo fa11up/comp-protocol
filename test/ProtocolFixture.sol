@@ -6,6 +6,7 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
 abstract contract ProtocolFixture is Test {
     address internal constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
@@ -13,17 +14,20 @@ abstract contract ProtocolFixture is Test {
     CompToken internal comp;
     MockWorkOracle internal oracle;
     CDPVault internal vault;
+    TestSwarmFeed internal priceFeed;
+    TestSwarmFeed internal nhiFeed;
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
 
     function setUp() public virtual {
         imd = new MockIMD();
         comp = new CompToken(address(0));
-        vault = new CDPVault(address(imd), address(comp), address(0));
-        oracle = new MockWorkOracle(address(vault));
+        priceFeed = new TestSwarmFeed(1 ether);
+        nhiFeed = new TestSwarmFeed(0.85 ether);
+        vault = new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed));
+        oracle = MockWorkOracle(address(vault.oracle()));
         vm.startPrank(OPERATOR);
         comp.setVault(address(vault));
-        vault.setOracle(address(oracle));
         imd.mint(alice, 1000 ether);
         imd.mint(bob, 1000 ether);
         oracle.grantRights(alice, 1000 ether);

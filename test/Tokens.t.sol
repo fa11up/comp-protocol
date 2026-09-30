@@ -52,7 +52,8 @@ contract TokensTest is ProtocolFixture {
 
     function test_setVaultDeployerOnlyAndIrreversible() public {
         CompToken fresh = new CompToken(address(0));
-        CDPVault freshVault = new CDPVault(address(imd), address(fresh), address(0));
+        CDPVault freshVault =
+            new CDPVault(address(imd), address(fresh), address(0), address(priceFeed), address(nhiFeed));
         vm.prank(alice);
         vm.expectRevert(CompToken.Unauthorized.selector);
         fresh.setVault(address(freshVault));

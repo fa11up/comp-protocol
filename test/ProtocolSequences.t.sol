@@ -35,7 +35,6 @@ contract ProtocolSequencesTest is ProtocolFixture {
         uint256 previousRights = oracle.mintingRights(alice);
         vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
-        oracle.grantRights(alice, debt);
         vm.stopPrank();
 
         vm.startPrank(alice);
