@@ -77,7 +77,7 @@ contract CDPVault is ReentrancyGuard {
         if (imdToken_.code.length == 0 || compToken_.code.length == 0 || imdToken_ == compToken_) {
             revert InvalidToken();
         }
-        if (priceFeed_.code.length == 0 || nhiFeed_.code.length == 0) revert InvalidFeed();
+        if (priceFeed_.code.length == 0 || nhiFeed_.code.length == 0 || priceFeed_ == nhiFeed_) revert InvalidFeed();
         imdToken = IERC20(imdToken_);
         compToken = CompToken(compToken_);
         priceFeed = ISwarmFeed(priceFeed_);

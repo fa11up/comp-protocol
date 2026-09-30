@@ -7,12 +7,27 @@ import {SwarmFeed} from "./SwarmFeed.sol";
 contract PriceFeed is SwarmFeed {
     constructor(
         address attester_,
-        bytes32 questionHash_,
+        address relayer_,
+        uint256 attestationChainId_,
+        uint8 attestationAnswerType_,
         address reporter0_,
         address reporter1_,
         address reporter2_,
         uint8 quorum_,
         uint256 maxAge_,
         uint256 maxDeviationBps_
-    ) SwarmFeed(attester_, questionHash_, reporter0_, reporter1_, reporter2_, quorum_, maxAge_, maxDeviationBps_) {}
+    )
+        SwarmFeed(
+            attester_,
+            relayer_,
+            attestationChainId_,
+            attestationAnswerType_,
+            reporter0_,
+            reporter1_,
+            reporter2_,
+            quorum_,
+            maxAge_,
+            maxDeviationBps_
+        )
+    {}
 }

@@ -35,7 +35,9 @@ abstract contract SwarmFeed is ISwarmFeed {
     error ZeroValue();
     error ExcessDeviation();
     error InvalidSignature();
-    error InvalidQuestion();
+    error UnauthorizedRelayer();
+    error InvalidAttestationChain();
+    error InvalidAnswerType();
     error InvalidTimestamp();
     error ExpiredAttestation();
     error StaleAttestation();
@@ -43,25 +45,18 @@ abstract contract SwarmFeed is ISwarmFeed {
 
     event ValueUpdated(uint256 value, uint64 updatedAt);
     event Reported(uint256 indexed round, address indexed reporter, uint256 value);
-    event AttestationAccepted(bytes32 indexed requestId);
+    event AttestationAccepted(bytes32 indexed requestId, bytes32 questionHash);
 
     bytes32 public constant ATTESTATION_TYPEHASH = keccak256(
         "OracleAttestation(bytes32 requestId,uint256 chainId,bytes32 questionHash,uint8 answerType,bytes answer,uint256 figure,uint64 fromBlock,uint64 toBlock,bytes32 blockHash,bytes32 panelJobId,uint64 issuedAt,uint64 expiresAt)"
     );
-    // The IdentityMD service uses this domain on every chain, including Sepolia.
-    bytes32 public constant DOMAIN_SEPARATOR = keccak256(
-        abi.encode(
-            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-            keccak256("IdentityMD Oracle"),
-            keccak256("1"),
-            uint256(1),
-            address(0)
-        )
-    );
+    bytes32 public immutable DOMAIN_SEPARATOR;
     uint256 private constant _HALF_CURVE_ORDER = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
 
     address public immutable attester;
-    bytes32 public immutable questionHash;
+    address public immutable relayer;
+    uint256 public immutable attestationChainId;
+    uint8 public immutable attestationAnswerType;
     address public immutable reporter0;
     address public immutable reporter1;
     address public immutable reporter2;
@@ -79,6 +74,9 @@ abstract contract SwarmFeed is ISwarmFeed {
     uint64 private _updatedAt;
     bool private _hasValue;
 
+    /// @param relayer_ Sole attestation submitter, or zero for permissionless relay.
+    /// @param attestationChainId_ Required data chain in the signed payload, independent of the consumer chain.
+    /// @param attestationAnswerType_ Required answer type in the signed payload.
     /// @param reporter0_ First immutable reporter; unused reporter slots may be zero.
     /// @param reporter1_ Second immutable reporter, or zero.
     /// @param reporter2_ Third immutable reporter, or zero.
@@ -87,7 +85,9 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// @param maxDeviationBps_ Maximum change from the last accepted value, from 0 to 10,000 bps.
     constructor(
         address attester_,
-        bytes32 questionHash_,
+        address relayer_,
+        uint256 attestationChainId_,
+        uint8 attestationAnswerType_,
         address reporter0_,
         address reporter1_,
         address reporter2_,
@@ -102,8 +102,19 @@ abstract contract SwarmFeed is ISwarmFeed {
                 || (reporter0_ != address(0) && (reporter0_ == reporter1_ || reporter0_ == reporter2_))
                 || (reporter1_ != address(0) && reporter1_ == reporter2_)
         ) revert InvalidConfiguration();
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("IdentityMD Oracle"),
+                keccak256("1"),
+                block.chainid,
+                address(this)
+            )
+        );
         attester = attester_;
-        questionHash = questionHash_;
+        relayer = relayer_;
+        attestationChainId = attestationChainId_;
+        attestationAnswerType = attestationAnswerType_;
         reporter0 = reporter0_;
         reporter1 = reporter1_;
         reporter2 = reporter2_;
@@ -124,13 +135,18 @@ abstract contract SwarmFeed is ISwarmFeed {
         return account != address(0) && (account == reporter0 || account == reporter1 || account == reporter2);
     }
 
-    /// @notice Accept an IdentityMD EIP-712 attestation. Anyone may relay the authorized signature.
+    /// @notice Accept an IdentityMD EIP-712 attestation through the configured relayer, or anyone if zero.
     /// @dev Uses the signed issue time, so delayed delivery cannot extend freshness. requestId is the
-    /// replay nonce. chainId is signed payload data; the service domain chainId is always literal 1.
-    /// The attester must bind the configured question to the intended data chain and numeric answer
-    /// semantics; payload chainId and answerType are signed but not filtered here. Zero figures revert.
+    /// replay nonce. The immutable consumer domain binds the deployment chain and this feed, stopping
+    /// cross-feed replay without identifying the question. questionHash binds a changing pinned block
+    /// window, so this contract cannot verify WHICH question an attestation answers. The deviation guard
+    /// bounds a wrong-question figure once seeded while the previous value is fresh; a nonzero relayer
+    /// covers the unseeded first value and stale re-anchors. A stable per-question identifier would remove
+    /// the relayer entirely. Payload chainId and answerType must match the configured policy. Zero figures revert.
     function submitAttestation(OracleAttestation calldata a, bytes calldata sig) external {
-        if (a.questionHash != questionHash) revert InvalidQuestion();
+        if (relayer != address(0) && msg.sender != relayer) revert UnauthorizedRelayer();
+        if (a.chainId != attestationChainId) revert InvalidAttestationChain();
+        if (a.answerType != attestationAnswerType) revert InvalidAnswerType();
         if (block.timestamp > a.expiresAt) revert ExpiredAttestation();
         if (a.issuedAt > block.timestamp || a.issuedAt > a.expiresAt) revert InvalidTimestamp();
         if (_tooOld(a.issuedAt) || (_hasValue && a.issuedAt < _updatedAt)) revert StaleAttestation();
@@ -141,7 +157,7 @@ abstract contract SwarmFeed is ISwarmFeed {
         _accept(a.figure, a.issuedAt);
         // A primary update discards any unfinished fallback round based on the preceding value.
         _nextRound();
-        emit AttestationAccepted(a.requestId);
+        emit AttestationAccepted(a.requestId, a.questionHash);
     }
 
     /// @notice Submit one value per reporter per round; reaching quorum publishes the median.

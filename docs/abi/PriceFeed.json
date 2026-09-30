@@ -8,9 +8,19 @@
         "internalType": "address"
       },
       {
-        "name": "questionHash_",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "relayer_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "attestationChainId_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "attestationAnswerType_",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "reporter0_",
@@ -67,6 +77,32 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "attestationAnswerType",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "attestationChainId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -181,19 +217,6 @@
   },
   {
     "type": "function",
-    "name": "questionHash",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "quorum",
     "inputs": [],
     "outputs": [
@@ -201,6 +224,19 @@
         "name": "",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "relayer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -391,6 +427,12 @@
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
+      },
+      {
+        "name": "questionHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -456,12 +498,17 @@
   },
   {
     "type": "error",
-    "name": "InvalidConfiguration",
+    "name": "InvalidAnswerType",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "InvalidQuestion",
+    "name": "InvalidAttestationChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidConfiguration",
     "inputs": []
   },
   {
@@ -487,6 +534,11 @@
   {
     "type": "error",
     "name": "StaleAttestation",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedRelayer",
     "inputs": []
   },
   {
