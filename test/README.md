@@ -1,23 +1,37 @@
 # Contract test coverage
 
-Run `forge build` and `forge test`. Dependencies are already vendored; the suite needs no network, RPC, environment variables, FFI, or files under `test/scratch/`.
+Run `forge build` and `forge test`. For a workspace restricted to test-file writes, place generated artifacts under scratch:
+
+```sh
+FOUNDRY_OUT=test/scratch/out FOUNDRY_CACHE_PATH=test/scratch/cache forge build
+FOUNDRY_OUT=test/scratch/out FOUNDRY_CACHE_PATH=test/scratch/cache forge test
+```
+
+Dependencies are already vendored. The submitted suite needs no network, RPC, environment setup, FFI, or files under `test/scratch/`. Constructor fixtures deploy fresh local tokens to model the existing collateral and separately authorized COMP addresses. No production source or configuration is changed.
 
 | Area | Tests |
 | --- | --- |
-| Constructors, one-time initialization, permissions, getters, events, zero inputs, rejected collateral/debt changes | `CDPVault.t.sol`, `Tokens.t.sol`, `MockWorkOracle.t.sol`, `BoundaryPaths.t.sol` |
-| ERC-20 transfers, finite/infinite allowances, zero addresses, rollback after failed transfers, supply overflow | `Tokens.t.sol`, `LaunchToken.t.sol`, `BoundaryPaths.t.sol` |
-| Full-range `uint128` deposit/mint/repay/withdraw, repeat lifecycles, another borrower's debt, exact balances and rights after each operation | `ProtocolSequences.t.sol` |
-| One-unit health boundaries, wide arithmetic, both ratio-saturation paths | `ProtocolSequences.t.sol`, `Arithmetic.t.sol` |
-| Failed oracle/token calls, rollback of consumed rights, reentrant callbacks | `BoundaryPaths.t.sol`, `Adversarial.t.sol` |
-| Liquidation payout, partial/full/repeated/self liquidation, rounding, other users' collateral, failed burns/transfers | `Liquidation.t.sol`, `Adversarial.t.sol` |
-| Random sequences and repayment/withdrawal of every remaining position | `Protocol.invariant.t.sol` |
+| Independent debt/work mint channels, zero-rights borrowing, authorization, rollback, stale-feed gates, deposits/repayment/withdrawal | `CDPVault.t.sol`, `BoundaryPaths.t.sol` |
+| Price-driven full, partial, repeated and self liquidation; cascade across positions; exact payout at unit and non-unit prices; grace boundaries; recovery; NHI-only triggers; snapshot preservation | `Liquidation.t.sol` |
+| Random debt and work minting, transfers, deposits, withdrawals, repayments, donations, feed shocks, staleness, elapsed time, marking, recovery and liquidation | `Protocol.invariant.t.sol` |
+| Reporter quorum, median, deviation, round expiry, staleness boundaries, attestation acceptance/rejection and literal chain-1 signature domain on Sepolia | `SwarmFeed.t.sol` |
+| Real SwarmFeed-to-vault liquidation, including feed expiry during grace and mandatory refresh of both feeds | `SwarmFeed.t.sol` |
+| Reentrant callbacks across all eight vault actions, failed oracle/token calls, short incoming transfers, failed outgoing liquidation transfer rollback | `Adversarial.t.sol` |
+| Full-range uint128 lifecycle properties and arithmetic saturation/boundaries | `ProtocolSequences.t.sol`, `Arithmetic.t.sol` |
+| Token/oracle permissions, finite allowances and transfer failures, factory construction, separate token authorization, runtime checks | `Tokens.t.sol`, `MockWorkOracle.t.sol`, `FactoryDeployment.t.sol`, `LaunchToken.t.sol`, `Runtime.t.sol` |
 
-The new sequence, boundary and partial-liquidation fuzz properties each run 1,000 cases using inline Foundry configuration. Bounds promote inputs to `uint256` before arithmetic and include the entire `uint128` range. Valid sequence tests execute all four actions without swallowing reverts. Separate tests require the exact errors for invalid actions.
+The invariant campaign uses four tracked actors and 17 handler operations, with 256 sequences of 128 calls and unexpected reverts treated as failures. Both work and debt supply start nonzero, making the retired debt-only invariant immediately falsifiable. The replacement asserts:
 
-The invariant handler targets ten operations across four funded borrowers, each initially holding real collateral and debt. It runs 256 sequences of 128 calls with unexpected reverts treated as failures. After every call, the invariant checks COMP supply against the sum of **all** position debts and wallet balances, the independent inequality `collateral * 100 >= debt * 150`, each position against its deposit/withdraw/mint/repay history, work-credit consumption, and IMD conservation including uncredited donations. After each sequence, existing COMP is redistributed to its debtors, every debt is repaid and every position's collateral is withdrawn. No storage injection, privileged COMP mint, or credit restoration is used in these sequences.
+```text
+COMP.totalSupply == sum(all position debts) + vault.totalWorkMinted
+```
 
-Liquidation success tests explicitly inject a hypothetical collateral loss using a test-only storage write and move the same quantity of IMD out of custody. This is a branch-testing fixture, not a production transition. The requested healthy-position-to-liquidation withdrawal scenario conflicts with the specified 150% withdrawal guard: depositing 200 IMD, borrowing 100 COMP, then withdrawing 70 IMD must revert. `test_withdrawalCannotCreateLiquidatablePosition` checks that rejection and the subsequent rejection of liquidation. Synthetic liquidation properties assert the exact liquidator balance increase `debtToRepay * 110 / 100`, both owner position fields, supply, custody, unchanged rights, and an unrelated liquidator debt position.
+Additional properties reconcile COMP wallet balances, collateral custody including donations, each position's complete deposit/withdraw/debt/repayment/liquidation history, rights consumed only by work minting, and the immutable mark/grace snapshots. Every successful randomized liquidation asserts the exact `debtToRepay * 110 / 100` payout, regardless of price. Deterministic handler sequences prove successful liquidation at every generated price, recovery and both mint channels are reachable. Each random sequence ends by redistributing existing COMP, repaying every debt and withdrawing every position's collateral, including with stale feeds; remaining supply equals work issuance.
 
-The previous factory authorization defect is resolved in the accepted source: initialization and mock-faucet calls use the operator named in the approved workflow. `FactoryDeployment.t.sol` verifies CREATE/CREATE2 deployment, operator initialization and a complete borrower lifecycle, while rejecting unauthorized factory, relayer and origin calls. This revision updates three boundary-test setups for `CompToken(address)` and reciprocal vault-link validation. The wrong-vault test registers another vault that reports the same token; the supply-overflow test calls from a registered vault. Their failure and accounting assertions are preserved. The withdrawal/liquidation requirements conflict remains documented above.
+Liquidation tests make positions underwater through price or NHI changes after valid borrowing. They do not inject vault storage or manufacture COMP. Exact payout assertions cover terminal prices below, at and above `1e18`. Tests cover one second before and exactly at grace expiry, zero grace, both NHI directions during an existing window, repeat marking, deposit/repayment recovery and keeper-observed feed recovery. Rounding and sequence properties use 1,000 fuzz cases through inline configuration.
 
-Source coverage was checked with `forge coverage --exclude-tests --no-match-contract ProtocolInvariantTest`: all five concrete contracts in `src/` reached 100% reported line, statement, branch and function coverage (135 lines, 193 statements, 47 branches and 22 functions). This measurement excludes dependency internals and does not establish deployment compatibility. The invariant campaign is checked separately by the full `forge test` run.
+## Payout regression
+
+The previously reported price-division defect is fixed in the supplied implementation. Its reproduction is now a passing regression: deposit 300 collateral, borrow 100 COMP at price 1, lower the price to 0.4, mark and wait six hours, then liquidate 100 debt. The liquidator must receive exactly **110 collateral**, and the borrower retains **190**. Non-unit-price fuzz tests and the invariant handler enforce the same price-independent payout and rounding rule.
+
+Local test feeds make value/freshness changes independently controllable; the real-feed integration complements those isolated vault tests. These are offline tests, not live Sepolia or fork validation. They do not establish the deployed tokens' authorization state or constitute the independent launch review.

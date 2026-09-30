@@ -14,33 +14,35 @@ import {LaunchToken} from "src/LaunchToken.sol";
 contract BoundaryPathsTest is ProtocolFixture {
     error TokenUnavailable();
 
-    function test_mintRejectsMissingOracleEvenWhenTokenIsLinked() public {
+    function test_mintRejectsUnlinkedTokenDespiteConstructorBoundOracle() public {
         CompToken token = new CompToken(address(0));
-        CDPVault fresh = new CDPVault(address(imd), address(token), address(0));
-        vm.prank(OPERATOR);
-        token.setVault(address(fresh));
+        CDPVault fresh = new CDPVault(address(imd), address(token), address(0), address(priceFeed), address(nhiFeed));
+        assertEq(MockWorkOracle(address(fresh.oracle())).vault(), address(fresh));
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
+        vm.expectRevert(CDPVault.NotInitialized.selector);
+        fresh.mintFromWork(1);
         assertEq(token.totalSupply(), 0);
     }
 
     function test_mintRejectsTokenLinkedToDifferentVault() public {
         CompToken token = new CompToken(address(0));
-        CDPVault fresh = new CDPVault(address(imd), address(token), address(0));
-        CDPVault registeredVault = new CDPVault(address(imd), address(token), address(0));
-        MockWorkOracle freshOracle = new MockWorkOracle(address(fresh));
+        CDPVault fresh = new CDPVault(address(imd), address(token), address(0), address(priceFeed), address(nhiFeed));
+        CDPVault registeredVault =
+            new CDPVault(address(imd), address(token), address(0), address(priceFeed), address(nhiFeed));
         vm.startPrank(OPERATOR);
-        fresh.setOracle(address(freshOracle));
         token.setVault(address(registeredVault));
         vm.stopPrank();
         assertEq(token.vault(), address(registeredVault));
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
+        vm.expectRevert(CDPVault.NotInitialized.selector);
+        fresh.mintFromWork(1);
         assertEq(token.totalSupply(), 0);
     }
 
     function test_collateralCanBeRecoveredBeforeInitialization() public {
-        CDPVault fresh = new CDPVault(address(imd), address(comp), address(0));
+        CDPVault fresh = new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed));
         vm.startPrank(alice);
         imd.approve(address(fresh), 7);
         fresh.depositCollateral(7);
@@ -53,29 +55,30 @@ contract BoundaryPathsTest is ProtocolFixture {
         assertEq(imd.balanceOf(address(fresh)), 0);
     }
 
-    function test_repaidWorkCreditsCannotBeUsedToBorrowAgain() public {
-        vm.prank(OPERATOR);
-        imd.mint(alice, 500 ether);
-        _open(alice, 1500 ether, 1000 ether);
+    function test_exhaustedWorkCreditsCannotBeReusedButDoNotPreventBorrowing() public {
         vm.startPrank(alice);
-        vault.repayCOMP(1000 ether);
+        vault.mintFromWork(1000 ether);
         vm.expectRevert(CDPVault.InsufficientRights.selector);
-        vault.mintCOMP(1);
+        vault.mintFromWork(1);
+        vault.depositCollateral(150 ether);
+        vault.mintCOMP(100 ether);
+        vault.repayCOMP(100 ether);
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
         vault.repayCOMP(1);
-        vault.withdrawCollateral(1500 ether);
+        vault.withdrawCollateral(150 ether);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vault.withdrawCollateral(1);
         vm.stopPrank();
         _assertPosition(alice, 0, 0);
         assertEq(oracle.mintingRights(alice), 0);
-        assertEq(comp.totalSupply(), 0);
-        assertEq(imd.balanceOf(alice), 1500 ether);
+        assertEq(vault.totalWorkMinted(), 1000 ether);
+        assertEq(comp.totalSupply(), 1000 ether);
+        assertEq(imd.balanceOf(alice), 1000 ether);
     }
 
-    function test_tokenMintFailureRollsBackConsumedRightsAndDebt() public {
+    function test_borrowMintFailureRollsBackDebt() public {
         _open(alice, 150 ether, 0);
-        // Fail only the last external step, after the real oracle has consumed rights.
+        // Fail only the last external step, after the vault has written debt.
         vm.mockCallRevert(
             address(comp),
             abi.encodeCall(comp.mint, (alice, 100 ether)),
@@ -94,8 +97,29 @@ contract BoundaryPathsTest is ProtocolFixture {
         _assertPosition(alice, 150 ether, 100 ether);
     }
 
-    function test_rightsQueryFailureDoesNotPreventRepaymentOrWithdrawal() public {
-        _open(alice, 150 ether, 100 ether);
+    function test_workMintFailureRollsBackConsumedRightsAndWorkAccounting() public {
+        vm.mockCallRevert(
+            address(comp),
+            abi.encodeCall(comp.mint, (alice, 100 ether)),
+            abi.encodeWithSelector(TokenUnavailable.selector)
+        );
+        vm.prank(alice);
+        vm.expectRevert(TokenUnavailable.selector);
+        vault.mintFromWork(100 ether);
+        _assertPosition(alice, 0, 0);
+        assertEq(oracle.mintingRights(alice), 1000 ether);
+        assertEq(vault.totalWorkMinted(), 0);
+        assertEq(comp.totalSupply(), 0);
+        vm.clearMockedCalls();
+        vm.prank(alice);
+        vault.mintFromWork(100 ether);
+        assertEq(vault.totalWorkMinted(), 100 ether);
+        assertEq(comp.totalSupply(), 100 ether);
+        assertEq(oracle.mintingRights(alice), 900 ether);
+    }
+
+    function test_rightsQueryFailureOnlyBlocksWorkMint() public {
+        _open(alice, 200 ether, 100 ether);
         vm.mockCallRevert(
             address(oracle),
             abi.encodeCall(oracle.mintingRights, (alice)),
@@ -103,15 +127,16 @@ contract BoundaryPathsTest is ProtocolFixture {
         );
         vm.startPrank(alice);
         vm.expectRevert(TokenUnavailable.selector);
+        vault.mintFromWork(1);
         vault.mintCOMP(1);
-        vault.repayCOMP(100 ether);
-        vault.withdrawCollateral(150 ether);
+        vault.repayCOMP(100 ether + 1);
+        vault.withdrawCollateral(200 ether);
         vm.stopPrank();
         vm.clearMockedCalls();
         _assertPosition(alice, 0, 0);
         assertEq(comp.totalSupply(), 0);
         assertEq(imd.balanceOf(alice), 1000 ether);
-        assertEq(oracle.mintingRights(alice), 900 ether);
+        assertEq(oracle.mintingRights(alice), 1000 ether);
     }
 
     function test_oracleRightsOverflowRevertsWithoutErasingRights() public {
@@ -151,7 +176,8 @@ contract BoundaryPathsTest is ProtocolFixture {
         assertEq(freshIMD.balanceOf(bob), 0);
 
         CompToken freshCOMP = new CompToken(address(0));
-        CDPVault tokenVault = new CDPVault(address(imd), address(freshCOMP), address(0));
+        CDPVault tokenVault =
+            new CDPVault(address(imd), address(freshCOMP), address(0), address(priceFeed), address(nhiFeed));
         vm.prank(OPERATOR);
         freshCOMP.setVault(address(tokenVault));
         // Isolate ERC-20 supply arithmetic using the registered vault as caller.

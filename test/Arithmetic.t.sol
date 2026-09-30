@@ -6,17 +6,19 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract ArithmeticTest is ProtocolFixture {
     function setUp() public override {
         imd = new MockIMD();
         comp = new CompToken(address(0));
-        vault = new CDPVault(address(imd), address(comp), address(0));
-        oracle = new MockWorkOracle(address(vault));
+        priceFeed = new TestSwarmFeed(1 ether);
+        nhiFeed = new TestSwarmFeed(0.85 ether);
+        vault = new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed));
+        oracle = MockWorkOracle(address(vault.oracle()));
         vm.startPrank(OPERATOR);
         comp.setVault(address(vault));
-        vault.setOracle(address(oracle));
         vm.stopPrank();
         vm.prank(alice);
         imd.approve(address(vault), type(uint256).max);

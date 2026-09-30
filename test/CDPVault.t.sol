@@ -22,77 +22,55 @@ contract CDPVaultTest is ProtocolFixture {
         assertEq(address(vault.imdToken()), address(imd));
         assertEq(address(vault.compToken()), address(comp));
         assertEq(address(vault.oracle()), address(oracle));
-        assertEq(vault.MIN_COLLATERAL_RATIO(), 150);
+        assertEq(vault.minCR(), 150);
         assertEq(vault.LIQUIDATION_BONUS_PERCENT(), 10);
         assertEq(vault.collateralRatio(alice), type(uint256).max);
     }
 
-    function test_invalidConstructorTokens() public {
+    function test_invalidConstructorTokensAndFeeds() public {
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(0), address(comp), address(0));
+        new CDPVault(address(0), address(comp), address(0), address(priceFeed), address(nhiFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(imd), alice, address(0));
+        new CDPVault(address(imd), address(0), address(0), address(priceFeed), address(nhiFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(imd), address(imd), address(0));
-        vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(address(imd), address(comp), alice);
-        vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(address(imd), address(comp), address(imd));
-        // A MockWorkOracle bound to a different vault is rejected at construction as well.
-        vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(address(imd), address(comp), address(oracle));
+        new CDPVault(address(imd), alice, address(0), address(priceFeed), address(nhiFeed));
+        vm.expectRevert(CDPVault.InvalidToken.selector);
+        new CDPVault(address(imd), address(imd), address(0), address(priceFeed), address(nhiFeed));
+        vm.expectRevert(CDPVault.InvalidFeed.selector);
+        new CDPVault(address(imd), address(comp), address(0), address(0), address(nhiFeed));
+        vm.expectRevert(CDPVault.InvalidFeed.selector);
+        new CDPVault(address(imd), address(comp), address(0), address(priceFeed), alice);
     }
 
-    function test_oracleInitializationOnlyDeployerOnce() public {
-        CDPVault fresh = new CDPVault(address(imd), address(comp), address(0));
-        MockWorkOracle freshOracle = new MockWorkOracle(address(fresh));
-        vm.prank(alice);
-        vm.expectRevert(CDPVault.Unauthorized.selector);
-        fresh.setOracle(address(freshOracle));
-        vm.startPrank(OPERATOR);
+    function test_constructorRejectsInvalidOrWrongVaultOracle() public {
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        fresh.setOracle(address(0));
+        new CDPVault(address(imd), address(comp), alice, address(priceFeed), address(nhiFeed));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        fresh.setOracle(alice);
-        // Contracts that are not IWorkOracle, and mock oracles bound to another vault, are rejected
-        // without consuming the one-time initialization authority.
+        new CDPVault(address(imd), address(comp), address(imd), address(priceFeed), address(nhiFeed));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        fresh.setOracle(address(imd));
-        vm.expectRevert(CDPVault.InvalidOracle.selector);
-        fresh.setOracle(address(comp));
-        vm.expectRevert(CDPVault.InvalidOracle.selector);
-        fresh.setOracle(address(oracle));
-        assertEq(address(fresh.oracle()), address(0));
-        vm.expectEmit(true, false, false, true, address(fresh));
-        emit CDPVault.OracleSet(address(freshOracle));
-        fresh.setOracle(address(freshOracle));
-        assertEq(address(fresh.oracle()), address(freshOracle));
-        vm.expectRevert(CDPVault.AlreadyInitialized.selector);
-        fresh.setOracle(address(freshOracle));
-        vm.stopPrank();
-        vm.prank(alice);
-        vm.expectRevert(CDPVault.AlreadyInitialized.selector);
-        fresh.setOracle(address(0));
+        new CDPVault(address(imd), address(comp), address(oracle), address(priceFeed), address(nhiFeed));
     }
 
-    function test_constructorOracleLocksInitialization() public {
+    function test_constructorAcceptsPlainOracleAndCreatesBoundOracleWhenZero() public {
         PlainOracle plain = new PlainOracle();
-        CDPVault fresh = new CDPVault(address(imd), address(comp), address(plain));
-        assertEq(address(fresh.oracle()), address(plain));
-        vm.prank(OPERATOR);
-        vm.expectRevert(CDPVault.AlreadyInitialized.selector);
-        fresh.setOracle(address(plain));
-        // The same drop-in oracle is also accepted through deferred setup.
-        CDPVault deferred = new CDPVault(address(imd), address(comp), address(0));
-        vm.prank(OPERATOR);
-        deferred.setOracle(address(plain));
-        assertEq(address(deferred.oracle()), address(plain));
+        CDPVault supplied =
+            new CDPVault(address(imd), address(comp), address(plain), address(priceFeed), address(nhiFeed));
+        assertEq(address(supplied.oracle()), address(plain));
+        CDPVault generated = new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed));
+        MockWorkOracle generatedOracle = MockWorkOracle(address(generated.oracle()));
+        assertEq(generatedOracle.vault(), address(generated));
+        assertEq(generatedOracle.deployer(), OPERATOR);
+        assertEq(address(generated.compToken()), address(comp));
+        assertEq(address(generated.imdToken()), address(imd));
+        assertEq(address(generated.priceFeed()), address(priceFeed));
+        assertEq(address(generated.nhiFeed()), address(nhiFeed));
     }
 
-    function test_mintRequiresBothLinksInitialized() public {
+    function test_bothMintChannelsRequireTokenAuthorization() public {
         CompToken freshComp = new CompToken(address(0));
-        CDPVault fresh = new CDPVault(address(imd), address(freshComp), address(0));
-        MockWorkOracle freshOracle = new MockWorkOracle(address(fresh));
+        CDPVault fresh =
+            new CDPVault(address(imd), address(freshComp), address(0), address(priceFeed), address(nhiFeed));
+        MockWorkOracle freshOracle = MockWorkOracle(address(fresh.oracle()));
         vm.prank(alice);
         imd.approve(address(fresh), 150 ether);
         vm.prank(alice);
@@ -100,46 +78,19 @@ contract CDPVaultTest is ProtocolFixture {
         vm.prank(alice);
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
-        vm.prank(OPERATOR);
-        fresh.setOracle(address(freshOracle));
         vm.prank(alice);
         vm.expectRevert(CDPVault.NotInitialized.selector);
-        fresh.mintCOMP(1);
+        fresh.mintFromWork(1);
         vm.startPrank(OPERATOR);
         freshComp.setVault(address(fresh));
         freshOracle.grantRights(alice, 1);
         vm.stopPrank();
-        vm.prank(alice);
+        vm.startPrank(alice);
         fresh.mintCOMP(1);
-        assertEq(freshComp.balanceOf(alice), 1);
-    }
-
-    function test_selfContainedConstructorCreatesAndLocksBothLinks() public {
-        CDPVault fresh = new CDPVault(address(imd), address(0), address(0));
-        CompToken createdComp = fresh.compToken();
-        MockWorkOracle createdOracle = MockWorkOracle(address(fresh.oracle()));
-        assertTrue(address(createdComp) != address(0) && address(createdComp) != address(comp));
-        assertTrue(address(createdOracle) != address(0) && address(createdOracle) != address(oracle));
-        assertEq(createdComp.vault(), address(fresh));
-        assertEq(createdComp.totalSupply(), 0);
-        assertEq(createdComp.symbol(), "COMP");
-        assertEq(createdOracle.vault(), address(fresh));
-        assertEq(createdOracle.deployer(), OPERATOR);
-        vm.startPrank(OPERATOR);
-        vm.expectRevert(CompToken.AlreadyInitialized.selector);
-        createdComp.setVault(address(fresh));
-        vm.expectRevert(CDPVault.AlreadyInitialized.selector);
-        fresh.setOracle(address(createdOracle));
+        fresh.mintFromWork(1);
         vm.stopPrank();
-        // Self-contained mode with a supplied oracle validates and locks that oracle instead of creating one.
-        PlainOracle plain = new PlainOracle();
-        CDPVault withPlain = new CDPVault(address(imd), address(0), address(plain));
-        assertEq(address(withPlain.oracle()), address(plain));
-        assertEq(withPlain.compToken().vault(), address(withPlain));
-        vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(address(imd), address(0), address(oracle));
-        vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(0), address(0), address(0));
+        assertEq(freshComp.balanceOf(alice), 2);
+        assertEq(fresh.totalWorkMinted(), 1);
     }
 
     function test_depositAndWithdrawWithoutDebt() public {
@@ -181,12 +132,14 @@ contract CDPVaultTest is ProtocolFixture {
         vm.expectRevert(CDPVault.ZeroAmount.selector);
         vault.mintCOMP(0);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
+        vault.mintFromWork(0);
+        vm.expectRevert(CDPVault.ZeroAmount.selector);
         vault.repayCOMP(0);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
         vault.liquidate(alice, 0);
     }
 
-    function test_mintAt150PercentConsumesRightsAndEmitsEvent() public {
+    function test_borrowAt150PercentPreservesRightsAndEmitsEvent() public {
         _open(alice, 150 ether, 0);
         vm.prank(alice);
         vm.expectEmit(true, false, false, true, address(vault));
@@ -195,20 +148,97 @@ contract CDPVaultTest is ProtocolFixture {
         _assertPosition(alice, 150 ether, 100 ether);
         assertEq(comp.totalSupply(), 100 ether);
         assertEq(comp.balanceOf(alice), 100 ether);
-        assertEq(oracle.mintingRights(alice), 900 ether);
+        assertEq(oracle.mintingRights(alice), 1000 ether);
         assertEq(vault.collateralRatio(alice), 150);
     }
 
-    function test_mintRejectsInsufficientRightsWithNoStateChange() public {
-        vm.prank(OPERATOR);
-        imd.mint(alice, 2000 ether);
-        _open(alice, 3000 ether, 0);
+    function test_workMintConsumesRightsWithoutCollateralOrDebt() public {
+        vm.prank(alice);
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit CDPVault.WorkMinted(alice, 100 ether);
+        vault.mintFromWork(100 ether);
+        _assertPosition(alice, 0, 0);
+        assertEq(comp.totalSupply(), 100 ether);
+        assertEq(comp.balanceOf(alice), 100 ether);
+        assertEq(vault.totalWorkMinted(), 100 ether);
+        assertEq(oracle.mintingRights(alice), 900 ether);
+        vm.prank(alice);
+        vm.expectRevert(CDPVault.ExcessRepayment.selector);
+        vault.repayCOMP(1);
+    }
+
+    function test_workMintRejectsInsufficientRightsWithNoStateChange() public {
         vm.prank(alice);
         vm.expectRevert(CDPVault.InsufficientRights.selector);
-        vault.mintCOMP(1000 ether + 1);
-        _assertPosition(alice, 3000 ether, 0);
+        vault.mintFromWork(1000 ether + 1);
+        _assertPosition(alice, 0, 0);
         assertEq(comp.totalSupply(), 0);
+        assertEq(vault.totalWorkMinted(), 0);
         assertEq(oracle.mintingRights(alice), 1000 ether);
+    }
+
+    function test_borrowWithoutAnyWorkRights() public {
+        address borrower = address(0xCAFE);
+        vm.prank(OPERATOR);
+        imd.mint(borrower, 150 ether);
+        vm.prank(borrower);
+        imd.approve(address(vault), 150 ether);
+        _open(borrower, 150 ether, 100 ether);
+        _assertPosition(borrower, 150 ether, 100 ether);
+        assertEq(oracle.mintingRights(borrower), 0);
+        assertEq(vault.totalWorkMinted(), 0);
+        assertEq(comp.totalSupply(), 100 ether);
+    }
+
+    function test_workAndBorrowChannelsKeepSupplyAccountingSeparate() public {
+        _open(alice, 150 ether, 100 ether);
+        vm.prank(alice);
+        vault.mintFromWork(50 ether);
+        _assertPosition(alice, 150 ether, 100 ether);
+        assertEq(comp.totalSupply(), 150 ether);
+        assertEq(vault.totalWorkMinted(), 50 ether);
+        assertEq(oracle.mintingRights(alice), 950 ether);
+        vm.prank(alice);
+        vault.repayCOMP(100 ether);
+        _assertPosition(alice, 150 ether, 0);
+        assertEq(comp.totalSupply(), 50 ether);
+        assertEq(vault.totalWorkMinted(), 50 ether);
+        assertEq(oracle.mintingRights(alice), 950 ether);
+    }
+
+    function test_staleEitherFeedBlocksBothMintChannelsButAllowsRepayment(bool stalePrice) public {
+        _open(alice, 200 ether, 100 ether);
+        if (stalePrice) priceFeed.setStale(true);
+        else nhiFeed.setStale(true);
+        vm.startPrank(alice);
+        vm.expectRevert(CDPVault.StaleFeed.selector);
+        vault.mintCOMP(1);
+        vm.expectRevert(CDPVault.StaleFeed.selector);
+        vault.mintFromWork(1);
+        vm.expectRevert(CDPVault.StaleFeed.selector);
+        vault.withdrawCollateral(1);
+        vault.repayCOMP(100 ether);
+        vault.withdrawCollateral(200 ether);
+        vm.stopPrank();
+        _assertPosition(alice, 0, 0);
+        assertEq(comp.totalSupply(), 0);
+        assertEq(vault.totalWorkMinted(), 0);
+        assertEq(oracle.mintingRights(alice), 1000 ether);
+        assertEq(imd.balanceOf(alice), 1000 ether);
+    }
+
+    function test_zeroPriceBlocksBothMintChannelsButAllowsRepayment() public {
+        _open(alice, 150 ether, 100 ether);
+        priceFeed.setValue(0);
+        vm.startPrank(alice);
+        vm.expectRevert(CDPVault.InvalidPrice.selector);
+        vault.mintCOMP(1);
+        vm.expectRevert(CDPVault.InvalidPrice.selector);
+        vault.mintFromWork(1);
+        vault.repayCOMP(100 ether);
+        vault.withdrawCollateral(150 ether);
+        vm.stopPrank();
+        assertEq(comp.totalSupply(), 0);
     }
 
     function test_mintRejectsInsufficientCollateralIncludingExistingDebt() public {
@@ -220,7 +250,7 @@ contract CDPVaultTest is ProtocolFixture {
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
         vault.mintCOMP(1);
         _assertPosition(alice, 150 ether, 100 ether);
-        assertEq(oracle.mintingRights(alice), 900 ether);
+        assertEq(oracle.mintingRights(alice), 1000 ether);
         assertEq(comp.totalSupply(), 100 ether);
     }
 
@@ -267,7 +297,7 @@ contract CDPVaultTest is ProtocolFixture {
         assertEq(imd.balanceOf(address(vault)), 200 ether);
     }
 
-    function test_partialAndFullRepaymentWithoutApprovalDoesNotRestoreRights() public {
+    function test_partialAndFullRepaymentWithoutApprovalPreservesWorkRights() public {
         _open(alice, 150 ether, 100 ether);
         vm.startPrank(alice);
         vm.expectEmit(true, false, false, true, address(vault));
@@ -281,7 +311,7 @@ contract CDPVaultTest is ProtocolFixture {
         vm.stopPrank();
         _assertPosition(alice, 0, 0);
         assertEq(comp.totalSupply(), 0);
-        assertEq(oracle.mintingRights(alice), 900 ether);
+        assertEq(oracle.mintingRights(alice), 1000 ether);
         assertEq(imd.balanceOf(alice), 1000 ether);
     }
 
@@ -329,7 +359,6 @@ contract CDPVaultTest is ProtocolFixture {
         r = bound(r, 0, d);
         vm.startPrank(OPERATOR);
         imd.mint(alice, c);
-        oracle.grantRights(alice, d);
         vm.stopPrank();
         _open(alice, c, d);
         vm.startPrank(alice);

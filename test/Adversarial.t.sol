@@ -2,7 +2,6 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -10,18 +9,22 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {IWorkOracle} from "../src/interfaces/IWorkOracle.sol";
 
 abstract contract ReentryProbe {
     uint256 public blockedCallbacks;
 
     function _probe(CDPVault vault, address account) internal {
-        bytes[5] memory calls = [
+        bytes[8] memory calls = [
             abi.encodeCall(vault.depositCollateral, (1)),
             abi.encodeCall(vault.withdrawCollateral, (1)),
             abi.encodeCall(vault.mintCOMP, (1)),
             abi.encodeCall(vault.repayCOMP, (1)),
-            abi.encodeCall(vault.liquidate, (account, 1))
+            abi.encodeCall(vault.liquidate, (account, 1)),
+            abi.encodeCall(vault.mintFromWork, (1)),
+            abi.encodeCall(vault.markUnderwater, (account)),
+            abi.encodeCall(vault.clearRecoveredMark, (account))
         ];
         for (uint256 i; i < calls.length; ++i) {
             (bool ok, bytes memory reason) = address(vault).call(calls[i]);
@@ -92,22 +95,26 @@ contract AdversarialCollateral is ERC20, ReentryProbe {
 }
 
 contract AdversarialTest is Test {
-    using stdStorage for StdStorage;
-
     address internal alice = address(0xA11CE);
     CompToken internal comp;
     CDPVault internal vault;
     AdversarialCollateral internal collateral;
     AdversarialOracle internal oracle;
+    TestSwarmFeed internal priceFeed;
+    TestSwarmFeed internal nhiFeed;
 
     function setUp() public {
         collateral = new AdversarialCollateral(alice);
         comp = new CompToken(address(0));
-        vault = new CDPVault(address(collateral), address(comp), address(0));
-        oracle = new AdversarialOracle(vault, alice);
+        priceFeed = new TestSwarmFeed(1 ether);
+        nhiFeed = new TestSwarmFeed(0.85 ether);
+        // The immutable oracle validates the address of the vault that will be created next.
+        address predictedVault = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        oracle = new AdversarialOracle(CDPVault(predictedVault), alice);
+        vault = new CDPVault(address(collateral), address(comp), address(oracle), address(priceFeed), address(nhiFeed));
+        assertEq(address(vault), predictedVault);
         vm.startPrank(0x5167D014a056E43883e1BBEa5530c3c0dC993281);
         comp.setVault(address(vault));
-        vault.setOracle(address(oracle));
         vm.stopPrank();
         vm.prank(alice);
         collateral.approve(address(vault), type(uint256).max);
@@ -116,25 +123,27 @@ contract AdversarialTest is Test {
     function test_oracleCallbackCannotReenterAnyVaultAction() public {
         vm.startPrank(alice);
         vault.depositCollateral(150 ether);
-        vault.mintCOMP(100 ether);
+        vault.mintFromWork(100 ether);
         vm.stopPrank();
-        assertEq(oracle.blockedCallbacks(), 5);
+        assertEq(oracle.blockedCallbacks(), 8);
         assertEq(oracle.mintingRights(alice), 0);
         assertEq(comp.balanceOf(alice), 100 ether);
         (, uint256 debt) = vault.positions(alice);
-        assertEq(debt, 100 ether);
+        assertEq(debt, 0);
+        assertEq(vault.totalWorkMinted(), 100 ether);
     }
 
-    function test_revertingOracleRollsBackDebtRightsAndSupply() public {
+    function test_revertingOracleRollsBackWorkRightsAndSupply() public {
         oracle.setFail(true);
         vm.startPrank(alice);
         vault.depositCollateral(150 ether);
         vm.expectRevert(AdversarialOracle.OracleOffline.selector);
-        vault.mintCOMP(100 ether);
+        vault.mintFromWork(100 ether);
         vm.stopPrank();
         (, uint256 debt) = vault.positions(alice);
         assertEq(debt, 0);
         assertEq(comp.totalSupply(), 0);
+        assertEq(vault.totalWorkMinted(), 0);
         assertEq(oracle.mintingRights(alice), 100 ether);
         assertEq(oracle.blockedCallbacks(), 0);
     }
@@ -162,7 +171,7 @@ contract AdversarialTest is Test {
         vault.depositCollateral(150 ether);
         vault.withdrawCollateral(150 ether);
         vm.stopPrank();
-        assertEq(collateral.blockedCallbacks(), 10);
+        assertEq(collateral.blockedCallbacks(), 16);
         (uint256 c,) = vault.positions(alice);
         assertEq(c, 0);
         assertEq(collateral.balanceOf(alice), 1000 ether);
@@ -185,14 +194,14 @@ contract AdversarialTest is Test {
         vault.depositCollateral(150 ether);
         vault.mintCOMP(100 ether);
         vm.stopPrank();
-        // Synthetic unhealthy state; no production operation can perform this write.
-        stdstore.target(address(vault)).sig("positions(address)").with_key(alice).depth(0).checked_write(140 ether);
+        nhiFeed.setValue(0.6 ether);
+        vault.markUnderwater(alice);
         collateral.configure(vault, AdversarialCollateral.Mode.FalseOut);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(collateral)));
         vault.liquidate(alice, 100 ether);
         (uint256 c, uint256 d) = vault.positions(alice);
-        assertEq(c, 140 ether);
+        assertEq(c, 150 ether);
         assertEq(d, 100 ether);
         assertEq(comp.balanceOf(alice), 100 ether);
         assertEq(comp.totalSupply(), 100 ether);
@@ -203,11 +212,12 @@ contract AdversarialTest is Test {
         vault.depositCollateral(150 ether);
         vault.mintCOMP(100 ether);
         vm.stopPrank();
-        stdstore.target(address(vault)).sig("positions(address)").with_key(alice).depth(0).checked_write(140 ether);
+        nhiFeed.setValue(0.6 ether);
+        vault.markUnderwater(alice);
         collateral.configure(vault, AdversarialCollateral.Mode.Callback);
         vm.prank(alice);
         vault.liquidate(alice, 100 ether);
-        assertEq(collateral.blockedCallbacks(), 5);
+        assertEq(collateral.blockedCallbacks(), 8);
         assertEq(comp.totalSupply(), 0);
     }
 }
