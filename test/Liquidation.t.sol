@@ -79,9 +79,46 @@ contract LiquidationTest is ProtocolFixture {
         assertEq(vault.collateralRatio(alice), type(uint256).max);
     }
 
-    // The non-unit-price exact-payout regression fails in the accepted implementation.
-    // Its standalone failing source is reported in .imd-findings.json; do not change the
-    // required debtToRepay * 110 / 100 assertion to bless a price-divided payout.
+    function test_partialLiquidationAtHalfUnitPricePaysExactCollateralAndRoundsDown() public {
+        uint256 payout = _checkPartialLiquidation(100 ether + 7, 50 ether + 3, 250 ether, 0.5 ether);
+        assertEq(payout, 110 ether + 6, "fractional 0.6 wei of collateral is rounded down");
+    }
+
+    function test_partialLiquidationAtDoubleUnitPricePaysExactCollateralAndRoundsDown() public {
+        uint256 payout = _checkPartialLiquidation(100 ether + 7, 50 ether + 3, 65 ether, 2 ether);
+        assertEq(payout, 27.5 ether + 1, "fractional 0.65 wei of collateral is rounded down");
+    }
+
+    function test_fullLiquidationAtHalfUnitPricePaysExactCollateralAndClearsMark() public {
+        uint256 payout = _checkPartialLiquidation(100 ether + 3, 100 ether + 3, 250 ether, 0.5 ether);
+        assertEq(payout, 220 ether + 6);
+        _assertMark(alice, 0, 0, false);
+    }
+
+    function test_fullLiquidationAtDoubleUnitPricePaysExactCollateralAndClearsMark() public {
+        uint256 payout = _checkPartialLiquidation(100 ether + 3, 100 ether + 3, 65 ether, 2 ether);
+        assertEq(payout, 55 ether + 1);
+        _assertMark(alice, 0, 0, false);
+    }
+
+    function test_halfUnitPriceLiquidationRejectsPayoutAboveOwnerCollateralAtomically() public {
+        _priceDrivenPosition(140 ether);
+        _open(bob, 200 ether, 0);
+        priceFeed.setValue(0.5 ether);
+        (uint256 markedAt, uint256 grace) = _markAndWait(alice);
+
+        vm.prank(bob);
+        vm.expectRevert(CDPVault.InsufficientCollateral.selector);
+        vault.liquidate(alice, 100 ether);
+
+        _assertPosition(alice, 140 ether, 100 ether);
+        _assertPosition(bob, 200 ether, 0);
+        _assertMark(alice, markedAt, grace, true);
+        assertEq(imd.balanceOf(address(vault)), 340 ether);
+        assertEq(imd.balanceOf(bob), 800 ether);
+        assertEq(comp.balanceOf(bob), 100 ether);
+        assertEq(comp.totalSupply(), 100 ether + vault.totalWorkMinted());
+    }
 
     function test_liquidationRequiresMarkAndElapsedGrace() public {
         _priceDrivenPosition(140 ether);
@@ -555,6 +592,18 @@ contract LiquidationTest is ProtocolFixture {
         _checkPartialLiquidation(rawDebt, rawRepayment, rawCollateral, 1 ether);
     }
 
+    /// forge-config: default.fuzz.runs = 1000
+    function testFuzz_partialLiquidationAtNonUnitPricesConservesBalancesAndRoundsDown(
+        uint128 rawDebt,
+        uint128 rawRepayment,
+        uint128 rawCollateral,
+        bool halfUnitPrice
+    ) public {
+        // A minimum of 20 debt units permits integral collateral at both prices, even for full repayment.
+        uint128 debt = uint128(bound(uint256(rawDebt), 20, type(uint128).max));
+        _checkPartialLiquidation(debt, rawRepayment, rawCollateral, halfUnitPrice ? 0.5 ether : 2 ether);
+    }
+
     function test_liquidationOfOneMinorUnitRoundsBonusDown() public {
         _checkPartialLiquidation(1, 1, 1, 1 ether);
     }
@@ -568,18 +617,19 @@ contract LiquidationTest is ProtocolFixture {
         uint128 rawRepayment,
         uint128 rawCollateral,
         uint256 liquidationPrice
-    ) private {
+    ) private returns (uint256 actualPayout) {
         uint256 debt = bound(uint256(rawDebt), 1, type(uint128).max);
         uint256 repayment = bound(uint256(rawRepayment), 1, debt);
-        uint256 payout = repayment * 110 / 100;
-        uint256 openingMinimum = (debt * 75 + 99) / 100;
+        uint256 payout = repayment * 1.1 ether / liquidationPrice;
+        uint256 openingPrice = liquidationPrice * 2;
+        uint256 openingMinimum = (debt * 1.5 ether + openingPrice - 1) / openingPrice;
         // The highest collateral below 150% at the execution price, including integer-rounding edges.
         uint256 unhealthyMaximum = (debt * 150 ether + liquidationPrice * 100 - 1) / (liquidationPrice * 100) - 1;
         uint256 collateral =
             bound(uint256(rawCollateral), payout > openingMinimum ? payout : openingMinimum, unhealthyMaximum);
         vm.prank(OPERATOR);
         imd.mint(alice, collateral);
-        priceFeed.setValue(2 ether);
+        priceFeed.setValue(openingPrice);
         _open(alice, collateral, debt);
         // The liquidator's own collateral and debt must remain untouched.
         _open(bob, 300 ether, 100 ether);
@@ -591,11 +641,16 @@ contract LiquidationTest is ProtocolFixture {
         uint256 ownerBalance = imd.balanceOf(alice);
 
         vm.prank(bob);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit CDPVault.Liquidated(alice, bob, repayment, payout);
         vault.liquidate(alice, repayment);
 
         _assertPosition(alice, collateral - payout, debt - repayment);
         _assertPosition(bob, 300 ether, 100 ether);
-        assertEq(imd.balanceOf(bob) - liquidatorBalance, repayment * 110 / 100, "exact liquidation payout");
+        actualPayout = imd.balanceOf(bob) - liquidatorBalance;
+        assertEq(actualPayout, payout, "exact price-divided liquidation payout");
+        assertLe(actualPayout * liquidationPrice, repayment * 1.1 ether, "payout does not round up");
+        assertLt(repayment * 1.1 ether, (actualPayout + 1) * liquidationPrice, "no extra collateral is withheld");
         assertEq(imd.balanceOf(alice), ownerBalance);
         assertEq(imd.balanceOf(address(vault)), collateral - payout + 300 ether);
         assertEq(comp.balanceOf(bob), debt + 100 ether - repayment);

@@ -147,8 +147,9 @@ contract ProtocolHandler is Test {
 
     function setMarket(uint256 priceSeed, uint256 nhi) external {
         // Include unit price frequently, with price-only and NHI-only shocks both reachable.
-        uint256[3] memory prices = [uint256(0.8 ether), uint256(1 ether), uint256(1.2 ether)];
-        priceFeed.setValue(prices[priceSeed % 3]);
+        uint256[5] memory prices =
+            [uint256(0.8 ether), uint256(1 ether), uint256(1.2 ether), uint256(0.5 ether), uint256(2 ether)];
+        priceFeed.setValue(prices[priceSeed % 5]);
         nhiFeed.setValue(bound(nhi, 0.5 ether, 0.95 ether));
     }
 
@@ -204,8 +205,8 @@ contract ProtocolHandler is Test {
                 || block.timestamp > timestamp + grace + vault.liquidationWindow()
         ) return;
         (uint256 collateral, uint256 debt) = vault.positions(owner);
-        // Conservative input bound supports both the specified fixed payout and the current implementation.
-        uint256 collateralBound = collateral * _min(_price(), 1 ether) * 100 / (110 * 1 ether);
+        // Bound repayment by the collateral's value, including the liquidation bonus.
+        uint256 collateralBound = collateral * _price() / 1.1 ether;
         uint256 available = _min(_min(debt, comp.balanceOf(caller)), collateralBound);
         if (available == 0) return;
         amount = bound(amount, 1, available);
@@ -216,6 +217,7 @@ contract ProtocolHandler is Test {
         (uint256 collateral, uint256 debt) = vault.positions(owner);
         uint256 beforeIMD = imd.balanceOf(caller);
         uint256 beforeCOMP = comp.balanceOf(caller);
+        uint256 expectedPayout = amount * 1.1 ether / _price();
         vm.prank(caller);
         vault.liquidate(owner, amount);
         (uint256 remainingCollateral, uint256 remainingDebt) = vault.positions(owner);
@@ -223,9 +225,7 @@ contract ProtocolHandler is Test {
         assertEq(comp.balanceOf(caller), beforeCOMP - amount, "liquidator pays its own COMP");
         assertEq(remainingDebt, debt - amount, "liquidation retires debt");
         assertEq(collateral - remainingCollateral, received, "seized collateral reaches liquidator");
-        // Non-unit-price payout violates the assignment; a standalone failing proof is reported in
-        // .imd-findings.json. Conservation remains testable without asserting that payout is correct.
-        if (_price() == 1 ether) assertEq(received, amount * 110 / 100, "exact liquidation bonus at unit price");
+        assertEq(received, expectedPayout, "exact price-divided payout including rounding");
         debtLiquidated[owner] += amount;
         collateralSeized[owner] += received;
         collateralReceived[caller] += received;
@@ -479,25 +479,30 @@ contract ProtocolInvariantTest is StdInvariant, Test {
 
     function test_handlerLiquidationConservesDebtAndCustodyAtEveryMarketPrice() public {
         uint256 debtToRepay = 25 ether + 9;
-        for (uint256 priceSeed; priceSeed < 3; ++priceSeed) {
-            // All three prices leave a fresh 150/100 position below the NHI-derived 200% minimum.
+        for (uint256 priceSeed; priceSeed < 5; ++priceSeed) {
+            if (priceSeed != 0) handler = new ProtocolHandler();
+            // At price two, borrow up to the healthy 150% threshold before the NHI decline.
+            if (priceSeed == 4) {
+                handler.setMarket(priceSeed, 0.85 ether);
+                handler.mintDebt(0, 100 ether);
+            }
             handler.setMarket(priceSeed, 0.5 ether);
-            handler.markOrClear(priceSeed);
-            address owner = handler.actors(priceSeed);
-            address liquidator = handler.actors(priceSeed + 1);
+            handler.markOrClear(0);
+            address owner = handler.actors(0);
+            address liquidator = handler.actors(1);
             uint256 beforeCollateral = handler.imd().balanceOf(liquidator);
             (uint256 collateral, uint256 debt) = handler.vault().positions(owner);
-            handler.liquidate(priceSeed, priceSeed + 1, debtToRepay);
+            (uint256 price,) = handler.priceFeed().latestValue();
+            handler.liquidate(0, 1, debtToRepay);
             (uint256 remainingCollateral, uint256 remainingDebt) = handler.vault().positions(owner);
             uint256 received = handler.imd().balanceOf(liquidator) - beforeCollateral;
             assertEq(remainingDebt, debt - debtToRepay, "liquidation retires debt at every price");
             assertEq(collateral - remainingCollateral, received, "seized collateral reaches liquidator");
-            // Exact non-unit-price payout is the failing property reported in .imd-findings.json.
-            if (priceSeed == 1) assertEq(received, debtToRepay * 110 / 100, "unit-price payout including rounding");
+            assertEq(received, debtToRepay * 1.1 ether / price, "exact payout at every market price");
+            assertEq(handler.successfulLiquidations(), 1, "each market price reaches liquidation");
             invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
+            afterInvariant();
         }
-        assertEq(handler.successfulLiquidations(), 3, "each market price reaches liquidation");
-        afterInvariant();
     }
 
     function test_handlerExpiredMarkRefreshesItsTimestampAndGraceGhosts() public {
