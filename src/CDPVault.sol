@@ -177,7 +177,7 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @notice Burn caller COMP against a marked, still-underwater position after its snapshotted grace.
-    /// @dev Payout is floor(debtToRepay * 1.1e18 / price); collateral must cover the full payout.
+    /// @dev Payout is floor(debtToRepay * 110 / 100); collateral must cover the full payout.
     function liquidate(address owner, uint256 debtToRepay) external nonReentrant {
         if (debtToRepay == 0) revert ZeroAmount();
         _requireFreshFeeds();
@@ -187,7 +187,7 @@ contract CDPVault is ReentrancyGuard {
         if (!mark.marked) revert PositionNotMarked();
         if (block.timestamp - mark.markedAt < mark.grace) revert GracePeriodNotElapsed();
         if (debtToRepay > position.debt) revert ExcessRepayment();
-        uint256 collateralSeized = Math.mulDiv(debtToRepay, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, _price());
+        uint256 collateralSeized = Math.mulDiv(debtToRepay, 100 + LIQUIDATION_BONUS_PERCENT, 100);
         if (collateralSeized > position.collateral) revert InsufficientCollateral();
         position.debt -= debtToRepay;
         position.collateral -= collateralSeized;
