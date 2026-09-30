@@ -13,7 +13,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// zero. The deviation bound applies while the last accepted value is fresh; once that value has aged
 /// past maxAge the feed is stale and consumers already fail safe, so the next accepted value re-anchors
 /// the band instead of leaving an immutable feed permanently unable to follow a genuine large move.
-contract SwarmFeed is ISwarmFeed {
+abstract contract SwarmFeed is ISwarmFeed {
     struct OracleAttestation {
         bytes32 requestId;
         uint256 chainId;

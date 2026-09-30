@@ -15,31 +15,76 @@ The JSON files in `docs/abi/` contain complete Solidity ABI arrays, including co
 | IWorkOracle, MockWorkOracle | `consumeRights(account, amount)` | Associated vault only; reduces remaining rights |
 | MockWorkOracle | `deployer()`, `vault()` | Immutable authority and associated consumer |
 | MockWorkOracle | `grantRights(account, amount)` | Approved workflow operator only; adds to existing rights |
-| CDPVault | `imdToken()`, `compToken()`, `oracle()` | Linked contract addresses |
-| CDPVault | `MIN_COLLATERAL_RATIO()`, `LIQUIDATION_BONUS_PERCENT()` | 150 and 10 |
+| ISwarmFeed, SwarmFeed, PriceFeed, NhiFeed | `latestValue()`, `isStale()`, `maxAge()` | Latest `(uint256 value, uint64 updatedAt)`, freshness, and immutable maximum age in seconds |
+| SwarmFeed, PriceFeed, NhiFeed | `attester()`, `questionHash()`, `reporter0()`, `reporter1()`, `reporter2()`, `quorum()`, `maxDeviationBps()` | Immutable attestation and reporter configuration |
+| SwarmFeed, PriceFeed, NhiFeed | `ATTESTATION_TYPEHASH()`, `DOMAIN_SEPARATOR()` | EIP-712 signing constants |
+| SwarmFeed, PriceFeed, NhiFeed | `round()`, `reportCount()`, `lastReportedRound(account)`, `usedRequests(requestId)`, `isReporter(account)` | Fallback round, replay, and reporter views |
+| SwarmFeed, PriceFeed, NhiFeed | `submitAttestation(attestation, signature)` | Anyone may relay a matching, fresh attestation signed by `attester()` |
+| SwarmFeed, PriceFeed, NhiFeed | `report(value)` | Allowlisted reporter submits one value per round; quorum publishes the median |
+| CDPVault | `imdToken()`, `compToken()`, `oracle()`, `priceFeed()`, `nhiFeed()` | Immutable linked contract addresses |
+| CDPVault | `LIQUIDATION_BONUS_PERCENT()` | 10 |
 | CDPVault | `positions(account)` | Tuple `(collateral, debt)` |
-| CDPVault | `collateralRatio(account)` | Integer percent; uint256.max for no debt or unrepresentably large ratio |
-| CDPVault | `setOracle(oracle)` | Approved workflow operator once if constructed with a supplied token and zero oracle; otherwise always reverts. Requires an IWorkOracle whose `vault()`, if present, is this vault |
+| CDPVault | `liquidationMarks(account)` | Tuple `(markedAt, grace, marked)`; times are seconds |
+| CDPVault | `collateralRatio(account)` | Price-derived integer percent; uint256.max for no debt or unrepresentably large ratio |
+| CDPVault | `minCR()`, `gracePeriod()`, `liquidationWindow()` | NHI-derived minimum ratio and grace, and the shorter feed maximum age |
+| CDPVault | `totalWorkMinted()` | Cumulative COMP minted by consuming work rights |
 | CDPVault | `depositCollateral(amount)` | Moves caller's approved IMD into their position |
-| CDPVault | `withdrawCollateral(amount)` | Returns caller's IMD if remaining position stays at least 150% |
-| CDPVault | `mintCOMP(amount)` | Consumes caller's rights, increases debt, mints COMP to caller |
+| CDPVault | `withdrawCollateral(amount)` | Returns caller's IMD if debt is zero or the remaining position meets `minCR()` |
+| CDPVault | `mintCOMP(amount)` | Increases caller's debt and mints COMP if the resulting position meets `minCR()`; consumes no work rights |
+| CDPVault | `mintFromWork(amount)` | Consumes caller's work rights and mints COMP without collateral or debt |
 | CDPVault | `repayCOMP(amount)` | Burns caller's COMP, decreases their debt; no approval and no rights refund |
-| CDPVault | `liquidate(owner, debtToRepay)` | Burns caller's COMP against an unhealthy owner's debt and pays caller IMD |
+| CDPVault | `markUnderwater(owner)` | Anyone may mark an unhealthy position and snapshot its grace period |
+| CDPVault | `clearRecoveredMark(owner)` | Anyone may clear a healthy position's mark |
+| CDPVault | `liquidate(owner, debtToRepay)` | Burns caller's COMP against a marked, still-unhealthy owner's debt after grace and pays caller IMD |
 
 `LaunchToken()` takes no constructor arguments and mints exactly 10^27 minor units to its deployer. Its metadata is `COMP Launch` / `CPL` / 18 decimals. Its public functions are only the standard ERC-20 views, transfers, and approval; it has no mint/burn or administration API. Use `docs/abi/LaunchToken.json` for the launch asset and `docs/abi/CompToken.json` for the stablecoin borrowed from CDPVault.
 
-The application constructor signatures are `MockIMD()`, `CompToken(vault)`, `CDPVault(imdToken, compToken, oracle)`, and `MockWorkOracle(vault)`. `CompToken(vault)` is the only ABI change in this revision: zero defers the one-time `setVault`, while a nonzero vault is validated (or recognized as the creating contract) and locked at construction. `CDPVault(imd, 0x0, 0x0)` creates and binds its own CompToken and MockWorkOracle, so the factory launch needs no call after construction; read them from `compToken()` and `oracle()`. Deferred initialization and faucet authority is the explicit workflow operator `0x5167D014a056E43883e1BBEa5530c3c0dC993281`, pinned in `src/DeploymentConfig.sol`. The mock `deployer()` getters return that operator even when a factory or the vault creates the contracts. The factory and transaction origin gain no permissions. No event or error name changed.
+The token and oracle constructor signatures are `MockIMD()`, `CompToken(address vault)`, and `MockWorkOracle(address vault)`. `CompToken(0x0)` defers the one-time `setVault`, while a nonzero vault is validated (or recognized as the creating contract) and locked at construction. MockIMD starts with zero supply and metadata `Identity MD` / `IMD`; CompToken starts with zero supply and metadata `Compute Money` / `COMP`. Neither has a configured supply cap. MockWorkOracle requires a deployed vault or its creating contract and permanently limits rights consumption to that address.
+
+`CDPVault(address imdToken, address compToken, address oracle, address priceFeed, address nhiFeed)` requires existing, distinct token contracts and deployed feed contracts. The current constructor does not require the two feed addresses to differ. Zero oracle creates and binds a fresh MockWorkOracle; a supplied oracle must answer `mintingRights(address)` and, if it exposes `vault()`, name this vault. The vault creates no token and has no `setOracle` or parameter setter. An existing, uninitialized CompToken must separately authorize the vault through `setVault` before borrowing or work minting can succeed.
+
+Deferred CompToken initialization and mock faucet authority is the explicit workflow operator `0x5167D014a056E43883e1BBEa5530c3c0dC993281`, pinned in `src/DeploymentConfig.sol`. The mock `deployer()` getters return that operator even when a factory or the vault creates the contracts. The factory and transaction origin gain no permissions.
+
+`SwarmFeed` is abstract. `PriceFeed` and `NhiFeed` are concrete pass-through subclasses with no added state or logic. Each constructor takes `(address attester, bytes32 questionHash, address reporter0, address reporter1, address reporter2, uint8 quorum, uint256 maxAge, uint256 maxDeviationBps)`, forwarding every argument unchanged. The attester must be nonzero; nonzero reporters must be distinct; quorum must be between one and the number of nonzero reporters; maxAge must be positive; and maxDeviationBps must be at most 10,000. No setter or administrator can change the configuration. Neither subclass adds application-specific value bounds.
+
+Feed values use 18 decimals. Before the first update, `latestValue()` returns `(0, 0)` and `isStale()` is true. A value is stale only when its age is greater than maxAge, so the exact age boundary is still fresh. Zero updates revert. While the previous value is fresh, each submitted report and accepted update must differ by at most `floor(previousValue * maxDeviationBps / 10000)`; once stale, the next update may re-anchor at any positive value. Reaching reporter quorum publishes the median (the floored mean for quorum two), dated at the oldest contributing report. An unfinished round expires after maxAge. A quorum-one reporter can complete multiple rounds in the same block; the deviation bound is per update, not per unit of time.
+
+`submitAttestation` takes an `OracleAttestation` tuple in this exact order: `(bytes32 requestId, uint256 chainId, bytes32 questionHash, uint8 answerType, bytes answer, uint256 figure, uint64 fromBlock, uint64 toBlock, bytes32 blockHash, bytes32 panelJobId, uint64 issuedAt, uint64 expiresAt)`, followed by a 65-byte signature. The EIP-712 domain remains `IdentityMD Oracle`, version `1`, chainId `1`, verifyingContract `address(0)`. The signed questionHash must equal the configured hash; requestId is consumed once per feed; issuedAt cannot be in the future, exceed expiresAt, precede the last accepted update, or be older than maxAge. Delivery after expiresAt is rejected. The feed publishes figure and uses signed issuedAt for freshness, then discards any unfinished reporter round. Payload chainId and answerType are signed but not filtered; the attester is trusted to bind the question to the intended chain and numeric semantics. The domain does not bind signatures to an individual feed, and request replay tracking is local to each instance. There is no relayer restriction.
+
+The vault treats price as COMP per IMD scaled by 1e18. `collateralRatio` is `floor(collateral * price * 100 / (debt * 1e18))`. Only NHI determines requirements: at or below `0.60e18`, minCR is 200% and grace is zero; at or above `0.85e18`, minCR is 150% and grace is six hours. Between these points, minCR is `150 + ceil((0.85e18 - nhi) * 50 / 0.25e18)` and grace is `floor((nhi - 0.60e18) * 21600 / 0.25e18)` seconds. These views read latest values without enforcing freshness. Borrowing, work minting, withdrawals with debt, marking, clearing recovered marks, and liquidation require both feeds fresh and price nonzero. Deposits, repayment, and debt-free withdrawals remain available with stale feeds.
+
+An active mark preserves its original grace snapshot. Liquidation is allowed from `markedAt + grace` through `markedAt + grace + liquidationWindow()`, inclusive, while the position remains unhealthy; after that the mark must be retaken and grace restarts. Payout is exactly `floor(debtToRepay * 1.1e18 / price)` IMD minor units, and the position must cover the full payout. Successful borrowing and withdrawals clear marks; deposits, repayment, and liquidation clear them on observed recovery (or zero debt). Anyone can call `clearRecoveredMark` to record recovery from a feed change. An unobserved recovery followed by another fall does not reset grace within the mark's bounded lifetime.
 
 Events:
 
 - All three tokens emit standard `Transfer` and `Approval`; mint/burn use the zero-address convention. LaunchToken emits its only mint during construction.
 - CompToken emits `VaultSet(vault)` with indexed vault once, during construction or the one-time `setVault`.
 - MockWorkOracle emits `RightsGranted(account, amount)` and `RightsConsumed(account, amount)` with indexed account.
-- CDPVault emits `OracleSet(oracle)`, `CollateralDeposited(account, amount)`, `CollateralWithdrawn(account, amount)`, `COMPMinted(account, amount)`, and `COMPRepaid(account, amount)` with indexed addresses.
+- SwarmFeed and both subclasses emit `ValueUpdated(value, updatedAt)`, `Reported(round, reporter, value)` with indexed round and reporter, and `AttestationAccepted(requestId)` with indexed requestId.
+- CDPVault emits `OracleSet(oracle)`, `CollateralDeposited(account, amount)`, `CollateralWithdrawn(account, amount)`, `COMPMinted(account, amount)`, `WorkMinted(account, amount)`, and `COMPRepaid(account, amount)` with indexed addresses.
+- `UnderwaterMarked(owner, markedAt, grace)` and `UnderwaterMarkCleared(owner)` index owner.
 - `Liquidated(owner, liquidator, debtRepaid, collateralSeized)` indexes owner and liquidator. Actual payout is included, so consumers need not reconstruct rounded amounts.
 
-Custom errors have no arguments unless indicated in the generated ABI. `Unauthorized` indicates a caller outside the permitted authority; `AlreadyInitialized` indicates permanently closed setup. Invalid contract addresses, and targets that fail the reciprocal-link checks, produce `InvalidToken`, `InvalidVault`, or `InvalidOracle` without consuming initialization authority. `NotInitialized` means the vault's borrowing links are incomplete. MockWorkOracle additionally uses `InvalidAccount` for zero recipients.
+Custom errors have no arguments unless indicated in the generated ABI. `Unauthorized` indicates a caller outside the permitted authority; `AlreadyInitialized` indicates permanently closed CompToken setup. Invalid contract addresses, and targets that fail the reciprocal-link checks, produce `InvalidToken`, `InvalidVault`, `InvalidOracle`, or `InvalidFeed`. A failed `setVault` does not consume initialization authority. `NotInitialized` means CompToken has not authorized this vault. MockWorkOracle additionally uses `InvalidAccount` for zero recipients, `ZeroAmount`, and `InsufficientRights`.
 
-Vault operation errors are `ZeroAmount`, `InsufficientCollateral`, `InsufficientRights`, `UnsafeCollateralRatio`, `HealthyPosition`, `ExcessRepayment`, and `UnexpectedCollateralReceived`. The last detects an unsupported short collateral deposit. External token/oracle reverts propagate; ERC-20 custom errors include balances and allowances. SafeERC20 false returns produce `SafeERC20FailedOperation(token)`. Reentry produces `ReentrancyGuardReentrantCall`. A reverted transaction rolls back position changes, work credits, token supply, and emitted events together.
+Feed errors are `InvalidConfiguration`, `UnauthorizedReporter`, `AlreadyReported`, `ZeroValue`, `ExcessDeviation`, `InvalidSignature`, `InvalidQuestion`, `InvalidTimestamp`, `ExpiredAttestation`, `StaleAttestation`, and `ReplayedAttestation`. InvalidSignature includes malformed length, high-s signatures, invalid v, and a signer other than the configured attester.
 
-Suggested frontend sequence: approve the desired IMD deposit, deposit, check rights and collateral headroom, then mint. On repayment, call repay directly from the indebted wallet and withdraw any newly available collateral. Show debt-free ratios as debt-free rather than rendering uint256.max as a percentage. Health bands are green at >=170%, amber at >=150% and <170%, and red below 150%. Refresh balances, rights, and position after each confirmed transaction. Restrict the grant-rights panel to `MockWorkOracle.deployer()` and show Sepolia only.
+Vault operation errors are `ZeroAmount`, `InsufficientCollateral`, `InsufficientRights`, `UnsafeCollateralRatio`, `HealthyPosition`, `ExcessRepayment`, `UnexpectedCollateralReceived`, `StaleFeed`, `InvalidPrice`, `PositionNotMarked`, `GracePeriodNotElapsed`, `MarkExpired`, and `UnderwaterPosition`. UnexpectedCollateralReceived detects an unsupported collateral deposit whose balance increase differs from the requested amount. External token/oracle/feed reverts propagate; ERC-20 custom errors include balances and allowances. SafeERC20 false returns produce `SafeERC20FailedOperation(token)`. Reentry produces `ReentrancyGuardReentrantCall`. A reverted transaction rolls back position changes, work credits, token supply, and emitted events together.
+
+Suggested frontend sequence: approve the desired IMD deposit, deposit, check feed freshness and collateral headroom against `minCR()`, then borrow with `mintCOMP`. Work minting uses `mintFromWork` and available rights independently of collateral. On repayment, call repay directly from the indebted wallet and withdraw any newly available collateral. Show debt-free ratios as debt-free rather than rendering uint256.max as a percentage. Display price, NHI, the effective minimum ratio, and the stored grace countdown and mark expiry. Refresh balances, rights, feeds, and position after each confirmed transaction. Restrict the grant-rights panel to `MockWorkOracle.deployer()` and show Sepolia only.
+
+To regenerate every committed ABI export from the repository root, build sources explicitly: the existing `test/SwarmFeed.t.sol` still instantiates the now-abstract base and is outside this assignment's delivered scope. The unchanged `tools/export_abi.py` lists only the original six contracts; this uses its JSON formatting for all current exports:
+
+```sh
+forge build src --offline --out test/scratch/abi-out --cache-path test/scratch/abi-cache
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+for destination in sorted(Path("docs/abi").glob("*.json")):
+    name = destination.stem
+    artifact = Path("test/scratch/abi-out") / f"{name}.sol" / f"{name}.json"
+    abi = json.loads(artifact.read_text())["abi"]
+    destination.write_text(json.dumps(abi, indent=2) + "\n")
+PY
+```

@@ -16,6 +16,16 @@
         "name": "oracle_",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "priceFeed_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nhiFeed_",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
@@ -35,16 +45,16 @@
   },
   {
     "type": "function",
-    "name": "MIN_COLLATERAL_RATIO",
-    "inputs": [],
-    "outputs": [
+    "name": "clearRecoveredMark",
+    "inputs": [
       {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
       }
     ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -93,6 +103,19 @@
   },
   {
     "type": "function",
+    "name": "gracePeriod",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "imdToken",
     "inputs": [],
     "outputs": [
@@ -124,6 +147,74 @@
   },
   {
     "type": "function",
+    "name": "liquidationMarks",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "markedAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "grace",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "marked",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "liquidationWindow",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "markUnderwater",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "minCR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "mintCOMP",
     "inputs": [
       {
@@ -134,6 +225,32 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "mintFromWork",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "nhiFeed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ISwarmFeed"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -174,6 +291,19 @@
   },
   {
     "type": "function",
+    "name": "priceFeed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ISwarmFeed"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "repayCOMP",
     "inputs": [
       {
@@ -187,16 +317,16 @@
   },
   {
     "type": "function",
-    "name": "setOracle",
-    "inputs": [
+    "name": "totalWorkMinted",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "oracle_",
-        "type": "address",
-        "internalType": "address"
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -332,6 +462,63 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "UnderwaterMarkCleared",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "UnderwaterMarked",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "markedAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "grace",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WorkMinted",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AddressEmptyCode",
     "inputs": [
@@ -355,17 +542,17 @@
   },
   {
     "type": "error",
-    "name": "AlreadyInitialized",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ExcessRepayment",
     "inputs": []
   },
   {
     "type": "error",
     "name": "FailedInnerCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GracePeriodNotElapsed",
     "inputs": []
   },
   {
@@ -385,12 +572,27 @@
   },
   {
     "type": "error",
+    "name": "InvalidFeed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidOracle",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "InvalidPrice",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidToken",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarkExpired",
     "inputs": []
   },
   {
@@ -401,6 +603,11 @@
   {
     "type": "error",
     "name": "NotInitialized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionNotMarked",
     "inputs": []
   },
   {
@@ -421,7 +628,12 @@
   },
   {
     "type": "error",
-    "name": "Unauthorized",
+    "name": "StaleFeed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnderwaterPosition",
     "inputs": []
   },
   {
