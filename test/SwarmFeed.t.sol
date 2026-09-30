@@ -74,6 +74,9 @@ contract SwarmFeedTest is Test {
 
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_threeReporterMedian(uint128 a, uint128 b, uint128 c) public {
+        a = uint128(bound(a, 1, type(uint128).max));
+        b = uint128(bound(b, 1, type(uint128).max));
+        c = uint128(bound(c, 1, type(uint128).max));
         _report(REPORTER_A, a);
         _report(REPORTER_B, b);
         _report(REPORTER_C, c);
@@ -83,6 +86,29 @@ contract SwarmFeedTest is Test {
         uint256 hi = a > b ? a : b;
         if (c > hi) hi = c;
         assertEq(actual, uint256(a) + b + c - lo - hi);
+    }
+
+    function test_zeroReportAndAttestationRevertWithoutConsumingRoundOrRequest() public {
+        vm.expectRevert(SwarmFeed.ZeroValue.selector);
+        _report(REPORTER_A, 0);
+        assertEq(feed.reportCount(), 0);
+        assertTrue(feed.isStale());
+        // The failed vote must not prevent the same reporter from submitting a valid value.
+        _report(REPORTER_A, 1 ether);
+        assertEq(feed.reportCount(), 1);
+
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        a.figure = 0;
+        bytes memory sig = _sign(a, SIGNER_KEY, 1);
+        vm.expectRevert(SwarmFeed.ZeroValue.selector);
+        feed.submitAttestation(a, sig);
+        assertFalse(feed.usedRequests(a.requestId));
+        assertEq(feed.reportCount(), 1, "failed attestation preserves pending votes");
+        assertTrue(feed.isStale());
+        a.figure = 1 ether;
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY, 1));
+        assertTrue(feed.usedRequests(a.requestId));
+        assertFalse(feed.isStale());
     }
 
     function test_evenQuorumMeanDoesNotOverflow() public {

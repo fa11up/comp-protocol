@@ -5,6 +5,8 @@ import {ISwarmFeed} from "src/interfaces/ISwarmFeed.sol";
 
 /// @dev Controllable offline feed for isolating vault transitions and stale-feed failures.
 contract TestSwarmFeed is ISwarmFeed {
+    // Freshness remains explicitly controlled; this bounds the vault's liquidation window.
+    uint256 public constant maxAge = 1 days;
     uint256 private value;
     uint64 private updatedAt;
     bool private stale;
