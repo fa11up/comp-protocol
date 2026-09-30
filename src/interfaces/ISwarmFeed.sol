@@ -7,4 +7,7 @@ interface ISwarmFeed {
 
     /// @notice True before the first accepted value, or once its immutable maximum age has elapsed.
     function isStale() external view returns (bool);
+
+    /// @notice Immutable maximum accepted age of the latest value, in seconds.
+    function maxAge() external view returns (uint256);
 }

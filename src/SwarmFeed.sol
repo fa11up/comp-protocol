@@ -9,7 +9,10 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// Production replaces the reporter fallback with scheduled attestations. The testnet configuration
 /// uses the deployer as sole reporter with quorum one; the reporter set should widen in production.
 /// There is no admin or setter. Values are scaled by 1e18; consumers enforce any application bounds.
-/// An accepted zero can only be followed by zero: every positive change exceeds a relative bound of zero.
+/// Zero is rejected on both paths: it is never a valid scaled figure and would pin the relative bound at
+/// zero. The deviation bound applies while the last accepted value is fresh; once that value has aged
+/// past maxAge the feed is stale and consumers already fail safe, so the next accepted value re-anchors
+/// the band instead of leaving an immutable feed permanently unable to follow a genuine large move.
 contract SwarmFeed is ISwarmFeed {
     struct OracleAttestation {
         bytes32 requestId;
@@ -29,6 +32,7 @@ contract SwarmFeed is ISwarmFeed {
     error InvalidConfiguration();
     error UnauthorizedReporter();
     error AlreadyReported();
+    error ZeroValue();
     error ExcessDeviation();
     error InvalidSignature();
     error InvalidQuestion();
@@ -193,7 +197,8 @@ contract SwarmFeed is ISwarmFeed {
     }
 
     function _checkValue(uint256 value) private view {
-        if (_hasValue) {
+        if (value == 0) revert ZeroValue();
+        if (_hasValue && !_tooOld(_updatedAt)) {
             uint256 change = value > _value ? value - _value : _value - value;
             if (change > Math.mulDiv(_value, maxDeviationBps, 10_000)) revert ExcessDeviation();
         }

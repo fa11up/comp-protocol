@@ -43,6 +43,7 @@ contract CDPVault is ReentrancyGuard {
     error UnexpectedCollateralReceived();
     error PositionNotMarked();
     error GracePeriodNotElapsed();
+    error MarkExpired();
     error UnderwaterPosition();
 
     event OracleSet(address indexed oracle);
@@ -155,12 +156,17 @@ contract CDPVault is ReentrancyGuard {
         emit COMPRepaid(msg.sender, amount);
     }
 
-    /// @notice Start an underwater position's grace window; repeated marks preserve its original snapshot.
+    /// @notice Start an underwater position's grace window; repeated marks preserve an active snapshot.
+    /// @dev A mark is actionable from markedAt + grace for one liquidationWindow(), then expires and must be
+    /// retaken, which restarts grace. latestValue cannot reveal a recover-then-fall sequence nobody
+    /// transacted through, so bounding a mark's lifetime is what keeps an old mark from turning a later
+    /// dip into a same-block liquidation with no effective grace.
     function markUnderwater(address owner) external nonReentrant {
         _requireFreshFeeds();
         Position storage position = positions[owner];
         if (_healthy(position.collateral, position.debt)) revert HealthyPosition();
-        if (liquidationMarks[owner].marked) return;
+        LiquidationMark storage mark = liquidationMarks[owner];
+        if (mark.marked && !_expired(mark)) return;
         uint256 grace = gracePeriod();
         liquidationMarks[owner] = LiquidationMark(block.timestamp, grace, true);
         emit UnderwaterMarked(owner, block.timestamp, grace);
@@ -177,7 +183,9 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @notice Burn caller COMP against a marked, still-underwater position after its snapshotted grace.
-    /// @dev Payout is floor(debtToRepay * 110 / 100); collateral must cover the full payout.
+    /// @dev Payout is floor(debtToRepay * 1.1e18 / price) IMD, i.e. collateral worth 110% of the COMP burned
+    /// at the same accepted price the health check reads; collateral must cover the full payout.
+    /// The mark must still be within its liquidation window (see markUnderwater).
     function liquidate(address owner, uint256 debtToRepay) external nonReentrant {
         if (debtToRepay == 0) revert ZeroAmount();
         _requireFreshFeeds();
@@ -186,8 +194,9 @@ contract CDPVault is ReentrancyGuard {
         LiquidationMark storage mark = liquidationMarks[owner];
         if (!mark.marked) revert PositionNotMarked();
         if (block.timestamp - mark.markedAt < mark.grace) revert GracePeriodNotElapsed();
+        if (_expired(mark)) revert MarkExpired();
         if (debtToRepay > position.debt) revert ExcessRepayment();
-        uint256 collateralSeized = Math.mulDiv(debtToRepay, 100 + LIQUIDATION_BONUS_PERCENT, 100);
+        uint256 collateralSeized = Math.mulDiv(debtToRepay, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, _price());
         if (collateralSeized > position.collateral) revert InsufficientCollateral();
         position.debt -= debtToRepay;
         position.collateral -= collateralSeized;
@@ -215,6 +224,13 @@ contract CDPVault is ReentrancyGuard {
     function gracePeriod() public view returns (uint256) {
         (uint256 nhi,) = nhiFeed.latestValue();
         return _gracePeriod(nhi);
+    }
+
+    /// @notice How long after its grace ends a mark stays actionable: the shorter feed lifetime.
+    /// @dev Past that, at least one full feed cycle has elapsed in which nobody liquidated, and either
+    /// feed may have moved the position through recovery unobserved; the mark is void and must be retaken.
+    function liquidationWindow() public view returns (uint256) {
+        return Math.min(priceFeed.maxAge(), nhiFeed.maxAge());
     }
 
     /// @dev Accepts only a deployed contract that answers `mintingRights(address)` as IWorkOracle requires.
@@ -267,6 +283,10 @@ contract CDPVault is ReentrancyGuard {
                 _clearMark(owner);
             }
         }
+    }
+
+    function _expired(LiquidationMark storage mark) private view returns (bool) {
+        return block.timestamp > mark.markedAt + mark.grace + liquidationWindow();
     }
 
     function _clearMark(address owner) private {
