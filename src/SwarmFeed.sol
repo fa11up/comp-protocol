@@ -127,6 +127,8 @@ contract SwarmFeed is ISwarmFeed {
     /// @notice Accept an IdentityMD EIP-712 attestation. Anyone may relay the authorized signature.
     /// @dev Uses the signed issue time, so delayed delivery cannot extend freshness. requestId is the
     /// replay nonce. chainId is signed payload data; the service domain chainId is always literal 1.
+    /// The attester must bind the configured question to the intended data chain and numeric answer
+    /// semantics; payload chainId and answerType are signed but not filtered here. Zero figures revert.
     function submitAttestation(OracleAttestation calldata a, bytes calldata sig) external {
         if (a.questionHash != questionHash) revert InvalidQuestion();
         if (block.timestamp > a.expiresAt) revert ExpiredAttestation();
@@ -146,6 +148,8 @@ contract SwarmFeed is ISwarmFeed {
     /// @dev Even-sized quorums use the floor of the two central values' mean. Unfinished rounds
     /// expire after maxAge; the next report then starts a fresh round instead of using old votes.
     /// The accepted timestamp is the oldest contributing report's time, so quorum cannot renew it.
+    /// Deviation is bounded per accepted update, not per block or unit of time. A quorum-one reporter
+    /// can complete multiple rounds in one block; the fallback therefore trusts that reporter's values.
     function report(uint256 value) external {
         if (!isReporter(msg.sender)) revert UnauthorizedReporter();
         if (block.timestamp > type(uint64).max) revert InvalidTimestamp();

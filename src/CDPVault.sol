@@ -175,6 +175,8 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Anyone may clear a mark after observing recovery, including a recovery caused only by a feed.
     /// @dev latestValue cannot reveal an unobserved recover-then-fall sequence. Keepers should clear marks
     /// when recovery is observed; deposit, repayment and successful borrowing/withdrawal also clear them.
+    /// Borrowers should call this while healthy: an unobserved recovery does not restart grace within
+    /// the bounded mark lifetime, even if a subsequent dip happens before that lifetime ends.
     function clearRecoveredMark(address owner) external nonReentrant {
         _requireFreshFeeds();
         Position storage position = positions[owner];
@@ -215,6 +217,7 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @notice Minimum CR, derived only from NHI: 200 at/below .60; 150 at/above .85.
+    /// @dev Linear interpolation rounds up to a whole percent, so rounding cannot weaken the threshold.
     function minCR() public view returns (uint256) {
         (uint256 nhi,) = nhiFeed.latestValue();
         return _minCR(nhi);
@@ -259,7 +262,7 @@ contract CDPVault is ReentrancyGuard {
     function _minCR(uint256 nhi) private pure returns (uint256) {
         if (nhi >= 0.85e18) return 150;
         if (nhi <= 0.6e18) return 200;
-        return 150 + (0.85e18 - nhi) * 50 / 0.25e18;
+        return 150 + Math.mulDiv(0.85e18 - nhi, 50, 0.25e18, Math.Rounding.Ceil);
     }
 
     function _gracePeriod(uint256 nhi) private pure returns (uint256) {
