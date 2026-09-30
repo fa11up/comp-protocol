@@ -8,19 +8,12 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {CompToken} from "./CompToken.sol";
 import {MockWorkOracle} from "./MockWorkOracle.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
-import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
+import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 
-/// @notice Collateralized COMP borrowing against consumable work credits on Sepolia.
-/// @dev PRICE ASSUMPTION: 1 IMD == 1 COMP, fixed for this testnet demonstration. Both use 18 decimals.
-/// No market feed, interest, stability fee, or peg redemption is implemented. A production feed is out of scope.
-/// The oracle is selected once; there is no owner, upgrade, emergency withdrawal, or mutable parameter authority.
-///
-/// Two constructor modes resolve the token/vault/oracle dependency cycle:
-/// - Assembled (workflow order): `compToken_` is a deployed CompToken. A zero `oracle_` defers the one-time
-///   `setOracle` call to the approved operator; a nonzero `oracle_` is validated and locked immediately.
-/// - Self-contained (constructor-only factories): `compToken_` is zero. The vault creates `CompToken(this)`
-///   and, when `oracle_` is also zero, `MockWorkOracle(this)`, so every link is complete and locked when the
-///   constructor returns and no call is needed from any account afterwards.
+/// @notice Price-aware COMP borrowing and independent work-credit minting on Sepolia.
+/// @dev Both existing tokens use 18 decimals; price is COMP per IMD scaled by 1e18.
+/// NHI alone determines collateral requirements and liquidation grace. There is no parameter admin.
+/// Tokens are never created here. Their requester must separately authorize this vault to mint/burn COMP.
 contract CDPVault is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -29,11 +22,18 @@ contract CDPVault is ReentrancyGuard {
         uint256 debt;
     }
 
-    error Unauthorized();
-    error AlreadyInitialized();
+    struct LiquidationMark {
+        uint256 markedAt;
+        uint256 grace;
+        bool marked;
+    }
+
     error InvalidToken();
     error InvalidOracle();
+    error InvalidFeed();
+    error InvalidPrice();
     error NotInitialized();
+    error StaleFeed();
     error ZeroAmount();
     error InsufficientCollateral();
     error InsufficientRights();
@@ -41,55 +41,52 @@ contract CDPVault is ReentrancyGuard {
     error HealthyPosition();
     error ExcessRepayment();
     error UnexpectedCollateralReceived();
+    error PositionNotMarked();
+    error GracePeriodNotElapsed();
+    error UnderwaterPosition();
 
     event OracleSet(address indexed oracle);
     event CollateralDeposited(address indexed account, uint256 amount);
     event CollateralWithdrawn(address indexed account, uint256 amount);
     event COMPMinted(address indexed account, uint256 amount);
+    event WorkMinted(address indexed account, uint256 amount);
     event COMPRepaid(address indexed account, uint256 amount);
     event Liquidated(address indexed owner, address indexed liquidator, uint256 debtRepaid, uint256 collateralSeized);
+    event UnderwaterMarked(address indexed owner, uint256 markedAt, uint256 grace);
+    event UnderwaterMarkCleared(address indexed owner);
 
-    uint256 public constant MIN_COLLATERAL_RATIO = 150;
     uint256 public constant LIQUIDATION_BONUS_PERCENT = 10;
 
     IERC20 public immutable imdToken;
     CompToken public immutable compToken;
-    IWorkOracle public oracle;
-    address private _initializer;
+    IWorkOracle public immutable oracle;
+    ISwarmFeed public immutable priceFeed;
+    ISwarmFeed public immutable nhiFeed;
+    uint256 public totalWorkMinted;
     mapping(address account => Position position) public positions;
+    mapping(address account => LiquidationMark mark) public liquidationMarks;
 
     /// @param imdToken_ Deployed, nonrebasing, fee-free MockIMD collateral (18 decimals).
-    /// @param compToken_ Deployed CompToken whose vault must be set to this contract before borrowing, or zero
-    /// to have this vault create and permanently bind its own CompToken (self-contained mode).
-    /// @param oracle_ Zero defers one-time setup in assembled mode and creates a bound MockWorkOracle in
-    /// self-contained mode; a deployed IWorkOracle is validated and locked immediately in either mode.
-    constructor(address imdToken_, address compToken_, address oracle_) {
-        if (imdToken_.code.length == 0 || imdToken_ == compToken_) revert InvalidToken();
-        imdToken = IERC20(imdToken_);
-        if (compToken_ == address(0)) {
-            compToken = new CompToken(address(this));
-            if (oracle_ == address(0)) {
-                oracle_ = address(new MockWorkOracle(address(this)));
-            }
-        } else {
-            if (compToken_.code.length == 0) revert InvalidToken();
-            compToken = CompToken(compToken_);
-            if (oracle_ == address(0)) {
-                _initializer = APPROVED_OPERATOR;
-                return;
-            }
+    /// @param compToken_ Existing CompToken to be authorized separately; zero is never accepted.
+    /// @param oracle_ Zero creates a fresh MockWorkOracle bound to this vault during construction.
+    /// A supplied oracle must already be deployed and, if it exposes vault(), bound to this vault.
+    /// @param priceFeed_ Immutable collateral price feed, scaled by 1e18.
+    /// @param nhiFeed_ Immutable network health feed, scaled by 1e18.
+    constructor(address imdToken_, address compToken_, address oracle_, address priceFeed_, address nhiFeed_) {
+        if (imdToken_.code.length == 0 || compToken_.code.length == 0 || imdToken_ == compToken_) {
+            revert InvalidToken();
         }
-        _setOracle(oracle_);
-    }
-
-    /// @notice Finish deferred initialization once; all initialization authority is then erased.
-    /// @dev Only the workflow's approved operator may call, including after factory deployment. A rejected
-    /// target leaves initialization available; only a successful call erases the authority.
-    function setOracle(address oracle_) external {
-        if (_initializer == address(0)) revert AlreadyInitialized();
-        if (msg.sender != _initializer) revert Unauthorized();
-        _setOracle(oracle_);
-        delete _initializer;
+        if (priceFeed_.code.length == 0 || nhiFeed_.code.length == 0) revert InvalidFeed();
+        imdToken = IERC20(imdToken_);
+        compToken = CompToken(compToken_);
+        priceFeed = ISwarmFeed(priceFeed_);
+        nhiFeed = ISwarmFeed(nhiFeed_);
+        if (oracle_ == address(0)) {
+            oracle_ = address(new MockWorkOracle(address(this)));
+        }
+        _validateOracle(oracle_);
+        oracle = IWorkOracle(oracle_);
+        emit OracleSet(oracle_);
     }
 
     function depositCollateral(uint256 amount) external nonReentrant {
@@ -98,6 +95,7 @@ contract CDPVault is ReentrancyGuard {
         positions[msg.sender].collateral += amount;
         imdToken.safeTransferFrom(msg.sender, address(this), amount);
         if (imdToken.balanceOf(address(this)) - beforeBalance != amount) revert UnexpectedCollateralReceived();
+        _clearIfRecovered(msg.sender);
         emit CollateralDeposited(msg.sender, amount);
     }
 
@@ -106,23 +104,43 @@ contract CDPVault is ReentrancyGuard {
         Position storage position = positions[msg.sender];
         if (amount > position.collateral) revert InsufficientCollateral();
         uint256 remaining = position.collateral - amount;
-        if (!_healthy(remaining, position.debt)) revert UnsafeCollateralRatio();
+        // A withdrawal with debt always lowers CR, so it cannot be allowed with stale feeds.
+        // Debt-free collateral remains withdrawable: its ratio is infinite and no solvency depends on a feed.
+        if (position.debt != 0) {
+            _requireFreshFeeds();
+            if (!_healthy(remaining, position.debt)) revert UnsafeCollateralRatio();
+        }
         position.collateral = remaining;
+        _clearMark(msg.sender);
         imdToken.safeTransfer(msg.sender, amount);
         emit CollateralWithdrawn(msg.sender, amount);
     }
 
     function mintCOMP(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
-        if (address(oracle) == address(0) || compToken.vault() != address(this)) revert NotInitialized();
-        if (oracle.mintingRights(msg.sender) < amount) revert InsufficientRights();
+        _requireFreshFeeds();
+        if (compToken.vault() != address(this)) revert NotInitialized();
         Position storage position = positions[msg.sender];
         uint256 resultingDebt = position.debt + amount;
         if (!_healthy(position.collateral, resultingDebt)) revert UnsafeCollateralRatio();
         position.debt = resultingDebt;
-        oracle.consumeRights(msg.sender, amount);
+        _clearMark(msg.sender);
         compToken.mint(msg.sender, amount);
         emit COMPMinted(msg.sender, amount);
+    }
+
+    /// @notice Mint earned COMP by consuming work rights, without collateral or a debt entry.
+    /// @dev With zero initial supply and this vault as sole minter/burner, supply equals summed debt
+    /// plus totalWorkMinted. Repayments and liquidations burn debt; neither restores work rights.
+    function mintFromWork(uint256 amount) external nonReentrant {
+        if (amount == 0) revert ZeroAmount();
+        _requireFreshFeeds();
+        if (compToken.vault() != address(this)) revert NotInitialized();
+        if (oracle.mintingRights(msg.sender) < amount) revert InsufficientRights();
+        totalWorkMinted += amount;
+        oracle.consumeRights(msg.sender, amount);
+        compToken.mint(msg.sender, amount);
+        emit WorkMinted(msg.sender, amount);
     }
 
     /// @notice Repay the caller's debt by burning their COMP; no COMP approval is required.
@@ -133,48 +151,76 @@ contract CDPVault is ReentrancyGuard {
         if (amount > position.debt) revert ExcessRepayment();
         position.debt -= amount;
         compToken.burn(msg.sender, amount);
+        _clearIfRecovered(msg.sender);
         emit COMPRepaid(msg.sender, amount);
     }
 
-    /// @notice Burn the caller's COMP against an unhealthy position and receive IMD with a 10% bonus.
-    /// @dev PRICE ASSUMPTION: 1 IMD == 1 COMP. Payout is floor(debtToRepay * 110 / 100).
-    /// Reverts if the target is healthy, repayment exceeds debt, or collateral cannot cover the full payout.
-    /// At the fixed price, a healthy position cannot become unhealthy through normal operations.
-    function liquidate(address owner, uint256 debtToRepay) external nonReentrant {
-        if (debtToRepay == 0) revert ZeroAmount();
+    /// @notice Start an underwater position's grace window; repeated marks preserve its original snapshot.
+    function markUnderwater(address owner) external nonReentrant {
+        _requireFreshFeeds();
         Position storage position = positions[owner];
         if (_healthy(position.collateral, position.debt)) revert HealthyPosition();
+        if (liquidationMarks[owner].marked) return;
+        uint256 grace = gracePeriod();
+        liquidationMarks[owner] = LiquidationMark(block.timestamp, grace, true);
+        emit UnderwaterMarked(owner, block.timestamp, grace);
+    }
+
+    /// @notice Anyone may clear a mark after observing recovery, including a recovery caused only by a feed.
+    /// @dev latestValue cannot reveal an unobserved recover-then-fall sequence. Keepers should clear marks
+    /// when recovery is observed; deposit, repayment and successful borrowing/withdrawal also clear them.
+    function clearRecoveredMark(address owner) external nonReentrant {
+        _requireFreshFeeds();
+        Position storage position = positions[owner];
+        if (!_healthy(position.collateral, position.debt)) revert UnderwaterPosition();
+        _clearMark(owner);
+    }
+
+    /// @notice Burn caller COMP against a marked, still-underwater position after its snapshotted grace.
+    /// @dev Payout is floor(debtToRepay * 1.1e18 / price); collateral must cover the full payout.
+    function liquidate(address owner, uint256 debtToRepay) external nonReentrant {
+        if (debtToRepay == 0) revert ZeroAmount();
+        _requireFreshFeeds();
+        Position storage position = positions[owner];
+        if (_healthy(position.collateral, position.debt)) revert HealthyPosition();
+        LiquidationMark storage mark = liquidationMarks[owner];
+        if (!mark.marked) revert PositionNotMarked();
+        if (block.timestamp - mark.markedAt < mark.grace) revert GracePeriodNotElapsed();
         if (debtToRepay > position.debt) revert ExcessRepayment();
-        uint256 bonus = debtToRepay / 10;
-        if (debtToRepay > position.collateral || bonus > position.collateral - debtToRepay) {
-            revert InsufficientCollateral();
-        }
-        uint256 collateralSeized = debtToRepay + bonus;
+        uint256 collateralSeized = Math.mulDiv(debtToRepay, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, _price());
+        if (collateralSeized > position.collateral) revert InsufficientCollateral();
         position.debt -= debtToRepay;
         position.collateral -= collateralSeized;
+        _clearIfRecovered(owner);
         compToken.burn(msg.sender, debtToRepay);
         imdToken.safeTransfer(msg.sender, collateralSeized);
         emit Liquidated(owner, msg.sender, debtToRepay, collateralSeized);
     }
 
-    /// @notice Integer CR percentage at the fixed 1 IMD == 1 COMP price, rounded down.
+    /// @notice floor(collateral * price * 100 / (debt * 1e18)), using the latest accepted price.
     /// @dev Returns uint256.max for debt-free positions; unrepresentably large ratios also saturate at that value.
     function collateralRatio(address owner) external view returns (uint256) {
         Position storage position = positions[owner];
-        uint256 debt = position.debt;
-        if (debt == 0) return type(uint256).max;
-        uint256 whole = position.collateral / debt;
-        if (whole > type(uint256).max / 100) return type(uint256).max;
-        uint256 scaled = whole * 100;
-        uint256 fraction = Math.mulDiv(position.collateral % debt, 100, debt);
-        if (fraction > type(uint256).max - scaled) return type(uint256).max;
-        return scaled + fraction;
+        if (position.debt == 0) return type(uint256).max;
+        return _collateralRatio(position.collateral, position.debt, _price());
+    }
+
+    /// @notice Minimum CR, derived only from NHI: 200 at/below .60; 150 at/above .85.
+    function minCR() public view returns (uint256) {
+        (uint256 nhi,) = nhiFeed.latestValue();
+        return _minCR(nhi);
+    }
+
+    /// @notice Grace derived only from NHI: zero at/below .60; six hours at/above .85.
+    function gracePeriod() public view returns (uint256) {
+        (uint256 nhi,) = nhiFeed.latestValue();
+        return _gracePeriod(nhi);
     }
 
     /// @dev Accepts only a deployed contract that answers `mintingRights(address)` as IWorkOracle requires.
     /// If the target additionally exposes `vault()` (as MockWorkOracle does), that consumer must be this vault;
     /// an oracle without that view is accepted so a drop-in IWorkOracle implementation remains compatible.
-    function _setOracle(address oracle_) private {
+    function _validateOracle(address oracle_) private view {
         if (oracle_.code.length == 0) revert InvalidOracle();
         (bool ok, bytes memory data) = oracle_.staticcall(abi.encodeCall(IWorkOracle.mintingRights, (address(this))));
         if (!ok || data.length != 32) revert InvalidOracle();
@@ -182,12 +228,69 @@ contract CDPVault is ReentrancyGuard {
         if (ok && data.length == 32 && abi.decode(data, (uint256)) != uint256(uint160(address(this)))) {
             revert InvalidOracle();
         }
-        oracle = IWorkOracle(oracle_);
-        emit OracleSet(oracle_);
     }
 
-    /// @dev Equivalent to collateral * 100 >= debt * 150, without overflowing either product.
-    function _healthy(uint256 collateral, uint256 debt) private pure returns (bool) {
-        return collateral >= debt && collateral - debt >= debt / 2 + debt % 2;
+    function _requireFreshFeeds() private view {
+        if (priceFeed.isStale() || nhiFeed.isStale()) revert StaleFeed();
+        _price();
+    }
+
+    function _price() private view returns (uint256 price) {
+        (price,) = priceFeed.latestValue();
+        if (price == 0) revert InvalidPrice();
+    }
+
+    function _minCR(uint256 nhi) private pure returns (uint256) {
+        if (nhi >= 0.85e18) return 150;
+        if (nhi <= 0.6e18) return 200;
+        return 150 + (0.85e18 - nhi) * 50 / 0.25e18;
+    }
+
+    function _gracePeriod(uint256 nhi) private pure returns (uint256) {
+        if (nhi >= 0.85e18) return 6 hours;
+        if (nhi <= 0.6e18) return 0;
+        return (nhi - 0.6e18) * 6 hours / 0.25e18;
+    }
+
+    function _healthy(uint256 collateral, uint256 debt) private view returns (bool) {
+        return debt == 0 || _collateralRatio(collateral, debt, _price()) >= minCR();
+    }
+
+    function _clearIfRecovered(address owner) private {
+        if (!liquidationMarks[owner].marked) return;
+        Position storage position = positions[owner];
+        if (position.debt == 0) {
+            _clearMark(owner);
+        } else if (!priceFeed.isStale() && !nhiFeed.isStale()) {
+            (uint256 price,) = priceFeed.latestValue();
+            if (price != 0 && _collateralRatio(position.collateral, position.debt, price) >= minCR()) {
+                _clearMark(owner);
+            }
+        }
+    }
+
+    function _clearMark(address owner) private {
+        if (!liquidationMarks[owner].marked) return;
+        delete liquidationMarks[owner];
+        emit UnderwaterMarkCleared(owner);
+    }
+
+    /// @dev Divide collateral into whole/remainder debt units before pricing. This preserves fractions
+    /// even for one-wei debt, avoids overflowing debt * 1e16, and saturates only an unrepresentable ratio.
+    function _collateralRatio(uint256 collateral, uint256 debt, uint256 price) private pure returns (uint256) {
+        if (debt == 0) return type(uint256).max;
+        uint256 scale = 1e16;
+        uint256 whole = collateral / debt;
+        uint256 priceWhole = price / scale;
+        if (priceWhole != 0 && whole > type(uint256).max / priceWhole) return type(uint256).max;
+        uint256 ratio = whole * priceWhole;
+        uint256 fraction = Math.mulDiv(collateral % debt, price, debt);
+        ratio = _saturatingAdd(ratio, Math.mulDiv(whole, price % scale, scale));
+        ratio = _saturatingAdd(ratio, fraction / scale);
+        return _saturatingAdd(ratio, (mulmod(whole, price, scale) + fraction % scale) / scale);
+    }
+
+    function _saturatingAdd(uint256 a, uint256 b) private pure returns (uint256) {
+        return b > type(uint256).max - a ? type(uint256).max : a + b;
     }
 }
