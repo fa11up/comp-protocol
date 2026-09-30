@@ -31,7 +31,7 @@ contract CDPVaultTest is ProtocolFixture {
         vm.expectRevert(CDPVault.InvalidToken.selector);
         new CDPVault(address(0), address(comp), address(0), address(priceFeed), address(nhiFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(imd), address(0), address(0), address(priceFeed), address(nhiFeed));
+        new CDPVault(alice, address(0), address(0), address(priceFeed), address(nhiFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
         new CDPVault(address(imd), alice, address(0), address(priceFeed), address(nhiFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
