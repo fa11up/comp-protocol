@@ -1,3 +1,5 @@
 out/
 cache/
 broadcast/
+oracle/node_modules/
+oracle/relayer.config.js

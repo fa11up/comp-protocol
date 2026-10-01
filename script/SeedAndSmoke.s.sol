@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.26;
+
+import {Script, console2} from "forge-std/Script.sol";
+import {PriceFeed} from "../src/PriceFeed.sol";
+import {NhiFeed} from "../src/NhiFeed.sol";
+import {CDPVault} from "../src/CDPVault.sol";
+import {CompToken} from "../src/CompToken.sol";
+import {MockIMD} from "../src/MockIMD.sol";
+import {MockWorkOracle} from "../src/MockWorkOracle.sol";
+
+/// @notice Seed both feeds through the reporter path, then drive one full borrow/repay cycle.
+/// @dev The reporter path is the testnet fallback; the attested path is exercised separately by
+/// RelayAttestation (JS), because the signed struct comes from the control plane.
+/// PRICE is WETH wei per 1e18 raw IMD, the same figure the oracle question asks for.
+contract SeedAndSmoke is Script {
+    function run() external {
+        CDPVault vault = CDPVault(vm.envAddress("VAULT"));
+        uint256 price = vm.envUint("PRICE"); // e.g. 1292410679962996
+        uint256 nhi = vm.envOr("NHI", uint256(0.9e18)); // >= 0.85e18 => minCR 150, grace 6h
+        address me = vm.envAddress("OPERATOR");
+
+        PriceFeed priceFeed = PriceFeed(address(vault.priceFeed()));
+        NhiFeed nhiFeed = NhiFeed(address(vault.nhiFeed()));
+        MockIMD imd = MockIMD(address(vault.imdToken()));
+        CompToken comp = vault.compToken();
+
+        vm.startBroadcast();
+
+        if (priceFeed.isStale()) priceFeed.report(price);
+        if (nhiFeed.isStale()) nhiFeed.report(nhi);
+
+        require(!priceFeed.isStale() && !nhiFeed.isStale(), "feeds still stale after reporting");
+        console2.log("minCR now         ", vault.minCR());
+        console2.log("gracePeriod now   ", vault.gracePeriod());
+
+        // A deposit large enough to clear minCR at this price, plus headroom.
+        // MockIMD's faucet is pinned to APPROVED_OPERATOR in source, so the broadcaster cannot
+        // mint unless it happens to be that wallet — it spends the balance it already holds.
+        uint256 debt = vm.envOr("DEBT", uint256(1e18));
+        uint256 collateral = (debt * 1e18 * vault.minCR() * 3) / (price * 100);
+        require(imd.balanceOf(me) >= collateral, "insufficient IMD: mint to this wallet from the faucet operator");
+        imd.approve(address(vault), collateral);
+        vault.depositCollateral(collateral);
+        vault.mintCOMP(debt);
+        console2.log("collateral         ", collateral);
+        console2.log("debt               ", debt);
+        console2.log("collateralRatio    ", vault.collateralRatio(me));
+        require(comp.balanceOf(me) >= debt, "COMP not minted");
+
+        // Work channel: no collateral, no debt. grantRights is pinned to APPROVED_OPERATOR in
+        // source, so unless the broadcaster is that wallet the rights must be granted separately.
+        // Exercised only when they are already there, which keeps this script re-runnable.
+        MockWorkOracle workOracle = MockWorkOracle(address(vault.oracle()));
+        if (workOracle.mintingRights(me) >= debt) {
+            uint256 beforeWork = vault.totalWorkMinted();
+            vault.mintFromWork(debt);
+            require(vault.totalWorkMinted() == beforeWork + debt, "work mint not recorded");
+            console2.log("work channel       exercised");
+        } else {
+            console2.log("work channel       SKIPPED - no rights; grantRights from the faucet operator");
+        }
+
+        vault.repayCOMP(debt);
+        vm.stopBroadcast();
+
+        (uint256 c, uint256 d) = vault.positions(me);
+        console2.log("after repay: collateral", c, "debt", d);
+        require(d == 0, "debt not cleared");
+        require(comp.totalSupply() == vault.totalWorkMinted(), "supply invariant broken");
+        console2.log("\nSupply invariant holds: totalSupply == summed debt + totalWorkMinted");
+    }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "comp-oracle-tools",
+  "private": true,
+  "type": "commonjs",
+  "description": "Preflight, relay and simulation tooling for IdentityMD oracle attestations",
+  "dependencies": { "ethers": "^5.7.2" }
+}

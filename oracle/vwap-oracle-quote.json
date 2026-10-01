@@ -1,0 +1,26 @@
+{
+  "requestKey": "generated-fresh-by-submit.js",
+  "action": "oracle.request",
+  "input": {
+    "v": 1,
+    "question": "Across every Swap event the Uniswap v4 PoolManager 0x000000000004444c5dc75cb358380d2e3de08a90 emitted for pool id 0xb07d640fd9e2eb9dc81b953c8e4fd006bdfeaf276010fb5418eb763ca15abfb3 on Ethereum mainnet in the window, what is the volume-weighted average price of IMD in native ETH, as the total absolute amount0 divided by the total absolute amount1, scaled by 1e18 and truncated to a whole integer?",
+    "chainId": 1,
+    "window": { "fromBlock": 26098000, "toBlock": 26100000 },
+    "answerType": "uint256",
+    "evidence": "panel",
+    "toleranceBps": 0,
+    "definitions": {
+      "method": "Compute from an Ethereum RPC with eth_getLogs over exactly the window; this is a chain read, not a fact to look up. Name the RPC and the command in source.",
+      "event": "event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee), emitted by the PoolManager above, filtered to topic1 equal to the pool id above. No other pool.",
+      "sums": "Take amount0 and amount1 as signed int128 from the log data. Sum their absolute values separately over every matching log: sum0 over amount0, sum1 over amount1. amount0 is native ETH in wei, amount1 is IMD in raw units with 18 decimals.",
+      "formula": "answer = floor(sum0 * 10**18 / sum1), computed with exact integer arithmetic. No floating point. Truncate toward zero.",
+      "chunks": "If the RPC caps a getLogs range, split the range and add the sums; do not drop a chunk.",
+      "sanity": "The result is wei of native ETH per 1e18 raw IMD and lies near 2.2e15. A result near 4.5e20 means the division was inverted.",
+      "refusal": "If the window contains no matching Swap logs, sum1 is zero and the average is undefined: report inability rather than answering 0."
+    },
+    "guards": { "min": "100000000000000", "max": "100000000000000000" },
+    "panelSize": 20,
+    "quorum": 14,
+    "validForSeconds": 86400
+  }
+}

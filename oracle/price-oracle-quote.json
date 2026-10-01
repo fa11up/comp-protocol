@@ -1,0 +1,34 @@
+{
+  "requestKey": "generated-fresh-by-submit.js",
+  "action": "oracle.request",
+  "input": {
+    "v": 1,
+    "question": "At the last block of the window on Ethereum mainnet, read slot0().sqrtPriceX96 from the Uniswap v3 pool at 0xd6a822d028bbf7b6edfa1533e110ee40c08551d9, whose token0 is WETH (0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2) and token1 is IMD (0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7). Compute floor(1e18 * 2**192 / sqrtPriceX96**2) and return that unsigned integer. It is the number of WETH wei that 1e18 raw units of IMD are worth at that instantaneous pool price, using raw token units with no decimal adjustment and no rounding other than truncation toward zero. Do not use any other pool, any time-weighted average, or any external price source.",
+    "chainId": 1,
+    "window": {
+      "hours": 24
+    },
+    "answerType": "uint256",
+    "evidence": "chain",
+    "panelSize": 100,
+    "quorum": 70,
+    "toleranceBps": 0,
+    "validForSeconds": 86400,
+    "definitions": {
+      "sqrtPriceX96": "The FIRST return value of slot0() on 0xd6a822d028bbf7b6edfa1533e110ee40c08551d9, decoded as a full uint160 from all 32 bytes of the first ABI word. Do not truncate, shift, or drop any hex digit. At the pinned block it is a 101-bit integer near 2.2e30.",
+      "formula": "Return floor(1e18 * 2**192 / sqrtPriceX96**2) with exact integer arithmetic. No floating point anywhere. Truncate toward zero.",
+      "units": "Raw token units with no decimal adjustment. token0 is WETH (0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2), token1 is IMD (0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7), fee tier 10000. Verify token0/token1 before computing; do not assume the ordering.",
+      "block": "Use the pinned window's last block only. Not the chain head, not a TWAP, not an observation from the oracle cardinality array.",
+      "sanity": "The result is WETH wei per 1e18 raw IMD and lies near 1.3e15. A result near 3.3e17 means sqrtPriceX96 was read 16x too small: re-read the full 32-byte word.",
+      "refusal": "If the pool, the block or slot0 cannot be read, report inability rather than guessing or substituting another venue."
+    },
+    "guards": {
+      "min": "100000000000000",
+      "max": "100000000000000000"
+    },
+    "consumer": {
+      "chainId": 11155111,
+      "verifyingContract": "0x5bec0f48c7e054d84be5a96e9e7aa5530c2369f0"
+    }
+  }
+}
