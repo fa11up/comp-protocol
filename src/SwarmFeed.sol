@@ -25,6 +25,9 @@ abstract contract SwarmFeed is ISwarmFeed {
         uint64 toBlock;
         bytes32 blockHash;
         bytes32 panelJobId;
+        uint16 panelSize;
+        uint16 quorum;
+        uint16 agreed;
         uint64 issuedAt;
         uint64 expiresAt;
     }
@@ -42,13 +45,23 @@ abstract contract SwarmFeed is ISwarmFeed {
     error ExpiredAttestation();
     error StaleAttestation();
     error ReplayedAttestation();
+    error PanelTooSmall();
+    error NotEnoughAgreement();
 
     event ValueUpdated(uint256 value, uint64 updatedAt);
     event Reported(uint256 indexed round, address indexed reporter, uint256 value);
     event AttestationAccepted(bytes32 indexed requestId, bytes32 questionHash);
 
+    /// @notice Smallest panel this feed accepts, read from the signed attestation.
+    /// @dev Attestation v2 signs panelSize/quorum/agreed, so the CONSUMER sets the real bar instead of
+    /// trusting the request's own quorum. A request may therefore ask for a low quorum so that it
+    /// attests at all, while this contract still refuses anything thinner than these floors.
+    uint16 public constant MIN_PANEL_SIZE = 25;
+    /// @notice Smallest number of members that must have given the signed answer.
+    uint16 public constant MIN_AGREED = 15;
+
     bytes32 public constant ATTESTATION_TYPEHASH = keccak256(
-        "OracleAttestation(bytes32 requestId,uint256 chainId,bytes32 questionHash,uint8 answerType,bytes answer,uint256 figure,uint64 fromBlock,uint64 toBlock,bytes32 blockHash,bytes32 panelJobId,uint64 issuedAt,uint64 expiresAt)"
+        "OracleAttestation(bytes32 requestId,uint256 chainId,bytes32 questionHash,uint8 answerType,bytes answer,uint256 figure,uint64 fromBlock,uint64 toBlock,bytes32 blockHash,bytes32 panelJobId,uint16 panelSize,uint16 quorum,uint16 agreed,uint64 issuedAt,uint64 expiresAt)"
     );
     bytes32 public immutable DOMAIN_SEPARATOR;
     uint256 private constant _HALF_CURVE_ORDER = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
@@ -106,7 +119,7 @@ abstract contract SwarmFeed is ISwarmFeed {
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
                 keccak256("IdentityMD Oracle"),
-                keccak256("1"),
+                keccak256("2"),
                 block.chainid,
                 address(this)
             )
@@ -146,6 +159,8 @@ abstract contract SwarmFeed is ISwarmFeed {
     function submitAttestation(OracleAttestation calldata a, bytes calldata sig) external {
         if (relayer != address(0) && msg.sender != relayer) revert UnauthorizedRelayer();
         if (a.chainId != attestationChainId) revert InvalidAttestationChain();
+        if (a.panelSize < MIN_PANEL_SIZE) revert PanelTooSmall();
+        if (a.agreed < MIN_AGREED || a.agreed > a.panelSize) revert NotEnoughAgreement();
         if (a.answerType != attestationAnswerType) revert InvalidAnswerType();
         if (block.timestamp > a.expiresAt) revert ExpiredAttestation();
         if (a.issuedAt > block.timestamp || a.issuedAt > a.expiresAt) revert InvalidTimestamp();
@@ -182,22 +197,25 @@ abstract contract SwarmFeed is ISwarmFeed {
         }
     }
 
+    /// @dev Split across two `abi.encode` calls and concatenated: every field is a static
+    /// single-word type, so this is byte-identical to encoding all sixteen at once, and it keeps the
+    /// function off a stack-too-deep without turning on viaIR.
     function _attestationHash(OracleAttestation calldata a) private pure returns (bytes32) {
         return keccak256(
-            abi.encode(
-                ATTESTATION_TYPEHASH,
-                a.requestId,
-                a.chainId,
-                a.questionHash,
-                a.answerType,
-                keccak256(a.answer),
-                a.figure,
-                a.fromBlock,
-                a.toBlock,
-                a.blockHash,
-                a.panelJobId,
-                a.issuedAt,
-                a.expiresAt
+            bytes.concat(
+                abi.encode(
+                    ATTESTATION_TYPEHASH,
+                    a.requestId,
+                    a.chainId,
+                    a.questionHash,
+                    a.answerType,
+                    keccak256(a.answer),
+                    a.figure,
+                    a.fromBlock
+                ),
+                abi.encode(
+                    a.toBlock, a.blockHash, a.panelJobId, a.panelSize, a.quorum, a.agreed, a.issuedAt, a.expiresAt
+                )
             )
         );
     }

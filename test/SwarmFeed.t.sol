@@ -628,6 +628,11 @@ abstract contract SwarmFeedTest is Test {
         a.toBlock = 200;
         a.blockHash = keccak256("block");
         a.panelJobId = keccak256("panel");
+        // Attestation v2: signed panel figures. Set at or above the feed's floors so these tests
+        // exercise the guard each one is about rather than tripping the panel check first.
+        a.panelSize = 30;
+        a.quorum = 10;
+        a.agreed = 20;
         a.issuedAt = uint64(block.timestamp);
         a.expiresAt = uint64(block.timestamp + 1 hours);
     }
@@ -641,7 +646,7 @@ abstract contract SwarmFeedTest is Test {
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
                 keccak256("IdentityMD Oracle"),
-                keccak256("1"),
+                keccak256("2"),
                 chainId,
                 consumer
             )
@@ -657,7 +662,7 @@ abstract contract SwarmFeedTest is Test {
             bytes.concat(
                 abi.encode(
                     keccak256(
-                        "OracleAttestation(bytes32 requestId,uint256 chainId,bytes32 questionHash,uint8 answerType,bytes answer,uint256 figure,uint64 fromBlock,uint64 toBlock,bytes32 blockHash,bytes32 panelJobId,uint64 issuedAt,uint64 expiresAt)"
+                        "OracleAttestation(bytes32 requestId,uint256 chainId,bytes32 questionHash,uint8 answerType,bytes answer,uint256 figure,uint64 fromBlock,uint64 toBlock,bytes32 blockHash,bytes32 panelJobId,uint16 panelSize,uint16 quorum,uint16 agreed,uint64 issuedAt,uint64 expiresAt)"
                     ),
                     a.requestId,
                     a.chainId,
@@ -666,7 +671,10 @@ abstract contract SwarmFeedTest is Test {
                     keccak256(a.answer),
                     a.figure
                 ),
-                abi.encode(a.fromBlock, a.toBlock, a.blockHash, a.panelJobId, a.issuedAt, a.expiresAt)
+                abi.encode(
+                    a.fromBlock, a.toBlock, a.blockHash, a.panelJobId, a.panelSize, a.quorum, a.agreed,
+                    a.issuedAt, a.expiresAt
+                )
             )
         );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, keccak256(abi.encodePacked("\x19\x01", domain, body)));
