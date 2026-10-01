@@ -9,6 +9,7 @@ import {CompToken} from "./CompToken.sol";
 import {MockWorkOracle} from "./MockWorkOracle.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
+import {FEE_RECIPIENT} from "./DeploymentConfig.sol";
 
 /// @notice Price-aware COMP borrowing and independent work-credit minting on Sepolia.
 /// @dev Both tokens use 18 decimals; price is COMP per IMD scaled by 1e18.
@@ -46,6 +47,7 @@ contract CDPVault is ReentrancyGuard {
     error GracePeriodNotElapsed();
     error MarkExpired();
     error UnderwaterPosition();
+    error DebtCeilingReached();
 
     event OracleSet(address indexed oracle);
     event CollateralDeposited(address indexed account, uint256 amount);
@@ -58,6 +60,24 @@ contract CDPVault is ReentrancyGuard {
     event UnderwaterMarkCleared(address indexed owner);
 
     uint256 public constant LIQUIDATION_BONUS_PERCENT = 10;
+
+    /// @notice Maximum collateral-backed debt this vault will ever carry, in stablecoin units.
+    /// @dev Unlimited by default so behaviour is unchanged; a deployment that wants a cap overrides
+    /// this. There is no admin, so the value a deployment chooses is permanent for that vault —
+    /// raising a ceiling means a new vault and a migration, which is the price of having no keys.
+    function debtCeiling() public view virtual returns (uint256) {
+        return type(uint256).max;
+    }
+
+    /// @notice Share of the liquidation bonus paid to FEE_RECIPIENT, in basis points of the bonus.
+    /// @dev Zero by default. The borrower's loss is identical either way: this splits the existing
+    /// 10% bonus rather than seizing more, so turning it on never makes liquidation harsher.
+    function protocolBonusShareBps() public view virtual returns (uint256) {
+        return 0;
+    }
+
+    /// @notice Total collateral-backed debt outstanding. Work-minted supply is tracked separately.
+    uint256 public totalDebt;
 
     IERC20 public immutable imdToken;
     CompToken public immutable compToken;
@@ -129,6 +149,9 @@ contract CDPVault is ReentrancyGuard {
         Position storage position = positions[msg.sender];
         uint256 resultingDebt = position.debt + amount;
         if (!_healthy(position.collateral, resultingDebt)) revert UnsafeCollateralRatio();
+        uint256 resultingTotal = totalDebt + amount;
+        if (resultingTotal > debtCeiling()) revert DebtCeilingReached();
+        totalDebt = resultingTotal;
         position.debt = resultingDebt;
         _clearMark(msg.sender);
         compToken.mint(msg.sender, amount);
@@ -156,6 +179,7 @@ contract CDPVault is ReentrancyGuard {
         Position storage position = positions[msg.sender];
         if (amount > position.debt) revert ExcessRepayment();
         position.debt -= amount;
+        totalDebt -= amount;
         compToken.burn(msg.sender, amount);
         _clearIfRecovered(msg.sender);
         emit COMPRepaid(msg.sender, amount);
@@ -203,13 +227,20 @@ contract CDPVault is ReentrancyGuard {
         if (block.timestamp - mark.markedAt < mark.grace) revert GracePeriodNotElapsed();
         if (_expired(mark)) revert MarkExpired();
         if (debtToRepay > position.debt) revert ExcessRepayment();
-        uint256 collateralSeized = Math.mulDiv(debtToRepay, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, _price());
+        uint256 price = _price();
+        uint256 collateralSeized = Math.mulDiv(debtToRepay, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, price);
         if (collateralSeized > position.collateral) revert InsufficientCollateral();
+        // The protocol's cut comes out of the bonus, never out of the principal, so a liquidator is
+        // always made whole on the debt it burned.
+        uint256 protocolCut =
+            Math.mulDiv(collateralSeized - Math.mulDiv(debtToRepay, 1e18, price), protocolBonusShareBps(), 10_000);
         position.debt -= debtToRepay;
+        totalDebt -= debtToRepay;
         position.collateral -= collateralSeized;
         _clearIfRecovered(owner);
         compToken.burn(msg.sender, debtToRepay);
-        imdToken.safeTransfer(msg.sender, collateralSeized);
+        imdToken.safeTransfer(msg.sender, collateralSeized - protocolCut);
+        if (protocolCut != 0) imdToken.safeTransfer(FEE_RECIPIENT, protocolCut);
         emit Liquidated(owner, msg.sender, debtToRepay, collateralSeized);
     }
 
