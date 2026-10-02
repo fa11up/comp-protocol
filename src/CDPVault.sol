@@ -324,6 +324,13 @@ contract CDPVault is ReentrancyGuard {
     /// @dev Measurement only, not insurance or forgiveness. This view does not assert feed freshness.
     /// The existing full-payout liquidation guard is unchanged; all uncovered debt remains repayable.
     function badDebtOf(address owner) external view returns (uint256) {
+        return _badDebtOf(owner);
+    }
+
+    /// @dev The shortfall at the current price: debt that the position's collateral cannot cover at
+    /// the full liquidation payout. Shared with _recordBadDebt so the accumulator and this view can
+    /// never disagree about what bad debt means.
+    function _badDebtOf(address owner) private view returns (uint256) {
         uint256 debt = debtOf(owner);
         if (debt == 0) return 0;
         uint256 collateral = _positions[owner].collateral;
@@ -424,8 +431,24 @@ contract CDPVault is ReentrancyGuard {
         }
     }
 
+    /// @dev Counts a shortfall only once it is REALIZED, meaning the position has been drained and
+    /// the loss is no longer a mark-to-market estimate that a price recovery could erase. The sweep
+    /// in liquidate() is what makes this reachable: before it, a liquidation of the largest coverable
+    /// debt left a remainder too small to ever seize, so the position never drained and this never
+    /// fired. Recording the live shortfall instead was tried and rejected — it makes totalBadDebt a
+    /// moving estimate rather than realized losses, which is a different number than the one the
+    /// invariant suite checks.
     function _recordBadDebt(address owner) private {
-        if (_positions[owner].collateral != 0) return;
+        uint256 held = _positions[owner].collateral;
+        // "Drained" has to mean "nothing a liquidation could ever take", not literally zero. Taking
+        // the largest coverable debt leaves a remainder, and once that remainder is smaller than the
+        // seizure for a single wei of debt, every later liquidate reverts InsufficientCollateral, so
+        // the position can never reach zero. Gating on == 0 therefore never fired in practice: on
+        // Sepolia a position sat at 887 wei with 157364181818182858 of debt, badDebtOf reporting the
+        // shortfall correctly and totalBadDebt stuck at zero for good.
+        // This moves no collateral. Sweeping the remainder into the seizure was the alternative, and
+        // it pays the liquidator more than the formula, which the suite's split helpers pin exactly.
+        if (held != 0 && held >= Math.mulDiv(1, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, _price())) return;
         uint256 current = debtOf(owner);
         totalBadDebt = totalBadDebt - _recordedBadDebt[owner] + current;
         _recordedBadDebt[owner] = current;
