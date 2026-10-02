@@ -11,6 +11,7 @@ import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
 import {SwarmFeed} from "../src/SwarmFeed.sol";
+import {APPROVED_OPERATOR, FEED_REPORTER_0} from "../src/DeploymentConfig.sol";
 
 contract SelfContainedInvariantFactory {
     function deploy(address imd, address price, address nhi, address spot) external returns (CDPVault) {
@@ -22,7 +23,8 @@ contract SelfContainedInvariantFactory {
 /// Fixed market values isolate deployment, borrower accounting and the feed freshness boundary;
 /// the existing protocol invariant separately exercises market shocks and liquidations.
 contract SelfContainedDeploymentHandler is Test {
-    address public constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+    address public constant OPERATOR = APPROVED_OPERATOR;
+    address public constant REPORTER = FEED_REPORTER_0;
     address private constant RELAYER = address(0xD001);
     address private constant ORIGIN = address(0xD002);
     uint256 public constant INITIAL_BALANCE = 1_000_000 ether;
@@ -58,10 +60,14 @@ contract SelfContainedDeploymentHandler is Test {
         assertEq(comp.vault(), address(vault), "token linked by constructor");
         assertEq(oracle.vault(), address(vault), "oracle linked by constructor");
 
-        // No initialization call. The only privileged transactions seed feeds and fund mock faucets.
-        vm.startPrank(OPERATOR);
+        // No initialization call. The only privileged transactions seed feeds and fund mock faucets,
+        // and those are two different parties: REPORTER is the feeds' pinned reporter, OPERATOR is
+        // the faucet authority baked into MockIMD and MockWorkOracle. They used to be one address.
+        vm.startPrank(REPORTER);
         priceFeed.report(1 ether);
         nhiFeed.report(0.85 ether);
+        vm.stopPrank();
+        vm.startPrank(OPERATOR);
         for (uint256 i; i < actors.length; ++i) {
             imd.mint(actors[i], INITIAL_BALANCE);
             oracle.grantRights(actors[i], INITIAL_RIGHTS);
@@ -206,7 +212,7 @@ contract SelfContainedDeploymentHandler is Test {
     function expireAndRefreshFeeds(uint256 seed, bool refreshPriceFirst) external {
         address actor = actors[seed % 4];
         vm.warp(block.timestamp + 1 days + 1);
-        vm.prank(OPERATOR);
+        vm.prank(REPORTER);
         if (refreshPriceFirst) priceFeed.report(1 ether);
         else nhiFeed.report(0.85 ether);
         bytes32 beforeState = _stateDigest(actor);
@@ -222,7 +228,7 @@ contract SelfContainedDeploymentHandler is Test {
         }
         vm.stopPrank();
         assertEq(_stateDigest(actor), beforeState, "one fresh feed cannot authorize borrowing");
-        vm.prank(OPERATOR);
+        vm.prank(REPORTER);
         if (refreshPriceFirst) nhiFeed.report(0.85 ether);
         else priceFeed.report(1 ether);
     }

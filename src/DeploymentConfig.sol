@@ -37,12 +37,26 @@ address constant ORACLE_ATTESTER = 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982;
 /// @dev Sole address permitted to submit an attestation. Zero would mean permissionless relay,
 /// which SwarmFeed.submitAttestation documents as unsafe for as long as questionHash binds a
 /// moving block window and so cannot identify WHICH question an attestation answers.
-address constant ATTESTATION_RELAYER = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+///
+/// TESTNET VALUE. This is the simulation wallet W0, whose key sits in sim/sim.config.js so the
+/// harness can seed feeds and relay attestations unattended. Treat anything it guards as public on
+/// Sepolia: whoever holds that file can set this deployment's prices. That is the deliberate trade
+/// for an iteration loop that needs no human at a browser wallet.
+/// MAINNET MUST CHANGE THIS to a key held outside the repo, and must not reuse W0.
+address constant ATTESTATION_RELAYER = 0x1d0074aB2ba9dA4cCbc67cFC0026E570D0E93951;
 
 /// @dev Fallback reporters. Unused slots are zero; FEED_QUORUM must not exceed the nonzero count.
 /// A single reporter is a single point of failure for the manual path and is deliberate on testnet;
 /// mainnet is a fresh deployment with three distinct keys, none of them FEE_RECIPIENT.
-address constant FEED_REPORTER_0 = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+///
+/// TESTNET VALUE, and the same shared simulation wallet as ATTESTATION_RELAYER — see the warning
+/// there. DeployComp also requires the broadcasting key to be this address, because a deployer who
+/// cannot report cannot seed the feed it just deployed.
+///
+/// One thing this arrangement gets RIGHT that the previous one did not: FEE_RECIPIENT below is
+/// miyagod.eth and is now a different party from the reporter and relayer, which is the separation
+/// FEE_RECIPIENT's own comment requires and which was violated while all three were one address.
+address constant FEED_REPORTER_0 = 0x1d0074aB2ba9dA4cCbc67cFC0026E570D0E93951;
 address constant FEED_REPORTER_1 = address(0);
 address constant FEED_REPORTER_2 = address(0);
 uint8 constant FEED_QUORUM = 1;

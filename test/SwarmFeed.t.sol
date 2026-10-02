@@ -13,6 +13,7 @@ import {MockIMD} from "src/MockIMD.sol";
 import {ConfigurableSwarmFeed} from "./helpers/ConfigurableSwarmFeed.sol";
 import {
     APPROVED_OPERATOR,
+    FEE_RECIPIENT,
     ORACLE_ATTESTER,
     ATTESTATION_RELAYER,
     ATTESTATION_CHAIN_ID,
@@ -782,8 +783,13 @@ contract PinnedAuthorityTest is Test {
     /// a relayer nobody holds a key for cannot seed or re-anchor the feed.
     function test_theTwoValuesThatBrokeLaunch519CannotRecur() public view {
         assertTrue(priceFeed.attestationAnswerType() != 1, "answerType must not be the address enum");
-        assertTrue(priceFeed.relayer() == APPROVED_OPERATOR, "relayer must be an address we operate");
-        assertTrue(priceFeed.isReporter(APPROVED_OPERATOR), "operator must be able to seed manually");
+        assertTrue(priceFeed.relayer() == ATTESTATION_RELAYER, "relayer must be an address we operate");
+        assertTrue(priceFeed.isReporter(FEED_REPORTER_0), "the reporter must be able to seed manually");
+        // The faucet authority is deliberately NOT the reporter or the relayer: whoever sets the
+        // price would otherwise profit from liquidations they can trigger. All three were one
+        // address until the feed authority moved to the simulation wallet.
+        assertTrue(FEED_REPORTER_0 != FEE_RECIPIENT, "the price setter must not collect the fee");
+        assertTrue(ATTESTATION_RELAYER != FEE_RECIPIENT, "the relayer must not collect the fee");
     }
 
     /// @dev The risk bounds stay arguments because they are the values that legitimately differ per
