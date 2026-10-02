@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {SwarmFeed} from "src/SwarmFeed.sol";
 import {PriceFeed} from "src/PriceFeed.sol";
 import {NhiFeed} from "src/NhiFeed.sol";
+import {SpotFeed} from "src/SpotFeed.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
@@ -754,15 +755,17 @@ contract SwarmFeedMechanicsTest is SwarmFeedTest {
 contract PinnedAuthorityTest is Test {
     PriceFeed private priceFeed;
     NhiFeed private nhiFeed;
+    SpotFeed private spotFeed;
 
     function setUp() public {
         vm.chainId(11155111);
         priceFeed = new PriceFeed(1 hours, 1000);
         nhiFeed = new NhiFeed(1 days, 2000);
+        spotFeed = new SpotFeed(30 minutes, 1000);
     }
 
     function test_bothArtifactsReportTheSourcePinnedAuthority() public view {
-        SwarmFeed[2] memory feeds = [SwarmFeed(priceFeed), SwarmFeed(nhiFeed)];
+        SwarmFeed[3] memory feeds = [SwarmFeed(priceFeed), SwarmFeed(nhiFeed), SwarmFeed(spotFeed)];
         for (uint256 i; i < feeds.length; ++i) {
             assertEq(feeds[i].attester(), ORACLE_ATTESTER, "attester");
             assertEq(feeds[i].relayer(), ATTESTATION_RELAYER, "relayer");
@@ -796,5 +799,17 @@ contract PinnedAuthorityTest is Test {
     /// is not replayable on the other even though every pinned value above is identical.
     function test_sharedAuthorityDoesNotShareTheConsumerDomain() public view {
         assertTrue(priceFeed.DOMAIN_SEPARATOR() != nhiFeed.DOMAIN_SEPARATOR());
+        assertTrue(priceFeed.DOMAIN_SEPARATOR() != spotFeed.DOMAIN_SEPARATOR());
+        assertTrue(nhiFeed.DOMAIN_SEPARATOR() != spotFeed.DOMAIN_SEPARATOR());
+    }
+
+    /// @dev The manifest names a deployment by its contract name and has no alias field, so the
+    /// vault's three feeds must be three distinct artifacts. Deploying PriceFeed twice is what
+    /// parked workflow be84ca8c. A separate type is the only representable answer.
+    function test_spotIsItsOwnArtifactSoAManifestCanNameIt() public view {
+        assertTrue(address(spotFeed) != address(priceFeed), "spot must not be the primary");
+        assertNotEq(
+            keccak256(address(spotFeed).code), keccak256(address(priceFeed).code), "distinct artifacts"
+        );
     }
 }

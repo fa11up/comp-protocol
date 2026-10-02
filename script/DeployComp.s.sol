@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
+import {SpotFeed} from "../src/SpotFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {CompToken} from "../src/CompToken.sol";
@@ -37,6 +38,7 @@ contract DeployComp is Script {
 
     uint256 constant MAX_AGE = 86_400; // also bounds CDPVault.liquidationWindow()
     uint256 constant MAX_DEVIATION_BPS = 2_000;
+    uint256 constant SPOT_MAX_AGE = 3_600; // a spot read is only a sanity bound; one hour is generous
 
     // Attestation v2 signs panelSize/quorum/agreed, so the CONSUMER sets the real bar. A request can
     // therefore ask for a low quorum — so that it attests at all — while the feed still refuses
@@ -67,7 +69,10 @@ contract DeployComp is Script {
 
         PriceFeed priceFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
         NhiFeed nhiFeed = new NhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
-        PriceFeed spotFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
+        // A named artifact of its own, not a second PriceFeed: a launch manifest identifies a
+        // deployment by contract name and cannot list one twice. SPOT_MAX_AGE is tighter because a
+        // point-in-time price goes stale faster than the window average it is checking.
+        SpotFeed spotFeed = new SpotFeed(SPOT_MAX_AGE, MAX_DEVIATION_BPS);
         // compToken_ = 0 and oracle_ = 0 put the vault in self-contained mode: it creates and
         // permanently binds its own CompToken and MockWorkOracle, so no post-deploy call exists.
         CDPVault vault =
@@ -91,7 +96,7 @@ contract DeployComp is Script {
         CDPVault vault,
         PriceFeed priceFeed,
         NhiFeed nhiFeed,
-        PriceFeed spotFeed,
+        SpotFeed spotFeed,
         address imd,
         address operator
     ) internal view {
@@ -110,7 +115,7 @@ contract DeployComp is Script {
         require(workOracle.deployer() == APPROVED_OPERATOR, "oracle: faucet authority is not the pinned operator");
         require(workOracle.vault() == address(vault), "oracle: not bound to vault");
 
-        PriceFeed[3] memory feeds = [priceFeed, PriceFeed(address(nhiFeed)), spotFeed];
+        PriceFeed[3] memory feeds = [priceFeed, PriceFeed(address(nhiFeed)), PriceFeed(address(spotFeed))];
         for (uint256 i = 0; i < feeds.length; ++i) {
             // Read off chain and compared to source, not to a local copy of the same literal: this
             // is the check that would have failed the 519 deployment instead of discovering it live.
@@ -127,7 +132,7 @@ contract DeployComp is Script {
             );
             require(feeds[i].attestationAnswerType() != 1, "feed: answerType is the address enum, as on 519");
             require(feeds[i].attestationChainId() == ATTESTATION_CHAIN_ID, "feed: wrong payload chainId");
-            require(feeds[i].maxAge() == MAX_AGE, "feed: wrong maxAge");
+            require(feeds[i].maxAge() == (i == 2 ? SPOT_MAX_AGE : MAX_AGE), "feed: wrong maxAge");
             require(feeds[i].maxDeviationBps() == MAX_DEVIATION_BPS, "feed: wrong maxDeviationBps");
             require(feeds[i].MIN_PANEL_SIZE() == MIN_PANEL_SIZE, "feed: panel floor changed");
             require(feeds[i].MIN_AGREED() == MIN_AGREED, "feed: agreement floor changed");
