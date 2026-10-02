@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {Test} from "forge-std/Test.sol";
 import {SwarmFeed} from "src/SwarmFeed.sol";
 import {PriceFeed} from "src/PriceFeed.sol";
@@ -380,7 +381,9 @@ abstract contract SwarmFeedTest is Test {
         vm.stopPrank();
         MockIMD imd = new MockIMD();
         CompToken comp = new CompToken(address(0));
-        CDPVault vault = new CDPVault(address(imd), address(comp), address(0), address(price), address(nhi));
+        MirroredSwarmFeed spot = new MirroredSwarmFeed(address(price));
+        CDPVault vault =
+            new CDPVault(address(imd), address(comp), address(0), address(price), address(nhi), address(spot));
         vm.startPrank(operator);
         comp.setVault(address(vault));
         imd.mint(REPORTER_A, 140 ether);
@@ -407,7 +410,9 @@ abstract contract SwarmFeedTest is Test {
         nhi.report(0.85 ether);
         vm.prank(REPORTER_B);
         vault.liquidate(REPORTER_A, 100 ether);
-        assertEq(imd.balanceOf(REPORTER_B), 110 ether);
+        assertEq(imd.balanceOf(REPORTER_B), 109 ether, "liquidator receives principal plus 90% of bonus");
+        assertEq(imd.balanceOf(address(this)), 1 ether, "distinct marker receives 10% of bonus");
+        assertEq(imd.balanceOf(REPORTER_B) + imd.balanceOf(address(this)), 110 ether);
         assertEq(comp.totalSupply(), 0);
         (uint256 remaining, uint256 debt) = vault.positions(REPORTER_A);
         assertEq(remaining, 30 ether);
@@ -688,8 +693,15 @@ abstract contract SwarmFeedTest is Test {
                     a.figure
                 ),
                 abi.encode(
-                    a.fromBlock, a.toBlock, a.blockHash, a.panelJobId, a.panelSize, a.quorum, a.agreed,
-                    a.issuedAt, a.expiresAt
+                    a.fromBlock,
+                    a.toBlock,
+                    a.blockHash,
+                    a.panelJobId,
+                    a.panelSize,
+                    a.quorum,
+                    a.agreed,
+                    a.issuedAt,
+                    a.expiresAt
                 )
             )
         );

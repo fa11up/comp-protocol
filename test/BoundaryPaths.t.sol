@@ -16,7 +16,9 @@ contract BoundaryPathsTest is ProtocolFixture {
 
     function test_mintRejectsUnlinkedTokenDespiteConstructorBoundOracle() public {
         CompToken token = new CompToken(address(0));
-        CDPVault fresh = new CDPVault(address(imd), address(token), address(0), address(priceFeed), address(nhiFeed));
+        CDPVault fresh = new CDPVault(
+            address(imd), address(token), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         assertEq(MockWorkOracle(address(fresh.oracle())).vault(), address(fresh));
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintCOMP(1);
@@ -27,9 +29,12 @@ contract BoundaryPathsTest is ProtocolFixture {
 
     function test_mintRejectsTokenLinkedToDifferentVault() public {
         CompToken token = new CompToken(address(0));
-        CDPVault fresh = new CDPVault(address(imd), address(token), address(0), address(priceFeed), address(nhiFeed));
-        CDPVault registeredVault =
-            new CDPVault(address(imd), address(token), address(0), address(priceFeed), address(nhiFeed));
+        CDPVault fresh = new CDPVault(
+            address(imd), address(token), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
+        CDPVault registeredVault = new CDPVault(
+            address(imd), address(token), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         vm.startPrank(OPERATOR);
         token.setVault(address(registeredVault));
         vm.stopPrank();
@@ -42,7 +47,9 @@ contract BoundaryPathsTest is ProtocolFixture {
     }
 
     function test_collateralCanBeRecoveredBeforeInitialization() public {
-        CDPVault fresh = new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed));
+        CDPVault fresh = new CDPVault(
+            address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         vm.startPrank(alice);
         imd.approve(address(fresh), 7);
         fresh.depositCollateral(7);
@@ -176,8 +183,9 @@ contract BoundaryPathsTest is ProtocolFixture {
         assertEq(freshIMD.balanceOf(bob), 0);
 
         CompToken freshCOMP = new CompToken(address(0));
-        CDPVault tokenVault =
-            new CDPVault(address(imd), address(freshCOMP), address(0), address(priceFeed), address(nhiFeed));
+        CDPVault tokenVault = new CDPVault(
+            address(imd), address(freshCOMP), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         vm.prank(OPERATOR);
         freshCOMP.setVault(address(tokenVault));
         // Isolate ERC-20 supply arithmetic using the registered vault as caller.

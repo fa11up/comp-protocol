@@ -8,19 +8,20 @@ import {CDPVault} from "../src/CDPVault.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
+import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {FEED_REPORTER_0} from "../src/DeploymentConfig.sol";
 
 /// @dev Models constructor-only deployment, with no application-call capability.
 contract ApplicationConstructionFactory {
-    function deploy(address imd, address comp, address priceFeed, address nhiFeed, bool useCreate2)
+    function deploy(address imd, address comp, address priceFeed, address nhiFeed, address spotFeed, bool useCreate2)
         external
         returns (CDPVault vault)
     {
         if (useCreate2) {
-            vault = new CDPVault{salt: bytes32(uint256(1))}(imd, comp, address(0), priceFeed, nhiFeed);
+            vault = new CDPVault{salt: bytes32(uint256(1))}(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
         } else {
-            vault = new CDPVault(imd, comp, address(0), priceFeed, nhiFeed);
+            vault = new CDPVault(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
         }
     }
 }
@@ -37,6 +38,7 @@ contract FactoryDeploymentTest is Test {
     MockWorkOracle private oracle;
     TestSwarmFeed private priceFeed;
     TestSwarmFeed private nhiFeed;
+    MirroredSwarmFeed private spotFeed;
 
     function setUp() public {
         factory = new ApplicationConstructionFactory();
@@ -44,13 +46,16 @@ contract FactoryDeploymentTest is Test {
         comp = new CompToken(address(0));
         priceFeed = new TestSwarmFeed(1e18);
         nhiFeed = new TestSwarmFeed(0.85e18);
+        spotFeed = new MirroredSwarmFeed(address(priceFeed));
         _deploy(false);
     }
 
     function _deploy(bool useCreate2) private {
         // Neither the factory, submitting caller nor transaction origin is the operator.
         vm.prank(RELAYER, ORIGIN);
-        vault = factory.deploy(address(imd), address(comp), address(priceFeed), address(nhiFeed), useCreate2);
+        vault = factory.deploy(
+            address(imd), address(comp), address(priceFeed), address(nhiFeed), address(spotFeed), useCreate2
+        );
         oracle = MockWorkOracle(address(vault.oracle()));
     }
 
@@ -169,6 +174,7 @@ contract SelfContainedFactoryDeploymentTest is Test {
     MockWorkOracle private oracle;
     PriceFeed private priceFeed;
     NhiFeed private nhiFeed;
+    MirroredSwarmFeed private spotFeed;
 
     function setUp() public {
         vm.chainId(11155111);
@@ -177,18 +183,23 @@ contract SelfContainedFactoryDeploymentTest is Test {
         imd = new MockIMD();
         priceFeed = new PriceFeed(86400, 2000);
         nhiFeed = new NhiFeed(86400, 2000);
+        spotFeed = new MirroredSwarmFeed(address(priceFeed));
     }
 
     function _deploy(bool useCreate2) private {
         bytes32 initCodeHash = keccak256(
             abi.encodePacked(
                 type(CDPVault).creationCode,
-                abi.encode(address(imd), address(0), address(0), address(priceFeed), address(nhiFeed))
+                abi.encode(
+                    address(imd), address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+                )
             )
         );
         address predicted = vm.computeCreate2Address(bytes32(uint256(1)), initCodeHash, address(factory));
         vm.prank(RELAYER, ORIGIN);
-        vault = factory.deploy(address(imd), address(0), address(priceFeed), address(nhiFeed), useCreate2);
+        vault = factory.deploy(
+            address(imd), address(0), address(priceFeed), address(nhiFeed), address(spotFeed), useCreate2
+        );
         if (useCreate2) assertEq(address(vault), predicted, "CREATE2 uses the factory and zero constructor words");
         comp = vault.compToken();
         oracle = MockWorkOracle(address(vault.oracle()));
@@ -403,19 +414,23 @@ contract SelfContainedFactoryDeploymentTest is Test {
         for (uint256 mode; mode < 2; ++mode) {
             vm.startPrank(RELAYER, ORIGIN);
             vm.expectRevert(CDPVault.InvalidToken.selector);
-            factory.deploy(address(0), address(0), address(priceFeed), address(nhiFeed), mode == 1);
+            factory.deploy(address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed), mode == 1);
             vm.expectRevert(CDPVault.InvalidToken.selector);
-            factory.deploy(BORROWER, address(0), address(priceFeed), address(nhiFeed), mode == 1);
+            factory.deploy(BORROWER, address(0), address(priceFeed), address(nhiFeed), address(spotFeed), mode == 1);
             vm.expectRevert(CDPVault.InvalidToken.selector);
-            factory.deploy(address(imd), BORROWER, address(priceFeed), address(nhiFeed), mode == 1);
+            factory.deploy(address(imd), BORROWER, address(priceFeed), address(nhiFeed), address(spotFeed), mode == 1);
             vm.expectRevert(CDPVault.InvalidToken.selector);
-            factory.deploy(address(imd), address(imd), address(priceFeed), address(nhiFeed), mode == 1);
+            factory.deploy(
+                address(imd), address(imd), address(priceFeed), address(nhiFeed), address(spotFeed), mode == 1
+            );
             vm.expectRevert(CDPVault.InvalidFeed.selector);
-            factory.deploy(address(imd), address(0), address(0), address(nhiFeed), mode == 1);
+            factory.deploy(address(imd), address(0), address(0), address(nhiFeed), address(spotFeed), mode == 1);
             vm.expectRevert(CDPVault.InvalidFeed.selector);
-            factory.deploy(address(imd), address(0), address(priceFeed), BORROWER, mode == 1);
+            factory.deploy(address(imd), address(0), address(priceFeed), BORROWER, address(spotFeed), mode == 1);
             vm.expectRevert(CDPVault.InvalidFeed.selector);
-            factory.deploy(address(imd), address(0), address(priceFeed), address(priceFeed), mode == 1);
+            factory.deploy(
+                address(imd), address(0), address(priceFeed), address(priceFeed), address(spotFeed), mode == 1
+            );
             vm.stopPrank();
         }
     }

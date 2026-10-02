@@ -29,45 +29,58 @@ contract CDPVaultTest is ProtocolFixture {
 
     function test_invalidConstructorTokensAndFeeds() public {
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(0), address(comp), address(0), address(priceFeed), address(nhiFeed));
+        new CDPVault(address(0), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(alice, address(0), address(0), address(priceFeed), address(nhiFeed));
+        new CDPVault(alice, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(imd), alice, address(0), address(priceFeed), address(nhiFeed));
+        new CDPVault(address(imd), alice, address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(imd), address(imd), address(0), address(priceFeed), address(nhiFeed));
+        new CDPVault(address(imd), address(imd), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new CDPVault(address(imd), address(comp), address(0), address(0), address(nhiFeed));
+        new CDPVault(address(imd), address(comp), address(0), address(0), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new CDPVault(address(imd), address(comp), address(0), address(priceFeed), alice);
+        new CDPVault(address(imd), address(comp), address(0), address(priceFeed), alice, address(spotFeed));
     }
 
     function test_constructorRejectsInvalidOrWrongVaultOracle() public {
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(address(imd), address(comp), alice, address(priceFeed), address(nhiFeed));
+        new CDPVault(address(imd), address(comp), alice, address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(address(imd), address(comp), address(imd), address(priceFeed), address(nhiFeed));
+        new CDPVault(address(imd), address(comp), address(imd), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(address(imd), address(comp), address(oracle), address(priceFeed), address(nhiFeed));
+        new CDPVault(
+            address(imd), address(comp), address(oracle), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
+    }
+
+    function test_constructorRejectsMissingOrAliasedSpotFeed() public {
+        address[4] memory invalidSpots = [address(0), alice, address(priceFeed), address(nhiFeed)];
+        for (uint256 i; i < invalidSpots.length; ++i) {
+            vm.expectRevert(CDPVault.InvalidFeed.selector);
+            new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), invalidSpots[i]);
+        }
     }
 
     function test_constructorRejectsSharedPriceAndNhiFeed() public {
         // A valid price of 0.5 must never implicitly become the NHI through an aliased feed.
         priceFeed.setValue(0.5 ether);
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(priceFeed));
+        new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(priceFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new CDPVault(address(imd), address(comp), address(0), address(nhiFeed), address(nhiFeed));
+        new CDPVault(address(imd), address(comp), address(0), address(nhiFeed), address(nhiFeed), address(spotFeed));
         assertEq(vault.minCR(), 150, "distinct NHI remains independent of the price change");
         assertEq(vault.gracePeriod(), 6 hours);
     }
 
     function test_constructorAcceptsPlainOracleAndCreatesBoundOracleWhenZero() public {
         PlainOracle plain = new PlainOracle();
-        CDPVault supplied =
-            new CDPVault(address(imd), address(comp), address(plain), address(priceFeed), address(nhiFeed));
+        CDPVault supplied = new CDPVault(
+            address(imd), address(comp), address(plain), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         assertEq(address(supplied.oracle()), address(plain));
-        CDPVault generated = new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed));
+        CDPVault generated = new CDPVault(
+            address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         MockWorkOracle generatedOracle = MockWorkOracle(address(generated.oracle()));
         assertEq(generatedOracle.vault(), address(generated));
         assertEq(generatedOracle.deployer(), OPERATOR);
@@ -79,8 +92,9 @@ contract CDPVaultTest is ProtocolFixture {
 
     function test_bothMintChannelsRequireTokenAuthorization() public {
         CompToken freshComp = new CompToken(address(0));
-        CDPVault fresh =
-            new CDPVault(address(imd), address(freshComp), address(0), address(priceFeed), address(nhiFeed));
+        CDPVault fresh = new CDPVault(
+            address(imd), address(freshComp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         MockWorkOracle freshOracle = MockWorkOracle(address(fresh.oracle()));
         vm.prank(alice);
         imd.approve(address(fresh), 150 ether);

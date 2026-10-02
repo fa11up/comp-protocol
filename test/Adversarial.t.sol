@@ -9,6 +9,7 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {IWorkOracle} from "../src/interfaces/IWorkOracle.sol";
 
@@ -69,6 +70,7 @@ contract AdversarialCollateral is ERC20, ReentryProbe {
     }
     Mode public mode;
     CDPVault public vault;
+    mapping(address => uint256) public blockedCallbacksForRecipient;
 
     constructor(address account) ERC20("Adversarial", "BAD") {
         _mint(account, 1000 ether);
@@ -89,7 +91,11 @@ contract AdversarialCollateral is ERC20, ReentryProbe {
 
     function transfer(address to, uint256 amount) public override returns (bool) {
         if (mode == Mode.FalseOut) return false;
-        if (mode == Mode.Callback) _probe(vault, to);
+        if (mode == Mode.Callback) {
+            uint256 beforeCallbacks = blockedCallbacks;
+            _probe(vault, to);
+            blockedCallbacksForRecipient[to] += blockedCallbacks - beforeCallbacks;
+        }
         return super.transfer(to, amount);
     }
 }
@@ -102,16 +108,20 @@ contract AdversarialTest is Test {
     AdversarialOracle internal oracle;
     TestSwarmFeed internal priceFeed;
     TestSwarmFeed internal nhiFeed;
+    MirroredSwarmFeed internal spotFeed;
 
     function setUp() public {
         collateral = new AdversarialCollateral(alice);
         comp = new CompToken(address(0));
         priceFeed = new TestSwarmFeed(1 ether);
         nhiFeed = new TestSwarmFeed(0.85 ether);
+        spotFeed = new MirroredSwarmFeed(address(priceFeed));
         // The immutable oracle validates the address of the vault that will be created next.
         address predictedVault = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
         oracle = new AdversarialOracle(CDPVault(predictedVault), alice);
-        vault = new CDPVault(address(collateral), address(comp), address(oracle), address(priceFeed), address(nhiFeed));
+        vault = new CDPVault(
+            address(collateral), address(comp), address(oracle), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         assertEq(address(vault), predictedVault);
         vm.startPrank(0x5167D014a056E43883e1BBEa5530c3c0dC993281);
         comp.setVault(address(vault));
@@ -217,7 +227,12 @@ contract AdversarialTest is Test {
         collateral.configure(vault, AdversarialCollateral.Mode.Callback);
         vm.prank(alice);
         vault.liquidate(alice, 100 ether);
-        assertEq(collateral.blockedCallbacks(), 8);
+        assertEq(collateral.blockedCallbacks(), 16);
+        assertEq(collateral.blockedCallbacksForRecipient(alice), 8, "liquidator payout blocks every reentry");
+        assertEq(collateral.blockedCallbacksForRecipient(address(this)), 8, "marker payout blocks every reentry");
+        assertEq(collateral.balanceOf(alice), 959 ether);
+        assertEq(collateral.balanceOf(address(this)), 1 ether);
+        assertEq(collateral.balanceOf(address(vault)), 40 ether);
         assertEq(comp.totalSupply(), 0);
     }
 }

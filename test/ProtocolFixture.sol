@@ -6,6 +6,7 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
 abstract contract ProtocolFixture is Test {
@@ -16,6 +17,7 @@ abstract contract ProtocolFixture is Test {
     CDPVault internal vault;
     TestSwarmFeed internal priceFeed;
     TestSwarmFeed internal nhiFeed;
+    MirroredSwarmFeed internal spotFeed;
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
 
@@ -24,7 +26,10 @@ abstract contract ProtocolFixture is Test {
         comp = new CompToken(address(0));
         priceFeed = new TestSwarmFeed(1 ether);
         nhiFeed = new TestSwarmFeed(0.85 ether);
-        vault = new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed));
+        spotFeed = new MirroredSwarmFeed(address(priceFeed));
+        vault = new CDPVault(
+            address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         oracle = MockWorkOracle(address(vault.oracle()));
         vm.startPrank(OPERATOR);
         comp.setVault(address(vault));
