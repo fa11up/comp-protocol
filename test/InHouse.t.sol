@@ -63,7 +63,7 @@ contract InHouseTest is Test {
     address constant LIVE_MOCK_IMD = 0xE44AB81Ce23d34E29383dD158a1DfFEB1c10d439;
     uint8 constant ANSWER_TYPE_UINT256 = ATTESTATION_ANSWER_TYPE;
     uint256 constant MAX_AGE = 86_400;
-    uint256 constant MAX_DEVIATION_BPS = 2_000;
+    uint256 constant MAX_DEVIATION_BPS = 5_000;
     // Native ETH wei per 1e18 raw IMD, from the live Uniswap v4 pool
     // 0xb07d640fd9e2eb9dc81b953c8e4fd006bdfeaf276010fb5418eb763ca15abfb3. The v3 WETH pool we first
     // used is drained (liquidity() == 0), so its price was a frozen leftover.
@@ -209,10 +209,11 @@ contract InHouseTest is Test {
         assertEq(imd.balanceOf(address(this)) - markerBefore, markerCut, "marker receives only its bonus share");
     }
 
-    /// OPERATIONAL LIMIT: maxDeviationBps 2000 caps one update at 20% of the last value, and the
+    /// OPERATIONAL LIMIT: maxDeviationBps caps one update at that share of the last value, and the
     /// bound is floor-based, so the largest legal step is v - floor(v * bps / 10000) exactly — one
     /// wei further reverts. A faster real move must be tracked in successive updates, so the feed
-    /// lags a crash. This applies to attested updates too, not only the reporter path.
+    /// lags a crash. This applies to attested updates too, not only the reporter path, and on
+    /// mainnet there is no reporter to walk it: see the note on the constant in DeployComp.
     function test_deviationCeilingIsExactAndFloorBased() public {
         _seed(PRICE, 0.9e18);
         uint256 floorStep = _maxDownStep(PRICE);
@@ -226,16 +227,16 @@ contract InHouseTest is Test {
         (uint256 v,) = priceFeed.latestValue();
         assertEq(v, floorStep);
 
-        // A 36% total fall needs two steps; quorum 1 lets both land in one block.
+        // Two steps clear far more than one; quorum 1 lets both land in the same block.
         vm.prank(OPERATOR);
         priceFeed.report(_maxDownStep(floorStep));
         (uint256 v2,) = priceFeed.latestValue();
         assertLt(v2, floorStep, "second step must move further down");
-        assertLt(v2, PRICE * 65 / 100, "two steps should clear a 35% fall");
+        assertLt(v2, PRICE * 30 / 100, "two steps should clear a 70% fall at this cap");
     }
 
     function _maxDownStep(uint256 v) private pure returns (uint256) {
-        return v - (v * 2_000) / 10_000;
+        return v - (v * MAX_DEVIATION_BPS) / 10_000;
     }
 
     /// A wrong-question attestation is refused before any signature work.

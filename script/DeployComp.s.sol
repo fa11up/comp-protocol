@@ -37,7 +37,15 @@ contract DeployComp is Script {
     // launch manifest — there is no argument to substitute. verify() reads them back off chain.
 
     uint256 constant MAX_AGE = 86_400; // also bounds CDPVault.liquidationWindow()
-    uint256 constant MAX_DEVIATION_BPS = 2_000;
+    // The cap and the update frequency are one knob, not two. A tight cap only works if updates are
+    // frequent enough that the market never moves further than it between them; a feed updated
+    // rarely needs a loose one or it simply cannot follow. At 2000 this feed could not absorb a
+    // real 44.6% move in IMD on 2026-10-02 and had to be walked up by the reporter in three steps —
+    // a path that does not exist on mainnet without a trusted reporter.
+    // 5000 absorbs what we have actually seen with headroom and still bounds a bad attestation to
+    // 1.5x the last value. It is a testnet number: the principled fix is to make the bound a
+    // function of elapsed time, or to trigger updates on price movement rather than on a clock.
+    uint256 constant MAX_DEVIATION_BPS = 5_000;
     uint256 constant SPOT_MAX_AGE = 3_600; // a spot read is only a sanity bound; one hour is generous
 
     // Attestation v2 signs panelSize/quorum/agreed, so the CONSUMER sets the real bar. A request can
