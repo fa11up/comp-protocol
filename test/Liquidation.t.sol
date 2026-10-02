@@ -619,12 +619,41 @@ contract LiquidationTest is ProtocolFixture {
         view
         returns (uint256 totalReceived)
     {
+        return _assertDefaultSplit(liquidatorReceived, payout, principalCollateral, 0);
+    }
+
+    /// @dev `swept` is an unreachable remainder that liquidate() folds into the seizure. It goes to
+    /// the liquidator on top of the formula payout, and is deliberately outside the bonus, so
+    /// neither the marker's share nor the protocol's grows with it. The return value stays the
+    /// formula payout so the rounding assertions above it keep measuring the formula.
+    function _assertDefaultSplit(
+        uint256 liquidatorReceived,
+        uint256 payout,
+        uint256 principalCollateral,
+        uint256 swept
+    ) private view returns (uint256 formulaPayout) {
         uint256 expectedMarker = (payout - principalCollateral) * vault.markerShareBps() / 10_000;
         assertEq(vault.protocolBonusShareBps(), 0);
         assertEq(imd.balanceOf(address(this)), expectedMarker, "distinct marker receives its bonus share");
-        assertEq(liquidatorReceived, payout - expectedMarker, "liquidator receives principal and remaining bonus");
-        totalReceived = liquidatorReceived + imd.balanceOf(address(this));
-        assertEq(totalReceived, payout, "split conserves the full collateral seizure");
+        assertEq(
+            liquidatorReceived,
+            payout + swept - expectedMarker,
+            "liquidator receives principal, remaining bonus and any swept dust"
+        );
+        uint256 totalReceived = liquidatorReceived + imd.balanceOf(address(this));
+        assertEq(totalReceived, payout + swept, "split conserves the full collateral seizure");
+        formulaPayout = totalReceived - swept;
+    }
+
+    /// @dev What liquidate() will fold into the seizure: a remainder no liquidation could ever take,
+    /// and only while debt survives the repayment.
+    function _sweptAmount(uint256 remainder, uint256 repayment, uint256 debt, uint256 price)
+        private
+        pure
+        returns (uint256)
+    {
+        if (remainder == 0 || repayment >= debt) return 0;
+        return remainder < uint256(1.1 ether) / price ? remainder : 0;
     }
 
     function _checkPartialLiquidation(
@@ -655,20 +684,27 @@ contract LiquidationTest is ProtocolFixture {
         uint256 liquidatorBalance = imd.balanceOf(bob);
         uint256 ownerBalance = imd.balanceOf(alice);
 
+        // liquidate() folds an unreachable remainder into the seizure, so the event, the position
+        // and the liquidator's balance all carry it. Mirror that here rather than loosening the
+        // assertions: the formula is still pinned, and so is the bound on what may be swept.
+        uint256 seized = payout + _sweptAmount(collateral - payout, repayment, debt, liquidationPrice);
+
         vm.prank(bob);
         vm.expectEmit(true, true, false, true, address(vault));
-        emit CDPVault.Liquidated(alice, bob, repayment, payout);
+        emit CDPVault.Liquidated(alice, bob, repayment, seized);
         vault.liquidate(alice, repayment);
 
-        _assertPosition(alice, collateral - payout, debt - repayment);
+        if (seized != payout) assertEq(collateral - seized, 0, "a swept remainder must close the position");
+        _assertPosition(alice, collateral - seized, debt - repayment);
         _assertPosition(bob, 300 ether, 100 ether);
-        actualPayout =
-            _assertDefaultSplit(imd.balanceOf(bob) - liquidatorBalance, payout, repayment * 1 ether / liquidationPrice);
+        actualPayout = _assertDefaultSplit(
+            imd.balanceOf(bob) - liquidatorBalance, payout, repayment * 1 ether / liquidationPrice, seized - payout
+        );
         assertEq(actualPayout, payout, "exact price-divided total collateral seizure");
         assertLe(actualPayout * liquidationPrice, repayment * 1.1 ether, "payout does not round up");
         assertLt(repayment * 1.1 ether, (actualPayout + 1) * liquidationPrice, "no extra collateral is withheld");
         assertEq(imd.balanceOf(alice), ownerBalance);
-        assertEq(imd.balanceOf(address(vault)), collateral - payout + 300 ether);
+        assertEq(imd.balanceOf(address(vault)), collateral - seized + 300 ether);
         assertEq(comp.balanceOf(bob), debt + 100 ether - repayment);
         assertEq(comp.balanceOf(alice), 0);
         assertEq(comp.totalSupply(), debt - repayment + 100 ether + vault.totalWorkMinted());

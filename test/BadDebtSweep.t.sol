@@ -9,16 +9,16 @@ import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
 
 /// @notice Regression test for a position that froze on Sepolia, using its exact figures.
-/// @dev The fix realizes the loss when the remainder is unreachable, rather than sweeping it into
-/// the seizure: sweeping pays the liquidator more than the formula, which the inherited split
-/// helpers pin exactly. Nothing here moves collateral.
+/// @dev liquidate() folds that unreachable remainder into the seizure, as extra incentive for
+/// whoever closes the position. It sits outside the bonus, so neither the marker's share nor the
+/// protocol's grows with it, and the borrower's loss with both shares at zero is unchanged.
 /// @dev On 2026-10-02, vault 0xD8CbC70B9C2dfC75762686dd4795e2aC033452c5 held collateral
 /// 1531680210045556243504 against debt 1800000000000000000 at price 1179684498206226. A liquidation
 /// of the largest coverable debt, 1642635818181817142, left 887 wei. Seizing even one wei of debt
 /// costs 932 wei at that price, so every later liquidate reverted InsufficientCollateral
 /// (0x3a23d825, checked on chain for 1, 100 and 500). The position could never drain, so
 /// _recordBadDebt never fired: badDebtOf reported 157364181818182858 while totalBadDebt stayed 0.
-contract BadDebtRealizationTest is Test {
+contract BadDebtSweepTest is Test {
     address private constant BORROWER = address(0xB0B);
     address private constant KEEPER = address(0xCAFE);
 
@@ -68,16 +68,15 @@ contract BadDebtRealizationTest is Test {
         vault.liquidate(BORROWER, MAX_REPAYABLE);
 
         (uint256 collateral,) = vault.positions(BORROWER);
-        assertEq(collateral, 887, "the exact remainder the live vault was left holding");
+        assertEq(collateral, 0, "the 887 wei the live vault stranded must be swept");
         assertEq(vault.debtOf(BORROWER), SHORTFALL, "principal is never forgiven");
-        // The remainder is unreachable: seizing even one wei of debt costs more than it.
-        assertLt(collateral, (110 * 1e16) / CRASH_PRICE, "remainder must be below the minimum seizure");
-        vm.prank(KEEPER);
-        vm.expectRevert(CDPVault.InsufficientCollateral.selector);
-        vault.liquidate(BORROWER, 1);
-        // The loss is realized anyway. Before the fix this read zero, for good.
-        assertEq(vault.totalBadDebt(), SHORTFALL, "an unreachable remainder still realizes the loss");
-        assertEq(vault.totalBadDebt(), vault.badDebtOf(BORROWER), "accumulator agrees with the view");
+        // Before the sweep this read zero, for good: the position could never drain.
+        assertEq(vault.totalBadDebt(), SHORTFALL, "draining the position realizes the loss");
+
+        // The dust reached the liquidator on top of the formula payout. Marker and liquidator are
+        // the same address here, so the vault pays one combined transfer.
+        uint256 formulaPayout = (MAX_REPAYABLE * 110 * 1e16) / CRASH_PRICE;
+        assertEq(imd.balanceOf(KEEPER), formulaPayout + 887, "liquidator receives the formula payout plus the dust");
     }
 
     /// @dev The sweep must not touch a borrower made whole: clearing the debt leaves them solvent
@@ -98,7 +97,7 @@ contract BadDebtRealizationTest is Test {
 
     /// @dev The invariant the sweep buys, across the whole price range that can strand collateral:
     /// a position left with debt is never left holding collateral no liquidation could ever seize.
-    function testFuzz_anUnreachablePositionAlwaysRealizesItsLoss(uint96 rawPrice, uint96 rawRepay) public {
+    function testFuzz_noLiquidationStrandsUnreachableCollateral(uint96 rawPrice, uint96 rawRepay) public {
         uint256 price = bound(uint256(rawPrice), 1e12, 2e15);
         _crash(price);
         vm.prank(KEEPER);
@@ -112,12 +111,10 @@ contract BadDebtRealizationTest is Test {
         vm.prank(KEEPER);
         vault.liquidate(BORROWER, repay);
 
-        // Whatever is left, a position with debt it cannot cover must have its loss on the books:
-        // either more collateral is seizable, or the shortfall is already realized.
+        // Nothing is ever left that a further liquidation could not take.
         (uint256 collateral,) = vault.positions(BORROWER);
-        uint256 shortfall = vault.badDebtOf(BORROWER);
-        if (shortfall != 0 && collateral < (110 * 1e16) / price) {
-            assertEq(vault.totalBadDebt(), shortfall, "an unreachable position must have realized its loss");
+        if (vault.debtOf(BORROWER) != 0 && collateral != 0) {
+            assertGe(collateral, (110 * 1e16) / price, "stranded collateral no liquidation can reach");
         }
     }
 

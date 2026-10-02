@@ -232,7 +232,15 @@ contract ProtocolHandler is Test {
         assertEq(remainingDebt, debt - amount, "liquidation retires debt");
         uint256 markerCut = (expectedPayout - amount * 1 ether / _price()) * vault.markerShareBps() / 10_000;
         assertEq(collateral - remainingCollateral, received + markerCut, "seized collateral reaches both keepers");
-        assertEq(received, expectedPayout - markerCut, "liquidator receives principal plus remaining bonus");
+        // liquidate() folds a remainder no liquidation could ever take into the seizure, as extra
+        // incentive for whoever closes the position. It sits outside the bonus, so the marker's cut
+        // is unchanged by it, and it may only appear when the position is left closed.
+        uint256 swept = collateral - remainingCollateral - expectedPayout;
+        assertEq(received, expectedPayout + swept - markerCut, "liquidator receives principal, bonus and swept dust");
+        assertTrue(
+            swept == 0 || (remainingCollateral == 0 && swept < uint256(1.1 ether) / _price()),
+            "a sweep may only close an unreachable remainder"
+        );
         markerReceived += markerCut;
         assertEq(imd.balanceOf(address(this)), markerReceived, "marker payments match independent history");
         debtLiquidated[owner] += amount;

@@ -274,6 +274,22 @@ contract CDPVault is ReentrancyGuard {
         uint256 protocolCut = Math.mulDiv(bonus, protocolShare, 10_000);
         uint256 markerCut = Math.mulDiv(bonus, markerShareBps, 10_000);
         address marker = mark.marker;
+        // Sweep a remainder nobody could ever claim. Taking the largest coverable debt leaves dust,
+        // and once that dust is smaller than the seizure for a single wei of debt every later
+        // liquidate reverts InsufficientCollateral: the position freezes with debt outstanding and
+        // collateral no one can reach, so it never drains and its loss is never realized. Observed
+        // on Sepolia at 887 wei against 157364181818182858 of debt.
+        // It is folded in AFTER the split, so it enlarges neither the bonus nor the marker's and
+        // protocol's shares of it — the dust is extra incentive for whoever closes the position, and
+        // the borrower's loss with both shares at zero is unchanged. Only when debt survives the
+        // liquidation: a borrower whose debt is cleared is solvent and the remainder is theirs.
+        uint256 remainder = position.collateral - collateralSeized;
+        if (
+            remainder != 0 && debtToRepay < position.debt + _stabilityFees[owner]
+                && remainder < Math.mulDiv(1, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, price)
+        ) {
+            collateralSeized += remainder;
+        }
         uint256 feePaid = _reduceDebt(owner, debtToRepay);
         position.collateral -= collateralSeized;
         _recordBadDebt(owner);
@@ -439,16 +455,12 @@ contract CDPVault is ReentrancyGuard {
     /// moving estimate rather than realized losses, which is a different number than the one the
     /// invariant suite checks.
     function _recordBadDebt(address owner) private {
-        uint256 held = _positions[owner].collateral;
-        // "Drained" has to mean "nothing a liquidation could ever take", not literally zero. Taking
-        // the largest coverable debt leaves a remainder, and once that remainder is smaller than the
-        // seizure for a single wei of debt, every later liquidate reverts InsufficientCollateral, so
-        // the position can never reach zero. Gating on == 0 therefore never fired in practice: on
-        // Sepolia a position sat at 887 wei with 157364181818182858 of debt, badDebtOf reporting the
-        // shortfall correctly and totalBadDebt stuck at zero for good.
-        // This moves no collateral. Sweeping the remainder into the seizure was the alternative, and
-        // it pays the liquidator more than the formula, which the suite's split helpers pin exactly.
-        if (held != 0 && held >= Math.mulDiv(1, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, _price())) return;
+        // Reachable because liquidate() sweeps an unreachable remainder: without that, a position
+        // drained to dust never hit zero and this never fired, leaving totalBadDebt at zero while
+        // badDebtOf reported the shortfall. Still "realized" only — a loss is counted once the
+        // position is actually drained, not while it is a mark-to-market estimate a price recovery
+        // could erase.
+        if (_positions[owner].collateral != 0) return;
         uint256 current = debtOf(owner);
         totalBadDebt = totalBadDebt - _recordedBadDebt[owner] + current;
         _recordedBadDebt[owner] = current;
