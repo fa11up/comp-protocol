@@ -9,6 +9,7 @@ import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
+import {FEED_REPORTER_0} from "../src/DeploymentConfig.sol";
 
 /// @dev Models constructor-only deployment, with no application-call capability.
 contract ApplicationConstructionFactory {
@@ -158,7 +159,9 @@ contract SelfContainedFactoryDeploymentTest is Test {
     address private constant RELAYER = address(0x2001);
     address private constant ORIGIN = address(0x2002);
     address private constant BORROWER = address(0x2003);
-    address private constant REPORTER = address(0x2004);
+    // Not a free choice any more: the deployment artifacts pin their reporter in source, so this
+    // names the pinned one. Picking any other address here would make _seedFeeds revert.
+    address private constant REPORTER = FEED_REPORTER_0;
     ApplicationConstructionFactory private factory;
     MockIMD private imd;
     CompToken private comp;
@@ -172,8 +175,8 @@ contract SelfContainedFactoryDeploymentTest is Test {
         vm.warp(1_000_000);
         factory = new ApplicationConstructionFactory();
         imd = new MockIMD();
-        priceFeed = new PriceFeed(address(0xA77), REPORTER, 1, 1, REPORTER, address(0), address(0), 1, 86400, 2000);
-        nhiFeed = new NhiFeed(address(0xA77), REPORTER, 1, 1, REPORTER, address(0), address(0), 1, 86400, 2000);
+        priceFeed = new PriceFeed(86400, 2000);
+        nhiFeed = new NhiFeed(86400, 2000);
     }
 
     function _deploy(bool useCreate2) private {

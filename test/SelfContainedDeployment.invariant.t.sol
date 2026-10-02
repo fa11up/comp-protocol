@@ -46,8 +46,9 @@ contract SelfContainedDeploymentHandler is Test {
     constructor() {
         factory = new SelfContainedInvariantFactory();
         imd = new MockIMD();
-        priceFeed = new PriceFeed(address(0xA77E57), OPERATOR, 1, 1, OPERATOR, address(0), address(0), 1, 1 days, 2000);
-        nhiFeed = new NhiFeed(address(0xA77E57), OPERATOR, 1, 1, OPERATOR, address(0), address(0), 1, 1 days, 2000);
+        // Authority is pinned in DeploymentConfig; OPERATOR below IS the pinned relayer and reporter.
+        priceFeed = new PriceFeed(1 days, 2000);
+        nhiFeed = new NhiFeed(1 days, 2000);
         vm.prank(RELAYER, ORIGIN);
         vault = factory.deploy(address(imd), address(priceFeed), address(nhiFeed));
         comp = vault.compToken();

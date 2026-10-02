@@ -7,6 +7,18 @@ import {NhiFeed} from "../src/NhiFeed.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockIMD} from "../src/MockIMD.sol";
+import {ConfigurableSwarmFeed} from "./helpers/ConfigurableSwarmFeed.sol";
+import {
+    APPROVED_OPERATOR,
+    ORACLE_ATTESTER,
+    ATTESTATION_RELAYER,
+    ATTESTATION_CHAIN_ID,
+    ATTESTATION_ANSWER_TYPE,
+    FEED_REPORTER_0,
+    FEED_REPORTER_1,
+    FEED_REPORTER_2,
+    FEED_QUORUM
+} from "../src/DeploymentConfig.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {SwarmFeed} from "../src/SwarmFeed.sol";
 import {FEE_RECIPIENT} from "../src/DeploymentConfig.sol";
@@ -38,10 +50,14 @@ contract CappedFeeVault is CDPVault {
 /// layer that actually failed on launch 519, where `$owner` and an answerType of 1 were both wrong
 /// and immutable. Run with: forge test --match-path test/InHouse.t.sol --fork-url $SEPOLIA_RPC_URL
 contract InHouseTest is Test {
-    address constant ATTESTER = 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982;
-    address constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+    // Aliases, not second copies: a literal repeated here would keep passing after someone edited
+    // DeploymentConfig, which is exactly the drift this whole change exists to remove.
+    address constant ATTESTER = ORACLE_ATTESTER;
+    address constant OPERATOR = APPROVED_OPERATOR;
     address constant LIVE_MOCK_IMD = 0xE44AB81Ce23d34E29383dD158a1DfFEB1c10d439;
-    uint8 constant ANSWER_TYPE_UINT256 = 3;
+    uint8 constant ANSWER_TYPE_UINT256 = ATTESTATION_ANSWER_TYPE;
+    uint256 constant MAX_AGE = 86_400;
+    uint256 constant MAX_DEVIATION_BPS = 2_000;
     // Native ETH wei per 1e18 raw IMD, from the live Uniswap v4 pool
     // 0xb07d640fd9e2eb9dc81b953c8e4fd006bdfeaf276010fb5418eb763ca15abfb3. The v3 WETH pool we first
     // used is drained (liquidity() == 0), so its price was a frozen leftover.
@@ -56,9 +72,17 @@ contract InHouseTest is Test {
     MockIMD imd;
 
     function setUp() public {
+        // Every test here reads live Sepolia state, so the suite is meaningless without --fork-url
+        // and used to fail setUp() with InvalidToken() on a plain `forge test`. The swarm runs the
+        // suite unforked, so a red test it has no way to make green blocks the whole workflow.
+        if (LIVE_MOCK_IMD.code.length == 0) {
+            vm.skip(true);
+            return;
+        }
         imd = MockIMD(LIVE_MOCK_IMD);
-        priceFeed = new PriceFeed(ATTESTER, OPERATOR, 1, ANSWER_TYPE_UINT256, OPERATOR, address(0), address(0), 1, 86_400, 2_000);
-        nhiFeed = new NhiFeed(ATTESTER, OPERATOR, 1, ANSWER_TYPE_UINT256, OPERATOR, address(0), address(0), 1, 86_400, 2_000);
+        // Authority and attestation policy are pinned in DeploymentConfig and are not arguments.
+        priceFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
+        nhiFeed = new NhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
         vault = new CDPVault(address(imd), address(0), address(0), address(priceFeed), address(nhiFeed));
         comp = vault.compToken();
     }
@@ -68,10 +92,18 @@ contract InHouseTest is Test {
         assertEq(imd.deployer(), OPERATOR, "MockIMD faucet is not ours");
     }
 
-    /// Every authority that launch 519 got wrong.
+    /// Every authority that launch 519 got wrong — read back against the source that pins them, so
+    /// this fails if DeploymentConfig and the deployed artifact ever disagree.
     function test_authoritiesLandOnUs() public view {
         assertTrue(priceFeed.isReporter(OPERATOR), "operator cannot report");
         assertEq(priceFeed.relayer(), OPERATOR, "relayer is not us");
+        assertEq(priceFeed.attester(), ORACLE_ATTESTER, "attester is not the live oracle signer");
+        assertEq(priceFeed.relayer(), ATTESTATION_RELAYER, "relayer is not the pinned relayer");
+        assertEq(priceFeed.reporter0(), FEED_REPORTER_0, "reporter0 is not the pinned reporter");
+        assertEq(priceFeed.reporter1(), FEED_REPORTER_1, "reporter1 drifted from source");
+        assertEq(priceFeed.reporter2(), FEED_REPORTER_2, "reporter2 drifted from source");
+        assertEq(priceFeed.quorum(), FEED_QUORUM, "quorum drifted from source");
+        assertEq(priceFeed.attestationChainId(), ATTESTATION_CHAIN_ID, "payload chainId drifted");
         assertEq(priceFeed.attestationAnswerType(), ANSWER_TYPE_UINT256, "answerType must be 3 = uint256");
         assertEq(priceFeed.MIN_PANEL_SIZE(), MIN_PANEL_SIZE, "panel floor changed");
         assertEq(priceFeed.MIN_AGREED(), MIN_AGREED, "agreement floor changed");
@@ -233,8 +265,11 @@ contract InHouseTest is Test {
     /// recovering real attestation signatures, which is how answerType=3 was established.
     function test_attestedUpdateAcceptedFromRelayer() public {
         (address signer, uint256 pk) = makeAddrAndKey("test-attester");
-        PriceFeed f =
-            new PriceFeed(signer, OPERATOR, 1, ANSWER_TYPE_UINT256, OPERATOR, address(0), address(0), 1, 86_400, 2_000);
+        // PriceFeed pins the live attester, whose key nobody here holds, so this one test leaf is
+        // configurable. What it proves is SwarmFeed's digest, which PriceFeed inherits unchanged.
+        ConfigurableSwarmFeed f = new ConfigurableSwarmFeed(
+            signer, OPERATOR, 1, ANSWER_TYPE_UINT256, OPERATOR, address(0), address(0), 1, MAX_AGE, MAX_DEVIATION_BPS
+        );
 
         SwarmFeed.OracleAttestation memory a = SwarmFeed.OracleAttestation({
             requestId: keccak256("request-1"),
@@ -272,8 +307,9 @@ contract InHouseTest is Test {
     function test_attestedUpdateRejectsForeignSigner() public {
         (address signer,) = makeAddrAndKey("test-attester");
         (, uint256 wrongPk) = makeAddrAndKey("impostor");
-        PriceFeed f =
-            new PriceFeed(signer, OPERATOR, 1, ANSWER_TYPE_UINT256, OPERATOR, address(0), address(0), 1, 86_400, 2_000);
+        ConfigurableSwarmFeed f = new ConfigurableSwarmFeed(
+            signer, OPERATOR, 1, ANSWER_TYPE_UINT256, OPERATOR, address(0), address(0), 1, MAX_AGE, MAX_DEVIATION_BPS
+        );
         SwarmFeed.OracleAttestation memory a;
         a.chainId = 1;
         a.panelSize = MIN_PANEL_SIZE;
@@ -290,7 +326,7 @@ contract InHouseTest is Test {
         f.submitAttestation(a, sig);
     }
 
-    function _sign(PriceFeed f, SwarmFeed.OracleAttestation memory a, uint256 pk)
+    function _sign(SwarmFeed f, SwarmFeed.OracleAttestation memory a, uint256 pk)
         private
         view
         returns (bytes memory)

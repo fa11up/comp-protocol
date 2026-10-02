@@ -7,6 +7,17 @@ import {NhiFeed} from "../src/NhiFeed.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockIMD} from "../src/MockIMD.sol";
+import {
+    APPROVED_OPERATOR,
+    ORACLE_ATTESTER,
+    ATTESTATION_RELAYER,
+    ATTESTATION_CHAIN_ID,
+    ATTESTATION_ANSWER_TYPE,
+    FEED_REPORTER_0,
+    FEED_REPORTER_1,
+    FEED_REPORTER_2,
+    FEED_QUORUM
+} from "../src/DeploymentConfig.sol";
 
 /// @notice In-house deployment of the COMP feed + vault stack, with every authority held by us.
 /// @dev Launch 519 deployed the same source through the swarm and is unusable to us for two reasons,
@@ -18,20 +29,13 @@ import {MockIMD} from "../src/MockIMD.sol";
 /// Both are immutable, so 519's feeds are permanently inert. Nothing here is upgradeable either —
 /// that is the point — so every constant below is checked against chain state by `verify()`.
 contract DeployComp is Script {
-    // Signer of every IdentityMD oracle attestation, read from live attestations.
-    address constant ATTESTER = 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982;
-
-    // Answer-type enum, recovered empirically: bool=0, address=1, bytes32=2, uint256=3.
-    uint8 constant ANSWER_TYPE_UINT256 = 3;
-
-    // The data chain a question is asked about. Our price question targets Ethereum mainnet,
-    // because the oracle serves no Sepolia RPC. This is the payload's `chainId` field, NOT the
-    // EIP-712 domain — the domain is block.chainid + address(this), set in SwarmFeed's constructor.
-    uint256 constant ATTESTATION_CHAIN_ID = 1;
+    // The attester, relayer, reporters, quorum, answer type and payload chainId are no longer
+    // written here at all: PriceFeed and NhiFeed take none of them, because every one of them is
+    // pinned in src/DeploymentConfig.sol. This script cannot get them wrong, and neither can a
+    // launch manifest — there is no argument to substitute. verify() reads them back off chain.
 
     uint256 constant MAX_AGE = 86_400; // also bounds CDPVault.liquidationWindow()
     uint256 constant MAX_DEVIATION_BPS = 2_000;
-    uint8 constant QUORUM = 1;
 
     // Attestation v2 signs panelSize/quorum/agreed, so the CONSUMER sets the real bar. A request can
     // therefore ask for a low quorum — so that it attests at all — while the feed still refuses
@@ -40,7 +44,12 @@ contract DeployComp is Script {
     uint16 constant MIN_AGREED = 15;     // mirrors SwarmFeed.MIN_AGREED
 
     function run() external {
+        // Kept only to check the broadcasting key against the authority the source pins. A deployer
+        // who cannot report cannot seed the feed, which is launch 519's failure by another road.
+        // Deliberately NOT required to equal ATTESTATION_RELAYER: relaying is a hot, automated role
+        // and is expected to move to its own key, while deploying stays a cold, manual one.
         address operator = vm.envAddress("OPERATOR");
+        require(operator == FEED_REPORTER_0, "OPERATOR cannot report: not the reporter pinned in DeploymentConfig");
         // Reused from launch 519: its faucet authority is the hardcoded APPROVED_OPERATOR in
         // DeploymentConfig.sol, so MockIMD.deployer() is already us. Set MOCK_IMD=0x0 to deploy fresh.
         address imd = vm.envOr("MOCK_IMD", address(0));
@@ -55,14 +64,8 @@ contract DeployComp is Script {
             console2.log("MockIMD     (reused)", imd);
         }
 
-        PriceFeed priceFeed = new PriceFeed(
-            ATTESTER, operator, ATTESTATION_CHAIN_ID, ANSWER_TYPE_UINT256,
-            operator, address(0), address(0), QUORUM, MAX_AGE, MAX_DEVIATION_BPS
-        );
-        NhiFeed nhiFeed = new NhiFeed(
-            ATTESTER, operator, ATTESTATION_CHAIN_ID, ANSWER_TYPE_UINT256,
-            operator, address(0), address(0), QUORUM, MAX_AGE, MAX_DEVIATION_BPS
-        );
+        PriceFeed priceFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
+        NhiFeed nhiFeed = new NhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
         // compToken_ = 0 and oracle_ = 0 put the vault in self-contained mode: it creates and
         // permanently binds its own CompToken and MockWorkOracle, so no post-deploy call exists.
         CDPVault vault = new CDPVault(imd, address(0), address(0), address(priceFeed), address(nhiFeed));
@@ -84,6 +87,7 @@ contract DeployComp is Script {
         internal
         view
     {
+        require(MockIMD(imd).deployer() == APPROVED_OPERATOR, "imd: faucet authority is not the pinned operator");
         require(address(vault.imdToken()) == imd, "vault: wrong collateral");
         require(address(vault.priceFeed()) == address(priceFeed), "vault: wrong price feed");
         require(address(vault.nhiFeed()) == address(nhiFeed), "vault: wrong nhi feed");
@@ -95,10 +99,20 @@ contract DeployComp is Script {
 
         PriceFeed[2] memory feeds = [priceFeed, PriceFeed(address(nhiFeed))];
         for (uint256 i = 0; i < feeds.length; ++i) {
-            require(feeds[i].attester() == ATTESTER, "feed: wrong attester");
-            require(feeds[i].relayer() == operator, "feed: relayer is not the operator");
+            // Read off chain and compared to source, not to a local copy of the same literal: this
+            // is the check that would have failed the 519 deployment instead of discovering it live.
+            require(feeds[i].attester() == ORACLE_ATTESTER, "feed: wrong attester");
+            require(feeds[i].relayer() == ATTESTATION_RELAYER, "feed: relayer is not the pinned one");
+            require(feeds[i].relayer() != address(0), "feed: permissionless relay while questionHash is unbound");
+            require(feeds[i].reporter0() == FEED_REPORTER_0, "feed: reporter0 is not the pinned one");
+            require(feeds[i].reporter1() == FEED_REPORTER_1, "feed: reporter1 drifted from source");
+            require(feeds[i].reporter2() == FEED_REPORTER_2, "feed: reporter2 drifted from source");
+            require(feeds[i].quorum() == FEED_QUORUM, "feed: quorum drifted from source");
             require(feeds[i].isReporter(operator), "feed: operator cannot report");
-            require(feeds[i].attestationAnswerType() == ANSWER_TYPE_UINT256, "feed: answerType must be 3 (uint256)");
+            require(
+                feeds[i].attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "feed: answerType must be 3 (uint256)"
+            );
+            require(feeds[i].attestationAnswerType() != 1, "feed: answerType is the address enum, as on 519");
             require(feeds[i].attestationChainId() == ATTESTATION_CHAIN_ID, "feed: wrong payload chainId");
             require(feeds[i].maxAge() == MAX_AGE, "feed: wrong maxAge");
             require(feeds[i].MIN_PANEL_SIZE() == MIN_PANEL_SIZE, "feed: panel floor changed");

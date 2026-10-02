@@ -13,3 +13,68 @@ address constant APPROVED_OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
 /// MUST NOT be the feed's reporter or relayer — whoever sets the price would otherwise profit from
 /// liquidations they can trigger. Nothing on chain enforces that; see SPEC-ceiling-and-fee.md.
 address constant FEE_RECIPIENT = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+
+// ---------------------------------------------------------------------------------------------
+// Feed authority and attestation policy — pinned in source, never supplied by a deployer.
+// ---------------------------------------------------------------------------------------------
+// Launch 519 is the whole argument for this block. Every authority the source named landed on us
+// (APPROVED_OPERATOR above; MockWorkOracle's deployer). Every authority a template supplied landed
+// wrong, and silently:
+//   * launch.json's `$owner` resolved to the platform's policy owner, not the requester, so the
+//     feeds' `relayer` and `reporter0` were addresses we hold no key for.
+//   * `attestationAnswerType` arrived as 1 (`address`) where a uint256 price attestation carries 3.
+// Each of those is immutable, so 519's feeds are permanently inert. Nothing reverted and nothing
+// on chain pointed at the cause; the loss only surfaced when the first seed transaction failed.
+//
+// PriceFeed and NhiFeed therefore accept NO authority and NO attestation policy as constructor
+// arguments. There is no slot for a template to fill in, correctly or otherwise, and a deploy
+// script that tries to pass one does not compile. Changing any of these is a source edit: it shows
+// up in a diff, goes through review, and is checked against chain state by DeployComp.verify().
+
+/// @dev Signer of every IdentityMD oracle attestation, recovered from live attestation signatures.
+address constant ORACLE_ATTESTER = 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982;
+
+/// @dev Sole address permitted to submit an attestation. Zero would mean permissionless relay,
+/// which SwarmFeed.submitAttestation documents as unsafe for as long as questionHash binds a
+/// moving block window and so cannot identify WHICH question an attestation answers.
+address constant ATTESTATION_RELAYER = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+
+/// @dev Fallback reporters. Unused slots are zero; FEED_QUORUM must not exceed the nonzero count.
+/// A single reporter is a single point of failure for the manual path and is deliberate on testnet;
+/// mainnet is a fresh deployment with three distinct keys, none of them FEE_RECIPIENT.
+address constant FEED_REPORTER_0 = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+address constant FEED_REPORTER_1 = address(0);
+address constant FEED_REPORTER_2 = address(0);
+uint8 constant FEED_QUORUM = 1;
+
+/// @dev Answer-type enum of the signed payload, recovered empirically against live signatures:
+/// bool=0, address=1, bytes32=2, uint256=3. This is the field 519 was handed as 1.
+uint8 constant ATTESTATION_ANSWER_TYPE = 3;
+
+/// @dev The chain a question is asked ABOUT — the payload's `chainId`, which our price and NHI
+/// questions both read from Ethereum mainnet because the oracle serves no Sepolia RPC. It is NOT
+/// the chain the feed runs on: the EIP-712 domain uses block.chainid and address(this), and
+/// SwarmFeed's constructor derives that itself.
+uint256 constant ATTESTATION_CHAIN_ID = 1;
+
+// ---------------------------------------------------------------------------------------------
+// Vault risk parameters for the unattended-liquidation increment — pinned for the same reason.
+// ---------------------------------------------------------------------------------------------
+// These were going to be constructor words supplied by a launch manifest. They are constants
+// instead, so the manifest's only remaining degree of freedom over the vault is the spot feed's
+// address, which cannot be a constant because it is deployed in the same run. None of them carries
+// a setter: an immutable with no setter and a constant with no setter are equally unchangeable, and
+// a constant cannot be mis-supplied at deployment. Turning the stability fee on is a source edit
+// and a redeployment, which is the intent — "do not add any authority to change the rate".
+
+/// @dev Maximum tolerated gap between the primary average price and the spot price, in basis points
+/// of the primary. Beyond this the two feeds disagree and every price-dependent action is refused.
+uint256 constant MAX_DIVERGENCE_BPS = 500;
+
+/// @dev Share of the liquidation bonus paid to whoever marked the position underwater, in basis
+/// points of the bonus. Never taken from principal: the borrower's loss is identical at zero.
+uint256 constant MARKER_SHARE_BPS = 1_000;
+
+/// @dev Annual stability fee on open debt, in basis points, accrued linearly from deployment.
+/// Ships at zero so this increment changes no existing behaviour; a later deployment turns it on.
+uint256 constant STABILITY_FEE_BPS = 0;

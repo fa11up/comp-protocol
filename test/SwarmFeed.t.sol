@@ -8,6 +8,18 @@ import {NhiFeed} from "src/NhiFeed.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
+import {ConfigurableSwarmFeed} from "./helpers/ConfigurableSwarmFeed.sol";
+import {
+    APPROVED_OPERATOR,
+    ORACLE_ATTESTER,
+    ATTESTATION_RELAYER,
+    ATTESTATION_CHAIN_ID,
+    ATTESTATION_ANSWER_TYPE,
+    FEED_REPORTER_0,
+    FEED_REPORTER_1,
+    FEED_REPORTER_2,
+    FEED_QUORUM
+} from "src/DeploymentConfig.sol";
 
 abstract contract SwarmFeedTest is Test {
     uint256 private constant SIGNER_KEY = 0x12345;
@@ -355,16 +367,17 @@ abstract contract SwarmFeedTest is Test {
         assertTrue(feed.isStale());
     }
 
+    /// @dev Deliberately uses the real deployment artifacts rather than ConfigurableSwarmFeed: the
+    /// point is the vault's grace window against the feeds it will actually hold. They pin their own
+    /// reporter, so every report() below speaks as that reporter instead of as the test contract.
     function test_realFeedsExpireDuringGraceAndMustRefreshBeforeLiquidation() public {
-        address operator = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
-        PriceFeed price = new PriceFeed(
-            vm.addr(SIGNER_KEY), address(0), 1, 1, address(this), address(0), address(0), 1, 1 hours, 10000
-        );
-        NhiFeed nhi = new NhiFeed(
-            vm.addr(SIGNER_KEY), address(0), 1, 1, address(this), address(0), address(0), 1, 1 hours, 10000
-        );
+        address operator = APPROVED_OPERATOR;
+        PriceFeed price = new PriceFeed(1 hours, 10000);
+        NhiFeed nhi = new NhiFeed(1 hours, 10000);
+        vm.startPrank(FEED_REPORTER_0);
         price.report(1.5 ether);
         nhi.report(0.85 ether);
+        vm.stopPrank();
         MockIMD imd = new MockIMD();
         CompToken comp = new CompToken(address(0));
         CDPVault vault = new CDPVault(address(imd), address(comp), address(0), address(price), address(nhi));
@@ -378,16 +391,19 @@ abstract contract SwarmFeedTest is Test {
         vault.mintCOMP(100 ether);
         comp.transfer(REPORTER_B, 100 ether);
         vm.stopPrank();
+        vm.prank(FEED_REPORTER_0);
         price.report(1 ether);
         vault.markUnderwater(REPORTER_A);
         vm.warp(block.timestamp + 6 hours);
         vm.prank(REPORTER_B);
         vm.expectRevert(CDPVault.StaleFeed.selector);
         vault.liquidate(REPORTER_A, 100 ether);
+        vm.prank(FEED_REPORTER_0);
         price.report(1 ether);
         vm.prank(REPORTER_B);
         vm.expectRevert(CDPVault.StaleFeed.selector);
         vault.liquidate(REPORTER_A, 100 ether);
+        vm.prank(FEED_REPORTER_0);
         nhi.report(0.85 ether);
         vm.prank(REPORTER_B);
         vault.liquidate(REPORTER_A, 100 ether);
@@ -682,8 +698,16 @@ abstract contract SwarmFeedTest is Test {
     }
 }
 
+/// @dev The mechanics above are SwarmFeed's, not a leaf's: quorum, median, rounds, deviation,
+/// replay and signature recovery all live in the base. They used to run twice, once through
+/// PriceFeed and once through NhiFeed, because the base is abstract and those were the only
+/// concrete leaves. Both leaves now pin their authority in source (DeploymentConfig), so neither can
+/// be handed the test reporters or the test attester key this suite needs, and running the suite
+/// through a test leaf is the only option. What the two runs uniquely proved — that each leaf wires
+/// its arguments through to the base unchanged — is now PinnedAuthorityTest's job, and it proves
+/// more: that the arguments cannot be wrong because they are no longer arguments.
 /// forge-config: default.fuzz.runs = 1000
-contract PriceFeedTest is SwarmFeedTest {
+contract SwarmFeedMechanicsTest is SwarmFeedTest {
     function _deployFeed(
         address attester,
         address relayer,
@@ -696,7 +720,7 @@ contract PriceFeedTest is SwarmFeedTest {
         uint256 maxAge,
         uint256 maxDeviationBps
     ) internal override returns (SwarmFeed) {
-        return new PriceFeed(
+        return new ConfigurableSwarmFeed(
             attester,
             relayer,
             attestationChainId,
@@ -711,31 +735,54 @@ contract PriceFeedTest is SwarmFeedTest {
     }
 }
 
-/// forge-config: default.fuzz.runs = 1000
-contract NhiFeedTest is SwarmFeedTest {
-    function _deployFeed(
-        address attester,
-        address relayer,
-        uint256 attestationChainId,
-        uint8 attestationAnswerType,
-        address reporter0,
-        address reporter1,
-        address reporter2,
-        uint8 quorum,
-        uint256 maxAge,
-        uint256 maxDeviationBps
-    ) internal override returns (SwarmFeed) {
-        return new NhiFeed(
-            attester,
-            relayer,
-            attestationChainId,
-            attestationAnswerType,
-            reporter0,
-            reporter1,
-            reporter2,
-            quorum,
-            maxAge,
-            maxDeviationBps
-        );
+/// @dev The deployment artifacts take no authority argument, so this is all there is to check: the
+/// values they were compiled with are the values they report. A template substitution of the kind
+/// that made launch 519's feeds permanently inert has nowhere to land — the only way to change any
+/// of these is to edit DeploymentConfig.sol, which shows up in a diff.
+contract PinnedAuthorityTest is Test {
+    PriceFeed private priceFeed;
+    NhiFeed private nhiFeed;
+
+    function setUp() public {
+        vm.chainId(11155111);
+        priceFeed = new PriceFeed(1 hours, 1000);
+        nhiFeed = new NhiFeed(1 days, 2000);
+    }
+
+    function test_bothArtifactsReportTheSourcePinnedAuthority() public view {
+        SwarmFeed[2] memory feeds = [SwarmFeed(priceFeed), SwarmFeed(nhiFeed)];
+        for (uint256 i; i < feeds.length; ++i) {
+            assertEq(feeds[i].attester(), ORACLE_ATTESTER, "attester");
+            assertEq(feeds[i].relayer(), ATTESTATION_RELAYER, "relayer");
+            assertEq(feeds[i].reporter0(), FEED_REPORTER_0, "reporter0");
+            assertEq(feeds[i].reporter1(), FEED_REPORTER_1, "reporter1");
+            assertEq(feeds[i].reporter2(), FEED_REPORTER_2, "reporter2");
+            assertEq(feeds[i].quorum(), FEED_QUORUM, "quorum");
+            assertEq(feeds[i].attestationAnswerType(), ATTESTATION_ANSWER_TYPE, "answerType");
+            assertEq(feeds[i].attestationChainId(), ATTESTATION_CHAIN_ID, "payload chainId");
+        }
+    }
+
+    /// @dev 519's two fatal values, named. answerType 1 is `address`, and a uint256 figure carries 3;
+    /// a relayer nobody holds a key for cannot seed or re-anchor the feed.
+    function test_theTwoValuesThatBrokeLaunch519CannotRecur() public view {
+        assertTrue(priceFeed.attestationAnswerType() != 1, "answerType must not be the address enum");
+        assertTrue(priceFeed.relayer() == APPROVED_OPERATOR, "relayer must be an address we operate");
+        assertTrue(priceFeed.isReporter(APPROVED_OPERATOR), "operator must be able to seed manually");
+    }
+
+    /// @dev The risk bounds stay arguments because they are the values that legitimately differ per
+    /// feed, and a wrong one is loud: it bounds freshness, it cannot capture authority.
+    function test_onlyTheRiskBoundsVaryPerFeed() public view {
+        assertEq(priceFeed.maxAge(), 1 hours);
+        assertEq(nhiFeed.maxAge(), 1 days);
+        assertEq(priceFeed.maxDeviationBps(), 1000);
+        assertEq(nhiFeed.maxDeviationBps(), 2000);
+    }
+
+    /// @dev The per-feed EIP-712 domain still separates them, so an attestation relayed to one feed
+    /// is not replayable on the other even though every pinned value above is identical.
+    function test_sharedAuthorityDoesNotShareTheConsumerDomain() public view {
+        assertTrue(priceFeed.DOMAIN_SEPARATOR() != nhiFeed.DOMAIN_SEPARATOR());
     }
 }
