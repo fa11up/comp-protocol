@@ -3,46 +3,6 @@
     "type": "constructor",
     "inputs": [
       {
-        "name": "attester_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "relayer_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "attestationChainId_",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "attestationAnswerType_",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "reporter0_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "reporter1_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "reporter2_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "quorum_",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
         "name": "maxAge_",
         "type": "uint256",
         "internalType": "uint256"
@@ -77,6 +37,32 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_AGREED",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_PANEL_SIZE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -379,6 +365,21 @@
             "internalType": "bytes32"
           },
           {
+            "name": "panelSize",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "quorum",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "agreed",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
             "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
@@ -524,6 +525,16 @@
   {
     "type": "error",
     "name": "MathOverflowedMulDiv",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotEnoughAgreement",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PanelTooSmall",
     "inputs": []
   },
   {

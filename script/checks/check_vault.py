@@ -20,7 +20,7 @@ def check(root, artifacts, *selection):
     )
     subprocess.run(
         ["forge", "test", "--offline", "--root", str(root),
-         "--match-path", "script/checks/CDPVaultIncrement.t.sol", *selection],
+         "--match-path", "script/checks/CDPVault*.t.sol", *selection],
         cwd=root, env=env, check=True,
     )
 
@@ -47,10 +47,12 @@ def main():
     check(ROOT, SCRATCH / "default")
     print("Checking a scratch-only 10% annual stability fee", flush=True)
     fee = variant("fee-1000", "STABILITY_FEE_BPS = 0;", "STABILITY_FEE_BPS = 1_000;")
-    check(fee, fee / "artifacts", "--match-test", "(fee|Fee|borrowCheckpoint)")
+    check(fee, fee / "artifacts", "--match-contract", "CDPVaultIncrementTest",
+          "--match-test", "(fee|Fee|borrowCheckpoint)")
     print("Checking identical borrower loss with the marker share disabled in scratch", flush=True)
     marker = variant("marker-zero", "MARKER_SHARE_BPS = 1_000;", "MARKER_SHARE_BPS = 0;")
-    check(marker, marker / "artifacts", "--match-test", "(marker|Marker|[Ss]hare|[Bb]onus)")
+    check(marker, marker / "artifacts", "--match-contract", "CDPVaultIncrementTest",
+          "--match-test", "(marker|Marker|[Ss]hare|[Bb]onus)")
 
 
 if __name__ == "__main__":

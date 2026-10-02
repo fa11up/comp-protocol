@@ -46,3 +46,23 @@ A separate local read-only review examined the source changes and checked the in
 - Unrelated inherited feed prose in `docs/ABI.md` still describes old constructor and attestation formats. Only the vault integration sections were updated here; feed logic and authority constants remain untouched.
 
 `docs/abi/CDPVault.json` was regenerated from the compiled vault. No other contract ABI changed.
+
+## Review revision
+
+The preceding results describe the original increment. The supplied recovery proof reproduced all three reported failures with `GracePeriodNotElapsed`: explicit clearing, dust deposits and dust repayments could discard a mature mark using a divergent primary price. Explicit clearing now uses the existing price-agreement guard. Automatic clearing with outstanding debt requires fresh primary, NHI and spot feeds, nonzero prices and the same primary-relative divergence bound. Invalid observations preserve the mark and marker without blocking deposits or repayments. Full repayment still clears without reading feeds.
+
+`script/checks/CDPVaultRecovery.t.sol` adds ten regression tests covering those routes, stale/zero observations, immediate liquidation after price agreement returns, valid recovery, both exact divergence boundaries and debt-free exits. The existing runner includes this suite for the shipped configuration; parameter variants retain the original parameter-aware test selection.
+
+The second finding also reproduced: the published feed ABIs used obsolete constructor arguments and the old attestation selector. `docs/abi/PriceFeed.json`, `NhiFeed.json` and `SwarmFeed.json` now exactly match compiled artifacts, including the three signed `uint16` panel fields, selector `0x383f5938`, panel-floor getters and errors. Concrete feed constructors have two `uint256` arguments. Feed implementation, authority constants and panel checks are unchanged. The unchanged CDPVault ABI also matches its rebuilt artifact.
+
+Revision checks, all offline:
+
+| Check | Result |
+| --- | --- |
+| Supplied proof copied unchanged under `test/scratch/proofs` | Before fix: three failures; after fix: three passes |
+| `python3 script/checks/check_vault.py`, shipped configuration | 31 passed, two intentional nonzero-fee skips |
+| Same runner, scratch 10% fee / zero marker-share variants | Seven / five passed |
+| Source and deployment-script build command above | Passed |
+| Published feed and vault ABIs versus compiled `.abi` arrays | Exact equality |
+
+Plain compilation of the unmodified legacy test fixtures still encounters the constructor/getter arity mismatches recorded above; those fixtures remain outside this assignment's write scope. No manifest, configuration, feed logic or other financial behavior was changed by this revision.

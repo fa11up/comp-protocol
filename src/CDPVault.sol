@@ -242,6 +242,7 @@ contract CDPVault is ReentrancyGuard {
     /// the bounded mark lifetime, even if a subsequent dip happens before that lifetime ends.
     function clearRecoveredMark(address owner) external nonReentrant {
         _requireFreshFeeds();
+        _requirePriceAgreement();
         Position storage position = _positions[owner];
         if (!_healthy(position.collateral, debtOf(owner))) revert UnderwaterPosition();
         _clearMark(owner);
@@ -457,9 +458,15 @@ contract CDPVault is ReentrancyGuard {
         uint256 debt = debtOf(owner);
         if (debt == 0) {
             _clearMark(owner);
-        } else if (!priceFeed.isStale() && !nhiFeed.isStale()) {
+        } else if (!priceFeed.isStale() && !nhiFeed.isStale() && !spotFeed.isStale()) {
             (uint256 price,) = priceFeed.latestValue();
-            if (price != 0 && _collateralRatio(position.collateral, debt, price) >= minCR()) {
+            (uint256 spot,) = spotFeed.latestValue();
+            uint256 difference = price > spot ? price - spot : spot - price;
+            // Invalid recovery observations preserve the mark without blocking deposits or repayments.
+            if (
+                price != 0 && spot != 0 && difference <= Math.mulDiv(price, maxDivergenceBps, 10_000)
+                    && _collateralRatio(position.collateral, debt, price) >= minCR()
+            ) {
                 _clearMark(owner);
             }
         }
