@@ -8,20 +8,8 @@
   },
   "contracts": [
     {
-      "contract": "MockIMD",
-      "constructorArgs": []
-    },
-    {
       "contract": "PriceFeed",
       "constructorArgs": [
-        "0x5598aa9146215bc13eb26f2c692ad1461fd32982",
-        "$owner",
-        "1",
-        "1",
-        "$owner",
-        "0x0",
-        "0x0",
-        "1",
         "86400",
         "2000"
       ]
@@ -29,26 +17,8 @@
     {
       "contract": "NhiFeed",
       "constructorArgs": [
-        "0x5598aa9146215bc13eb26f2c692ad1461fd32982",
-        "$owner",
-        "1",
-        "1",
-        "$owner",
-        "0x0",
-        "0x0",
-        "1",
         "86400",
         "2000"
-      ]
-    },
-    {
-      "contract": "CDPVault",
-      "constructorArgs": [
-        "$contract:MockIMD",
-        "0x0",
-        "0x0",
-        "$contract:PriceFeed",
-        "$contract:NhiFeed"
       ]
     }
   ],
@@ -58,5 +28,5 @@
     "tickSpacing": 60,
     "initialPrice": "79228162514264337593543950336"
   },
-  "notes": "Sepolia (11155111) deployment: LaunchToken is COMP Launch (CPL), separate from the elastic CompToken created by CDPVault. MockIMD, PriceFeed and NhiFeed deploy before CDPVault; every contract dependency is deployed by this launch. The vault's zero CompToken and oracle arguments create and permanently bind a fresh CompToken and MockWorkOracle during construction. CompToken.setVault is already closed and the vault's oracle is immutable when construction returns. No post-deployment initialization transaction exists, and the requester has no initialization authority. The source-pinned operator retains only the MockIMD mint and MockWorkOracle grantRights test faucets. Both feeds use the approved attester, $owner as sole relayer and reporter, payload chainId 1 (Ethereum mainnet), answerType 1 (uint256), quorum 1, maxAge 86400 seconds and maxDeviationBps 2000. The consumer EIP-712 domain uses the deployment chain and each feed address. The feeds cannot identify which question an attestation answers; the relayer must check it, including the first value and stale re-anchors. NhiFeed has no validated oracle question this round and uses reporter updates alone; its attestation path is live but unused. Feeds start unseeded and require accepted updates before feed-dependent vault operations. $owner resolves exclusively from policy and must match the workflow-approved operator; policy/source authority alignment remains a review requirement. The factory performs no initialization calls. The pool pairs CPL with native ETH, with fee 3000, tickSpacing 60, decimal sqrtPriceX96 initialPrice and no hook. The factory supplies the LP and MerkleDistributor. These notes do not grant deployment authority. Services own policy, source publication, signed artifact linkage, attestation, admission, deployment and frontend startup; this manifest does not attest that those checks have passed."
+  "notes": "BLOCKING: This manifest records only the source-compatible token and feed entries; it is not a complete deployment of the approved vault increment. The workflow is Sepolia-only (11155111), not a token-only launch. CDPVault requires three distinct deployed feeds, but src contains only the concrete PriceFeed and NhiFeed artifacts; SwarmFeed is abstract. script/DeployComp.s.sol creates PriceFeed twice, once for the primary average and once for spot. The manifest requires unique contract identifiers and has no artifact-alias field, so it cannot represent both instances. CDPVault is therefore omitted pending an accepted, separately named production spot-feed artifact and its ABI. Reusing the primary or NHI address as spot reverts InvalidFeed; test helpers are not independent production spot feeds. The complete vault constructor has six address arguments, in order: existing MockIMD, zero CompToken, zero work oracle, primary PriceFeed, NhiFeed, distinct spot feed. The approved existing collateral is 0xe44ab81ce23d34e29383dd158a1dffeb1c10d439 on Sepolia and must not be redeployed; its code must be available in deployment simulation. The two zero arguments make the vault create and permanently bind CompToken and MockWorkOracle during construction. Those child contracts are not deployed by the entries here. LaunchToken is COMP Launch (CPL), 18 decimals, separate from the elastic CompToken. PriceFeed and NhiFeed each take only maxAge=86400 and maxDeviationBps=2000; their committed docs/abi exports still show obsolete ten-argument constructors and require correction by a source contributor. Feed authority, payload chainId=1, answerType=3, quorum=1 and vault scalars are pinned in DeploymentConfig.sol, not supplied as manifest arguments. No listed constructor accepts an owner; source-pinned privileges and policy/authorization compatibility remain independent review findings. Both feeds start unseeded and require accepted updates before use. The factory makes no initialization calls. The pool pairs CPL with native ETH using manifest fee 3000, tickSpacing 60 and decimal sqrtPriceX96 initialPrice. The factory supplies the LP, MerkleDistributor and initialization-only PoolInitializationGuard. These notes neither authorize deployment nor enforce a deployment block. Services own policy, source publication, signed artifact linkage, attestation, admission, deployment and frontend startup; none of those outcomes is asserted here."
 }
