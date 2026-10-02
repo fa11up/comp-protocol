@@ -15,7 +15,8 @@ contract DivergenceGuardTest is Test {
         Mint,
         Mark,
         Liquidate,
-        WithdrawWithDebt
+        WithdrawWithDebt,
+        ClearRecoveredMark
     }
 
     address private constant BORROWER = address(0xD100);
@@ -146,7 +147,7 @@ contract DivergenceGuardTest is Test {
 
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_PriceDependentActionsRejectEitherStaleFeed(uint8 actionSeed, bool staleSpot) public {
-        Action action = Action(bound(actionSeed, 0, 3));
+        Action action = Action(bound(actionSeed, 0, uint256(Action.ClearRecoveredMark)));
         _prepare(action);
         if (staleSpot) spot.setStale(true);
         else primary.setStale(true);
@@ -155,7 +156,7 @@ contract DivergenceGuardTest is Test {
 
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_PriceDependentActionsRejectZeroPrice(uint8 actionSeed, bool zeroSpot) public {
-        Action action = Action(bound(actionSeed, 0, 3));
+        Action action = Action(bound(actionSeed, 0, uint256(Action.ClearRecoveredMark)));
         _prepare(action);
         if (zeroSpot) spot.setValue(0);
         else primary.setValue(0);
@@ -165,6 +166,61 @@ contract DivergenceGuardTest is Test {
     function testFuzz_DebtBearingWithdrawalRejectsDivergenceAtomically(bool spotAbove) public {
         _setBoundary(1 ether, spotAbove, true);
         _expectAtomicFailure(Action.WithdrawWithDebt, CDPVault.PriceDivergence.selector);
+    }
+
+    function testFuzz_ExplicitRecoveryAcceptsExactlyMaximumDivergence(bool spotAbove) public {
+        _prepare(Action.ClearRecoveredMark);
+        _setBoundary(1 ether, spotAbove, false);
+        vm.prank(DEBT_FREE);
+        vault.clearRecoveredMark(BORROWER);
+        _assertMarkCleared();
+        assertEq(vault.debtOf(BORROWER), 100 ether);
+    }
+
+    function testFuzz_ExplicitRecoveryRejectsOneWeiBeyondMaximumDivergence(bool spotAbove) public {
+        _prepare(Action.ClearRecoveredMark);
+        _setBoundary(1 ether, spotAbove, true);
+        _expectAtomicFailure(Action.ClearRecoveredMark, CDPVault.PriceDivergence.selector);
+    }
+
+    function testFuzz_AutomaticRecoveryAcceptsExactlyMaximumDivergence(bool spotAbove, bool repay) public {
+        _prepare(Action.ClearRecoveredMark);
+        _setBoundary(1 ether, spotAbove, false);
+        _dustRecoveryAction(repay);
+        _assertMarkCleared();
+        (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
+        assertEq(collateral, 300 ether + (repay ? 0 : 1));
+        assertEq(debt, 100 ether - (repay ? 1 : 0));
+    }
+
+    /// @dev A primary-only recovery cannot erase an already mature keeper snapshot.
+    /// forge-config: default.fuzz.runs = 1000
+    function testFuzz_InvalidAutomaticRecoveryPreservesMatureMarkAndKeeper(uint8 observationSeed, bool repay) public {
+        _prepare(Action.ClearRecoveredMark);
+        bytes32 matureMark = _markState();
+        uint256 observation = bound(observationSeed, 0, 3);
+        if (observation < 2) _setBoundary(1 ether, observation == 0, true);
+        else if (observation == 2) spot.setStale(true);
+        else spot.setValue(0);
+
+        _dustRecoveryAction(repay);
+        assertEq(_markState(), matureMark, "invalid recovery changed the mature snapshot");
+        (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
+        assertEq(collateral, 300 ether + (repay ? 0 : 1));
+        assertEq(debt, 100 ether - (repay ? 1 : 0));
+
+        primary.setValue(0.4 ether);
+        spot.setValue(0.4 ether);
+        spot.setStale(false);
+        vm.prank(LIQUIDATOR);
+        vault.liquidate(BORROWER, 10 ether);
+        assertEq(_markState(), matureMark, "liquidation must retain the original keeper snapshot");
+        assertEq(imd.balanceOf(MARKER), 0.25 ether);
+        assertEq(imd.balanceOf(LIQUIDATOR), 27.25 ether);
+        assertEq(imd.balanceOf(FEE_RECIPIENT), 0);
+        (uint256 remainingCollateral, uint256 remainingDebt) = vault.positions(BORROWER);
+        assertEq(remainingCollateral, collateral - 27.5 ether);
+        assertEq(remainingDebt, debt - 10 ether);
     }
 
     function testFuzz_RepaymentAndFullExitSucceedWhilePricesDiverge(bool spotAbove) public {
@@ -225,14 +281,18 @@ contract DivergenceGuardTest is Test {
     }
 
     function _prepare(Action action) private {
-        if (action == Action.Mark || action == Action.Liquidate) {
+        if (action == Action.Mark || action == Action.Liquidate || action == Action.ClearRecoveredMark) {
             primary.setValue(0.4 ether);
             spot.setValue(0.4 ether);
         }
-        if (action == Action.Liquidate) {
+        if (action == Action.Liquidate || action == Action.ClearRecoveredMark) {
             vm.prank(MARKER);
             vault.markUnderwater(BORROWER);
             vm.warp(block.timestamp + 6 hours);
+        }
+        if (action == Action.ClearRecoveredMark) {
+            primary.setValue(1 ether);
+            spot.setValue(1 ether);
         }
     }
 
@@ -250,8 +310,32 @@ contract DivergenceGuardTest is Test {
         if (action == Action.Mint) vault.mintCOMP(1 ether);
         else if (action == Action.Mark) vault.markUnderwater(BORROWER);
         else if (action == Action.Liquidate) vault.liquidate(BORROWER, 10 ether);
+        else if (action == Action.ClearRecoveredMark) vault.clearRecoveredMark(BORROWER);
         else vault.withdrawCollateral(1 ether);
         assertEq(_state(), beforeState, "failed price check changed debt, mark, collateral or balances");
+    }
+
+    function _dustRecoveryAction(bool repay) private {
+        if (!repay) {
+            vm.prank(APPROVED_OPERATOR);
+            imd.mint(BORROWER, 1);
+        }
+        vm.prank(BORROWER);
+        if (repay) vault.repayCOMP(1);
+        else vault.depositCollateral(1);
+    }
+
+    function _markState() private view returns (bytes32) {
+        (uint256 markedAt, uint256 grace, bool marked, address marker) = vault.liquidationMarks(BORROWER);
+        return keccak256(abi.encode(markedAt, grace, marked, marker));
+    }
+
+    function _assertMarkCleared() private view {
+        (uint256 markedAt, uint256 grace, bool marked, address marker) = vault.liquidationMarks(BORROWER);
+        assertEq(markedAt, 0);
+        assertEq(grace, 0);
+        assertFalse(marked);
+        assertEq(marker, address(0));
     }
 
     function _state() private view returns (bytes32) {
