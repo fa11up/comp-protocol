@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {CompToken} from "../src/CompToken.sol";
@@ -12,8 +13,8 @@ import {NhiFeed} from "../src/NhiFeed.sol";
 import {SwarmFeed} from "../src/SwarmFeed.sol";
 
 contract SelfContainedInvariantFactory {
-    function deploy(address imd, address price, address nhi) external returns (CDPVault) {
-        return new CDPVault{salt: bytes32(uint256(42))}(imd, address(0), address(0), price, nhi);
+    function deploy(address imd, address price, address nhi, address spot) external returns (CDPVault) {
+        return new CDPVault{salt: bytes32(uint256(42))}(imd, address(0), address(0), price, nhi, spot);
     }
 }
 
@@ -49,8 +50,9 @@ contract SelfContainedDeploymentHandler is Test {
         // Authority is pinned in DeploymentConfig; OPERATOR below IS the pinned relayer and reporter.
         priceFeed = new PriceFeed(1 days, 2000);
         nhiFeed = new NhiFeed(1 days, 2000);
+        MirroredSwarmFeed spot = new MirroredSwarmFeed(address(priceFeed));
         vm.prank(RELAYER, ORIGIN);
-        vault = factory.deploy(address(imd), address(priceFeed), address(nhiFeed));
+        vault = factory.deploy(address(imd), address(priceFeed), address(nhiFeed), address(spot));
         comp = vault.compToken();
         oracle = MockWorkOracle(address(vault.oracle()));
         assertEq(comp.vault(), address(vault), "token linked by constructor");

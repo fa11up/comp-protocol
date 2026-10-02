@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {Test, console2} from "forge-std/Test.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
@@ -21,7 +22,7 @@ import {
 } from "../src/DeploymentConfig.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {SwarmFeed} from "../src/SwarmFeed.sol";
-import {FEE_RECIPIENT} from "../src/DeploymentConfig.sol";
+import {FEE_RECIPIENT, MARKER_SHARE_BPS} from "../src/DeploymentConfig.sol";
 
 /// A vault with both knobs switched on, so the ceiling and the fee split are actually exercised.
 /// Production turns them on by changing the base defaults; this proves the mechanism either way.
@@ -29,9 +30,14 @@ contract CappedFeeVault is CDPVault {
     uint256 private immutable _ceiling;
     uint256 private immutable _shareBps;
 
-    constructor(address imd, uint256 ceiling_, uint256 shareBps_, address priceFeed_, address nhiFeed_)
-        CDPVault(imd, address(0), address(0), priceFeed_, nhiFeed_)
-    {
+    constructor(
+        address imd,
+        uint256 ceiling_,
+        uint256 shareBps_,
+        address priceFeed_,
+        address nhiFeed_,
+        address spotFeed_
+    ) CDPVault(imd, address(0), address(0), priceFeed_, nhiFeed_, spotFeed_) {
         _ceiling = ceiling_;
         _shareBps = shareBps_;
     }
@@ -63,10 +69,11 @@ contract InHouseTest is Test {
     // used is drained (liquidity() == 0), so its price was a frozen leftover.
     uint256 constant PRICE = 2_219_784_507_040_719;
     uint16 constant MIN_PANEL_SIZE = 25; // mirrors SwarmFeed.MIN_PANEL_SIZE
-    uint16 constant MIN_AGREED = 15;     // mirrors SwarmFeed.MIN_AGREED
+    uint16 constant MIN_AGREED = 15; // mirrors SwarmFeed.MIN_AGREED
 
     PriceFeed priceFeed;
     NhiFeed nhiFeed;
+    MirroredSwarmFeed spotFeed;
     CDPVault vault;
     CompToken comp;
     MockIMD imd;
@@ -83,7 +90,9 @@ contract InHouseTest is Test {
         // Authority and attestation policy are pinned in DeploymentConfig and are not arguments.
         priceFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
         nhiFeed = new NhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
-        vault = new CDPVault(address(imd), address(0), address(0), address(priceFeed), address(nhiFeed));
+        spotFeed = new MirroredSwarmFeed(address(priceFeed));
+        vault =
+            new CDPVault(address(imd), address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         comp = vault.compToken();
     }
 
@@ -191,10 +200,13 @@ contract InHouseTest is Test {
         uint256 expected = (repay * 11e17) / fallen; // floor(debtToRepay * 1.1e18 / price)
         assertTrue(expected != repay * 110 / 100, "at a non-unit price the two formulas must differ");
 
+        uint256 markerCut = (expected - repay * 1e18 / fallen) * MARKER_SHARE_BPS / 10_000;
+        uint256 markerBefore = imd.balanceOf(address(this));
         uint256 before = imd.balanceOf(OPERATOR);
         vm.prank(OPERATOR);
         vault.liquidate(OPERATOR, repay);
-        assertEq(imd.balanceOf(OPERATOR) - before, expected, "payout is not floor(repay * 1.1e18 / price)");
+        assertEq(imd.balanceOf(OPERATOR) - before, expected - markerCut, "priced payout less marker bonus");
+        assertEq(imd.balanceOf(address(this)) - markerBefore, markerCut, "marker receives only its bonus share");
     }
 
     /// OPERATIONAL LIMIT: maxDeviationBps 2000 caps one update at 20% of the last value, and the
@@ -326,18 +338,20 @@ contract InHouseTest is Test {
         f.submitAttestation(a, sig);
     }
 
-    function _sign(SwarmFeed f, SwarmFeed.OracleAttestation memory a, uint256 pk)
-        private
-        view
-        returns (bytes memory)
-    {
+    function _sign(SwarmFeed f, SwarmFeed.OracleAttestation memory a, uint256 pk) private view returns (bytes memory) {
         // Split and concatenated for the same reason the contract does it: sixteen words in one
         // abi.encode is a stack-too-deep, and every field is a static single-word type.
         bytes32 structHash = keccak256(
             bytes.concat(
                 abi.encode(
-                    f.ATTESTATION_TYPEHASH(), a.requestId, a.chainId, a.questionHash, a.answerType,
-                    keccak256(a.answer), a.figure, a.fromBlock
+                    f.ATTESTATION_TYPEHASH(),
+                    a.requestId,
+                    a.chainId,
+                    a.questionHash,
+                    a.answerType,
+                    keccak256(a.answer),
+                    a.figure,
+                    a.fromBlock
                 ),
                 abi.encode(
                     a.toBlock, a.blockHash, a.panelJobId, a.panelSize, a.quorum, a.agreed, a.issuedAt, a.expiresAt
@@ -376,7 +390,8 @@ contract InHouseTest is Test {
 
     /// The ceiling is a hard stop on collateral-backed debt, and it does not touch the work channel.
     function test_debtCeilingStopsMintingAndFreesOnRepay() public {
-        CappedFeeVault v = new CappedFeeVault(address(imd), 10 ether, 0, address(priceFeed), address(nhiFeed));
+        CappedFeeVault v =
+            new CappedFeeVault(address(imd), 10 ether, 0, address(priceFeed), address(nhiFeed), address(spotFeed));
         _seed(PRICE, 0.9e18);
         uint256 collateral = (100 ether * 1e18 * 300) / (PRICE * 100);
         vm.startPrank(OPERATOR);
@@ -400,8 +415,9 @@ contract InHouseTest is Test {
     /// the liquidator is always made whole on the debt it burned.
     function test_feeSplitTakesFromBonusNotPrincipal() public {
         uint256 shareBps = 2_000; // a fifth of the 10% bonus = 2% of the repaid debt
-        CappedFeeVault v =
-            new CappedFeeVault(address(imd), type(uint256).max, shareBps, address(priceFeed), address(nhiFeed));
+        CappedFeeVault v = new CappedFeeVault(
+            address(imd), type(uint256).max, shareBps, address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         _seed(PRICE, 0.9e18);
 
         uint256 debt = 1 ether;
@@ -422,6 +438,7 @@ contract InHouseTest is Test {
         uint256 seized = (debt * 11e17) / fallen;
         uint256 principal = (debt * 1e18) / fallen;
         uint256 expectedCut = ((seized - principal) * shareBps) / 10_000;
+        uint256 markerCut = ((seized - principal) * MARKER_SHARE_BPS) / 10_000;
         assertGt(expectedCut, 0, "the split must actually move value");
 
         // FEE_RECIPIENT is miyagod.eth, which is also OPERATOR here, so the liquidator has to be a
@@ -435,6 +452,7 @@ contract InHouseTest is Test {
 
         uint256 feeBefore = imd.balanceOf(FEE_RECIPIENT);
         uint256 liqBefore = imd.balanceOf(liquidator);
+        uint256 markerBefore = imd.balanceOf(address(this));
         (uint256 collBefore,) = v.positions(OPERATOR);
 
         vm.prank(liquidator);
@@ -443,8 +461,9 @@ contract InHouseTest is Test {
         (uint256 collAfter,) = v.positions(OPERATOR);
         assertEq(collBefore - collAfter, seized, "borrower's loss must be unchanged by the fee");
         assertEq(imd.balanceOf(FEE_RECIPIENT) - feeBefore, expectedCut, "protocol cut wrong");
-        assertEq(imd.balanceOf(liquidator) - liqBefore, seized - expectedCut, "liquidator cut wrong");
-        assertGt(seized - expectedCut, principal, "liquidator must still clear the principal");
+        assertEq(imd.balanceOf(address(this)) - markerBefore, markerCut, "marker cut wrong");
+        assertEq(imd.balanceOf(liquidator) - liqBefore, seized - expectedCut - markerCut, "liquidator cut wrong");
+        assertGt(seized - expectedCut - markerCut, principal, "liquidator must still clear the principal");
     }
 
     function _seed(uint256 price, uint256 nhi) private {

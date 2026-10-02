@@ -7,6 +7,7 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
 contract ProtocolHandler is Test {
@@ -19,6 +20,7 @@ contract ProtocolHandler is Test {
     CDPVault public vault;
     TestSwarmFeed public priceFeed;
     TestSwarmFeed public nhiFeed;
+    MirroredSwarmFeed public spotFeed;
     address[4] public actors = [address(0x1001), address(0x1002), address(0x1003), address(0x1004)];
     mapping(address => uint256) public debtMinted;
     mapping(address => uint256) public workMinted;
@@ -32,6 +34,7 @@ contract ProtocolHandler is Test {
     mapping(address => uint256) public markedAt;
     mapping(address => uint256) public graceSnapshot;
     uint256 public donated;
+    uint256 public markerReceived;
     uint256 public successfulDebtMints;
     uint256 public successfulWorkMints;
     uint256 public successfulRepayments;
@@ -44,7 +47,10 @@ contract ProtocolHandler is Test {
         comp = new CompToken(address(0));
         priceFeed = new TestSwarmFeed(1 ether);
         nhiFeed = new TestSwarmFeed(0.85 ether);
-        vault = new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed));
+        spotFeed = new MirroredSwarmFeed(address(priceFeed));
+        vault = new CDPVault(
+            address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         oracle = MockWorkOracle(address(vault.oracle()));
         vm.prank(OPERATOR);
         comp.setVault(address(vault));
@@ -169,7 +175,7 @@ contract ProtocolHandler is Test {
             vault.markUnderwater(actor);
             return;
         }
-        (uint256 timestamp, uint256 grace, bool marked) = vault.liquidationMarks(actor);
+        (uint256 timestamp, uint256 grace, bool marked,) = vault.liquidationMarks(actor);
         if (_healthy(actor)) {
             if (marked) {
                 vault.clearRecoveredMark(actor);
@@ -181,7 +187,7 @@ contract ProtocolHandler is Test {
             return;
         }
         vault.markUnderwater(actor);
-        (uint256 actualTimestamp, uint256 actualGrace, bool actualMarked) = vault.liquidationMarks(actor);
+        (uint256 actualTimestamp, uint256 actualGrace, bool actualMarked,) = vault.liquidationMarks(actor);
         assertTrue(actualMarked);
         if (marked && block.timestamp <= timestamp + grace + vault.liquidationWindow()) {
             assertEq(actualTimestamp, timestamp, "repeat marking preserves timestamp");
@@ -199,7 +205,7 @@ contract ProtocolHandler is Test {
         address owner = actors[ownerSeed % 4];
         address caller = actors[callerSeed % 4];
         if (!_fresh() || _healthy(owner)) return;
-        (uint256 timestamp, uint256 grace, bool marked) = vault.liquidationMarks(owner);
+        (uint256 timestamp, uint256 grace, bool marked,) = vault.liquidationMarks(owner);
         if (
             !marked || block.timestamp < timestamp + grace
                 || block.timestamp > timestamp + grace + vault.liquidationWindow()
@@ -224,10 +230,13 @@ contract ProtocolHandler is Test {
         uint256 received = imd.balanceOf(caller) - beforeIMD;
         assertEq(comp.balanceOf(caller), beforeCOMP - amount, "liquidator pays its own COMP");
         assertEq(remainingDebt, debt - amount, "liquidation retires debt");
-        assertEq(collateral - remainingCollateral, received, "seized collateral reaches liquidator");
-        assertEq(received, expectedPayout, "exact price-divided payout including rounding");
+        uint256 markerCut = (expectedPayout - amount * 1 ether / _price()) * vault.markerShareBps() / 10_000;
+        assertEq(collateral - remainingCollateral, received + markerCut, "seized collateral reaches both keepers");
+        assertEq(received, expectedPayout - markerCut, "liquidator receives principal plus remaining bonus");
+        markerReceived += markerCut;
+        assertEq(imd.balanceOf(address(this)), markerReceived, "marker payments match independent history");
         debtLiquidated[owner] += amount;
-        collateralSeized[owner] += received;
+        collateralSeized[owner] += expectedPayout;
         collateralReceived[caller] += received;
         ++successfulLiquidations;
     }
@@ -281,7 +290,7 @@ contract ProtocolHandler is Test {
         } else if (_healthy(owner)) {
             expected = CDPVault.HealthyPosition.selector;
         } else {
-            (uint256 timestamp, uint256 grace, bool marked) = vault.liquidationMarks(owner);
+            (uint256 timestamp, uint256 grace, bool marked,) = vault.liquidationMarks(owner);
             if (!marked) {
                 expected = CDPVault.PositionNotMarked.selector;
             } else if (block.timestamp < timestamp + grace) {
@@ -387,21 +396,32 @@ contract ProtocolInvariantTest is StdInvariant, Test {
                     - handler.deposited(actor) - handler.donations(actor),
                 "wallet collateral history"
             );
-            (uint256 timestamp, uint256 grace, bool marked) = vault.liquidationMarks(actor);
+            (uint256 timestamp, uint256 grace, bool marked, address marker) = vault.liquidationMarks(actor);
             if (marked) {
+                assertEq(marker, address(handler), "active mark retains its keeper");
                 assertEq(timestamp, handler.markedAt(actor), "mark timestamp snapshot");
                 assertEq(grace, handler.graceSnapshot(actor), "NHI cannot change in-flight grace");
             } else {
+                assertEq(marker, address(0), "cleared marker");
                 assertEq(timestamp, 0, "cleared mark timestamp");
                 assertEq(grace, 0, "cleared grace snapshot");
             }
         }
         assertEq(vault.totalWorkMinted(), work, "work history");
-        assertEq(handler.comp().totalSupply(), debts + vault.totalWorkMinted(), "supply equals debt plus work");
+        assertEq(vault.totalFeesMinted(), 0, "zero rate never mints fees");
+        assertEq(vault.totalDebt(), debts, "zero-rate debt is minted principal");
+        assertEq(
+            handler.comp().totalSupply(),
+            debts + vault.totalWorkMinted() + vault.totalFeesMinted(),
+            "zero-rate supply invariant"
+        );
+        assertEq(handler.imd().balanceOf(address(handler)), handler.markerReceived(), "marker custody");
         assertEq(walletCOMP, handler.comp().totalSupply(), "all COMP accounted for");
         assertEq(handler.imd().balanceOf(address(vault)), collateral + handler.donated(), "vault custody");
         assertEq(
-            walletIMD + collateral + handler.donated(), handler.imd().totalSupply(), "all collateral accounted for"
+            walletIMD + collateral + handler.donated() + handler.markerReceived(),
+            handler.imd().totalSupply(),
+            "all collateral accounted for"
         );
     }
 
@@ -497,8 +517,10 @@ contract ProtocolInvariantTest is StdInvariant, Test {
             (uint256 remainingCollateral, uint256 remainingDebt) = handler.vault().positions(owner);
             uint256 received = handler.imd().balanceOf(liquidator) - beforeCollateral;
             assertEq(remainingDebt, debt - debtToRepay, "liquidation retires debt at every price");
-            assertEq(collateral - remainingCollateral, received, "seized collateral reaches liquidator");
-            assertEq(received, debtToRepay * 1.1 ether / price, "exact payout at every market price");
+            uint256 seized = debtToRepay * 1.1 ether / price;
+            uint256 markerCut = (seized - debtToRepay * 1 ether / price) * handler.vault().markerShareBps() / 10_000;
+            assertEq(collateral - remainingCollateral, received + markerCut, "seized collateral reaches both keepers");
+            assertEq(received, seized - markerCut, "exact liquidator payout at every market price");
             assertEq(handler.successfulLiquidations(), 1, "each market price reaches liquidation");
             invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
             afterInvariant();
