@@ -7,6 +7,7 @@ import {NhiFeed} from "../src/NhiFeed.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockIMD} from "../src/MockIMD.sol";
+import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {
     APPROVED_OPERATOR,
     ORACLE_ATTESTER,
@@ -66,38 +67,50 @@ contract DeployComp is Script {
 
         PriceFeed priceFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
         NhiFeed nhiFeed = new NhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
+        PriceFeed spotFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
         // compToken_ = 0 and oracle_ = 0 put the vault in self-contained mode: it creates and
         // permanently binds its own CompToken and MockWorkOracle, so no post-deploy call exists.
-        CDPVault vault = new CDPVault(imd, address(0), address(0), address(priceFeed), address(nhiFeed));
+        CDPVault vault =
+            new CDPVault(imd, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
 
         vm.stopBroadcast();
 
         console2.log("PriceFeed          ", address(priceFeed));
         console2.log("NhiFeed            ", address(nhiFeed));
+        console2.log("SpotFeed           ", address(spotFeed));
         console2.log("CDPVault           ", address(vault));
         console2.log("CompToken   (inner)", address(vault.compToken()));
         console2.log("MockWorkOracle(in) ", address(vault.oracle()));
 
-        verify(vault, priceFeed, nhiFeed, imd, operator);
+        verify(vault, priceFeed, nhiFeed, spotFeed, imd, operator);
         console2.log("\nAll authority checks passed.");
     }
 
     /// @dev Fails the run if any immutable did not land on us. 519 would have failed this.
-    function verify(CDPVault vault, PriceFeed priceFeed, NhiFeed nhiFeed, address imd, address operator)
-        internal
-        view
-    {
+    function verify(
+        CDPVault vault,
+        PriceFeed priceFeed,
+        NhiFeed nhiFeed,
+        PriceFeed spotFeed,
+        address imd,
+        address operator
+    ) internal view {
         require(MockIMD(imd).deployer() == APPROVED_OPERATOR, "imd: faucet authority is not the pinned operator");
         require(address(vault.imdToken()) == imd, "vault: wrong collateral");
         require(address(vault.priceFeed()) == address(priceFeed), "vault: wrong price feed");
         require(address(vault.nhiFeed()) == address(nhiFeed), "vault: wrong nhi feed");
+        require(address(vault.spotFeed()) == address(spotFeed), "vault: wrong spot feed");
         require(address(priceFeed) != address(nhiFeed), "feeds must differ");
+        require(address(spotFeed) != address(priceFeed) && address(spotFeed) != address(nhiFeed), "feeds must differ");
 
         CompToken comp = vault.compToken();
         require(comp.vault() == address(vault), "comp: not bound to vault");
         require(comp.totalSupply() == 0, "comp: nonzero opening supply");
+        MockWorkOracle workOracle = MockWorkOracle(address(vault.oracle()));
+        require(workOracle.deployer() == APPROVED_OPERATOR, "oracle: faucet authority is not the pinned operator");
+        require(workOracle.vault() == address(vault), "oracle: not bound to vault");
 
-        PriceFeed[2] memory feeds = [priceFeed, PriceFeed(address(nhiFeed))];
+        PriceFeed[3] memory feeds = [priceFeed, PriceFeed(address(nhiFeed)), spotFeed];
         for (uint256 i = 0; i < feeds.length; ++i) {
             // Read off chain and compared to source, not to a local copy of the same literal: this
             // is the check that would have failed the 519 deployment instead of discovering it live.
@@ -115,6 +128,7 @@ contract DeployComp is Script {
             require(feeds[i].attestationAnswerType() != 1, "feed: answerType is the address enum, as on 519");
             require(feeds[i].attestationChainId() == ATTESTATION_CHAIN_ID, "feed: wrong payload chainId");
             require(feeds[i].maxAge() == MAX_AGE, "feed: wrong maxAge");
+            require(feeds[i].maxDeviationBps() == MAX_DEVIATION_BPS, "feed: wrong maxDeviationBps");
             require(feeds[i].MIN_PANEL_SIZE() == MIN_PANEL_SIZE, "feed: panel floor changed");
             require(feeds[i].MIN_AGREED() == MIN_AGREED, "feed: agreement floor changed");
             require(feeds[i].isStale(), "feed: must open unseeded");

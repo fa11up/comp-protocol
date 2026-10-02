@@ -9,7 +9,7 @@ import {CompToken} from "./CompToken.sol";
 import {MockWorkOracle} from "./MockWorkOracle.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
-import {FEE_RECIPIENT} from "./DeploymentConfig.sol";
+import {FEE_RECIPIENT, MAX_DIVERGENCE_BPS, MARKER_SHARE_BPS, STABILITY_FEE_BPS} from "./DeploymentConfig.sol";
 
 /// @notice Price-aware COMP borrowing and independent work-credit minting on Sepolia.
 /// @dev Both tokens use 18 decimals; price is COMP per IMD scaled by 1e18.
@@ -28,6 +28,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 markedAt;
         uint256 grace;
         bool marked;
+        address marker;
     }
 
     error InvalidToken();
@@ -48,6 +49,8 @@ contract CDPVault is ReentrancyGuard {
     error MarkExpired();
     error UnderwaterPosition();
     error DebtCeilingReached();
+    error PriceDivergence();
+    error InvalidBonusShares();
 
     event OracleSet(address indexed oracle);
     event CollateralDeposited(address indexed account, uint256 amount);
@@ -60,8 +63,13 @@ contract CDPVault is ReentrancyGuard {
     event UnderwaterMarkCleared(address indexed owner);
 
     uint256 public constant LIQUIDATION_BONUS_PERCENT = 10;
+    uint256 public constant maxDivergenceBps = MAX_DIVERGENCE_BPS;
+    uint256 public constant markerShareBps = MARKER_SHARE_BPS;
+    uint256 public constant stabilityFeeBps = STABILITY_FEE_BPS;
+    uint256 private constant INDEX_SCALE = 1e18;
+    uint256 public immutable deployedAt = block.timestamp;
 
-    /// @notice Maximum collateral-backed debt this vault will ever carry, in stablecoin units.
+    /// @notice Maximum collateral-backed minted principal, in stablecoin units (fees are additional).
     /// @dev Unlimited by default so behaviour is unchanged; a deployment that wants a cap overrides
     /// this. There is no admin, so the value a deployment chooses is permanent for that vault —
     /// raising a ceiling means a new vault and a migration, which is the price of having no keys.
@@ -76,7 +84,8 @@ contract CDPVault is ReentrancyGuard {
         return 0;
     }
 
-    /// @notice Total collateral-backed debt outstanding. Work-minted supply is tracked separately.
+    /// @notice Outstanding minted principal, as used by the unchanged debt ceiling.
+    /// @dev Accrued, unpaid stability fees are additional obligations returned by debtOf/positions.
     uint256 public totalDebt;
 
     IERC20 public immutable imdToken;
@@ -84,8 +93,17 @@ contract CDPVault is ReentrancyGuard {
     IWorkOracle public immutable oracle;
     ISwarmFeed public immutable priceFeed;
     ISwarmFeed public immutable nhiFeed;
+    ISwarmFeed public immutable spotFeed;
     uint256 public totalWorkMinted;
-    mapping(address account => Position position) public positions;
+    uint256 public totalFeesMinted;
+    /// @notice Recorded residual debt from liquidations that exhausted collateral, at its last update.
+    /// @dev Measurement only: no insurance or debt forgiveness. Only debt repayment reduces a recorded
+    /// residual; adding collateral cannot hide it. Use badDebtOf for a current-price, accrued view.
+    uint256 public totalBadDebt;
+    mapping(address account => Position position) private _positions;
+    mapping(address account => uint256 index) public debtIndexOf;
+    mapping(address account => uint256 fees) private _stabilityFees;
+    mapping(address account => uint256 debt) private _recordedBadDebt;
     mapping(address account => LiquidationMark mark) public liquidationMarks;
 
     /// @param imdToken_ Deployed, nonrebasing, fee-free MockIMD collateral (18 decimals).
@@ -95,18 +113,30 @@ contract CDPVault is ReentrancyGuard {
     /// A supplied oracle must already be deployed and, if it exposes vault(), bound to this vault.
     /// @param priceFeed_ Immutable collateral price feed, scaled by 1e18.
     /// @param nhiFeed_ Immutable network health feed, scaled by 1e18.
-    constructor(address imdToken_, address compToken_, address oracle_, address priceFeed_, address nhiFeed_) {
+    /// @param spotFeed_ Immutable spot price feed, used only to bound divergence from the primary average.
+    constructor(
+        address imdToken_,
+        address compToken_,
+        address oracle_,
+        address priceFeed_,
+        address nhiFeed_,
+        address spotFeed_
+    ) {
         if (
             imdToken_.code.length == 0 || (compToken_ != address(0) && compToken_.code.length == 0)
                 || imdToken_ == compToken_
         ) {
             revert InvalidToken();
         }
-        if (priceFeed_.code.length == 0 || nhiFeed_.code.length == 0 || priceFeed_ == nhiFeed_) revert InvalidFeed();
+        if (
+            priceFeed_.code.length == 0 || nhiFeed_.code.length == 0 || spotFeed_.code.length == 0
+                || priceFeed_ == nhiFeed_ || spotFeed_ == nhiFeed_ || spotFeed_ == priceFeed_
+        ) revert InvalidFeed();
         imdToken = IERC20(imdToken_);
         compToken = compToken_ == address(0) ? new CompToken(address(this)) : CompToken(compToken_);
         priceFeed = ISwarmFeed(priceFeed_);
         nhiFeed = ISwarmFeed(nhiFeed_);
+        spotFeed = ISwarmFeed(spotFeed_);
         if (oracle_ == address(0)) {
             oracle_ = address(new MockWorkOracle(address(this)));
         }
@@ -118,7 +148,7 @@ contract CDPVault is ReentrancyGuard {
     function depositCollateral(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         uint256 beforeBalance = imdToken.balanceOf(address(this));
-        positions[msg.sender].collateral += amount;
+        _positions[msg.sender].collateral += amount;
         imdToken.safeTransferFrom(msg.sender, address(this), amount);
         if (imdToken.balanceOf(address(this)) - beforeBalance != amount) revert UnexpectedCollateralReceived();
         _clearIfRecovered(msg.sender);
@@ -127,14 +157,16 @@ contract CDPVault is ReentrancyGuard {
 
     function withdrawCollateral(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
-        Position storage position = positions[msg.sender];
+        Position storage position = _positions[msg.sender];
         if (amount > position.collateral) revert InsufficientCollateral();
         uint256 remaining = position.collateral - amount;
         // A withdrawal with debt always lowers CR, so it cannot be allowed with stale feeds.
         // Debt-free collateral remains withdrawable: its ratio is infinite and no solvency depends on a feed.
-        if (position.debt != 0) {
+        uint256 debt = debtOf(msg.sender);
+        if (debt != 0) {
             _requireFreshFeeds();
-            if (!_healthy(remaining, position.debt)) revert UnsafeCollateralRatio();
+            _requirePriceAgreement();
+            if (!_healthy(remaining, debt)) revert UnsafeCollateralRatio();
         }
         position.collateral = remaining;
         _clearMark(msg.sender);
@@ -145,22 +177,25 @@ contract CDPVault is ReentrancyGuard {
     function mintCOMP(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _requireFreshFeeds();
+        _requirePriceAgreement();
         if (compToken.vault() != address(this)) revert NotInitialized();
-        Position storage position = positions[msg.sender];
-        uint256 resultingDebt = position.debt + amount;
+        _accrue(msg.sender);
+        Position storage position = _positions[msg.sender];
+        uint256 resultingDebt = position.debt + _stabilityFees[msg.sender] + amount;
         if (!_healthy(position.collateral, resultingDebt)) revert UnsafeCollateralRatio();
         uint256 resultingTotal = totalDebt + amount;
         if (resultingTotal > debtCeiling()) revert DebtCeilingReached();
         totalDebt = resultingTotal;
-        position.debt = resultingDebt;
+        position.debt += amount;
         _clearMark(msg.sender);
         compToken.mint(msg.sender, amount);
         emit COMPMinted(msg.sender, amount);
     }
 
     /// @notice Mint earned COMP by consuming work rights, without collateral or a debt entry.
-    /// @dev With zero initial supply and this vault as sole minter/burner, supply equals summed debt
-    /// plus totalWorkMinted. Repayments and liquidations burn debt; neither restores work rights.
+    /// @dev With this vault as sole minter/burner, supply = summed accrued debt + totalWorkMinted
+    /// + totalFeesMinted - all fees accrued (paid and unpaid). Equivalently it is outstanding minted
+    /// principal + totalWorkMinted. Unpaid fees are claims, not supply. Neither repayment path restores rights.
     function mintFromWork(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _requireFreshFeeds();
@@ -176,11 +211,9 @@ contract CDPVault is ReentrancyGuard {
     /// @dev Repayment does not restore consumed work credits.
     function repayCOMP(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
-        Position storage position = positions[msg.sender];
-        if (amount > position.debt) revert ExcessRepayment();
-        position.debt -= amount;
-        totalDebt -= amount;
-        compToken.burn(msg.sender, amount);
+        _accrue(msg.sender);
+        uint256 feePaid = _reduceDebt(msg.sender, amount);
+        _payDebt(amount, feePaid);
         _clearIfRecovered(msg.sender);
         emit COMPRepaid(msg.sender, amount);
     }
@@ -192,12 +225,13 @@ contract CDPVault is ReentrancyGuard {
     /// dip into a same-block liquidation with no effective grace.
     function markUnderwater(address owner) external nonReentrant {
         _requireFreshFeeds();
-        Position storage position = positions[owner];
-        if (_healthy(position.collateral, position.debt)) revert HealthyPosition();
+        _requirePriceAgreement();
+        Position storage position = _positions[owner];
+        if (_healthy(position.collateral, debtOf(owner))) revert HealthyPosition();
         LiquidationMark storage mark = liquidationMarks[owner];
         if (mark.marked && !_expired(mark)) return;
         uint256 grace = gracePeriod();
-        liquidationMarks[owner] = LiquidationMark(block.timestamp, grace, true);
+        liquidationMarks[owner] = LiquidationMark(block.timestamp, grace, true, msg.sender);
         emit UnderwaterMarked(owner, block.timestamp, grace);
     }
 
@@ -208,8 +242,8 @@ contract CDPVault is ReentrancyGuard {
     /// the bounded mark lifetime, even if a subsequent dip happens before that lifetime ends.
     function clearRecoveredMark(address owner) external nonReentrant {
         _requireFreshFeeds();
-        Position storage position = positions[owner];
-        if (!_healthy(position.collateral, position.debt)) revert UnderwaterPosition();
+        Position storage position = _positions[owner];
+        if (!_healthy(position.collateral, debtOf(owner))) revert UnderwaterPosition();
         _clearMark(owner);
     }
 
@@ -220,26 +254,36 @@ contract CDPVault is ReentrancyGuard {
     function liquidate(address owner, uint256 debtToRepay) external nonReentrant {
         if (debtToRepay == 0) revert ZeroAmount();
         _requireFreshFeeds();
-        Position storage position = positions[owner];
-        if (_healthy(position.collateral, position.debt)) revert HealthyPosition();
+        _requirePriceAgreement();
+        Position storage position = _positions[owner];
+        if (_healthy(position.collateral, debtOf(owner))) revert HealthyPosition();
         LiquidationMark storage mark = liquidationMarks[owner];
         if (!mark.marked) revert PositionNotMarked();
         if (block.timestamp - mark.markedAt < mark.grace) revert GracePeriodNotElapsed();
         if (_expired(mark)) revert MarkExpired();
-        if (debtToRepay > position.debt) revert ExcessRepayment();
+        _accrue(owner);
+        if (debtToRepay > position.debt + _stabilityFees[owner]) revert ExcessRepayment();
         uint256 price = _price();
         uint256 collateralSeized = Math.mulDiv(debtToRepay, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, price);
         if (collateralSeized > position.collateral) revert InsufficientCollateral();
-        // The protocol's cut comes out of the bonus, never out of the principal, so a liquidator is
-        // always made whole on the debt it burned.
-        uint256 protocolCut =
-            Math.mulDiv(collateralSeized - Math.mulDiv(debtToRepay, 1e18, price), protocolBonusShareBps(), 10_000);
-        position.debt -= debtToRepay;
-        totalDebt -= debtToRepay;
+        // Both shares come out of the same bonus, never principal or extra borrower collateral.
+        uint256 protocolShare = protocolBonusShareBps();
+        if (protocolShare > 10_000 - markerShareBps) revert InvalidBonusShares();
+        uint256 bonus = collateralSeized - Math.mulDiv(debtToRepay, 1e18, price);
+        uint256 protocolCut = Math.mulDiv(bonus, protocolShare, 10_000);
+        uint256 markerCut = Math.mulDiv(bonus, markerShareBps, 10_000);
+        address marker = mark.marker;
+        uint256 feePaid = _reduceDebt(owner, debtToRepay);
         position.collateral -= collateralSeized;
+        _recordBadDebt(owner);
         _clearIfRecovered(owner);
-        compToken.burn(msg.sender, debtToRepay);
-        imdToken.safeTransfer(msg.sender, collateralSeized - protocolCut);
+        _payDebt(debtToRepay, feePaid);
+        if (marker == msg.sender) {
+            imdToken.safeTransfer(msg.sender, collateralSeized - protocolCut);
+        } else {
+            imdToken.safeTransfer(msg.sender, collateralSeized - protocolCut - markerCut);
+            if (markerCut != 0) imdToken.safeTransfer(marker, markerCut);
+        }
         if (protocolCut != 0) imdToken.safeTransfer(FEE_RECIPIENT, protocolCut);
         emit Liquidated(owner, msg.sender, debtToRepay, collateralSeized);
     }
@@ -247,9 +291,52 @@ contract CDPVault is ReentrancyGuard {
     /// @notice floor(collateral * price * 100 / (debt * 1e18)), using the latest accepted price.
     /// @dev Returns uint256.max for debt-free positions; unrepresentably large ratios also saturate at that value.
     function collateralRatio(address owner) external view returns (uint256) {
-        Position storage position = positions[owner];
-        if (position.debt == 0) return type(uint256).max;
-        return _collateralRatio(position.collateral, position.debt, _price());
+        Position storage position = _positions[owner];
+        uint256 debt = debtOf(owner);
+        if (debt == 0) return type(uint256).max;
+        return _collateralRatio(position.collateral, debt, _price());
+    }
+
+    /// @notice Collateral and full accrued debt, preserving the original two-word position view.
+    function positions(address owner) external view returns (uint256 collateral, uint256 debt) {
+        return (_positions[owner].collateral, debtOf(owner));
+    }
+
+    /// @notice Deployment-based linear index; no per-second compounding or mutable rate.
+    function debtIndex() public view returns (uint256) {
+        return INDEX_SCALE + Math.mulDiv(block.timestamp - deployedAt, stabilityFeeBps * INDEX_SCALE, 365 days * 10_000);
+    }
+
+    /// @notice Unpaid fees on principal since its last debt change, plus previously accrued unpaid fees.
+    /// @dev Fees never themselves earn interest. Reads and collateral/mark changes cannot capitalize fees.
+    function stabilityFeeOf(address owner) public view returns (uint256) {
+        uint256 principal = _positions[owner].debt;
+        if (principal == 0 || stabilityFeeBps == 0) return _stabilityFees[owner];
+        return _stabilityFees[owner] + Math.mulDiv(principal, debtIndex() - debtIndexOf[owner], INDEX_SCALE);
+    }
+
+    function debtOf(address owner) public view returns (uint256) {
+        return _positions[owner].debt + stabilityFeeOf(owner);
+    }
+
+    /// @notice Debt not covered by collateral at the current primary price, including the 10% payout.
+    /// @dev Measurement only, not insurance or forgiveness. This view does not assert feed freshness.
+    /// The existing full-payout liquidation guard is unchanged; all uncovered debt remains repayable.
+    function badDebtOf(address owner) external view returns (uint256) {
+        uint256 debt = debtOf(owner);
+        if (debt == 0) return 0;
+        uint256 collateral = _positions[owner].collateral;
+        if (collateral == 0) return debt;
+        uint256 price = _price();
+        // A ratio of at least 110 guarantees full coverage and avoids overflow on very large collateral.
+        if (_collateralRatio(collateral, debt, price) >= 100 + LIQUIDATION_BONUS_PERCENT) return 0;
+        uint256 payoutScale = (100 + LIQUIDATION_BONUS_PERCENT) * 1e16;
+        uint256 covered = Math.mulDiv(collateral, price, payoutScale);
+        // Match the existing floor-rounded payout exactly: capacity = ceil((collateral + 1)
+        // * price / payoutScale) - 1, split into quotients/remainders to avoid overflowing either product.
+        uint256 extra = (price - 1) / payoutScale;
+        extra += (mulmod(collateral, price, payoutScale) + (price - 1) % payoutScale) / payoutScale;
+        return extra >= debt - covered ? 0 : debt - covered - extra;
     }
 
     /// @notice Minimum CR, derived only from NHI: 200 at/below .60; 150 at/above .85.
@@ -290,6 +377,59 @@ contract CDPVault is ReentrancyGuard {
         _price();
     }
 
+    /// @dev A pinned closing block and an attestation valid for its TTL let an attacker know which
+    /// block to push and act on the signature afterwards. Price from an average; use spot only to
+    /// detect disagreement. Compare against the primary's share without a rounded-down BPS ratio.
+    function _requirePriceAgreement() private view {
+        if (spotFeed.isStale()) revert StaleFeed();
+        (uint256 spot,) = spotFeed.latestValue();
+        if (spot == 0) revert InvalidPrice();
+        uint256 primary = _price();
+        uint256 difference = primary > spot ? primary - spot : spot - primary;
+        if (difference > Math.mulDiv(primary, maxDivergenceBps, 10_000)) revert PriceDivergence();
+    }
+
+    function _accrue(address owner) private {
+        _stabilityFees[owner] = stabilityFeeOf(owner);
+        debtIndexOf[owner] = debtIndex();
+    }
+
+    /// @dev Pay fees first, then principal. Only burning COMP can reduce either obligation.
+    function _reduceDebt(address owner, uint256 amount) private returns (uint256 feePaid) {
+        Position storage position = _positions[owner];
+        uint256 fees = _stabilityFees[owner];
+        if (amount > position.debt + fees) revert ExcessRepayment();
+        feePaid = Math.min(amount, fees);
+        _stabilityFees[owner] = fees - feePaid;
+        uint256 principalPaid = amount - feePaid;
+        position.debt -= principalPaid;
+        totalDebt -= principalPaid;
+        uint256 previous = _recordedBadDebt[owner];
+        if (previous != 0) {
+            // Include new fees while collateral is exhausted. After recapitalization, only reduce
+            // the historical residual once remaining debt is actually below it (fees are paid first).
+            uint256 current = debtOf(owner);
+            if (position.collateral != 0) current = Math.min(previous, current);
+            totalBadDebt = totalBadDebt - previous + current;
+            _recordedBadDebt[owner] = current;
+        }
+    }
+
+    function _payDebt(uint256 amount, uint256 feePaid) private {
+        compToken.burn(msg.sender, amount);
+        if (feePaid != 0) {
+            totalFeesMinted += feePaid;
+            compToken.mint(FEE_RECIPIENT, feePaid);
+        }
+    }
+
+    function _recordBadDebt(address owner) private {
+        if (_positions[owner].collateral != 0) return;
+        uint256 current = debtOf(owner);
+        totalBadDebt = totalBadDebt - _recordedBadDebt[owner] + current;
+        _recordedBadDebt[owner] = current;
+    }
+
     function _price() private view returns (uint256 price) {
         (price,) = priceFeed.latestValue();
         if (price == 0) revert InvalidPrice();
@@ -313,12 +453,13 @@ contract CDPVault is ReentrancyGuard {
 
     function _clearIfRecovered(address owner) private {
         if (!liquidationMarks[owner].marked) return;
-        Position storage position = positions[owner];
-        if (position.debt == 0) {
+        Position storage position = _positions[owner];
+        uint256 debt = debtOf(owner);
+        if (debt == 0) {
             _clearMark(owner);
         } else if (!priceFeed.isStale() && !nhiFeed.isStale()) {
             (uint256 price,) = priceFeed.latestValue();
-            if (price != 0 && _collateralRatio(position.collateral, position.debt, price) >= minCR()) {
+            if (price != 0 && _collateralRatio(position.collateral, debt, price) >= minCR()) {
                 _clearMark(owner);
             }
         }
