@@ -60,6 +60,11 @@ contract Treasury {
     /// @dev Pinned to APPROVED_OPERATOR in source, like every other authority in this protocol, so a
     /// deployment template cannot substitute it. The destination is an argument rather than a second
     /// constant because the point of holding revenue is to deploy it later, and where is not decided.
+    /// @notice The only account that may withdraw. A source constant, like every authority here.
+    function withdrawer() external pure returns (address) {
+        return APPROVED_OPERATOR;
+    }
+
     function withdraw(IERC20 token, address to, uint256 amount) external {
         if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
         if (to == address(0) || to == address(this)) revert InvalidRecipient();
