@@ -60,6 +60,11 @@ contract InHouseTest is Test {
     // DeploymentConfig, which is exactly the drift this whole change exists to remove.
     address constant ATTESTER = ORACLE_ATTESTER;
     address constant OPERATOR = APPROVED_OPERATOR;
+    // Three different parties since the feed authority moved off miyagod.eth. OPERATOR owns the mock
+    // faucets and plays the borrower; REPORTER is the only address the feeds accept a report() from;
+    // RELAYER is the only address they accept an attestation from, and is now a contract.
+    address constant REPORTER = FEED_REPORTER_0;
+    address constant RELAYER = ATTESTATION_RELAYER;
     address constant LIVE_MOCK_IMD = 0xE44AB81Ce23d34E29383dD158a1DfFEB1c10d439;
     uint8 constant ANSWER_TYPE_UINT256 = ATTESTATION_ANSWER_TYPE;
     uint256 constant MAX_AGE = 86_400;
@@ -104,8 +109,9 @@ contract InHouseTest is Test {
     /// Every authority that launch 519 got wrong — read back against the source that pins them, so
     /// this fails if DeploymentConfig and the deployed artifact ever disagree.
     function test_authoritiesLandOnUs() public view {
-        assertTrue(priceFeed.isReporter(OPERATOR), "operator cannot report");
-        assertEq(priceFeed.relayer(), OPERATOR, "relayer is not us");
+        assertTrue(priceFeed.isReporter(REPORTER), "the pinned reporter cannot report");
+        assertEq(priceFeed.relayer(), RELAYER, "relayer is not the pinned relay");
+        assertTrue(REPORTER != OPERATOR, "the faucet operator must not also set the price");
         assertEq(priceFeed.attester(), ORACLE_ATTESTER, "attester is not the live oracle signer");
         assertEq(priceFeed.relayer(), ATTESTATION_RELAYER, "relayer is not the pinned relayer");
         assertEq(priceFeed.reporter0(), FEED_REPORTER_0, "reporter0 is not the pinned reporter");
@@ -190,7 +196,7 @@ contract InHouseTest is Test {
         vm.stopPrank();
 
         uint256 fallen = _maxDownStep(PRICE); // the largest single step the band allows
-        vm.prank(OPERATOR);
+        vm.prank(REPORTER);
         priceFeed.report(fallen);
         assertLt(vault.collateralRatio(OPERATOR), vault.minCR(), "position should be underwater");
 
@@ -218,17 +224,17 @@ contract InHouseTest is Test {
         _seed(PRICE, 0.9e18);
         uint256 floorStep = _maxDownStep(PRICE);
 
-        vm.prank(OPERATOR);
+        vm.prank(REPORTER);
         vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
         priceFeed.report(floorStep - 1); // one wei past the bound
 
-        vm.prank(OPERATOR);
+        vm.prank(REPORTER);
         priceFeed.report(floorStep); // exactly at the bound is accepted
         (uint256 v,) = priceFeed.latestValue();
         assertEq(v, floorStep);
 
         // Two steps clear far more than one; quorum 1 lets both land in the same block.
-        vm.prank(OPERATOR);
+        vm.prank(REPORTER);
         priceFeed.report(_maxDownStep(floorStep));
         (uint256 v2,) = priceFeed.latestValue();
         assertLt(v2, floorStep, "second step must move further down");
@@ -249,13 +255,13 @@ contract InHouseTest is Test {
         a.expiresAt = uint64(block.timestamp + 600);
         a.issuedAt = uint64(block.timestamp);
         a.figure = PRICE;
-        vm.prank(OPERATOR);
+        vm.prank(RELAYER);
         vm.expectRevert(SwarmFeed.InvalidAnswerType.selector);
         priceFeed.submitAttestation(a, new bytes(65));
 
         a.answerType = ANSWER_TYPE_UINT256;
         a.chainId = 11155111; // Sepolia payload, but our questions are asked about mainnet
-        vm.prank(OPERATOR);
+        vm.prank(RELAYER);
         vm.expectRevert(SwarmFeed.InvalidAttestationChain.selector);
         priceFeed.submitAttestation(a, new bytes(65));
     }
@@ -372,19 +378,19 @@ contract InHouseTest is Test {
         a.answerType = ANSWER_TYPE_UINT256;
         a.panelSize = MIN_PANEL_SIZE - 1;
         a.agreed = MIN_AGREED;
-        vm.prank(OPERATOR);
+        vm.prank(RELAYER);
         vm.expectRevert(SwarmFeed.PanelTooSmall.selector);
         priceFeed.submitAttestation(a, new bytes(65));
 
         a.panelSize = MIN_PANEL_SIZE;
         a.agreed = MIN_AGREED - 1;
-        vm.prank(OPERATOR);
+        vm.prank(RELAYER);
         vm.expectRevert(SwarmFeed.NotEnoughAgreement.selector);
         priceFeed.submitAttestation(a, new bytes(65));
 
         // agreed can never exceed the panel it came from
         a.agreed = MIN_PANEL_SIZE + 1;
-        vm.prank(OPERATOR);
+        vm.prank(RELAYER);
         vm.expectRevert(SwarmFeed.NotEnoughAgreement.selector);
         priceFeed.submitAttestation(a, new bytes(65));
     }
@@ -431,7 +437,7 @@ contract InHouseTest is Test {
         vm.stopPrank();
 
         uint256 fallen = PRICE - (PRICE * 2_000) / 10_000;
-        vm.prank(OPERATOR);
+        vm.prank(REPORTER);
         priceFeed.report(fallen);
         v.markUnderwater(OPERATOR);
         skip(6 hours);
@@ -468,7 +474,7 @@ contract InHouseTest is Test {
     }
 
     function _seed(uint256 price, uint256 nhi) private {
-        vm.startPrank(OPERATOR);
+        vm.startPrank(REPORTER);
         priceFeed.report(price);
         nhiFeed.report(nhi);
         vm.stopPrank();

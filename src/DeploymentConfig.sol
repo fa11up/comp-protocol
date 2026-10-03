@@ -38,12 +38,19 @@ address constant ORACLE_ATTESTER = 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982;
 /// which SwarmFeed.submitAttestation documents as unsafe for as long as questionHash binds a
 /// moving block window and so cannot identify WHICH question an attestation answers.
 ///
-/// TESTNET VALUE. This is the simulation wallet W0, whose key sits in sim/sim.config.js so the
-/// harness can seed feeds and relay attestations unattended. Treat anything it guards as public on
-/// Sepolia: whoever holds that file can set this deployment's prices. That is the deliberate trade
-/// for an iteration loop that needs no human at a browser wallet.
-/// MAINNET MUST CHANGE THIS to a key held outside the repo, and must not reuse W0.
-address constant ATTESTATION_RELAYER = 0x1d0074aB2ba9dA4cCbc67cFC0026E570D0E93951;
+/// This is SwarmRelay, deployed to Sepolia at the address below, NOT an externally owned account.
+/// Anyone may call it, so the trust is the same as a zero relayer, but the nonzero-relayer guarantee
+/// survives and two things become possible that a key cannot do: several feeds update in one
+/// transaction, and a keeper bundles an update with the action it enables.
+///
+/// ORDER MATTERS. This is a compile-time constant, so the relay must already exist before the feeds
+/// are compiled — a launch manifest cannot deploy the relay and then build feeds against it. Deploy
+/// the relay, write its address here, then deploy the feeds.
+///
+/// The feeds live on Sepolia TODAY still pin the old W0 account, because their bytecode was fixed at
+/// deployment. Only a redeployment picks this up. deploy/relay-attestation.js therefore still relays
+/// straight to those feeds, and must go through the relay once they are replaced.
+address constant ATTESTATION_RELAYER = 0xe36FFc2688Bf5974f2187AC9086492e372926D40;
 
 /// @dev Fallback reporters. Unused slots are zero; FEED_QUORUM must not exceed the nonzero count.
 /// A single reporter is a single point of failure for the manual path and is deliberate on testnet;
