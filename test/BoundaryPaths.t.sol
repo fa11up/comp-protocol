@@ -6,7 +6,7 @@ import {stdError} from "forge-std/StdError.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {CDPVault} from "src/CDPVault.sol";
-import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {MockWorkOracle} from "src/MockWorkOracle.sol";
@@ -17,7 +17,7 @@ contract BoundaryPathsTest is ProtocolFixture {
 
     function test_mintRejectsUnlinkedTokenDespiteConstructorBoundOracle() public {
         CompToken token = new CompToken(address(0));
-        CDPVault fresh = new ZeroFeeVault(
+        CDPVault fresh = new BaselineVault(
             address(imd), address(token), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         assertEq(MockWorkOracle(address(fresh.oracle())).vault(), address(fresh));
@@ -30,10 +30,10 @@ contract BoundaryPathsTest is ProtocolFixture {
 
     function test_mintRejectsTokenLinkedToDifferentVault() public {
         CompToken token = new CompToken(address(0));
-        CDPVault fresh = new ZeroFeeVault(
+        CDPVault fresh = new BaselineVault(
             address(imd), address(token), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
-        CDPVault registeredVault = new ZeroFeeVault(
+        CDPVault registeredVault = new BaselineVault(
             address(imd), address(token), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         vm.startPrank(OPERATOR);
@@ -48,7 +48,7 @@ contract BoundaryPathsTest is ProtocolFixture {
     }
 
     function test_collateralCanBeRecoveredBeforeInitialization() public {
-        CDPVault fresh = new ZeroFeeVault(
+        CDPVault fresh = new BaselineVault(
             address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         vm.startPrank(alice);
@@ -184,7 +184,7 @@ contract BoundaryPathsTest is ProtocolFixture {
         assertEq(freshIMD.balanceOf(bob), 0);
 
         CompToken freshCOMP = new CompToken(address(0));
-        CDPVault tokenVault = new ZeroFeeVault(
+        CDPVault tokenVault = new BaselineVault(
             address(imd), address(freshCOMP), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         vm.prank(OPERATOR);

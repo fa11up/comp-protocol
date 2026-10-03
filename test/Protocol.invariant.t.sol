@@ -7,7 +7,7 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
-import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
@@ -49,7 +49,7 @@ contract ProtocolHandler is Test {
         priceFeed = new TestSwarmFeed(1 ether);
         nhiFeed = new TestSwarmFeed(0.85 ether);
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
-        vault = new ZeroFeeVault(
+        vault = new BaselineVault(
             address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         oracle = MockWorkOracle(address(vault.oracle()));

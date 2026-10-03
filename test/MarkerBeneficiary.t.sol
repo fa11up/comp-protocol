@@ -6,7 +6,7 @@ import {CDPVault} from "../src/CDPVault.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
-import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {APPROVED_OPERATOR} from "../src/DeploymentConfig.sol";
 
 /// @dev Stands in for anything that marks on a keeper's behalf — a relay bundling the feed update
@@ -27,7 +27,7 @@ contract MarkerBeneficiaryTest is Test {
     address private constant KEEPER = address(0xCAFE);
     address private constant LIQUIDATOR = address(0x1A1D);
 
-    ZeroFeeVault private vault;
+    BaselineVault private vault;
     MockIMD private imd;
     CompToken private comp;
     TestSwarmFeed private price;
@@ -42,7 +42,7 @@ contract MarkerBeneficiaryTest is Test {
         price = new TestSwarmFeed(1 ether);
         spot = new TestSwarmFeed(1 ether);
         nhi = new TestSwarmFeed(0.6 ether); // minCR 200, grace 0
-        vault = new ZeroFeeVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
+        vault = new BaselineVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
         comp = vault.compToken();
         forwarder = new Forwarder();
 

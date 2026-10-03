@@ -8,7 +8,7 @@ import {PriceFeed} from "src/PriceFeed.sol";
 import {NhiFeed} from "src/NhiFeed.sol";
 import {SpotFeed} from "src/SpotFeed.sol";
 import {CDPVault} from "src/CDPVault.sol";
-import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {ConfigurableSwarmFeed} from "./helpers/ConfigurableSwarmFeed.sol";
@@ -386,7 +386,7 @@ abstract contract SwarmFeedTest is Test {
         CompToken comp = new CompToken(address(0));
         MirroredSwarmFeed spot = new MirroredSwarmFeed(address(price));
         CDPVault vault =
-            new ZeroFeeVault(address(imd), address(comp), address(0), address(price), address(nhi), address(spot));
+            new BaselineVault(address(imd), address(comp), address(0), address(price), address(nhi), address(spot));
         vm.startPrank(operator);
         comp.setVault(address(vault));
         imd.mint(REPORTER_A, 140 ether);

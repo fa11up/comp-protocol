@@ -9,7 +9,7 @@ import {CompToken} from "./CompToken.sol";
 import {MockWorkOracle} from "./MockWorkOracle.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
-import {FEE_RECIPIENT, MAX_DIVERGENCE_BPS, MARKER_SHARE_BPS, STABILITY_FEE_BPS} from "./DeploymentConfig.sol";
+import {FEE_RECIPIENT, MAX_DIVERGENCE_BPS, MARKER_SHARE_BPS, STABILITY_FEE_BPS, PROTOCOL_BONUS_SHARE_BPS} from "./DeploymentConfig.sol";
 
 /// @notice Price-aware COMP borrowing and independent work-credit minting on Sepolia.
 /// @dev Both tokens use 18 decimals; price is COMP per IMD scaled by 1e18.
@@ -100,7 +100,7 @@ contract CDPVault is ReentrancyGuard {
     }
 
     function protocolBonusShareBps() public view virtual returns (uint256) {
-        return 0;
+        return PROTOCOL_BONUS_SHARE_BPS;
     }
 
     /// @notice Outstanding minted principal, as used by the unchanged debt ceiling.

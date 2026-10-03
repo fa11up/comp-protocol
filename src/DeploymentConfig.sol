@@ -96,6 +96,15 @@ uint256 constant MAX_DIVERGENCE_BPS = 500;
 /// points of the bonus. Never taken from principal: the borrower's loss is identical at zero.
 uint256 constant MARKER_SHARE_BPS = 1_000;
 
+/// @dev The protocol's own share of the same bonus, in basis points of it, paid to FEE_RECIPIENT.
+/// This is revenue WITHOUT the protocol supplying capital or becoming the liquidator: the keeper
+/// still brings the stablecoin, takes the inventory risk on seized collateral and pays the gas.
+/// At 3333 a keeper keeps roughly 70% more than the protocol takes, which leaves liquidation worth
+/// doing on smaller positions — and liquidation happening is a solvency property, not a nicety.
+/// The vault refuses any value above 10_000 minus MARKER_SHARE_BPS. The borrower's loss is
+/// unchanged at any setting: this divides the existing bonus rather than seizing more collateral.
+uint256 constant PROTOCOL_BONUS_SHARE_BPS = 3_333;
+
 /// @dev Annual stability fee on open debt, in basis points, accrued linearly from deployment.
 /// Ships at zero so this increment changes no existing behaviour; a later deployment turns it on.
 uint256 constant STABILITY_FEE_BPS = 200;

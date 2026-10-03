@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "src/CDPVault.sol";
-import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
@@ -44,7 +44,7 @@ contract BadDebtSweepTest is Test {
         spotFeed = new TestSwarmFeed(1e18);
         // NHI 0.60 pins minCR at 200 and gracePeriod at zero, so a mark is actionable at once.
         nhiFeed = new TestSwarmFeed(0.6e18);
-        vault = new ZeroFeeVault(
+        vault = new BaselineVault(
             address(imd), address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         comp = vault.compToken();

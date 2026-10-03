@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "src/CDPVault.sol";
-import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {MockWorkOracle} from "src/MockWorkOracle.sol";
@@ -38,7 +38,7 @@ contract DivergenceGuardTest is Test {
         primary = new TestSwarmFeed(1 ether);
         spot = new TestSwarmFeed(1 ether);
         nhi = new TestSwarmFeed(0.85 ether);
-        vault = new ZeroFeeVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
+        vault = new BaselineVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
         comp = vault.compToken();
 
         vm.startPrank(APPROVED_OPERATOR);

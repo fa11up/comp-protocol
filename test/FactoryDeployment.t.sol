@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {CDPVault} from "../src/CDPVault.sol";
-import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
@@ -24,9 +24,9 @@ contract ApplicationConstructionFactory {
         returns (CDPVault vault)
     {
         if (useCreate2) {
-            vault = new ZeroFeeVault{salt: bytes32(uint256(1))}(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
+            vault = new BaselineVault{salt: bytes32(uint256(1))}(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
         } else {
-            vault = new ZeroFeeVault(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
+            vault = new BaselineVault(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
         }
     }
 }
@@ -194,7 +194,7 @@ contract SelfContainedFactoryDeploymentTest is Test {
     function _deploy(bool useCreate2) private {
         bytes32 initCodeHash = keccak256(
             abi.encodePacked(
-                type(ZeroFeeVault).creationCode,
+                type(BaselineVault).creationCode,
                 abi.encode(
                     address(imd), address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
                 )

@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {CDPVault} from "../src/CDPVault.sol";
-import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
@@ -20,7 +20,7 @@ import {APPROVED_OPERATOR, FEED_REPORTER_0} from "../src/DeploymentConfig.sol";
 /// unchanged: a deterministic address from creation code, salt and factory.
 contract SelfContainedInvariantFactory {
     function deploy(address imd, address price, address nhi, address spot) external returns (CDPVault) {
-        return new ZeroFeeVault{salt: bytes32(uint256(42))}(imd, address(0), address(0), price, nhi, spot);
+        return new BaselineVault{salt: bytes32(uint256(42))}(imd, address(0), address(0), price, nhi, spot);
     }
 }
 

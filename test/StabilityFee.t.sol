@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "src/CDPVault.sol";
-import {ZeroFeeVault, TenPercentFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault, TenPercentFeeVault} from "./helpers/BaselineVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {MockWorkOracle} from "src/MockWorkOracle.sol";
@@ -26,7 +26,7 @@ abstract contract StabilityFeeFixture is Test {
     /// @dev Which rate this suite runs at. The fixture funds and approves whatever this returns, so a
     /// suite cannot end up approving one vault and exercising another.
     function _deployVault() internal virtual returns (CDPVault) {
-        return new ZeroFeeVault(
+        return new BaselineVault(
             address(collateral), address(0), address(0), address(primary), address(nhi), address(spot)
         );
     }

@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {CDPVault} from "src/CDPVault.sol";
 
-/// @notice A vault holding the stability fee at zero, for suites that are not about the fee.
+/// @notice A vault with its economics inert, for suites that are about mechanics rather than money.
 /// @dev The shipped rate is non-zero, and accrual moves every debt figure by the time elapsed in a
 /// test. Suites that exist to pin liquidation payouts, divergence, bad debt or borrower accounting
 /// would all have to restate their expectations in terms of accrual to say the same things they say
@@ -13,7 +13,7 @@ import {CDPVault} from "src/CDPVault.sol";
 /// This is why stabilityFeeBps is virtual, as debtCeiling and protocolBonusShareBps already were.
 /// It replaces test/check_stability_fee.py, which could only reach a non-zero rate by copying the
 /// source and rewriting the constant outside the build.
-contract ZeroFeeVault is CDPVault {
+contract BaselineVault is CDPVault {
     constructor(
         address imdToken_,
         address compToken_,
@@ -24,6 +24,13 @@ contract ZeroFeeVault is CDPVault {
     ) CDPVault(imdToken_, compToken_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
 
     function stabilityFeeBps() public pure override returns (uint256) {
+        return 0;
+    }
+
+    /// @dev Zero too, for the same reason: a protocol share changes every liquidation payout, and
+    /// suites pinning those payouts longhand are testing the split arithmetic, not the share.
+    /// ProtocolShare tests and the shipped-configuration tests cover the real value.
+    function protocolBonusShareBps() public pure override returns (uint256) {
         return 0;
     }
 }

@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {CDPVault} from "src/CDPVault.sol";
-import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
+import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {APPROVED_OPERATOR, FEE_RECIPIENT, MARKER_SHARE_BPS} from "src/DeploymentConfig.sol";
@@ -78,7 +78,7 @@ contract MarkerBadDebtTest is Test {
     }
 
     function test_defaultProtocolShareStillPaysMarkerFromBonus() public {
-        vault = new ZeroFeeVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
+        vault = new BaselineVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
         comp = vault.compToken();
         _open(BORROWER, 140 ether, 100 ether);
         _setPrice(1 ether);
