@@ -39,6 +39,12 @@ abstract contract SwarmFeed is ISwarmFeed {
     error ExcessDeviation();
     error InvalidSignature();
     error UnauthorizedRelayer();
+    error WrongQuestion(bytes32 expected, bytes32 given);
+    error WindowSpanOutOfRange(uint64 span);
+    error WindowNotAdvancing(uint64 toBlock, uint64 lastAccepted);
+    error InvalidWindow();
+    error UnboundQuestionNeedsRelayer();
+    error QuestionNeedsWindowBounds();
     error InvalidAttestationChain();
     error InvalidAnswerType();
     error InvalidTimestamp();
@@ -68,6 +74,9 @@ abstract contract SwarmFeed is ISwarmFeed {
 
     address public immutable attester;
     address public immutable relayer;
+
+    /// @notice Closing block of the last accepted attestation window; only ever moves forward.
+    uint64 public lastToBlock;
     uint256 public immutable attestationChainId;
     uint8 public immutable attestationAnswerType;
     address public immutable reporter0;
@@ -124,6 +133,17 @@ abstract contract SwarmFeed is ISwarmFeed {
                 address(this)
             )
         );
+        // The pairing that the HIGH audit finding turned on: a feed that cannot verify WHICH question
+        // an attestation answers has only its relayer standing between a bought signature and its
+        // price, so it may not be deployed without one. A feed that pins its question needs no
+        // relayer, and must pin a window span too — an unbounded span would let the same question be
+        // answered over one block or over a month.
+        (bytes memory prefix_, uint64 minSpan_, uint64 maxSpan_) = questionPolicy();
+        if (prefix_.length == 0) {
+            if (relayer_ == address(0)) revert UnboundQuestionNeedsRelayer();
+        } else if (minSpan_ == 0 || maxSpan_ < minSpan_) {
+            revert QuestionNeedsWindowBounds();
+        }
         attester = attester_;
         relayer = relayer_;
         attestationChainId = attestationChainId_;
@@ -152,10 +172,11 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// @dev Uses the signed issue time, so delayed delivery cannot extend freshness. requestId is the
     /// replay nonce. The immutable consumer domain binds the deployment chain and this feed, stopping
     /// cross-feed replay without identifying the question. questionHash binds a changing pinned block
-    /// window, so this contract cannot verify WHICH question an attestation answers. The deviation guard
-    /// bounds a wrong-question figure once seeded while the previous value is fresh; a nonzero relayer
-    /// covers the unseeded first value and stale re-anchors. A stable per-question identifier would remove
-    /// the relayer entirely. Payload chainId and answerType must match the configured policy. Zero figures revert.
+    /// window, so this contract cannot verify WHICH question an attestation answers FROM THE HASH ALONE.
+    /// The deviation guard bounds a wrong-question figure once seeded while the previous value is fresh;
+    /// a nonzero relayer covers the unseeded first value and stale re-anchors. A feed that pins its
+    /// question document (questionPolicy) verifies the question directly and needs no relayer at all.
+    /// Payload chainId and answerType must match the configured policy. Zero figures revert.
     function submitAttestation(OracleAttestation calldata a, bytes calldata sig) external {
         if (relayer != address(0) && msg.sender != relayer) revert UnauthorizedRelayer();
         if (a.chainId != attestationChainId) revert InvalidAttestationChain();
@@ -169,10 +190,61 @@ abstract contract SwarmFeed is ISwarmFeed {
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, _attestationHash(a)));
         if (_recover(digest, sig) != attester) revert InvalidSignature();
         usedRequests[a.requestId] = true;
+        _requireQuestion(a);
         _accept(a.figure, a.issuedAt);
         // A primary update discards any unfinished fallback round based on the preceding value.
         _nextRound();
         emit AttestationAccepted(a.requestId, a.questionHash);
+    }
+
+    /// @notice The question document this feed accepts answers to, and the window span it allows.
+    /// @dev An empty prefix disables question binding, which is only safe behind a trusted relayer —
+    /// the constructor enforces that pairing. A production feed overrides this with the canonical
+    /// question-document prefix emitted by oracle/question-prefix.mjs. It is a SOURCE CONSTANT for the
+    /// same reason every other authority here is: whoever controls the question controls the price, so
+    /// it must never be a constructor argument a launch manifest could substitute.
+    function questionPolicy() internal pure virtual returns (bytes memory prefix, uint64 minSpan, uint64 maxSpan) {
+        return ("", 0, 0);
+    }
+
+    /// @dev Decimal ASCII of a uint64, because the document the attester hashed is JSON text and the
+    /// window's two numbers appear in it as digits. Written here rather than imported: this repository's
+    /// OpenZeppelin checkout carries only the few utils it needs, and a string helper is not worth
+    /// widening it for.
+    function _decimal(uint64 value) private pure returns (bytes memory) {
+        if (value == 0) return "0";
+        uint64 digits;
+        for (uint64 v = value; v != 0; v /= 10) ++digits;
+        bytes memory out = new bytes(digits);
+        for (uint64 v = value; v != 0; v /= 10) out[--digits] = bytes1(uint8(48 + (v % 10)));
+        return out;
+    }
+
+    /// @notice Rebuild the control plane's question document and refuse an answer to another question.
+    /// @dev The document is canonicalised as an RFC 8785 subset, so its keys are sorted and "window"
+    /// sorts last. The only part that differs between two otherwise identical requests is therefore a
+    /// SUFFIX, and the attestation carries that suffix's two numbers as SIGNED fields. So the feed
+    /// splices them into a pinned prefix and recomputes the very hash the attester signed over.
+    ///
+    /// Two further bounds, because answering the right question is not yet answering it honestly:
+    ///   - the span is bounded, so the question cannot be answered over a single block (a point read
+    ///     dressed up as a window median) nor over a month (which smooths away a real move);
+    ///   - toBlock must advance, so a freshly signed attestation cannot answer over an ANCIENT window
+    ///     in which the price was whatever the buyer needed it to be.
+    function _requireQuestion(OracleAttestation calldata a) private {
+        (bytes memory prefix, uint64 minSpan, uint64 maxSpan) = questionPolicy();
+        if (prefix.length == 0) return;
+        if (a.toBlock < a.fromBlock) revert InvalidWindow();
+        uint64 span = a.toBlock - a.fromBlock;
+        if (span < minSpan || span > maxSpan) revert WindowSpanOutOfRange(span);
+        if (a.toBlock <= lastToBlock) revert WindowNotAdvancing(a.toBlock, lastToBlock);
+        bytes32 expected = keccak256(
+            abi.encodePacked(
+                prefix, _decimal(a.fromBlock), ',"toBlock":', _decimal(a.toBlock), "}}"
+            )
+        );
+        if (a.questionHash != expected) revert WrongQuestion(expected, a.questionHash);
+        lastToBlock = a.toBlock;
     }
 
     /// @notice Submit one value per reporter per round; reaching quorum publishes the median.

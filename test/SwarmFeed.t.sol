@@ -36,7 +36,7 @@ abstract contract SwarmFeedTest is Test {
     function setUp() public {
         vm.chainId(11155111);
         vm.warp(10 days);
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
     }
 
     function test_quorumMedianRoundAndFreshnessBoundary() public {
@@ -145,7 +145,7 @@ abstract contract SwarmFeedTest is Test {
     }
 
     function test_evenQuorumMeanDoesNotOverflow() public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
         _report(REPORTER_A, type(uint256).max);
         _report(REPORTER_B, type(uint256).max - 1);
         (uint256 value,) = feed.latestValue();
@@ -156,7 +156,7 @@ abstract contract SwarmFeedTest is Test {
         SwarmFeed.OracleAttestation memory a = _attestation();
         _report(REPORTER_A, 99 ether);
         bytes memory sig = _sign(a, SIGNER_KEY);
-        vm.prank(address(0xCAFE));
+        // Submitted by the relayer this fixture pins, which is the test contract.
         feed.submitAttestation(a, sig);
         (uint256 value, uint64 updatedAt) = feed.latestValue();
         assertEq(value, a.figure);
@@ -268,22 +268,17 @@ abstract contract SwarmFeedTest is Test {
         assertFalse(feed.isStale());
     }
 
-    function test_attestationZeroRelayerAllowsDifferentSubmitters() public {
-        SwarmFeed.OracleAttestation memory a = _attestation();
-        bytes memory sig = _sign(a, SIGNER_KEY);
-        vm.prank(address(0xCAFE));
-        feed.submitAttestation(a, sig);
-        a.requestId = keccak256("request-2");
-        sig = _sign(a, SIGNER_KEY);
-        vm.prank(address(0xBEEF));
-        feed.submitAttestation(a, sig);
-        assertTrue(feed.usedRequests(keccak256("request-1")));
-        assertTrue(feed.usedRequests(a.requestId));
-        assertEq(feed.round(), 3);
+    /// @dev A zero relayer used to mean "anyone may submit", and that was the hole the audit found:
+    /// with nothing identifying WHICH question an attestation answers, anyone who can buy a signature
+    /// for this feed's domain sets its price. It is now unconstructable without a pinned question.
+    /// test/QuestionBinding.t.sol covers the configuration that replaces it.
+    function test_aZeroRelayerIsRefusedWithoutAPinnedQuestion() public {
+        vm.expectRevert(SwarmFeed.UnboundQuestionNeedsRelayer.selector);
+        _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
     }
 
     function test_attestationRejectsSignedWrongChainOrTypeThenAcceptsConfiguredPolicy() public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 10, 2, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 10, 2, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
         SwarmFeed.OracleAttestation memory a = _attestation();
         a.chainId = block.chainid;
         a.answerType = 2;
@@ -318,7 +313,7 @@ abstract contract SwarmFeedTest is Test {
 
         bytes memory sig = _sign(a, SIGNER_KEY);
         SwarmFeed originalFeed = feed;
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
         assertNotEq(feed.DOMAIN_SEPARATOR(), originalFeed.DOMAIN_SEPARATOR());
         _assertInvalidSignature(a, sig);
         originalFeed.submitAttestation(a, sig);
@@ -445,7 +440,7 @@ abstract contract SwarmFeedTest is Test {
     }
 
     function test_singleReporterQuorumAllowsNewRoundAndRejectsUnlistedReporter() public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, address(0), address(0), 1, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, address(0), address(0), 1, 1 hours, 1000);
         vm.expectRevert(SwarmFeed.UnauthorizedReporter.selector);
         _report(REPORTER_B, 1 ether);
         _report(REPORTER_A, 1 ether);
@@ -461,7 +456,7 @@ abstract contract SwarmFeedTest is Test {
 
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_evenQuorumFloorsMean(uint256 a, uint256 b) public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
         a = bound(a, 1, type(uint256).max);
         b = bound(b, 1, type(uint256).max);
         _report(REPORTER_B, b);
