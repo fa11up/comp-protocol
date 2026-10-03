@@ -4,6 +4,9 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {SwarmFeed} from "src/SwarmFeed.sol";
 import {SwarmRelay} from "src/SwarmRelay.sol";
+import {PriceFeed} from "src/PriceFeed.sol";
+import {NhiFeed} from "src/NhiFeed.sol";
+import {SpotFeed} from "src/SpotFeed.sol";
 
 /// @notice A feed that pins its question, so it does not need to trust whoever carries the answer.
 /// @dev The prefix is a real canonical question document with the window's two numbers cut off the
@@ -119,6 +122,24 @@ contract QuestionBindingTest is Test {
     /// assignments below would be unreachable, and solc refuses to compile it at all ("some
     /// immutables were read from but never assigned", error 1284). The branch is a cheap guard
     /// against a half-configured production leaf rather than a reachable state.
+
+    /// @dev Every production feed must pin a question, and they must pin DIFFERENT ones. The feeds
+    /// pass a nonzero relayer, so construction alone proves nothing — expectedQuestionHash returning
+    /// zero is what an unbound feed looks like. This is the test that fails if someone adds a fourth
+    /// feed and forgets the override, or deletes one.
+    function test_everyProductionFeedPinsItsQuestion() public {
+        bytes32 price = new PriceFeed(1 days, 2000).expectedQuestionHash(26_000_000, 26_000_600);
+        bytes32 nhi = new NhiFeed(1 days, 2000).expectedQuestionHash(26_000_000, 26_000_600);
+        bytes32 spot = new SpotFeed(1 hours, 2000).expectedQuestionHash(26_000_000, 26_000_600);
+        assertTrue(price != bytes32(0), "PriceFeed pins no question");
+        assertTrue(nhi != bytes32(0), "NhiFeed pins no question");
+        assertTrue(spot != bytes32(0), "SpotFeed pins no question");
+        // Three different questions, so an attestation for one can never be accepted by another even
+        // though all three share an attester. The consumer domain already separates them; this means
+        // the question does too.
+        assertTrue(price != nhi && nhi != spot && price != spot, "two feeds share a question");
+        assertEq(feed.expectedQuestionHash(26_000_000, 26_000_600), _expected(26_000_000, 26_000_600));
+    }
 
     function _expected(uint64 fromBlock, uint64 toBlock) private pure returns (bytes32) {
         return keccak256(

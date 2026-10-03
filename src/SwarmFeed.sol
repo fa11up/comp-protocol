@@ -220,6 +220,19 @@ abstract contract SwarmFeed is ISwarmFeed {
         return out;
     }
 
+    /// @notice The questionHash this feed will accept for a given window, or zero if it pins no
+    /// question and therefore accepts any.
+    /// @dev Public so an operator can check, from the chain, that a feed agrees with the payload they
+    /// are about to pay for. Buying a request whose question document differs by one character means
+    /// an attestation this feed refuses, and the 0.5 IMD is already spent by then.
+    function expectedQuestionHash(uint64 fromBlock, uint64 toBlock) public pure returns (bytes32) {
+        (bytes memory prefix,,) = questionPolicy();
+        if (prefix.length == 0) return bytes32(0);
+        return keccak256(
+            abi.encodePacked(prefix, _decimal(fromBlock), ',"toBlock":', _decimal(toBlock), "}}")
+        );
+    }
+
     /// @notice Rebuild the control plane's question document and refuse an answer to another question.
     /// @dev The document is canonicalised as an RFC 8785 subset, so its keys are sorted and "window"
     /// sorts last. The only part that differs between two otherwise identical requests is therefore a
@@ -238,11 +251,7 @@ abstract contract SwarmFeed is ISwarmFeed {
         uint64 span = a.toBlock - a.fromBlock;
         if (span < minSpan || span > maxSpan) revert WindowSpanOutOfRange(span);
         if (a.toBlock <= lastToBlock) revert WindowNotAdvancing(a.toBlock, lastToBlock);
-        bytes32 expected = keccak256(
-            abi.encodePacked(
-                prefix, _decimal(a.fromBlock), ',"toBlock":', _decimal(a.toBlock), "}}"
-            )
-        );
+        bytes32 expected = expectedQuestionHash(a.fromBlock, a.toBlock);
         if (a.questionHash != expected) revert WrongQuestion(expected, a.questionHash);
         lastToBlock = a.toBlock;
     }
