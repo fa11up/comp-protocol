@@ -23,7 +23,15 @@ import {CDPVault} from "./CDPVault.sol";
 ///   - a keeper can bundle an update with the action it enables, removing the race where someone
 ///     else liquidates between your update and your call.
 ///
-/// This contract holds nothing, approves nothing and has no owner. It cannot report, cannot seed a
+/// AUDIT NOTE (job c71449d1, info): "holds nothing" is not quite true, and the balance-delta
+/// accounting is why. `markUnderwaterFor` lets any caller name any beneficiary, so a griefer can name
+/// THIS contract as the marker of a position they do not intend to liquidate. A later DIRECT
+/// liquidation then pays the marker's cut here, and with no owner and no sweep it stays forever. A
+/// liquidation through `relayAndLiquidate` pays the keeper instead, so the loss is bounded to a
+/// griefer's own forgone reward plus the stranded cut. Left as is: a sweep would need to decide who
+/// deserves the funds, and the vault cannot be asked to recognise which addresses are relays.
+///
+/// This contract holds nothing it is given on purpose, approves nothing and has no owner. It cannot report, cannot seed a
 /// feed, and cannot alter an attestation: every guard the feed applies — attester signature, replay,
 /// freshness, panel floors, deviation — is untouched and still runs on the forwarded call. The worst
 /// a caller can do is relay a valid attestation the feed would have accepted anyway, or waste gas.
