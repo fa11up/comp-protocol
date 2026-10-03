@@ -69,21 +69,65 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(reserve.reserveAssetCount(), 0);
     }
 
+    function test_zeroHaircutValuesFundedAssetAtNothingAndCannotAuthorizeWork() public {
+        _register(asset, reservePrice, 0);
+        asset.mint(address(reserve), 100 ether);
+        assertTrue(reserve.isReserveAsset(asset), "zero factor is a valid listing");
+        assertEq(reserve.reserveAssetCount(), 1);
+        assertEq(reserve.reserveAsset(asset).haircutBps, 0);
+        assertEq(reserve.reserveValueOf(asset), 0);
+        assertEq(reserve.reserveValueUsd(), 0);
+        assertEq(backedVault.totalDebt(), 0);
+        assertEq(backedVault.workCeiling(), 0);
+        vm.prank(WORKER);
+        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        backedVault.mintFromWork(1);
+        assertEq(workOracle.mintingRights(WORKER), type(uint128).max);
+        assertEq(backedVault.totalWorkMinted(), 0);
+        assertEq(stable.totalSupply(), 0);
+    }
+
+    function test_fullHaircutValuesEntireAssetAndAuthorizesOnlyItsValue() public {
+        _register(asset, reservePrice, 10_000);
+        reservePrice.setValue(3 ether);
+        asset.mint(address(reserve), 2 ether + 1);
+        uint256 expected = 6 ether + 3;
+        assertEq(reserve.reserveAsset(asset).haircutBps, 10_000);
+        assertEq(reserve.reserveValueOf(asset), expected);
+        assertEq(reserve.reserveValueUsd(), expected);
+        assertEq(backedVault.totalDebt(), 0);
+        assertEq(backedVault.workCeiling(), expected);
+        _mintWork(WORKER, expected);
+        vm.prank(WORKER);
+        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        backedVault.mintFromWork(1);
+        assertEq(workOracle.mintingRights(WORKER), type(uint128).max - expected);
+        assertEq(backedVault.totalWorkMinted(), expected);
+        assertEq(stable.balanceOf(WORKER), expected);
+        assertEq(stable.totalSupply(), expected);
+    }
+
     /// forge-config: default.fuzz.runs = 1000
-    function testFuzz_valuesTokenDecimalsAndRoundsDustDown(uint96 rawBalance, uint64 rawPrice, uint8 rawDecimals)
-        public
-    {
+    function testFuzz_valuesTokenDecimalsAndRoundsDustDown(
+        uint96 rawBalance,
+        uint64 rawPrice,
+        uint8 rawDecimals,
+        uint16 rawHaircut
+    ) public {
         uint8 decimals = uint8(bound(rawDecimals, 0, 18));
         uint256 balance = rawBalance;
         uint256 price = bound(rawPrice, 1, type(uint64).max);
+        uint256 haircut = bound(rawHaircut, 0, 10_000);
         ReserveTestToken token = new ReserveTestToken(decimals);
         TestSwarmFeed feed = new TestSwarmFeed(price);
-        _register(token, feed, 5000);
+        _register(token, feed, haircut);
         token.mint(address(reserve), balance);
-        uint256 expected = balance * price / (10 ** decimals) / 2;
+        uint256 marked = balance * price / (10 ** decimals);
+        uint256 expected = marked * haircut / 10_000;
         assertEq(reserve.reserveValueOf(token), expected);
         assertEq(reserve.reserveValueUsd(), expected);
         assertEq(backedVault.workCeiling(), expected);
+        assertLe(expected, marked);
     }
 
     function test_largeReserveProductUsesFullPrecisionBeforeDecimalScaling() public {

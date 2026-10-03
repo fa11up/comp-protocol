@@ -21,6 +21,7 @@ contract WorkBackingHandler is WorkBackingFixture {
     uint256 public collateralWithdrawn;
     uint256 public acceptedWorkCalls;
     uint256 public rejectedWorkCalls;
+    uint256 public reserveHaircutBps = 5000;
 
     constructor() {
         setUp();
@@ -64,6 +65,12 @@ contract WorkBackingHandler is WorkBackingFixture {
 
     function governRatio(uint16 raw) external {
         _setRatio(bound(raw, 0, 2500));
+    }
+
+    function governReserveHaircut(uint16 raw) external {
+        uint256 factor = bound(raw, 0, 10_000);
+        _register(asset, reservePrice, factor);
+        reserveHaircutBps = factor;
     }
 
     function borrow(uint256 raw) external {
@@ -137,7 +144,9 @@ contract WorkBackingHandler is WorkBackingFixture {
         assertLe(reserve.lastSynced(asset), reserveBalance);
         assertLe(reserve.totalReceived(asset), reserveDeposited);
         (uint256 price,) = reservePrice.latestValue();
-        uint256 value = reservePrice.isStale() ? 0 : reserveBalance * price / 1 ether / 2;
+        uint256 marked = reserveBalance * price / 1 ether;
+        uint256 value = reservePrice.isStale() ? 0 : marked * reserveHaircutBps / 10_000;
+        assertEq(reserve.reserveAsset(asset).haircutBps, reserveHaircutBps);
         assertEq(reserve.reserveValueUsd(), value);
         uint256 principal = debtMinted - principalRepaid;
         assertEq(backedVault.totalDebt(), principal);
@@ -168,7 +177,7 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         handler = new WorkBackingHandler();
-        bytes4[] memory selectors = new bytes4[](10);
+        bytes4[] memory selectors = new bytes4[](11);
         selectors[0] = handler.donate.selector;
         selectors[1] = handler.syncReserve.selector;
         selectors[2] = handler.withdrawReserve.selector;
@@ -179,6 +188,7 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
         selectors[7] = handler.repay.selector;
         selectors[8] = handler.withdrawCollateral.selector;
         selectors[9] = handler.mintWork.selector;
+        selectors[10] = handler.governReserveHaircut.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
@@ -204,5 +214,26 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
         assertEq(handler.acceptedWorkCalls(), 2);
         assertEq(handler.rejectedWorkCalls(), 2);
         handler.checkAccounting();
+    }
+
+    function test_handlerHaircutEndpointsRemoveAndRestoreWorkBacking() public {
+        handler.governRatio(0);
+        handler.governReserveHaircut(0);
+        handler.mintWork(1, false);
+        handler.checkAccounting();
+        assertEq(handler.reserveHaircutBps(), 0);
+
+        handler.governReserveHaircut(10_000);
+        handler.mintWork(200 ether, false);
+        handler.mintWork(1, true);
+        handler.checkAccounting();
+        assertEq(handler.reserveHaircutBps(), 10_000);
+        assertEq(handler.workMinted(), 200 ether);
+
+        handler.governReserveHaircut(0);
+        handler.mintWork(1, false);
+        handler.checkAccounting();
+        assertEq(handler.acceptedWorkCalls(), 1);
+        assertEq(handler.rejectedWorkCalls(), 3);
     }
 }

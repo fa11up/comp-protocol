@@ -124,8 +124,7 @@ abstract contract WorkBackingFixture is Test {
         vm.stopPrank();
     }
 
-    // Fifty percent has the same value under both haircut conventions. The disputed endpoints
-    // are reproduced in the findings proof, not blessed by a passing expectation here.
+    // Retain half the market value, so twice the requested balance supplies exactly this backing.
     function _fundReserve(uint256 value) internal {
         _register(asset, reservePrice, 5000);
         asset.mint(address(reserve), value * 2);

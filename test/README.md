@@ -92,13 +92,19 @@ reserve-only backing is exactly one and the empty balance sheet has no ratio.
 `ReserveValuation.t.sol` covers decimal scaling, aggregate valuation, governance,
 COMP exclusion, stale or unavailable USD legs, and a liquidation that sends both
 collateral revenue and minted stability fees to the vault-created Treasury.
+Haircut endpoint regressions require zero backing at 0 and full market value at
+10000, including rejection of work without valued backing and of one wei past
+fully valued backing. Valuation fuzzing varies the retained factor across the
+entire 0–10000 range together with token decimals, balances and prices.
 The Chainlink leg is a local fixture at the source-pinned address; no network or
 environment mutation is required.
 
 `WorkBacking.invariant.t.sol` runs 256 sequences of 128 calls through the real
 ParameterizedVault and Treasury. Deposit/withdrawal, debt/fee, work-right and
 custody histories independently reconcile after random borrowing, repayments,
-work mints, reserve price changes, donations, withdrawals, syncs and governance.
+work mints, reserve price changes, donations, withdrawals, syncs and governance
+of the work ratio and reserve haircut. The expected retained factor is tracked
+independently, including deterministic sequences through both haircut endpoints.
 A successful work mint must respect the ceiling at execution. The invariant does
 not falsely require previously minted work to remain below a ceiling that later
 falls after an authorized withdrawal, price change or repayment.
@@ -111,9 +117,6 @@ assertions. Random work actions in the existing handlers use available debt
 backing; initialization and failure-path checks retain their original expected
 errors. No successful work test is replaced by an expected ceiling revert.
 
-One acceptance conflict remains in production: haircut 0 currently counts the
-full asset value and haircut 10000 is rejected. The assignment explicitly requires
-the opposite endpoints. `.imd-findings.json` includes the self-contained proof,
-verified to fail on both endpoints. The submitted valuation tests use 5000 for
-orthogonal decimal/aggregation/freshness coverage, where the two conventions
-coincide; they do not assert either broken endpoint is correct.
+The prior haircut endpoint finding is resolved in the accepted source. The
+regressions above exercise the corrected behavior without changing production
+contracts or weakening the earlier ceiling, stale-feed or fee-routing tests.
