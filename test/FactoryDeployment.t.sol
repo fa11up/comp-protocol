@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
@@ -13,15 +14,19 @@ import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {FEED_REPORTER_0} from "../src/DeploymentConfig.sol";
 
 /// @dev Models constructor-only deployment, with no application-call capability.
+/// @dev Deploys the zero-fee subclass. These suites are about constructor-only deployment,
+/// custody and CREATE2 determinism, none of which the stability rate touches, and holding the
+/// rate at zero keeps their debt figures stating what they are about. The CREATE2 property is
+/// unchanged: a deterministic address from creation code, salt and factory.
 contract ApplicationConstructionFactory {
     function deploy(address imd, address comp, address priceFeed, address nhiFeed, address spotFeed, bool useCreate2)
         external
         returns (CDPVault vault)
     {
         if (useCreate2) {
-            vault = new CDPVault{salt: bytes32(uint256(1))}(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
+            vault = new ZeroFeeVault{salt: bytes32(uint256(1))}(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
         } else {
-            vault = new CDPVault(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
+            vault = new ZeroFeeVault(imd, comp, address(0), priceFeed, nhiFeed, spotFeed);
         }
     }
 }
@@ -189,7 +194,7 @@ contract SelfContainedFactoryDeploymentTest is Test {
     function _deploy(bool useCreate2) private {
         bytes32 initCodeHash = keccak256(
             abi.encodePacked(
-                type(CDPVault).creationCode,
+                type(ZeroFeeVault).creationCode,
                 abi.encode(
                     address(imd), address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
                 )

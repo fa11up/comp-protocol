@@ -98,4 +98,4 @@ uint256 constant MARKER_SHARE_BPS = 1_000;
 
 /// @dev Annual stability fee on open debt, in basis points, accrued linearly from deployment.
 /// Ships at zero so this increment changes no existing behaviour; a later deployment turns it on.
-uint256 constant STABILITY_FEE_BPS = 0;
+uint256 constant STABILITY_FEE_BPS = 200;

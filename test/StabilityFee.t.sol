@@ -383,4 +383,35 @@ contract ShippedRateStabilityFeeTest is StabilityFeeFixture {
     function test_shippedRateIsASaneAnnualRate() public view {
         assertLt(rate, 10_000, "an annual rate at or above 100% is a misconfiguration");
     }
+
+    /// @dev A fee-bearing position cannot be closed by the borrower alone, and that is not a bug: a
+    /// repayment pays fees before principal, so paying back exactly what was minted leaves the fee
+    /// outstanding as principal. Minting to cover it does not help, because the mint adds the same
+    /// amount to principal. Closing out needs stablecoin bought from somewhere else, which is how
+    /// every fee-bearing CDP works and is worth pinning before a deployment relies on it.
+    /// Found because a factory test asserting a "debt-free exit" began reverting StaleFeed: the exit
+    /// was never debt-free once a fee existed.
+    function test_shippedRateMeansAPositionCannotBeClosedWithOnlyWhatItMinted() public {
+        if (rate == 0) return;
+        uint256 principal = 100 ether;
+        _open(BORROWER, principal);
+        uint256 started = vm.getBlockTimestamp();
+        vm.warp(started + 365 days);
+        primary.setValue(1 ether); // the fixture's feeds would be stale after a year
+        spot.setValue(1 ether);
+        nhi.setValue(0.85 ether);
+
+        uint256 fee = vault.stabilityFeeOf(BORROWER);
+        assertEq(fee, principal * rate / 10_000, "a year of fee at the shipped rate");
+        uint256 held = comp.balanceOf(BORROWER);
+        assertEq(held, principal, "the borrower holds exactly what it minted");
+
+        vm.prank(BORROWER);
+        vault.repayCOMP(held);
+
+        assertEq(comp.balanceOf(BORROWER), 0, "every unit it had is gone");
+        assertEq(vault.stabilityFeeOf(BORROWER), 0, "fees were taken first");
+        (, uint256 remaining) = vault.positions(BORROWER);
+        assertEq(remaining, fee, "and exactly the fee is left standing as principal");
+    }
 }
