@@ -63,8 +63,6 @@ contract CDPVault is ReentrancyGuard {
     event UnderwaterMarkCleared(address indexed owner);
 
     uint256 public constant LIQUIDATION_BONUS_PERCENT = 10;
-    uint256 public constant maxDivergenceBps = MAX_DIVERGENCE_BPS;
-    uint256 public constant markerShareBps = MARKER_SHARE_BPS;
     uint256 private constant INDEX_SCALE = 1e18;
     uint256 public immutable deployedAt = block.timestamp;
 
@@ -79,6 +77,19 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Share of the liquidation bonus paid to FEE_RECIPIENT, in basis points of the bonus.
     /// @dev Zero by default. The borrower's loss is identical either way: this splits the existing
     /// 10% bonus rather than seizing more, so turning it on never makes liquidation harsher.
+    /// @notice Tolerated gap between the primary average price and the spot price, in basis points.
+    /// @dev Virtual like every other economic knob here, so a deployment that reads its parameters
+    /// from somewhere governed can override it without this contract changing. The default is pinned
+    /// in source, and nothing in this contract can move it.
+    function maxDivergenceBps() public view virtual returns (uint256) {
+        return MAX_DIVERGENCE_BPS;
+    }
+
+    /// @notice Share of the liquidation bonus paid to whoever marked the position, in basis points.
+    function markerShareBps() public view virtual returns (uint256) {
+        return MARKER_SHARE_BPS;
+    }
+
     /// @notice Annual stability fee on open debt, in basis points, accrued linearly from deployment.
     /// @dev Virtual for the same reason debtCeiling and protocolBonusShareBps are: a deployment pins
     /// it in source, and a test can hold it at another value without rewriting the source to do it.
@@ -276,10 +287,10 @@ contract CDPVault is ReentrancyGuard {
         if (collateralSeized > position.collateral) revert InsufficientCollateral();
         // Both shares come out of the same bonus, never principal or extra borrower collateral.
         uint256 protocolShare = protocolBonusShareBps();
-        if (protocolShare > 10_000 - markerShareBps) revert InvalidBonusShares();
+        if (protocolShare > 10_000 - markerShareBps()) revert InvalidBonusShares();
         uint256 bonus = collateralSeized - Math.mulDiv(debtToRepay, 1e18, price);
         uint256 protocolCut = Math.mulDiv(bonus, protocolShare, 10_000);
-        uint256 markerCut = Math.mulDiv(bonus, markerShareBps, 10_000);
+        uint256 markerCut = Math.mulDiv(bonus, markerShareBps(), 10_000);
         address marker = mark.marker;
         // Sweep a remainder nobody could ever claim. Taking the largest coverable debt leaves dust,
         // and once that dust is smaller than the seizure for a single wei of debt every later
@@ -417,7 +428,7 @@ contract CDPVault is ReentrancyGuard {
         if (spot == 0) revert InvalidPrice();
         uint256 primary = _price();
         uint256 difference = primary > spot ? primary - spot : spot - primary;
-        if (difference > Math.mulDiv(primary, maxDivergenceBps, 10_000)) revert PriceDivergence();
+        if (difference > Math.mulDiv(primary, maxDivergenceBps(), 10_000)) revert PriceDivergence();
     }
 
     function _accrue(address owner) private {
@@ -506,7 +517,7 @@ contract CDPVault is ReentrancyGuard {
             uint256 difference = price > spot ? price - spot : spot - price;
             // Invalid recovery observations preserve the mark without blocking deposits or repayments.
             if (
-                price != 0 && spot != 0 && difference <= Math.mulDiv(price, maxDivergenceBps, 10_000)
+                price != 0 && spot != 0 && difference <= Math.mulDiv(price, maxDivergenceBps(), 10_000)
                     && _collateralRatio(position.collateral, debt, price) >= minCR()
             ) {
                 _clearMark(owner);
