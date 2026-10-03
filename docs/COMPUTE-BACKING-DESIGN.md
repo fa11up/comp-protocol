@@ -113,6 +113,31 @@ must not be reachable by governance.
 
 `workCeiling` and `workRatioBps` are new governed parameters, under the existing 48-hour delay.
 
+### 3a. What the independent review of the build changed (2026-10-03)
+
+Three corrections to the formula as built, none to the bound it derives:
+
+- **One unit.** `D` is denominated in the primary feed's unit — the pinned question asks for wei of
+  ETH per IMD, so a COMP of debt is an ETH-worth of collateral to `minCR` and `liquidate` — while
+  `reserveValueUsd` is USD. Added unconverted, the reserve authorised ETH/USD times more work
+  minting than the vault valued it at. The vault now converts the reserve at the Chainlink ETH/USD
+  leg (`reserveValue()`), zero while that leg is stale. For IMD priced through `UsdPriceFeed` the leg
+  cancels and `R` is `balance × primary × haircut`. Changing what denominates `D` stays out of scope.
+- **`D` counts only debt that existed before the transaction began.** The derivation assumes the
+  surplus collateral behind `D` is there when `W` is minted against it. A rights holder could raise
+  `D` with their own position, mint `rD` of work, repay and withdraw in one call, leaving `W` with
+  nothing behind it. `backedDebt()` caps `D` at its value at the start of the transaction (transient
+  storage), so the ratio term is only ever backed by positions that pre-date the caller. A position
+  held across transactions counts in full: the ceiling remains point-in-time for the slow version of
+  the same round trip, by design, and its cost is capital at risk in an open position rather than gas.
+- **`D` excludes recorded bad debt.** After a liquidation drains a position its residual principal
+  stays in `totalDebt` with no collateral behind it. `backedDebt()` subtracts `totalBadDebt`,
+  saturating at zero; the record is accrued debt while `totalDebt` is principal, so the subtraction
+  over-counts by unpaid fees, in the tightening direction.
+
+Because a finite ceiling is now priced off the primary feed, `mintFromWork` on the governed vault
+applies the same primary/spot agreement check as every other price-dependent action.
+
 ## 4. The work signal
 
 Two tracks, because one works today and the other fixes the cause.

@@ -49,12 +49,27 @@ contract UsdPriceFeed is ISwarmFeed {
     function isStale() external view override returns (bool) {
         if (imdEthFeed.isStale()) return true;
         (uint256 ethUsd, uint64 ethAt,) = _ethUsd();
-        return ethUsd == 0 || (block.timestamp > ethAt && block.timestamp - ethAt > ETH_USD_MAX_AGE);
+        return ethUsd == 0 || _tooOld(ethAt);
+    }
+
+    /// @notice The ETH/USD leg on its own: USD per ETH scaled by 1e18. Zero if the answer is missing,
+    /// non-positive or older than ETH_USD_MAX_AGE.
+    /// @dev What converts a USD figure back into the unit the IMD/ETH leg prices in. The vault reads
+    /// it to bring the Treasury's USD reserve value into the unit its own debt is denominated in; a
+    /// zero means "no price", and the vault counts the reserve for nothing rather than dividing by it.
+    function ethUsdPrice() external view returns (uint256) {
+        (uint256 ethUsd, uint64 ethAt, uint8 decimals) = _ethUsd();
+        if (ethUsd == 0 || _tooOld(ethAt)) return 0;
+        return Math.mulDiv(ethUsd, 1e18, 10 ** decimals);
     }
 
     /// @notice The shorter of the two legs' maximum ages.
     function maxAge() external view override returns (uint256) {
         return Math.min(imdEthFeed.maxAge(), ETH_USD_MAX_AGE);
+    }
+
+    function _tooOld(uint64 at) private view returns (bool) {
+        return block.timestamp > at && block.timestamp - at > ETH_USD_MAX_AGE;
     }
 
     /// @dev (0, 0, 0) for anything that is not a well-formed positive answer with a timestamp.

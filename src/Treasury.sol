@@ -121,10 +121,21 @@ contract Treasury {
             return;
         }
         if (address(priceFeed).code.length == 0) revert InvalidPriceSource();
+        // REVISION (finding 21a2b135): having code is not the same as answering. A source that
+        // reverts on, or returns short words from, the two reads reserveValueOf makes would have
+        // made reserveValueUsd — and so the vault's work ceiling and every mintFromWork — revert
+        // until a delisting matured 48 hours later. Probe both reads here, where the listing fails
+        // instead, with the same leniency a typed call applies to the returned length.
+        (bool ok, bytes memory data) = address(priceFeed).staticcall(abi.encodeCall(ISwarmFeed.isStale, ()));
+        if (!ok || data.length < 32) revert InvalidPriceSource();
+        (ok, data) = address(priceFeed).staticcall(abi.encodeCall(ISwarmFeed.latestValue, ()));
+        if (!ok || data.length < 64) revert InvalidPriceSource();
         // Both endpoints are valid: zero backing through full market value.
         if (haircutBps > BPS) revert HaircutOutOfRange(haircutBps);
         // Reverts here if the token has no decimals(), which is also what prices it correctly later.
-        IERC20Metadata(address(asset)).decimals();
+        // Same finding: 10 ** 78 overflows, so a token claiming more places than that would turn
+        // every later valuation into a panic. No real token is near this.
+        if (IERC20Metadata(address(asset)).decimals() > 77) revert InvalidReserveAsset();
     }
 
     /// @notice List, reprice or (with a zero price source) delist a reserve asset. Registrar only,
@@ -156,10 +167,23 @@ contract Treasury {
     }
 
     /// @notice One asset's discounted USD value; zero for anything unlisted or unpriced.
+    /// @dev The two feed reads are wrapped so a source that passed validation and later stops
+    /// answering counts for nothing, which is the promise reserveValueUsd makes, rather than
+    /// reverting the vault's ceiling until a delisting matures.
     function reserveValueOf(IERC20 asset) public view returns (uint256) {
         ReserveAsset storage entry = _reserve[asset];
-        if (address(entry.priceFeed) == address(0) || entry.priceFeed.isStale()) return 0;
-        (uint256 price,) = entry.priceFeed.latestValue();
+        if (address(entry.priceFeed) == address(0)) return 0;
+        try entry.priceFeed.isStale() returns (bool stale) {
+            if (stale) return 0;
+        } catch {
+            return 0;
+        }
+        uint256 price;
+        try entry.priceFeed.latestValue() returns (uint256 value, uint64) {
+            price = value;
+        } catch {
+            return 0;
+        }
         if (price == 0) return 0;
         uint256 marked = Math.mulDiv(asset.balanceOf(address(this)), price, 10 ** entry.decimals);
         return Math.mulDiv(marked, entry.haircutBps, BPS);

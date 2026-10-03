@@ -61,8 +61,9 @@ contract DeployGoverned is Script {
         // The vault creates its own Parameters, so there is nothing to deploy first and nothing to
         // bind afterwards. It opens holding exactly the shipped constants, so this changes no
         // economics; see the audit fix note in ParameterizedVault for why it cannot be passed one.
-        ParameterizedVault vault =
-            new ParameterizedVault(imd, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
+        ParameterizedVault vault = new ParameterizedVault(
+            imd, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         Parameters parameters = vault.parameters();
         // The Treasury is the vault's too, for the same reason: created in the same construction,
         // it is where the vault's revenue lands from the first liquidation, its register answers to
@@ -98,7 +99,9 @@ contract DeployGoverned is Script {
         require(treasury.vault() == address(vault), "treasury: not created by this vault");
         require(vault.feeRecipient() == address(treasury), "vault: revenue does not land in its treasury");
         require(treasury.withdrawer() == APPROVED_OPERATOR, "treasury: wrong withdrawer");
-        require(treasury.registrar() == address(parameters), "treasury: register not governed by the vault's parameters");
+        require(
+            treasury.registrar() == address(parameters), "treasury: register not governed by the vault's parameters"
+        );
         require(treasury.reserveAssetCount() == 0, "treasury: opens with a reserve register");
         require(treasury.reserveValueUsd() == 0, "treasury: opens valuing a reserve it does not hold");
 
@@ -109,6 +112,8 @@ contract DeployGoverned is Script {
         require(vault.workRatioBps() == WORK_RATIO_BPS, "params: work ratio drifted from source");
         require(parameters.MAX_WORK_RATIO_BPS() == 2_500, "params: work ratio bound is not 2500");
         require(vault.workRatioBps() <= parameters.MAX_WORK_RATIO_BPS(), "params: shipped ratio above its own bound");
+        require(vault.reserveValue() == 0, "vault: values a reserve it does not hold");
+        require(vault.backedDebt() == 0, "vault: counts debt nobody has minted");
         require(vault.workCeiling() == 0, "vault: work ceiling opens nonzero with nothing backing it");
         require(vault.totalWorkMinted() == 0, "vault: opens with work already minted");
     }

@@ -87,12 +87,88 @@ contract SixDecimalToken is ERC20 {
     }
 }
 
+/// @dev A token claiming more decimal places than 10 ** places can hold.
+contract WideToken is ERC20 {
+    constructor() ERC20("Wide", "WIDE") {}
+
+    function decimals() public pure override returns (uint8) {
+        return 78;
+    }
+}
+
+/// @dev Has code and answers isStale(), but not latestValue().
+contract HalfFeed {
+    function isStale() external pure returns (bool) {
+        return false;
+    }
+}
+
+/// @dev A feed that passes validation and can be made to revert on every read afterwards.
+contract BreakableFeed is ISwarmFeed {
+    uint256 public constant maxAge = 1 days;
+    uint256 private value;
+    bool private broken;
+
+    constructor(uint256 initial) {
+        value = initial;
+    }
+
+    function setBroken(bool next) external {
+        broken = next;
+    }
+
+    function latestValue() external view returns (uint256, uint64) {
+        require(!broken, "broken");
+        return (value, uint64(block.timestamp));
+    }
+
+    function isStale() external view returns (bool) {
+        require(!broken, "broken");
+        return false;
+    }
+}
+
+/// @dev A rights holder with transient capital, doing a borrow / work-mint / repay / withdraw round
+/// trip inside one transaction. Each entry point is one transaction from the test's point of view.
+contract RoundTripper {
+    ParameterizedVault private immutable vault;
+    MockIMD private immutable imd;
+
+    constructor(ParameterizedVault vault_, MockIMD imd_) {
+        vault = vault_;
+        imd = imd_;
+        imd_.approve(address(vault_), type(uint256).max);
+    }
+
+    function borrow(uint256 collateral, uint256 debt) external returns (uint256 ceiling, uint256 backed) {
+        vault.depositCollateral(collateral);
+        vault.mintCOMP(debt);
+        return (vault.workCeiling(), vault.backedDebt());
+    }
+
+    function roundTrip(uint256 collateral, uint256 debt, uint256 work) external {
+        vault.depositCollateral(collateral);
+        vault.mintCOMP(debt);
+        vault.mintFromWork(work);
+        vault.repayCOMP(debt);
+        vault.withdrawCollateral(collateral);
+    }
+
+    function repayThenMint(uint256 repay, uint256 mint) external returns (uint256 backed) {
+        vault.repayCOMP(repay);
+        vault.mintCOMP(mint);
+        return vault.backedDebt();
+    }
+}
+
 /// @notice The compute-backing increment, end to end on the governed vault: the Treasury the vault
 /// creates and routes revenue to, the USD feed, the governed reserve register, and the work ceiling.
 /// @dev Run like the other files in this directory:
 /// FOUNDRY_TEST=script/checks forge test --offline --match-contract ComputeBackingTest
 /// Prices are chosen so the arithmetic is legible: the primary feed says 1 IMD = 1 COMP, the ETH/USD
 /// mock says $2, so IMD is $2. Chainlink is stood in for by code etched at the pinned address.
+/// The vault's unit is the primary feed's (one COMP of debt is one ETH-worth of IMD), so a USD
+/// reserve figure is halved on its way into `workCeiling`: `reserveValueUsd` 200 is `reserveValue` 100.
 contract ComputeBackingTest is Test {
     address private constant BORROWER = address(0xB0B);
     address private constant KEEPER = address(0xCAFE);
@@ -376,11 +452,12 @@ contract ComputeBackingTest is Test {
         _listImd(10_000);
         _fundTreasury(100 ether);
         assertEq(treasury.reserveValueUsd(), 200e18);
-        assertEq(vault.workCeiling(), 200e18);
+        assertEq(vault.reserveValue(), 100e18, "100 IMD at a primary price of 1, in the vault's unit");
+        assertEq(vault.workCeiling(), 100e18);
 
         vm.startPrank(KEEPER);
-        vault.mintFromWork(200e18);
-        assertEq(vault.totalWorkMinted(), 200e18);
+        vault.mintFromWork(100e18);
+        assertEq(vault.totalWorkMinted(), 100e18);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         vault.mintFromWork(1);
         vm.stopPrank();
@@ -392,7 +469,271 @@ contract ComputeBackingTest is Test {
         _fundTreasury(100 ether);
         uint256 expected = 200e18 * haircutBps / 10_000;
         assertEq(treasury.reserveValueUsd(), expected);
-        assertEq(vault.workCeiling(), expected);
+        assertEq(vault.reserveValue(), expected / 2);
+        assertEq(vault.workCeiling(), expected / 2);
+    }
+
+    // --- the reserve term is in the vault's unit (revision, finding 9366455) ----------------------
+
+    /// @dev The register answers in USD; the vault's debt is in the primary feed's unit, wei of ETH
+    /// per IMD. The ceiling converts the reserve at the ETH/USD leg, so for IMD that leg cancels and
+    /// 100 IMD in the Treasury backs exactly what 100 IMD of collateral is worth to the vault — not
+    /// ETH/USD times that, which is what adding the USD figure to debt unconverted did.
+    function test_theReserveTermIsConvertedIntoTheVaultsUnit() public {
+        _listImd(10_000);
+        _fundTreasury(100 ether);
+        assertEq(treasury.reserveValueUsd(), 200e18, "the register still answers in USD");
+        assertEq(usd.ethUsdPrice(), 2e18);
+        assertEq(vault.reserveValue(), 100e18);
+        assertEq(vault.workCeiling(), 100e18);
+
+        // ETH at $2000 instead of $2 moves the USD figure a thousandfold and the ceiling not at all.
+        ethUsd.set(2000e8, block.timestamp);
+        assertEq(treasury.reserveValueUsd(), 200_000e18);
+        assertEq(vault.reserveValue(), 100e18, "the ETH/USD leg cancels for IMD");
+
+        // A primary move does: at 0.5 ETH per IMD the same 100 IMD is worth 50 to the vault.
+        price.setValue(0.5 ether);
+        spot.setValue(0.5 ether);
+        assertEq(vault.reserveValue(), 50e18);
+
+        // And the reserve never authorises more than the vault itself would lend against the same
+        // IMD at 100% CR: a borrower posting 100 IMD can mint at most 50 COMP at minCR 200 here.
+        price.setValue(1 ether);
+        spot.setValue(1 ether);
+        _borrow(100 ether, 50 ether);
+        vm.prank(BORROWER);
+        vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
+        vault.mintCOMP(1);
+        assertLe(vault.reserveValue(), 100e18);
+    }
+
+    /// @dev A reserve asset priced straight in USD converts at ETH/USD: a $1 token is half an
+    /// ETH-unit when ETH is $2. Without a fresh ETH/USD price the USD figure cannot be brought into
+    /// the vault's unit and counts for nothing, even though the asset's own feed is fine.
+    function test_aDollarAssetIsWorthItsEthValueToTheCeiling() public {
+        SixDecimalToken six = new SixDecimalToken();
+        CheckFeed dollar = new CheckFeed(1 ether);
+        _setReserve(IERC20(address(six)), dollar, 10_000);
+        six.mint(address(treasury), 10_000_000); // $10
+        assertEq(treasury.reserveValueUsd(), 10e18);
+        assertEq(vault.reserveValue(), 5e18);
+        assertEq(vault.workCeiling(), 5e18);
+
+        ethUsd.set(2e8, block.timestamp - ETH_USD_MAX_AGE - 1);
+        assertEq(treasury.reserveValueUsd(), 10e18, "the dollar feed itself is unaffected");
+        assertEq(usd.ethUsdPrice(), 0, "no fresh ETH/USD price");
+        assertEq(vault.reserveValue(), 0, "so the USD figure cannot be converted and counts for nothing");
+        assertEq(vault.workCeiling(), 0);
+        vm.prank(KEEPER);
+        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        vault.mintFromWork(1);
+    }
+
+    // --- debt created in the same transaction backs nothing (revision, finding 4d30331c) ----------
+
+    function test_debtCreatedInTheSameTransactionBacksNoWorkMinting() public {
+        RoundTripper tripper = new RoundTripper(vault, imd);
+        vm.startPrank(APPROVED_OPERATOR);
+        imd.mint(address(tripper), 300 ether);
+        oracle.grantRights(address(tripper), 25 ether);
+        vm.stopPrank();
+
+        // Inside the transaction that created it, the debt counts for nothing.
+        (uint256 ceiling, uint256 backed) = tripper.borrow(300 ether, 100 ether);
+        assertEq(backed, 0, "debt minted in this transaction is not backing");
+        assertEq(ceiling, 0);
+
+        // Once it has survived its transaction it counts in full. The ceiling is point-in-time from
+        // here, by design: this debt is real capital in an open position, not a flash of it.
+        assertEq(vault.backedDebt(), 100e18);
+        assertEq(vault.workCeiling(), 25e18);
+        vm.prank(address(tripper));
+        vault.mintFromWork(25 ether);
+        assertEq(vault.totalWorkMinted(), 25e18);
+    }
+
+    function test_theOneTransactionRoundTripIsRefusedAtTheWorkMint() public {
+        RoundTripper tripper = new RoundTripper(vault, imd);
+        vm.startPrank(APPROVED_OPERATOR);
+        imd.mint(address(tripper), 300 ether);
+        oracle.grantRights(address(tripper), 25 ether);
+        vm.stopPrank();
+
+        // deposit 300, mint 100 (minCR 200 exactly), mint 25 of work against it, repay, withdraw.
+        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        tripper.roundTrip(300 ether, 100 ether, 25 ether);
+        assertEq(vault.totalWorkMinted(), 0);
+        assertEq(comp.totalSupply(), 0);
+        assertEq(oracle.mintingRights(address(tripper)), 25 ether, "nothing consumed");
+        assertEq(imd.balanceOf(address(tripper)), 300 ether);
+    }
+
+    /// @dev The cap is the debt level at the start of the transaction, not the first change: repaying
+    /// and re-minting inside one transaction credits what stood before it and nothing more, and a
+    /// repayment alone lowers the backed figure at once.
+    function test_theBackedFigureIsCappedAtTheDebtTheTransactionBeganWith() public {
+        RoundTripper tripper = new RoundTripper(vault, imd);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(tripper), 600 ether);
+        tripper.borrow(600 ether, 100 ether);
+        assertEq(vault.backedDebt(), 100e18);
+
+        assertEq(tripper.repayThenMint(50 ether, 130 ether), 100e18, "180 outstanding, 100 stood before");
+        assertEq(vault.backedDebt(), 180e18, "and all of it afterwards");
+        assertEq(tripper.repayThenMint(100 ether, 20 ether), 100e18, "100 outstanding, below the 180 cap");
+    }
+
+    // --- principal whose collateral is gone backs nothing (revision, finding e3888b1e) -------------
+
+    /// @dev Grace is zero at NHI 0.6, so a mark is actionable at once. BORROWER posts 200 IMD against
+    /// 100 COMP (minCR 200 exactly); the price halves; the largest coverable liquidation seizes all
+    /// but two wei of it, which a second one-wei liquidation takes (the remainder is then swept),
+    /// leaving about 9 COMP of principal and no collateral.
+    function _drainBorrower() private returns (uint256 residualPrincipal) {
+        _borrow(200 ether, 100 ether);
+        vm.prank(BORROWER);
+        comp.transfer(KEEPER, 100 ether);
+        vm.warp(block.timestamp + 30 days);
+        ethUsd.set(2e8, block.timestamp);
+        price.setValue(0.5 ether);
+        spot.setValue(0.5 ether);
+        uint256 repay = Math.mulDiv(200 ether, 0.5e18, 1.1e18);
+        vm.startPrank(KEEPER);
+        vault.markUnderwater(BORROWER);
+        vault.liquidate(BORROWER, repay);
+        (uint256 left,) = vault.positions(BORROWER);
+        assertEq(left, 2, "two wei, too small to sweep, large enough to seize for one wei of debt");
+        vault.liquidate(BORROWER, 1);
+        vm.stopPrank();
+        (uint256 collateral,) = vault.positions(BORROWER);
+        assertEq(collateral, 0, "drained");
+        residualPrincipal = vault.totalDebt();
+        assertGt(residualPrincipal, 9e18);
+        assertGe(vault.totalBadDebt(), residualPrincipal, "recorded with its accrued fee");
+    }
+
+    function test_residualPrincipalOfADrainedPositionBacksNoWorkMinting() public {
+        _drainBorrower();
+        assertEq(vault.backedDebt(), 0);
+        assertEq(vault.workCeiling(), 0, "no surplus collateral stands behind that principal");
+        vm.prank(KEEPER);
+        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        vault.mintFromWork(1);
+
+        // The protocol's cut of the liquidation did land in the Treasury, but IMD is not listed here.
+        assertGt(imd.balanceOf(address(treasury)), 0);
+        assertEq(treasury.reserveValueUsd(), 0);
+    }
+
+    /// @dev totalBadDebt is accrued debt (fees included) and totalDebt is principal, so the
+    /// subtraction over-counts by the bad position's unpaid fees — in the tightening direction only.
+    function test_healthyDebtNextToBadDebtCountsNetOfIt() public {
+        uint256 residual = _drainBorrower();
+        assertEq(vault.totalBadDebt(), residual, "the liquidator paid the fees first, so the record is principal");
+
+        // Fees keep accruing on the drained principal and enter the record at its next update, which
+        // then exceeds the principal in totalDebt by exactly those fees.
+        vm.warp(block.timestamp + 30 days);
+        ethUsd.set(2e8, block.timestamp);
+        vm.prank(KEEPER);
+        comp.transfer(BORROWER, 1);
+        vm.prank(BORROWER);
+        vault.repayCOMP(1);
+        uint256 overcount = vault.totalBadDebt() - vault.totalDebt();
+        assertGt(overcount, 0, "30 days of fee on the drained principal");
+
+        address other = address(0xD0D0);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(other, 1_000 ether);
+        vm.startPrank(other);
+        imd.approve(address(vault), type(uint256).max);
+        vault.depositCollateral(1_000 ether);
+        vault.mintCOMP(100 ether); // 500 IMD-worth at 0.5 against 100: CR 500
+        vm.stopPrank();
+
+        assertEq(vault.totalDebt(), residual + 100e18);
+        assertEq(vault.backedDebt(), 100e18 - overcount, "the healthy debt, less the unpaid fees on the bad");
+        assertEq(vault.workCeiling(), (100e18 - overcount) / 4);
+
+        // Once the bad debtor's fees are paid the record is principal again, and it moves together
+        // with totalDebt from then on: the healthy debt counts in full and the bad still for nothing.
+        vm.prank(KEEPER);
+        comp.transfer(BORROWER, 5 ether);
+        vm.prank(BORROWER);
+        vault.repayCOMP(5 ether);
+        assertEq(vault.totalBadDebt(), vault.totalDebt() - 100e18);
+        assertEq(vault.backedDebt(), 100e18);
+    }
+
+    // --- the work mint is a price-dependent action here (revision, finding aba99865) ---------------
+
+    function test_mintFromWorkIsRefusedWhileTheFeedsDisagreeOrSpotIsStale() public {
+        _listImd(10_000);
+        _fundTreasury(100 ether);
+        assertEq(vault.workCeiling(), 100e18);
+
+        spot.setValue(0.5 ether); // 50% off, against a 5% bound
+        vm.prank(KEEPER);
+        vm.expectRevert(CDPVault.PriceDivergence.selector);
+        vault.mintFromWork(1);
+        spot.setValue(1 ether);
+        spot.setStale(true);
+        vm.prank(KEEPER);
+        vm.expectRevert(CDPVault.StaleFeed.selector);
+        vault.mintFromWork(1);
+        spot.setStale(false);
+        vm.prank(KEEPER);
+        vault.mintFromWork(1);
+
+        // The plain vault's unlimited ceiling reads no price, so its work channel stays open through
+        // a divergence halt, as the earlier increment pinned.
+        CDPVault plain = new CDPVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
+        MockWorkOracle plainOracle = MockWorkOracle(address(plain.oracle()));
+        vm.prank(APPROVED_OPERATOR);
+        plainOracle.grantRights(KEEPER, 1);
+        spot.setValue(0.5 ether);
+        vm.prank(KEEPER);
+        plain.mintFromWork(1);
+        assertEq(plain.totalWorkMinted(), 1);
+    }
+
+    // --- a listing the register could not read is refused, and never bricks the view (finding 21a2b135)
+
+    function test_theRegisterRefusesAPriceSourceItCouldNotRead() public {
+        ISwarmFeed half = ISwarmFeed(address(new HalfFeed()));
+        IERC20 wide = IERC20(address(new WideToken()));
+        vm.startPrank(APPROVED_OPERATOR);
+        // Has code, answers neither read: the COMP token named as a SOURCE (not as the asset).
+        vm.expectRevert(Treasury.InvalidPriceSource.selector);
+        params.proposeReserveAsset(IERC20(address(imd)), ISwarmFeed(address(comp)), 5_000);
+        // Answers isStale() and nothing else.
+        vm.expectRevert(Treasury.InvalidPriceSource.selector);
+        params.proposeReserveAsset(IERC20(address(imd)), half, 5_000);
+        // A token whose 10 ** decimals does not fit a word.
+        vm.expectRevert(Treasury.InvalidReserveAsset.selector);
+        params.proposeReserveAsset(wide, usd, 10_000);
+        vm.stopPrank();
+        assertEq(params.pendingEta(), 0, "none occupied the slot");
+    }
+
+    function test_aListedSourceThatStopsAnsweringCountsForNothingInsteadOfReverting() public {
+        BreakableFeed feed = new BreakableFeed(2 ether);
+        _setReserve(IERC20(address(imd)), feed, 10_000);
+        _fundTreasury(100 ether);
+        _borrow(1_000 ether, 100 ether);
+        assertEq(treasury.reserveValueUsd(), 200e18);
+        assertEq(vault.workCeiling(), 100e18 + 25e18);
+
+        feed.setBroken(true);
+        assertEq(treasury.reserveValueOf(IERC20(address(imd))), 0, "a source that reverts counts for nothing");
+        assertEq(treasury.reserveValueUsd(), 0);
+        assertEq(vault.workCeiling(), 25e18, "only the ratio term remains, and the view still answers");
+        vm.prank(KEEPER);
+        vault.mintFromWork(25e18);
+        vm.prank(KEEPER);
+        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        vault.mintFromWork(1);
     }
 
     // --- the USD feed -----------------------------------------------------------------------------
@@ -447,7 +788,7 @@ contract ComputeBackingTest is Test {
         _listImd(5_000);
         _fundTreasury(100 ether);
         _borrow(1_000 ether, 400 ether);
-        assertEq(vault.workCeiling(), 100e18 + 100e18, "reserve 100 + 25% of 400");
+        assertEq(vault.workCeiling(), 50e18 + 100e18, "reserve 50 (100 IMD at half factor) + 25% of 400");
 
         ethUsd.set(2e8, block.timestamp - ETH_USD_MAX_AGE - 1);
         assertEq(treasury.reserveValueUsd(), 0, "a stale price counts for nothing");
@@ -463,31 +804,33 @@ contract ComputeBackingTest is Test {
 
     function test_workCeilingIsTheReservePlusARatioOfDebtAndMintFromWorkStopsAtIt() public {
         _listImd(5_000);
-        _fundTreasury(100 ether); // $200 at a 50% haircut = 100
+        _fundTreasury(100 ether); // $200 at a 50% factor = $100 = 50 in the vault's unit
         _borrow(1_000 ether, 400 ether); // 25% of 400 = 100
-        assertEq(vault.workCeiling(), 200e18);
-        assertEq(vault.workCeiling(), treasury.reserveValueUsd() + vault.totalDebt() * vault.workRatioBps() / 10_000);
+        assertEq(vault.workCeiling(), 150e18);
+        assertEq(vault.workCeiling(), vault.reserveValue() + vault.backedDebt() * vault.workRatioBps() / 10_000);
+        assertEq(vault.reserveValue(), treasury.reserveValueUsd() * 1e18 / usd.ethUsdPrice());
+        assertEq(vault.backedDebt(), vault.totalDebt());
 
         vm.startPrank(KEEPER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        vault.mintFromWork(200e18 + 1);
-        vault.mintFromWork(150e18);
+        vault.mintFromWork(150e18 + 1);
+        vault.mintFromWork(100e18);
         vault.mintFromWork(50e18); // exactly to the ceiling
-        assertEq(vault.totalWorkMinted(), 200e18);
+        assertEq(vault.totalWorkMinted(), 150e18);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         vault.mintFromWork(1);
         vm.stopPrank();
-        assertEq(oracle.mintingRights(KEEPER), type(uint128).max - 200e18, "a refused mint consumes no rights");
+        assertEq(oracle.mintingRights(KEEPER), type(uint128).max - 150e18, "a refused mint consumes no rights");
 
         // Both terms are live. Repayment shrinks the ratio term; a withdrawal from the reserve shrinks
         // the other. What was already minted stays minted — the ceiling gates new supply only.
         vm.prank(BORROWER);
         vault.repayCOMP(200 ether);
-        assertEq(vault.workCeiling(), 150e18);
+        assertEq(vault.workCeiling(), 100e18);
         vm.prank(APPROVED_OPERATOR);
         treasury.withdraw(IERC20(address(imd)), STRANGER, 50 ether);
-        assertEq(vault.workCeiling(), 100e18);
-        assertEq(vault.totalWorkMinted(), 200e18);
+        assertEq(vault.workCeiling(), 75e18);
+        assertEq(vault.totalWorkMinted(), 150e18);
         vm.prank(KEEPER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         vault.mintFromWork(1);

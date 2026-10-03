@@ -241,6 +241,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 resultingTotal = totalDebt + amount;
         if (resultingTotal > debtCeiling()) revert DebtCeilingReached();
         totalDebt = resultingTotal;
+        _debtChanged(resultingTotal - amount);
         position.debt += amount;
         _clearMark(msg.sender);
         compToken.mint(msg.sender, amount);
@@ -259,7 +260,14 @@ contract CDPVault is ReentrancyGuard {
         if (compToken.vault() != address(this)) revert NotInitialized();
         if (oracle.mintingRights(msg.sender) < amount) revert InsufficientRights();
         uint256 resultingWork = totalWorkMinted + amount;
-        if (resultingWork > workCeiling()) revert WorkCeilingReached();
+        uint256 ceiling = workCeiling();
+        // REVISION (finding aba99865): a finite ceiling is priced off the primary feed —
+        // ParameterizedVault values its reserve through it — so minting against one is a
+        // price-dependent action and is refused while primary and spot disagree, like every other.
+        // The unlimited ceiling here reads no price, and this vault's work channel stays open through
+        // a divergence halt exactly as it did before (script/checks/CDPVaultIncrement.t.sol pins it).
+        if (ceiling != type(uint256).max) _requirePriceAgreement();
+        if (resultingWork > ceiling) revert WorkCeilingReached();
         totalWorkMinted = resultingWork;
         oracle.consumeRights(msg.sender, amount);
         compToken.mint(msg.sender, amount);
@@ -518,6 +526,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 principalPaid = amount - feePaid;
         position.debt -= principalPaid;
         totalDebt -= principalPaid;
+        _debtChanged(totalDebt + principalPaid);
         uint256 previous = _recordedBadDebt[owner];
         if (previous != 0) {
             // Include new fees while collateral is exhausted. After recapitalization, only reduce
@@ -528,6 +537,12 @@ contract CDPVault is ReentrancyGuard {
             _recordedBadDebt[owner] = current;
         }
     }
+
+    /// @dev Called with the previous total every time `totalDebt` moves. Nothing here: this vault's
+    /// ceiling is unlimited and reads no debt. ParameterizedVault overrides it to remember the debt
+    /// level a transaction began at, so debt created and repaid inside one transaction never counts
+    /// toward the work ceiling's ratio term.
+    function _debtChanged(uint256 previousTotal) internal virtual {}
 
     function _payDebt(uint256 amount, uint256 feePaid) private {
         compToken.burn(msg.sender, amount);
