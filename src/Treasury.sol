@@ -35,11 +35,11 @@ import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
 contract Treasury {
     using SafeERC20 for IERC20;
 
-    /// @notice A reserve asset's price source and discount.
+    /// @notice A reserve asset's price source and retained-value factor.
     /// @param priceFeed USD per whole token, 1e18-scaled, read like any other ISwarmFeed.
-    /// @param haircutBps The discount, in basis points: the asset counts for (10000 - haircutBps) /
-    /// 10000 of its market value. A stablecoin's is near zero; a volatile token's is not. It is what
-    /// stops a volatile asset authorising supply it cannot support through a downturn.
+    /// @param haircutBps The retained-value factor, in basis points: the asset counts for haircutBps /
+    /// 10000 of its market value. Zero counts for nothing; 10000 counts in full. A lower factor
+    /// limits the supply a volatile asset can authorise through a downturn.
     /// @param decimals The token's decimals, read once at listing, so a 6-decimal stablecoin is not
     /// priced as if it had 18.
     struct ReserveAsset {
@@ -121,9 +121,8 @@ contract Treasury {
             return;
         }
         if (address(priceFeed).code.length == 0) revert InvalidPriceSource();
-        // An asset counting for nothing is a removal written the long way; refuse it so the register
-        // only ever holds assets that back something.
-        if (haircutBps >= BPS) revert HaircutOutOfRange(haircutBps);
+        // Both endpoints are valid: zero backing through full market value.
+        if (haircutBps > BPS) revert HaircutOutOfRange(haircutBps);
         // Reverts here if the token has no decimals(), which is also what prices it correctly later.
         IERC20Metadata(address(asset)).decimals();
     }
@@ -145,7 +144,7 @@ contract Treasury {
     }
 
     /// @notice What the reserve is worth, in USD scaled by 1e18: the sum over registered assets of
-    /// balance x price x (1 - haircut).
+    /// balance x price x haircutBps / 10000, normalized by the token's decimals.
     /// @dev An asset whose price source is stale or reads zero counts for nothing. A dead feed can
     /// therefore only tighten the ceiling that reads this; it can never inflate it, and it never
     /// makes this view revert.
@@ -163,7 +162,7 @@ contract Treasury {
         (uint256 price,) = entry.priceFeed.latestValue();
         if (price == 0) return 0;
         uint256 marked = Math.mulDiv(asset.balanceOf(address(this)), price, 10 ** entry.decimals);
-        return Math.mulDiv(marked, BPS - entry.haircutBps, BPS);
+        return Math.mulDiv(marked, entry.haircutBps, BPS);
     }
 
     function _remove(IERC20 asset) private {

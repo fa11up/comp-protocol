@@ -117,7 +117,8 @@ contract ComputeBackingTest is Test {
         price = new CheckFeed(1 ether);
         spot = new CheckFeed(1 ether);
         nhi = new CheckFeed(0.6 ether); // minCR 200, grace 0
-        vault = new ParameterizedVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
+        vault =
+            new ParameterizedVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
         params = vault.parameters();
         treasury = vault.treasury();
         usd = vault.usdPriceFeed();
@@ -289,12 +290,12 @@ contract ComputeBackingTest is Test {
         assertEq(entry.decimals, 18);
         assertEq(treasury.reserveAssetCount(), 1);
 
-        // balance x price x (1 - haircut): 100 IMD at $2 at a 50% haircut.
+        // balance x price x haircut: 100 IMD at $2 at a 50% retained-value factor.
         _fundTreasury(100 ether);
         assertEq(treasury.reserveValueUsd(), 100e18);
 
         // Repricing is the same path, and does not duplicate the entry.
-        _listImd(0);
+        _listImd(10_000);
         assertEq(treasury.reserveAssetCount(), 1);
         assertEq(treasury.reserveValueUsd(), 200e18);
 
@@ -335,8 +336,8 @@ contract ComputeBackingTest is Test {
 
     function test_theRegisterRefusesWhatCannotBePriced() public {
         vm.startPrank(APPROVED_OPERATOR);
-        vm.expectRevert(abi.encodeWithSelector(Treasury.HaircutOutOfRange.selector, 10_000));
-        params.proposeReserveAsset(IERC20(address(imd)), usd, 10_000);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.HaircutOutOfRange.selector, 10_001));
+        params.proposeReserveAsset(IERC20(address(imd)), usd, 10_001);
         vm.expectRevert(Treasury.InvalidPriceSource.selector);
         params.proposeReserveAsset(IERC20(address(imd)), ISwarmFeed(STRANGER), 0);
         vm.expectRevert(Treasury.InvalidReserveAsset.selector);
@@ -351,10 +352,47 @@ contract ComputeBackingTest is Test {
     function test_theRegisterPricesByTheTokensOwnDecimals() public {
         SixDecimalToken six = new SixDecimalToken();
         CheckFeed dollar = new CheckFeed(1 ether);
-        _setReserve(IERC20(address(six)), dollar, 0);
+        _setReserve(IERC20(address(six)), dollar, 10_000);
         six.mint(address(treasury), 1_000_000);
         assertEq(treasury.reserveValueUsd(), 1e18);
         assertEq(treasury.reserveAsset(IERC20(address(six))).decimals, 6);
+    }
+
+    function test_zeroHaircutCountsForNothingAndCannotBackWorkMinting() public {
+        _listImd(0);
+        _fundTreasury(100 ether);
+        assertTrue(treasury.isReserveAsset(IERC20(address(imd))), "zero factor is not a delisting");
+        assertEq(treasury.reserveValueUsd(), 0);
+        assertEq(vault.workCeiling(), 0);
+
+        vm.prank(KEEPER);
+        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        vault.mintFromWork(1);
+        assertEq(vault.totalWorkMinted(), 0);
+        assertEq(oracle.mintingRights(KEEPER), type(uint128).max);
+    }
+
+    function test_tenThousandHaircutCountsInFullAndBacksWorkMinting() public {
+        _listImd(10_000);
+        _fundTreasury(100 ether);
+        assertEq(treasury.reserveValueUsd(), 200e18);
+        assertEq(vault.workCeiling(), 200e18);
+
+        vm.startPrank(KEEPER);
+        vault.mintFromWork(200e18);
+        assertEq(vault.totalWorkMinted(), 200e18);
+        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        vault.mintFromWork(1);
+        vm.stopPrank();
+    }
+
+    function testFuzz_reserveValueUsesTheHaircutAsARetainedValueFactor(uint256 haircutBps) public {
+        haircutBps = bound(haircutBps, 0, 10_000);
+        _listImd(haircutBps);
+        _fundTreasury(100 ether);
+        uint256 expected = 200e18 * haircutBps / 10_000;
+        assertEq(treasury.reserveValueUsd(), expected);
+        assertEq(vault.workCeiling(), expected);
     }
 
     // --- the USD feed -----------------------------------------------------------------------------

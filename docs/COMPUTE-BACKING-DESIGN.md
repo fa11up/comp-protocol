@@ -68,12 +68,13 @@ reserveValueUsd = Σ_assets  haircutBps[a]/10000 × balance[a] × priceUsd[a]
 
 Each asset needs a USD price source and a haircut. IMD's price is the existing `PriceFeed`
 (IMD/ETH) multiplied by Chainlink ETH/USD — on Sepolia `0x694AA1769357215DE4FAC081bf1f309aDC325306`,
-verified live at $2,675.82, 8 decimals. The haircut is what stops a volatile reserve asset from
-authorizing supply it cannot support; a stablecoin's haircut is near zero, IMD's is not.
+verified live at $2,675.82, 8 decimals. Here `haircutBps` is the retained-value factor: zero counts
+for nothing and 10000 counts in full. A stablecoin's factor would be near 10000, while a lower
+factor for IMD limits the supply its volatile reserve value can authorize.
 
 **This makes reserve value oracle-dependent and reflexive.** If IMD falls, reserve value falls, and
-COMP already minted against it becomes under-backed. The haircut is the only defence, so it belongs
-in code with a hard floor, not in governance alone.
+COMP already minted against it becomes under-backed. The reserve factor reduces the credited
+backing and is bounded in code to 0–10000; its governed value determines the discount.
 
 ## 3. The work ceiling
 
@@ -228,7 +229,7 @@ All under the existing 48-hour delay, all hard-bounded in the parameters contrac
 | `workRatioBps` | ratio term of `workCeiling` | 2500 | ≤ 2500 (cliff is `minCR − 1` = 5000) |
 | `redemptionCeilingCR` | above this a position cannot be redeemed against | 200 | ≥ `minCR`, ≤ 400 |
 | `feeBurnShareBps` | share of COMP fees burned on arrival | 10000 at first | no bound needed |
-| `haircutBps[asset]` | per-asset reserve discount | 0 stables, high for IMD | floor per asset class |
+| `haircutBps[asset]` | per-asset retained-value factor | near 10000 stables, lower for IMD | 0–10000 |
 | `targetWeightBps[asset]` | basket weight driving channel B's fee | — | must sum to 10000 |
 | `REDEMPTION_FEE_FLOOR` / `_MAX` | the peg band | 50 / 500 | constants, not governed |
 

@@ -139,7 +139,7 @@ contract Parameters is Governed {
 
     /// @notice Queue a listing, repricing or (with a zero price source) delisting of one of the
     /// Treasury's reserve assets. The Treasury's own rules apply at proposal — COMP is refused with
-    /// `CompIsNotReserve`, a haircut must be below 10000 — so a change the register would refuse
+    /// `CompIsNotReserve`, a haircut must be at most 10000 — so a change the register would refuse
     /// never occupies the slot. Applying it, like every other change, is anyone's to do after the delay.
     function proposeReserveAsset(IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps) external {
         _propose(abi.encode(Change.ReserveAsset, asset, priceFeed, haircutBps));
