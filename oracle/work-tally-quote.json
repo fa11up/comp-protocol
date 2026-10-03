@@ -1,0 +1,29 @@
+{
+  "requestKey": "PLACEHOLDER-REGENERATE-BEFORE-SUBMIT",
+  "action": "oracle.request",
+  "input": {
+    "v": 1,
+    "question": "Reading the IdentityMD control plane at https://api.imd.fun/swarm, what is the cumulative count of accepted tasks for the seat whose agentId is 51450, as a whole number?",
+    "chainId": 1,
+    "window": {
+      "hours": 1
+    },
+    "answerType": "uint256",
+    "evidence": "panel",
+    "toleranceBps": 300,
+    "definitions": {
+      "source": "Read GET https://api.imd.fun/swarm once, at answer time. It is public and needs no key. The answer is seats[\"1616\"].accepted, the entry whose agentId field is the string \"51450\". Match on agentId, not on the key: the key is a tokenId and the two are different numbers.",
+      "field": "accepted is the count of this seat's task attempts that were accepted. Do NOT use attempts, rejected, failed or pending, and do not add them together.",
+      "drift": "This is a live counter that only ever grows, so two readers seconds apart may differ by a few. Report what you read; do not round to a neater figure and do not adjust toward another member.",
+      "scale": "The answer is a plain whole number of tasks, NOT scaled by 1e18.",
+      "refusal": "If api.imd.fun/swarm cannot be reached, or no seat has agentId \"51450\", or the entry has no accepted field, report inability rather than substituting another source or guessing."
+    },
+    "guards": {
+      "min": "1000",
+      "max": "1000000"
+    },
+    "panelSize": 60,
+    "quorum": 20,
+    "validForSeconds": 86400
+  }
+}
