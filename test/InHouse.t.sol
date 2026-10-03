@@ -49,6 +49,12 @@ contract CappedFeeVault is CDPVault {
     function protocolBonusShareBps() public view override returns (uint256) {
         return _shareBps;
     }
+    /// @dev Held at zero so this suite keeps asserting what it is about. The shipped rate is
+    /// non-zero and ShippedRateStabilityFeeTest covers it.
+    function stabilityFeeBps() public pure override returns (uint256) {
+        return 0;
+    }
+
 }
 
 /// @notice Fork tests for OUR deployment parameters, against live Sepolia state.

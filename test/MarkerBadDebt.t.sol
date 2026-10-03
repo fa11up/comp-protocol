@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {CDPVault} from "src/CDPVault.sol";
+import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {APPROVED_OPERATOR, FEE_RECIPIENT, MARKER_SHARE_BPS} from "src/DeploymentConfig.sol";
@@ -22,6 +23,12 @@ contract MarkerProtocolShareVault is CDPVault {
     function protocolBonusShareBps() public view override returns (uint256) {
         return share;
     }
+    /// @dev Held at zero so this suite keeps asserting what it is about. The shipped rate is
+    /// non-zero and ShippedRateStabilityFeeTest covers it.
+    function stabilityFeeBps() public pure override returns (uint256) {
+        return 0;
+    }
+
 }
 
 contract MarkerBadDebtTest is Test {
@@ -71,7 +78,7 @@ contract MarkerBadDebtTest is Test {
     }
 
     function test_defaultProtocolShareStillPaysMarkerFromBonus() public {
-        vault = new CDPVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
+        vault = new ZeroFeeVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
         comp = vault.compToken();
         _open(BORROWER, 140 ether, 100 ether);
         _setPrice(1 ether);

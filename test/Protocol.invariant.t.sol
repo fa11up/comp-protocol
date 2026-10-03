@@ -7,6 +7,7 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
 import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
@@ -48,7 +49,7 @@ contract ProtocolHandler is Test {
         priceFeed = new TestSwarmFeed(1 ether);
         nhiFeed = new TestSwarmFeed(0.85 ether);
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
-        vault = new CDPVault(
+        vault = new ZeroFeeVault(
             address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         oracle = MockWorkOracle(address(vault.oracle()));
@@ -114,9 +115,14 @@ contract ProtocolHandler is Test {
         uint256 available = _min(comp.balanceOf(actor), debt);
         if (available == 0) return;
         amount = bound(amount, 1, available);
+        // Read before the prank: vm.prank applies to the NEXT call, and a view here would eat it.
+        // A repayment pays outstanding fees first and only the remainder retires principal
+        // (_reduceDebt: feePaid = min(amount, fees)), so `repaid` tracks principal and the debt
+        // history stays an independent model of principal rather than of gross payments.
+        uint256 feeBefore = vault.stabilityFeeOf(actor);
         vm.prank(actor);
         vault.repayCOMP(amount);
-        repaid[actor] += amount;
+        repaid[actor] += amount - (amount < feeBefore ? amount : feeBefore);
         ++successfulRepayments;
     }
 
@@ -380,7 +386,8 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         for (uint256 i; i < 4; ++i) {
             address actor = handler.actors(i);
             (uint256 c, uint256 d) = vault.positions(actor);
-            debts += d;
+            // principal only: unpaid accrued fees are not minted, so they are not in supply
+            debts += d - vault.stabilityFeeOf(actor);
             work += handler.workMinted(actor);
             collateral += c;
             walletCOMP += handler.comp().balanceOf(actor);
@@ -390,8 +397,11 @@ contract ProtocolInvariantTest is StdInvariant, Test {
                 handler.deposited(actor) - handler.withdrawn(actor) - handler.collateralSeized(actor),
                 "collateral history"
             );
+            // positions() reports debtOf(), principal plus accrued fee; the history models principal.
             assertEq(
-                d, handler.debtMinted(actor) - handler.repaid(actor) - handler.debtLiquidated(actor), "debt history"
+                d - vault.stabilityFeeOf(actor),
+                handler.debtMinted(actor) - handler.repaid(actor) - handler.debtLiquidated(actor),
+                "debt history"
             );
             assertEq(
                 handler.oracle().mintingRights(actor) + handler.workMinted(actor),

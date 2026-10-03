@@ -7,6 +7,7 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
 
 /// @dev Stands in for a vault that creates its COMP token from its own constructor.
 contract CompTokenCreator {
@@ -52,7 +53,7 @@ contract TokensTest is ProtocolFixture {
 
     function test_setVaultDeployerOnlyAndIrreversible() public {
         CompToken fresh = new CompToken(address(0));
-        CDPVault freshVault = new CDPVault(
+        CDPVault freshVault = new ZeroFeeVault(
             address(imd), address(fresh), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         vm.prank(alice);

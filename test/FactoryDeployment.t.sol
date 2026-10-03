@@ -105,7 +105,7 @@ contract FactoryDeploymentTest is Test {
         (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
         assertEq(collateral, 0);
         assertEq(debt, 0);
-        assertEq(comp.totalSupply(), vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), vault.totalWorkMinted() + vault.totalFeesMinted());
         assertEq(comp.balanceOf(BORROWER), 40 ether);
         assertEq(imd.balanceOf(BORROWER), 150 ether);
         assertEq(imd.balanceOf(address(vault)), 0);
@@ -293,10 +293,13 @@ contract SelfContainedFactoryDeploymentTest is Test {
     function _assertAccounting(uint256 collateral, uint256 debt, uint256 work) private view {
         (uint256 actualCollateral, uint256 actualDebt) = vault.positions(BORROWER);
         assertEq(actualCollateral, collateral);
-        assertEq(actualDebt, debt);
+        assertEq(actualDebt - vault.stabilityFeeOf(BORROWER), debt, "principal, excluding accrued fee");
         assertEq(imd.balanceOf(address(vault)), collateral);
         assertEq(vault.totalWorkMinted(), work);
-        assertEq(comp.totalSupply(), actualDebt + vault.totalWorkMinted());
+        assertEq(
+            comp.totalSupply(),
+            actualDebt - vault.stabilityFeeOf(BORROWER) + vault.totalWorkMinted() + vault.totalFeesMinted()
+        );
     }
 
     function test_bothDeploymentModesLockSetVaultForEveryCallerFromGenesis() public {

@@ -65,7 +65,6 @@ contract CDPVault is ReentrancyGuard {
     uint256 public constant LIQUIDATION_BONUS_PERCENT = 10;
     uint256 public constant maxDivergenceBps = MAX_DIVERGENCE_BPS;
     uint256 public constant markerShareBps = MARKER_SHARE_BPS;
-    uint256 public constant stabilityFeeBps = STABILITY_FEE_BPS;
     uint256 private constant INDEX_SCALE = 1e18;
     uint256 public immutable deployedAt = block.timestamp;
 
@@ -80,6 +79,14 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Share of the liquidation bonus paid to FEE_RECIPIENT, in basis points of the bonus.
     /// @dev Zero by default. The borrower's loss is identical either way: this splits the existing
     /// 10% bonus rather than seizing more, so turning it on never makes liquidation harsher.
+    /// @notice Annual stability fee on open debt, in basis points, accrued linearly from deployment.
+    /// @dev Virtual for the same reason debtCeiling and protocolBonusShareBps are: a deployment pins
+    /// it in source, and a test can hold it at another value without rewriting the source to do it.
+    /// There is no setter, so a deployment's rate is permanent for that vault.
+    function stabilityFeeBps() public view virtual returns (uint256) {
+        return STABILITY_FEE_BPS;
+    }
+
     function protocolBonusShareBps() public view virtual returns (uint256) {
         return 0;
     }
@@ -321,14 +328,14 @@ contract CDPVault is ReentrancyGuard {
 
     /// @notice Deployment-based linear index; no per-second compounding or mutable rate.
     function debtIndex() public view returns (uint256) {
-        return INDEX_SCALE + Math.mulDiv(block.timestamp - deployedAt, stabilityFeeBps * INDEX_SCALE, 365 days * 10_000);
+        return INDEX_SCALE + Math.mulDiv(block.timestamp - deployedAt, stabilityFeeBps() * INDEX_SCALE, 365 days * 10_000);
     }
 
     /// @notice Unpaid fees on principal since its last debt change, plus previously accrued unpaid fees.
     /// @dev Fees never themselves earn interest. Reads and collateral/mark changes cannot capitalize fees.
     function stabilityFeeOf(address owner) public view returns (uint256) {
         uint256 principal = _positions[owner].debt;
-        if (principal == 0 || stabilityFeeBps == 0) return _stabilityFees[owner];
+        if (principal == 0 || stabilityFeeBps() == 0) return _stabilityFees[owner];
         return _stabilityFees[owner] + Math.mulDiv(principal, debtIndex() - debtIndexOf[owner], INDEX_SCALE);
     }
 

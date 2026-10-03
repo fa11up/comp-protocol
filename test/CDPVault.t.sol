@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {ProtocolFixture} from "./ProtocolFixture.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
@@ -29,26 +30,26 @@ contract CDPVaultTest is ProtocolFixture {
 
     function test_invalidConstructorTokensAndFeeds() public {
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(0), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
+        new ZeroFeeVault(address(0), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(alice, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
+        new ZeroFeeVault(alice, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(imd), alice, address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
+        new ZeroFeeVault(address(imd), alice, address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new CDPVault(address(imd), address(imd), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
+        new ZeroFeeVault(address(imd), address(imd), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new CDPVault(address(imd), address(comp), address(0), address(0), address(nhiFeed), address(spotFeed));
+        new ZeroFeeVault(address(imd), address(comp), address(0), address(0), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new CDPVault(address(imd), address(comp), address(0), address(priceFeed), alice, address(spotFeed));
+        new ZeroFeeVault(address(imd), address(comp), address(0), address(priceFeed), alice, address(spotFeed));
     }
 
     function test_constructorRejectsInvalidOrWrongVaultOracle() public {
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(address(imd), address(comp), alice, address(priceFeed), address(nhiFeed), address(spotFeed));
+        new ZeroFeeVault(address(imd), address(comp), alice, address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(address(imd), address(comp), address(imd), address(priceFeed), address(nhiFeed), address(spotFeed));
+        new ZeroFeeVault(address(imd), address(comp), address(imd), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(
+        new ZeroFeeVault(
             address(imd), address(comp), address(oracle), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
     }
@@ -57,7 +58,7 @@ contract CDPVaultTest is ProtocolFixture {
         address[4] memory invalidSpots = [address(0), alice, address(priceFeed), address(nhiFeed)];
         for (uint256 i; i < invalidSpots.length; ++i) {
             vm.expectRevert(CDPVault.InvalidFeed.selector);
-            new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), invalidSpots[i]);
+            new ZeroFeeVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), invalidSpots[i]);
         }
     }
 
@@ -65,20 +66,20 @@ contract CDPVaultTest is ProtocolFixture {
         // A valid price of 0.5 must never implicitly become the NHI through an aliased feed.
         priceFeed.setValue(0.5 ether);
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new CDPVault(address(imd), address(comp), address(0), address(priceFeed), address(priceFeed), address(spotFeed));
+        new ZeroFeeVault(address(imd), address(comp), address(0), address(priceFeed), address(priceFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new CDPVault(address(imd), address(comp), address(0), address(nhiFeed), address(nhiFeed), address(spotFeed));
+        new ZeroFeeVault(address(imd), address(comp), address(0), address(nhiFeed), address(nhiFeed), address(spotFeed));
         assertEq(vault.minCR(), 150, "distinct NHI remains independent of the price change");
         assertEq(vault.gracePeriod(), 6 hours);
     }
 
     function test_constructorAcceptsPlainOracleAndCreatesBoundOracleWhenZero() public {
         PlainOracle plain = new PlainOracle();
-        CDPVault supplied = new CDPVault(
+        CDPVault supplied = new ZeroFeeVault(
             address(imd), address(comp), address(plain), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         assertEq(address(supplied.oracle()), address(plain));
-        CDPVault generated = new CDPVault(
+        CDPVault generated = new ZeroFeeVault(
             address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         MockWorkOracle generatedOracle = MockWorkOracle(address(generated.oracle()));
@@ -92,7 +93,7 @@ contract CDPVaultTest is ProtocolFixture {
 
     function test_bothMintChannelsRequireTokenAuthorization() public {
         CompToken freshComp = new CompToken(address(0));
-        CDPVault fresh = new CDPVault(
+        CDPVault fresh = new ZeroFeeVault(
             address(imd), address(freshComp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         MockWorkOracle freshOracle = MockWorkOracle(address(fresh.oracle()));

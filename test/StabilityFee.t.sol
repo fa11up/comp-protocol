@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "src/CDPVault.sol";
+import {ZeroFeeVault, TenPercentFeeVault} from "./helpers/ZeroFeeVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {MockWorkOracle} from "src/MockWorkOracle.sol";
@@ -22,13 +23,21 @@ abstract contract StabilityFeeFixture is Test {
     address internal constant LIQUIDATOR = address(0x1A1D);
     address internal constant MARKER = address(0xCA11);
 
+    /// @dev Which rate this suite runs at. The fixture funds and approves whatever this returns, so a
+    /// suite cannot end up approving one vault and exercising another.
+    function _deployVault() internal virtual returns (CDPVault) {
+        return new ZeroFeeVault(
+            address(collateral), address(0), address(0), address(primary), address(nhi), address(spot)
+        );
+    }
+
     function setUp() public virtual {
         vm.warp(1_000_000);
         collateral = new MockIMD();
         primary = new TestSwarmFeed(1 ether);
         spot = new TestSwarmFeed(1 ether);
         nhi = new TestSwarmFeed(0.85 ether);
-        vault = new CDPVault(address(collateral), address(0), address(0), address(primary), address(nhi), address(spot));
+        vault = _deployVault();
         comp = vault.compToken();
         oracle = MockWorkOracle(address(vault.oracle()));
         vm.startPrank(APPROVED_OPERATOR);
@@ -61,11 +70,12 @@ abstract contract StabilityFeeFixture is Test {
     }
 }
 
-/// @notice Exercises the shipped zero-rate configuration through actual vault entry points.
+/// @notice Exercises the ZERO-rate configuration through actual vault entry points. The shipped rate is
+/// non-zero; NonzeroStabilityFeeTest below covers that, and these cases hold the rate at zero so each one
+/// keeps asserting what it is about rather than restating it in terms of accrual.
 contract StabilityFeeTest is StabilityFeeFixture {
     function test_zeroRateUntouchedPositionAcrossKnownElapsedTimes() public {
-        assertEq(STABILITY_FEE_BPS, 0, "approved default must remain zero");
-        assertEq(vault.stabilityFeeBps(), 0);
+        assertEq(vault.stabilityFeeBps(), 0, "this suite pins the zero-rate configuration");
         uint256 principal = 100 ether + 7;
         _open(BORROWER, principal);
         uint256 initialIndex = vault.debtIndexOf(BORROWER);
@@ -171,18 +181,23 @@ contract StabilityFeeTest is StabilityFeeFixture {
     }
 }
 
-/// @notice These cases run only with the scratch source variant made by check_stability_fee.py.
-/// @dev The shipped rate is a nonvirtual zero constant. The runner copies the actual source and
-/// changes only that constant to 1,000 BPS, so this is parameterized source verification rather
-/// than coverage of a reachable nonzero configuration in the deployed zero-rate contract.
+/// @notice Exact linear-accrual arithmetic at a fixed 10% rate.
+/// @dev This used to be reachable only through check_stability_fee.py, which copied the source and
+/// rewrote the constant outside the build, because the rate was a nonvirtual constant. It is virtual
+/// now, so a subclass reaches it inside the build and that script is no longer needed.
 contract NonzeroStabilityFeeTest is StabilityFeeFixture {
+    uint256 internal rate;
+
     function setUp() public override {
-        if (STABILITY_FEE_BPS == 0) {
-            vm.skip(true);
-            return;
-        }
         super.setUp();
-        assertEq(vault.stabilityFeeBps(), 1_000, "this scratch suite assumes a 10% annual rate");
+        rate = vault.stabilityFeeBps();
+        assertEq(rate, 1_000, "these cases state their arithmetic longhand at a 10% rate");
+    }
+
+    function _deployVault() internal override returns (CDPVault) {
+        return new TenPercentFeeVault(
+            address(collateral), address(0), address(0), address(primary), address(nhi), address(spot)
+        );
     }
 
     function test_nonzeroUntouchedDebtAccruesLinearlyAcrossYears() public {
@@ -325,5 +340,47 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
         assertEq(comp.totalSupply(), 10 ether, "all principal retired; independently minted work supply survives");
         vm.warp(vm.getBlockTimestamp() + 365 days);
         assertEq(vault.debtOf(BORROWER), 0, "closed positions cannot accrue new fees");
+    }
+}
+
+/// @notice Whatever rate the deployment actually ships, accruing through the real vault.
+/// @dev The suites above pin zero and ten percent because their arithmetic is written out longhand.
+/// This one derives its expectations from the shipped constant, so the configuration that will
+/// actually be deployed is covered whatever it is set to, and a change to it cannot pass unnoticed.
+contract ShippedRateStabilityFeeTest is StabilityFeeFixture {
+    uint256 internal rate;
+
+    function setUp() public override {
+        super.setUp();
+        rate = vault.stabilityFeeBps();
+        assertEq(rate, STABILITY_FEE_BPS, "the deployed vault must carry the shipped rate");
+    }
+
+    function _deployVault() internal override returns (CDPVault) {
+        return new CDPVault(
+            address(collateral), address(0), address(0), address(primary), address(nhi), address(spot)
+        );
+    }
+
+    function test_shippedRateAccruesLinearlyAndMintsNothingUntilRepayment() public {
+        if (rate == 0) return; // a deployment may ship inert; the zero suite covers that case
+        uint256 principal = 100 ether;
+        _open(BORROWER, principal);
+        uint256 started = vm.getBlockTimestamp();
+        vm.warp(started + 365 days);
+
+        uint256 expectedFee = principal * rate / 10_000;
+        assertEq(vault.stabilityFeeOf(BORROWER), expectedFee, "one year accrues exactly the annual rate");
+        assertEq(vault.debtOf(BORROWER), principal + expectedFee);
+        assertEq(vault.totalDebt(), principal, "accrual leaves minted principal alone");
+        assertEq(comp.totalSupply(), principal, "an unpaid fee is not minted");
+        assertEq(vault.totalFeesMinted(), 0);
+
+        vm.warp(started + 2 * 365 days);
+        assertEq(vault.stabilityFeeOf(BORROWER), 2 * expectedFee, "linear, never compounding");
+    }
+
+    function test_shippedRateIsASaneAnnualRate() public view {
+        assertLt(rate, 10_000, "an annual rate at or above 100% is a misconfiguration");
     }
 }

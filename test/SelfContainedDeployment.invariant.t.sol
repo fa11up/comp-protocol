@@ -124,9 +124,14 @@ contract SelfContainedDeploymentHandler is Test {
         uint256 available = _min(debt, comp.balanceOf(actor));
         if (available == 0) return;
         amount = bound(amount, 1, available);
+        // Read before the prank: vm.prank applies to the NEXT call, and a view here would eat it.
+        // A repayment pays outstanding fees first and only the remainder retires principal
+        // (_reduceDebt: feePaid = min(amount, fees)), so `repaid` tracks principal and the debt
+        // history stays an independent model of principal rather than of gross payments.
+        uint256 feeBefore = vault.stabilityFeeOf(actor);
         vm.prank(actor);
         vault.repayCOMP(amount);
-        repaid[actor] += amount;
+        repaid[actor] += amount - (amount < feeBefore ? amount : feeBefore);
     }
 
     function withdraw(uint256 seed, uint256 amount) external {
@@ -288,13 +293,19 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
         for (uint256 i; i < 4; ++i) {
             address actor = handler.actors(i);
             (uint256 c, uint256 d) = vault.positions(actor);
-            debts += d;
+            // principal only: unpaid accrued fees are not minted, so they are not in supply
+            debts += d - vault.stabilityFeeOf(actor);
             collateral += c;
             work += handler.workMinted(actor);
             walletCOMP += comp.balanceOf(actor);
             walletIMD += handler.imd().balanceOf(actor);
             assertEq(c, handler.deposited(actor) - handler.withdrawn(actor), "collateral history");
-            assertEq(d, handler.debtMinted(actor) - handler.repaid(actor), "debt history");
+            // positions() reports debtOf(), principal plus accrued fee; the history models principal.
+            assertEq(
+                d - vault.stabilityFeeOf(actor),
+                handler.debtMinted(actor) - handler.repaid(actor),
+                "debt history"
+            );
             assertEq(
                 comp.balanceOf(actor),
                 handler.debtMinted(actor) + handler.workMinted(actor) + handler.received(actor) - handler.repaid(actor)
@@ -315,7 +326,11 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
         }
         assertGt(work, 0, "work issuance remains part of the supply identity");
         assertEq(vault.totalWorkMinted(), work, "independent work history");
-        assertEq(comp.totalSupply(), debts + vault.totalWorkMinted(), "supply equals summed debt plus work");
+        assertEq(
+            comp.totalSupply(),
+            debts + vault.totalWorkMinted() + vault.totalFeesMinted(),
+            "supply equals summed debt plus work plus fees minted"
+        );
         assertEq(comp.totalSupply(), walletCOMP, "COMP custody");
         assertEq(handler.imd().balanceOf(address(vault)), collateral, "vault IMD custody");
         assertEq(handler.imd().totalSupply(), walletIMD + collateral, "all IMD accounted for");
@@ -345,7 +360,10 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
             assertEq(remainingCollateral, 0, "all deposits redeemable");
             assertEq(remainingDebt, 0, "all debt repayable");
         }
-        assertEq(handler.comp().totalSupply(), handler.vault().totalWorkMinted());
+        assertEq(
+            handler.comp().totalSupply(),
+            handler.vault().totalWorkMinted() + handler.vault().totalFeesMinted()
+        );
         assertEq(handler.comp().balanceOf(handler.actors(0)), handler.vault().totalWorkMinted());
         assertEq(handler.imd().balanceOf(address(handler.vault())), 0);
         invariant_constructorLinksSupplyRightsAndCustodyRemainConsistent();

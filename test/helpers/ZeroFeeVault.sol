@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.26;
+
+import {CDPVault} from "src/CDPVault.sol";
+
+/// @notice A vault holding the stability fee at zero, for suites that are not about the fee.
+/// @dev The shipped rate is non-zero, and accrual moves every debt figure by the time elapsed in a
+/// test. Suites that exist to pin liquidation payouts, divergence, bad debt or borrower accounting
+/// would all have to restate their expectations in terms of accrual to say the same things they say
+/// now, which would bury what each one is actually asserting. They use this instead, so zero-rate
+/// behaviour stays covered exactly as before and the shipped rate is covered where it belongs.
+///
+/// This is why stabilityFeeBps is virtual, as debtCeiling and protocolBonusShareBps already were.
+/// It replaces test/check_stability_fee.py, which could only reach a non-zero rate by copying the
+/// source and rewriting the constant outside the build.
+contract ZeroFeeVault is CDPVault {
+    constructor(
+        address imdToken_,
+        address compToken_,
+        address oracle_,
+        address priceFeed_,
+        address nhiFeed_,
+        address spotFeed_
+    ) CDPVault(imdToken_, compToken_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
+
+    function stabilityFeeBps() public pure override returns (uint256) {
+        return 0;
+    }
+}
+
+/// @notice A vault at a fixed 10% annual rate.
+/// @dev NonzeroStabilityFeeTest's arithmetic is written out longhand against this rate — index
+/// deltas, fee totals and ratios all stated as exact numbers. Holding the rate here keeps every one
+/// of those assertions saying what it says, instead of restating them in terms of whatever the
+/// deployment currently ships and losing the exactness that makes them worth having.
+contract TenPercentFeeVault is CDPVault {
+    constructor(
+        address imdToken_,
+        address compToken_,
+        address oracle_,
+        address priceFeed_,
+        address nhiFeed_,
+        address spotFeed_
+    ) CDPVault(imdToken_, compToken_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
+
+    function stabilityFeeBps() public pure override returns (uint256) {
+        return 1_000;
+    }
+}

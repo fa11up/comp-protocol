@@ -9,6 +9,7 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
+import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
 import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {IWorkOracle} from "../src/interfaces/IWorkOracle.sol";
@@ -119,7 +120,7 @@ contract AdversarialTest is Test {
         // The immutable oracle validates the address of the vault that will be created next.
         address predictedVault = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
         oracle = new AdversarialOracle(CDPVault(predictedVault), alice);
-        vault = new CDPVault(
+        vault = new ZeroFeeVault(
             address(collateral), address(comp), address(oracle), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         assertEq(address(vault), predictedVault);

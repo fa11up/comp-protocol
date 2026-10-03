@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {CDPVault} from "src/CDPVault.sol";
+import {ZeroFeeVault} from "./helpers/ZeroFeeVault.sol";
 import {CompToken} from "src/CompToken.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {APPROVED_OPERATOR, FEE_RECIPIENT, MARKER_SHARE_BPS} from "src/DeploymentConfig.sol";
@@ -32,7 +33,7 @@ contract BadDebtSequenceHandler is Test {
         primary = new TestSwarmFeed(4 ether);
         spot = new TestSwarmFeed(4 ether);
         TestSwarmFeed nhi = new TestSwarmFeed(0.6 ether);
-        vault = new CDPVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
+        vault = new ZeroFeeVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
         comp = vault.compToken();
         for (uint256 i; i < actors.length; ++i) {
             address actor = actors[i];
