@@ -30,13 +30,17 @@ contract CDPVaultTest is ProtocolFixture {
 
     function test_invalidConstructorTokensAndFeeds() public {
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new BaselineVault(address(0), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
+        new BaselineVault(
+            address(0), address(comp), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         vm.expectRevert(CDPVault.InvalidToken.selector);
         new BaselineVault(alice, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
         new BaselineVault(address(imd), alice, address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidToken.selector);
-        new BaselineVault(address(imd), address(imd), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
+        new BaselineVault(
+            address(imd), address(imd), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         vm.expectRevert(CDPVault.InvalidFeed.selector);
         new BaselineVault(address(imd), address(comp), address(0), address(0), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidFeed.selector);
@@ -47,7 +51,9 @@ contract CDPVaultTest is ProtocolFixture {
         vm.expectRevert(CDPVault.InvalidOracle.selector);
         new BaselineVault(address(imd), address(comp), alice, address(priceFeed), address(nhiFeed), address(spotFeed));
         vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new BaselineVault(address(imd), address(comp), address(imd), address(priceFeed), address(nhiFeed), address(spotFeed));
+        new BaselineVault(
+            address(imd), address(comp), address(imd), address(priceFeed), address(nhiFeed), address(spotFeed)
+        );
         vm.expectRevert(CDPVault.InvalidOracle.selector);
         new BaselineVault(
             address(imd), address(comp), address(oracle), address(priceFeed), address(nhiFeed), address(spotFeed)
@@ -58,7 +64,9 @@ contract CDPVaultTest is ProtocolFixture {
         address[4] memory invalidSpots = [address(0), alice, address(priceFeed), address(nhiFeed)];
         for (uint256 i; i < invalidSpots.length; ++i) {
             vm.expectRevert(CDPVault.InvalidFeed.selector);
-            new BaselineVault(address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), invalidSpots[i]);
+            new BaselineVault(
+                address(imd), address(comp), address(0), address(priceFeed), address(nhiFeed), invalidSpots[i]
+            );
         }
     }
 
@@ -66,9 +74,13 @@ contract CDPVaultTest is ProtocolFixture {
         // A valid price of 0.5 must never implicitly become the NHI through an aliased feed.
         priceFeed.setValue(0.5 ether);
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new BaselineVault(address(imd), address(comp), address(0), address(priceFeed), address(priceFeed), address(spotFeed));
+        new BaselineVault(
+            address(imd), address(comp), address(0), address(priceFeed), address(priceFeed), address(spotFeed)
+        );
         vm.expectRevert(CDPVault.InvalidFeed.selector);
-        new BaselineVault(address(imd), address(comp), address(0), address(nhiFeed), address(nhiFeed), address(spotFeed));
+        new BaselineVault(
+            address(imd), address(comp), address(0), address(nhiFeed), address(nhiFeed), address(spotFeed)
+        );
         assertEq(vault.minCR(), 150, "distinct NHI remains independent of the price change");
         assertEq(vault.gracePeriod(), 6 hours);
     }
@@ -179,12 +191,13 @@ contract CDPVaultTest is ProtocolFixture {
     }
 
     function test_workMintConsumesRightsWithoutCollateralOrDebt() public {
+        _establishWorkBacking(vault, 100 ether);
         vm.prank(alice);
         vm.expectEmit(true, false, false, true, address(vault));
         emit CDPVault.WorkMinted(alice, 100 ether);
         vault.mintFromWork(100 ether);
         _assertPosition(alice, 0, 0);
-        assertEq(comp.totalSupply(), 100 ether);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 100 ether);
         assertEq(comp.balanceOf(alice), 100 ether);
         assertEq(vault.totalWorkMinted(), 100 ether);
         assertEq(oracle.mintingRights(alice), 900 ether);
@@ -194,11 +207,12 @@ contract CDPVaultTest is ProtocolFixture {
     }
 
     function test_workMintRejectsInsufficientRightsWithNoStateChange() public {
+        _establishWorkBacking(vault, 1000 ether + 1);
         vm.prank(alice);
         vm.expectRevert(CDPVault.InsufficientRights.selector);
         vault.mintFromWork(1000 ether + 1);
         _assertPosition(alice, 0, 0);
-        assertEq(comp.totalSupply(), 0);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)]);
         assertEq(vault.totalWorkMinted(), 0);
         assertEq(oracle.mintingRights(alice), 1000 ether);
     }
@@ -218,16 +232,17 @@ contract CDPVaultTest is ProtocolFixture {
 
     function test_workAndBorrowChannelsKeepSupplyAccountingSeparate() public {
         _open(alice, 150 ether, 100 ether);
+        _establishWorkBacking(vault, 50 ether);
         vm.prank(alice);
         vault.mintFromWork(50 ether);
         _assertPosition(alice, 150 ether, 100 ether);
-        assertEq(comp.totalSupply(), 150 ether);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 150 ether);
         assertEq(vault.totalWorkMinted(), 50 ether);
         assertEq(oracle.mintingRights(alice), 950 ether);
         vm.prank(alice);
         vault.repayCOMP(100 ether);
         _assertPosition(alice, 150 ether, 0);
-        assertEq(comp.totalSupply(), 50 ether);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 50 ether);
         assertEq(vault.totalWorkMinted(), 50 ether);
         assertEq(oracle.mintingRights(alice), 950 ether);
     }

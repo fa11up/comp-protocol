@@ -64,6 +64,7 @@ contract BoundaryPathsTest is ProtocolFixture {
     }
 
     function test_exhaustedWorkCreditsCannotBeReusedButDoNotPreventBorrowing() public {
+        _establishWorkBacking(vault, 1000 ether);
         vm.startPrank(alice);
         vault.mintFromWork(1000 ether);
         vm.expectRevert(CDPVault.InsufficientRights.selector);
@@ -80,7 +81,7 @@ contract BoundaryPathsTest is ProtocolFixture {
         _assertPosition(alice, 0, 0);
         assertEq(oracle.mintingRights(alice), 0);
         assertEq(vault.totalWorkMinted(), 1000 ether);
-        assertEq(comp.totalSupply(), 1000 ether);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 1000 ether);
         assertEq(imd.balanceOf(alice), 1000 ether);
     }
 
@@ -106,6 +107,7 @@ contract BoundaryPathsTest is ProtocolFixture {
     }
 
     function test_workMintFailureRollsBackConsumedRightsAndWorkAccounting() public {
+        _establishWorkBacking(vault, 100 ether);
         vm.mockCallRevert(
             address(comp),
             abi.encodeCall(comp.mint, (alice, 100 ether)),
@@ -117,12 +119,12 @@ contract BoundaryPathsTest is ProtocolFixture {
         _assertPosition(alice, 0, 0);
         assertEq(oracle.mintingRights(alice), 1000 ether);
         assertEq(vault.totalWorkMinted(), 0);
-        assertEq(comp.totalSupply(), 0);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)]);
         vm.clearMockedCalls();
         vm.prank(alice);
         vault.mintFromWork(100 ether);
         assertEq(vault.totalWorkMinted(), 100 ether);
-        assertEq(comp.totalSupply(), 100 ether);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 100 ether);
         assertEq(oracle.mintingRights(alice), 900 ether);
     }
 
