@@ -38,7 +38,7 @@ contract ParametersTest is Test {
         price = new TestSwarmFeed(1 ether);
         spot = new TestSwarmFeed(1 ether);
         nhi = new TestSwarmFeed(0.9 ether);
-        params = new Parameters();
+        params = new Parameters(ICheckpointedVault(address(0)));
         vault = new ParameterizedVault(
             address(imd), address(0), address(0), address(price), address(nhi), address(spot), params
         );
@@ -242,7 +242,7 @@ contract ParametersTest is Test {
     }
 
     function test_theRateCannotMoveWhileNoVaultIsBound() public {
-        Parameters loose = new Parameters();
+        Parameters loose = new Parameters(ICheckpointedVault(address(0)));
         Parameters.ParamSet memory next = _set(type(uint256).max, 0, 500, 500, 1_000);
         vm.prank(APPROVED_OPERATOR);
         vm.expectRevert(Parameters.VaultNotBound.selector);
@@ -257,7 +257,7 @@ contract ParametersTest is Test {
     /// @dev The binding needs no authority because it confers no choice: the only vault it will
     /// accept is one already pointing at this contract through its own immutable.
     function test_theBindingAcceptsOnlyTheVaultThatAlreadyNamesIt() public {
-        Parameters fresh = new Parameters();
+        Parameters fresh = new Parameters(ICheckpointedVault(address(0)));
 
         vm.startPrank(STRANGER);
         vm.expectRevert(Parameters.ZeroVault.selector);
@@ -355,6 +355,31 @@ contract ParametersTest is Test {
         vm.warp(block.timestamp + 1);
         params.applyPending();
         assertEq(vault.stabilityFeeOf(BORROWER), 0, "and the new rate finds nothing to charge");
+    }
+
+    /// @dev The deployment shape a launch manifest can actually express: it makes no post-deploy
+    /// calls and names at most four contracts, so the vault creates its own Parameters and the pair
+    /// comes up mutually linked with nothing sent afterwards.
+    function test_aSelfContainedVaultComesUpAlreadyLinked() public {
+        ParameterizedVault solo = new ParameterizedVault(
+            address(imd), address(0), address(0), address(price), address(nhi), address(spot), Parameters(address(0))
+        );
+        Parameters own = solo.parameters();
+        assertTrue(address(own) != address(0), "the vault created its parameters");
+        assertEq(address(own.vault()), address(solo), "and they already name it, with no post-deploy call");
+        assertEq(address(own), address(solo.parameters()), "in both directions");
+
+        // Governance works immediately, including the rate, which needs the binding to checkpoint.
+        vm.prank(APPROVED_OPERATOR);
+        own.propose(Parameters.ParamSet(type(uint256).max, 0, 500, 500, 1_000));
+        vm.warp(block.timestamp + own.TIMELOCK());
+        own.applyPending();
+        assertEq(solo.stabilityFeeBps(), 500);
+
+        // And it is a DIFFERENT Parameters from this fixture's: one per vault, never shared.
+        assertTrue(address(own) != address(params), "a vault does not borrow another vault's parameters");
+        vm.expectRevert(Parameters.AlreadyBound.selector);
+        own.bindVault(ICheckpointedVault(address(vault)));
     }
 
     /// @dev `pokeIndex` is permissionless and can only move the index forward, so calling it

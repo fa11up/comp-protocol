@@ -2,7 +2,7 @@
 pragma solidity 0.8.26;
 
 import {CDPVault} from "./CDPVault.sol";
-import {Parameters} from "./Parameters.sol";
+import {Parameters, ICheckpointedVault} from "./Parameters.sol";
 
 /// @notice CDPVault with its five economic knobs read from a governed Parameters contract.
 /// @dev The entire difference from CDPVault is five overrides. That is the whole point of having
@@ -19,8 +19,6 @@ contract ParameterizedVault is CDPVault {
     /// replace it would have unbounded authority through the replacement.
     Parameters public immutable parameters;
 
-    error ZeroParameters();
-
     constructor(
         address imdToken_,
         address compToken_,
@@ -30,8 +28,14 @@ contract ParameterizedVault is CDPVault {
         address spotFeed_,
         Parameters parameters_
     ) CDPVault(imdToken_, compToken_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {
-        if (address(parameters_) == address(0)) revert ZeroParameters();
-        parameters = parameters_;
+        // Zero means self-contained, the same convention compToken_ and oracle_ already use: create
+        // the Parameters contract here and bind it in its own constructor, so the pair comes up
+        // mutually linked with no post-deploy transaction. A launch manifest makes no post-deploy
+        // calls and can name at most four contracts, so this is what lets the governed stack deploy
+        // from one: three feeds and this vault, with Parameters created inside it.
+        parameters = address(parameters_) == address(0)
+            ? new Parameters(ICheckpointedVault(address(this)))
+            : parameters_;
     }
 
     function debtCeiling() public view override returns (uint256) {

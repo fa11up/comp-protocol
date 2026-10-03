@@ -57,7 +57,7 @@ contract DeployGoverned is Script {
 
         // Parameters before the vault: the vault's reference to it is immutable, so the order is
         // forced. It opens holding exactly the shipped constants, so deploying it changes nothing.
-        Parameters parameters = new Parameters();
+        Parameters parameters = new Parameters(ICheckpointedVault(address(0)));
         ParameterizedVault vault = new ParameterizedVault(
             imd, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed), parameters
         );

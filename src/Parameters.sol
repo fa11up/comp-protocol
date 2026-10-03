@@ -82,7 +82,15 @@ contract Parameters is Governed {
     /// the vault would have had with them compiled in — including the unlimited default ceiling,
     /// which CDPVault pins as a literal rather than a named constant. Governance starts from the
     /// status quo, so binding it to a live vault changes nothing by itself.
-    constructor() {
+    /// @param vault_ the vault these parameters govern, or zero to bind it later with `bindVault`.
+    /// @dev A vault that creates its own Parameters passes itself here, because the verification
+    /// `bindVault` performs is impossible during construction: the vault has no code yet, so reading
+    /// its `parameters()` back would revert. No verification is needed on this path — the creator IS
+    /// the vault — and on the standalone path an unverified address could at worst make this contract
+    /// useless to itself, never reach the vault it names: all it may do there is read `totalDebt` and
+    /// call the permissionless `pokeIndex`.
+    constructor(ICheckpointedVault vault_) {
+        vault = vault_;
         _current = ParamSet({
             debtCeiling: type(uint256).max,
             protocolBonusShareBps: PROTOCOL_BONUS_SHARE_BPS,
