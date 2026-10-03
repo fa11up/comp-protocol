@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockIMD} from "src/MockIMD.sol";
@@ -56,6 +57,14 @@ abstract contract WorkBackingFixture is Test {
     address internal constant BORROWER = address(0xBA);
     address internal constant WORKER = address(0xCA);
     address internal constant OTHER_WORKER = address(0xDA);
+    /// @dev The fixture's Chainlink ETH/USD answer (8 decimals) and the same price 1e18-scaled, which
+    /// is what `UsdPriceFeed.ethUsdPrice` reports and what `ParameterizedVault.reserveValue` divides by.
+    int256 internal constant ETH_USD_ANSWER = 2000e8;
+    uint256 internal constant ETH_USD = 2000 ether;
+    /// @dev USD per reserve-asset token. Pinned to the ETH/USD price so one token is worth exactly one
+    /// ETH, the vault's unit of account: the register stays in USD, the conversion through the
+    /// Chainlink leg is exercised on every valuation, and the ceiling arithmetic reads in whole units.
+    uint256 internal constant ASSET_USD = 2000 ether;
     MockIMD internal collateral;
     ParameterizedVault internal backedVault;
     CompToken internal stable;
@@ -82,12 +91,12 @@ abstract contract WorkBackingFixture is Test {
         parameters = backedVault.parameters();
         reserve = backedVault.treasury();
         asset = new ReserveTestToken(18);
-        reservePrice = new TestSwarmFeed(1 ether);
+        reservePrice = new TestSwarmFeed(ASSET_USD);
         ReserveUsdAggregator implementation = new ReserveUsdAggregator();
         vm.etch(CHAINLINK_ETH_USD, address(implementation).code);
         usd = ReserveUsdAggregator(CHAINLINK_ETH_USD);
         usd.setDecimals(8);
-        usd.set(2000e8, vm.getBlockTimestamp());
+        usd.set(ETH_USD_ANSWER, vm.getBlockTimestamp());
         vm.startPrank(APPROVED_OPERATOR);
         workOracle.grantRights(WORKER, type(uint128).max);
         workOracle.grantRights(OTHER_WORKER, type(uint128).max);
@@ -98,7 +107,18 @@ abstract contract WorkBackingFixture is Test {
         vm.warp(parameters.pendingEta());
         vm.prank(address(0xA990));
         parameters.applyPending();
-        usd.set(2000e8, vm.getBlockTimestamp());
+        _refreshEthUsd();
+    }
+
+    /// @dev Re-date the Chainlink leg at the fixture's price after a warp, so a test that moves time
+    /// to mature a proposal does not also expire the USD leg unless it means to.
+    function _refreshEthUsd() internal {
+        usd.set(ETH_USD_ANSWER, vm.getBlockTimestamp());
+    }
+
+    /// @dev What `reserveValue` must report for a USD figure at the fixture's ETH/USD price.
+    function _inVaultUnit(uint256 usdValue) internal pure returns (uint256) {
+        return Math.mulDiv(usdValue, 1e18, ETH_USD);
     }
 
     function _register(IERC20 token, ISwarmFeed feed, uint256 haircut) internal {
@@ -124,7 +144,8 @@ abstract contract WorkBackingFixture is Test {
         vm.stopPrank();
     }
 
-    // Retain half the market value, so twice the requested balance supplies exactly this backing.
+    // Retain half the market value of a token worth one ETH, so twice the requested balance supplies
+    // exactly `value` of backing in the vault's unit (and 2000 x value in the USD register).
     function _fundReserve(uint256 value) internal {
         _register(asset, reservePrice, 5000);
         asset.mint(address(reserve), value * 2);

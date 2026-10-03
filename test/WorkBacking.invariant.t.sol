@@ -3,12 +3,13 @@ pragma solidity 0.8.26;
 
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Test} from "forge-std/Test.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {WorkBackingFixture, ReserveTestToken} from "./helpers/WorkBackingFixture.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
 import {Treasury} from "src/Treasury.sol";
 import {CompToken} from "src/CompToken.sol";
 import {CDPVault} from "src/CDPVault.sol";
-import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, ETH_USD_MAX_AGE} from "src/DeploymentConfig.sol";
 
 contract WorkBackingHandler is WorkBackingFixture {
     uint256 public reserveDeposited;
@@ -22,6 +23,10 @@ contract WorkBackingHandler is WorkBackingFixture {
     uint256 public acceptedWorkCalls;
     uint256 public rejectedWorkCalls;
     uint256 public reserveHaircutBps = 5000;
+    /// @dev The Chainlink leg as the handler last set it: the 8-decimal answer and whether it was
+    /// dated too old to be fresh. Governance helpers warp and re-date the leg, so they restore this.
+    int256 public ethUsdAnswer = ETH_USD_ANSWER;
+    bool public ethUsdStale;
 
     constructor() {
         setUp();
@@ -58,19 +63,33 @@ contract WorkBackingHandler is WorkBackingFixture {
         reserve.withdraw(asset, WORKER, amount);
     }
 
-    function setReserveMarket(uint64 rawPrice, bool stale) external {
-        reservePrice.setValue(bound(rawPrice, 0, 4 ether));
+    /// @dev USD per reserve token, anywhere from worthless to four times the fixture's one-ETH price.
+    function setReserveMarket(uint96 rawPrice, bool stale) external {
+        reservePrice.setValue(bound(rawPrice, 0, 4 * ASSET_USD));
         reservePrice.setStale(stale);
+    }
+
+    function setEthUsd(uint64 rawAnswer, bool stale) external {
+        ethUsdAnswer = int256(bound(rawAnswer, 100e8, 10_000e8));
+        ethUsdStale = stale;
+        _restoreEthUsd();
     }
 
     function governRatio(uint16 raw) external {
         _setRatio(bound(raw, 0, 2500));
+        _restoreEthUsd();
     }
 
     function governReserveHaircut(uint16 raw) external {
         uint256 factor = bound(raw, 0, 10_000);
         _register(asset, reservePrice, factor);
         reserveHaircutBps = factor;
+        _restoreEthUsd();
+    }
+
+    function _restoreEthUsd() private {
+        uint256 at = vm.getBlockTimestamp();
+        usd.set(ethUsdAnswer, ethUsdStale ? at - ETH_USD_MAX_AGE - 1 : at);
     }
 
     function borrow(uint256 raw) external {
@@ -135,6 +154,10 @@ contract WorkBackingHandler is WorkBackingFixture {
         }
     }
 
+    function backedVaultCeiling() external view returns (uint256) {
+        return backedVault.workCeiling();
+    }
+
     function checkAccounting() external view {
         uint256 reserveBalance = reserveDeposited - reserveWithdrawn;
         assertEq(asset.balanceOf(address(reserve)), reserveBalance);
@@ -147,10 +170,16 @@ contract WorkBackingHandler is WorkBackingFixture {
         uint256 marked = reserveBalance * price / 1 ether;
         uint256 value = reservePrice.isStale() ? 0 : marked * reserveHaircutBps / 10_000;
         assertEq(reserve.reserveAsset(asset).haircutBps, reserveHaircutBps);
-        assertEq(reserve.reserveValueUsd(), value);
+        assertEq(reserve.reserveValueUsd(), value, "the register is a USD figure");
+        uint256 ethUsd = uint256(ethUsdAnswer) * 1e10;
+        uint256 reserveTerm = ethUsdStale ? 0 : Math.mulDiv(value, 1e18, ethUsd);
+        assertEq(backedVault.usdPriceFeed().ethUsdPrice(), ethUsdStale ? 0 : ethUsd);
+        assertEq(backedVault.reserveValue(), reserveTerm, "and the ceiling reads it in the vault's unit");
         uint256 principal = debtMinted - principalRepaid;
         assertEq(backedVault.totalDebt(), principal);
-        assertEq(backedVault.workCeiling(), value + principal * backedVault.workRatioBps() / 10_000);
+        assertEq(backedVault.totalBadDebt(), 0, "a borrower kept at or above minCR never leaves bad debt");
+        assertEq(backedVault.backedDebt(), principal, "between transactions every open position counts");
+        assertEq(backedVault.workCeiling(), reserveTerm + principal * backedVault.workRatioBps() / 10_000);
         assertLe(backedVault.workRatioBps(), 2500);
         assertEq(backedVault.totalWorkMinted(), workMinted);
         assertEq(workOracle.mintingRights(WORKER) + workMinted, type(uint128).max);
@@ -177,7 +206,7 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         handler = new WorkBackingHandler();
-        bytes4[] memory selectors = new bytes4[](11);
+        bytes4[] memory selectors = new bytes4[](12);
         selectors[0] = handler.donate.selector;
         selectors[1] = handler.syncReserve.selector;
         selectors[2] = handler.withdrawReserve.selector;
@@ -189,6 +218,7 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
         selectors[8] = handler.withdrawCollateral.selector;
         selectors[9] = handler.mintWork.selector;
         selectors[10] = handler.governReserveHaircut.selector;
+        selectors[11] = handler.setEthUsd.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
@@ -204,7 +234,7 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
         handler.governRatio(0);
         handler.mintWork(1, false);
         handler.donate(400 ether);
-        handler.setReserveMarket(uint64(1 ether), false);
+        handler.setReserveMarket(uint96(2000 ether), false); // the fixture's one-ETH asset price
         handler.syncReserve();
         handler.mintWork(1 ether, false);
         handler.borrow(10 ether);
@@ -234,6 +264,34 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
         handler.mintWork(1, false);
         handler.checkAccounting();
         assertEq(handler.acceptedWorkCalls(), 1);
+        assertEq(handler.rejectedWorkCalls(), 3);
+    }
+
+    function test_handlerEthUsdLegMovesAndExpiresTheReserveTermOnly() public {
+        handler.governRatio(0);
+        handler.checkAccounting();
+        assertEq(handler.backedVaultCeiling(), 100 ether);
+        // Twice the ETH price halves what the same dollars of reserve back.
+        handler.setEthUsd(4000e8, false);
+        handler.checkAccounting();
+        assertEq(handler.backedVaultCeiling(), 50 ether);
+        handler.mintWork(50 ether, false);
+        handler.mintWork(1, true);
+        // An expired leg removes the reserve term; the debt term is untouched.
+        handler.setEthUsd(4000e8, true);
+        handler.checkAccounting();
+        assertEq(handler.backedVaultCeiling(), 0);
+        handler.mintWork(1, false);
+        handler.governRatio(2500);
+        handler.checkAccounting();
+        assertEq(handler.backedVaultCeiling(), 100 ether);
+        handler.mintWork(50 ether, false);
+        handler.mintWork(1, true);
+        // A fresh answer restores it.
+        handler.setEthUsd(1000e8, false);
+        handler.checkAccounting();
+        assertEq(handler.backedVaultCeiling(), 300 ether);
+        assertEq(handler.acceptedWorkCalls(), 2);
         assertEq(handler.rejectedWorkCalls(), 3);
     }
 }
