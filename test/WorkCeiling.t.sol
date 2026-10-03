@@ -69,8 +69,8 @@ contract WorkCeilingTest is WorkBackingFixture {
         _fundReserve(71 ether + 1);
         _openDebt(100 ether + 3);
         uint256 ceiling = 96 ether + 1;
-        assertEq(reserve.reserveValueUsd(), (71 ether + 1) * 2000, "register is kept in USD");
-        assertEq(backedVault.reserveValue(), 71 ether + 1, "reserve term converted into the vault's unit");
+        assertEq(reserve.reserveValueUsd(), 71 ether + 1, "register is kept in USD, which is the vault's unit");
+        assertEq(backedVault.reserveValue(), 71 ether + 1, "reserve term is the register, unconverted");
         assertEq(backedVault.backedDebt(), 100 ether + 3, "a position held across transactions counts in full");
         assertEq(backedVault.workCeiling(), ceiling, "sum, with ratio rounded down");
         _assertRejected(WORKER, ceiling + 1);
@@ -244,62 +244,76 @@ contract WorkCeilingTest is WorkBackingFixture {
 
     // --- the reserve term is converted into the vault's unit, never added as USD -----------------
 
-    function test_reserveTermIsDividedByEthUsdNotAddedAsUsd() public {
+    /// @dev The mirror of what finding 9366455 caught. The register is kept in dollars, and the vault
+    /// now measures in dollars, so the reserve term IS the register and the ETH price does not touch
+    /// it. The finding was that a USD figure was being added to an ETH-denominated debt term
+    /// unconverted, authorising ETH/USD times too much work; the protection was never the division
+    /// itself but that both terms share a unit. Reintroducing a conversion would make the ceiling move
+    /// with ETH again, which is what this now refuses.
+    function test_theEthPriceDoesNotMoveTheReserveTerm() public {
         _fundReserve(10 ether);
-        assertEq(reserve.reserveValueUsd(), 20_000 ether);
+        assertEq(reserve.reserveValueUsd(), 10 ether);
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), ETH_USD);
         assertEq(backedVault.reserveValue(), 10 ether);
         assertEq(backedVault.workCeiling(), 10 ether);
-        _assertRejected(WORKER, 20_000 ether);
         _assertRejected(WORKER, 10 ether + 1);
-        // A dearer ETH makes the same dollars worth less ETH; the register itself does not move.
+
+        // Twice the ETH price. The same dollars of reserve back the same dollars of work.
         usd.set(4000e8, vm.getBlockTimestamp());
-        assertEq(reserve.reserveValueUsd(), 20_000 ether);
-        assertEq(backedVault.reserveValue(), 5 ether);
-        assertEq(backedVault.workCeiling(), 5 ether);
-        _assertRejected(WORKER, 5 ether + 1);
-        _mintWork(WORKER, 5 ether);
-        _assertRejected(WORKER, 1);
+        assertEq(reserve.reserveValueUsd(), 10 ether);
+        assertEq(backedVault.reserveValue(), 10 ether, "a conversion here would halve it");
+        assertEq(backedVault.workCeiling(), 10 ether);
+
+        // And half the ETH price does not double it either.
         usd.set(1000e8, vm.getBlockTimestamp());
-        assertEq(backedVault.reserveValue(), 20 ether);
-        _mintWork(WORKER, 15 ether);
+        assertEq(backedVault.reserveValue(), 10 ether, "a conversion here would double it");
+        _mintWork(WORKER, 10 ether);
         _assertRejected(OTHER_WORKER, 1);
-        assertEq(backedVault.totalWorkMinted(), 20 ether);
+        assertEq(backedVault.totalWorkMinted(), 10 ether);
     }
 
     /// forge-config: default.fuzz.runs = 1000
-    function testFuzz_reserveValueDividesUsdByEthUsdAndRoundsDown(uint96 rawBalance, uint64 rawAnswer) public {
+    function testFuzz_reserveValueIsTheRegisterWhateverTheEthUsdLegSays(uint96 rawBalance, uint64 rawAnswer) public {
         uint256 balance = rawBalance;
         uint256 answer = bound(rawAnswer, 1, 1e13);
         _register(asset, reservePrice, 5000);
         asset.mint(address(reserve), balance);
         usd.set(int256(answer), vm.getBlockTimestamp());
-        uint256 usdValue = balance * 1000;
+        uint256 usdValue = balance / 2; // ASSET_USD is $1 a token and the haircut is half of it
         uint256 ethUsd = answer * 1e10;
-        uint256 expected = usdValue * 1e18 / ethUsd;
+        uint256 expected = usdValue; // the register IS the reserve term; the ETH/USD leg does not convert it
         assertEq(reserve.reserveValueUsd(), usdValue);
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), ethUsd);
         assertEq(backedVault.reserveValue(), expected);
         assertEq(backedVault.workCeiling(), expected);
-        assertEq(reserve.reserveValueUsd() * 1e18 / backedVault.usdPriceFeed().ethUsdPrice(), expected);
+        assertEq(reserve.reserveValueUsd(), expected, "no conversion: the register and the vault share a unit");
     }
 
-    function test_staleEthUsdLegZeroesReserveTermAndLeavesDebtTerm() public {
+    /// @dev Also inverted. A stale ETH/USD leg used to remove the reserve term and leave the debt
+    /// term, because that leg was what converted the register. Now it converts nothing, so the ceiling
+    /// is untouched — and instead the vault refuses to act at all, because it denominates in a price
+    /// it can no longer read. Halting is the right answer to not knowing a price; it is also a real
+    /// dependency, which is why it is pinned here.
+    function test_aStaleEthUsdLegHaltsTheVaultAndLeavesTheCeilingAlone() public {
         _fundReserve(10 ether);
         _openDebt(100 ether);
         assertEq(backedVault.workCeiling(), 35 ether);
+
         vm.warp(vm.getBlockTimestamp() + ETH_USD_MAX_AGE + 1);
         assertFalse(reservePrice.isStale(), "the asset's own USD source is still fresh");
-        assertEq(reserve.reserveValueUsd(), 20_000 ether, "the register still values the asset in USD");
-        assertEq(backedVault.usdPriceFeed().ethUsdPrice(), 0, "but the leg that converts it is stale");
-        assertEq(backedVault.reserveValue(), 0);
-        assertEq(backedVault.workCeiling(), 25 ether, "only the ratio term survives");
-        _assertRejected(WORKER, 25 ether + 1);
-        _mintWork(WORKER, 25 ether);
-        _assertRejected(WORKER, 1);
+        assertEq(reserve.reserveValueUsd(), 10 ether, "the register still values the asset in USD");
+        assertEq(backedVault.usdPriceFeed().ethUsdPrice(), 0, "the leg the vault prices through is stale");
+        assertEq(backedVault.reserveValue(), 10 ether, "which no longer converts anything");
+        assertEq(backedVault.workCeiling(), 35 ether, "so both terms survive");
+
+        // What does not survive is the ability to act on any of it.
+        vm.prank(WORKER);
+        vm.expectRevert(CDPVault.StaleFeed.selector);
+        backedVault.mintFromWork(1);
+
         _refreshEthUsd();
         assertEq(backedVault.workCeiling(), 35 ether);
-        _mintWork(WORKER, 10 ether);
+        _mintWork(WORKER, 35 ether);
         _assertRejected(WORKER, 1);
     }
 
@@ -366,7 +380,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         vm.prank(BORROWER);
         stable.transfer(WORKER, 91 ether);
         assertEq(backedVault.workCeiling(), 25 ether);
-        primary.setValue(0.5 ether);
+        _setVaultPrice(0.5 ether);
         vm.prank(OTHER_WORKER);
         backedVault.markUnderwater(BORROWER);
         // The largest debt whose 110% payout at 0.5 is exactly the 200 of collateral: the position
@@ -387,6 +401,9 @@ contract WorkCeilingTest is WorkBackingFixture {
         // now exceeds the principal that totalDebt counts. The subtraction saturates instead of
         // reverting the ceiling.
         vm.warp(vm.getBlockTimestamp() + 365 days);
+        // A year leaves the ETH/USD leg stale, which halts a vault denominated in USD. This test is
+        // about the ceiling's treatment of drained principal, not about staleness.
+        _refreshEthUsd();
         vm.prank(BORROWER);
         backedVault.repayCOMP(1);
         assertGt(backedVault.totalBadDebt(), backedVault.totalDebt());
@@ -417,7 +434,8 @@ contract WorkCeilingTest is WorkBackingFixture {
     // --- a finite ceiling is price-dependent, so spot must agree with the primary ----------------
 
     function test_divergentOrStaleSpotRefusesWorkAgainstFiniteCeiling() public {
-        TestSwarmFeed spot = new TestSwarmFeed(1 ether);
+        (uint256 primaryValue,) = primary.latestValue();
+        TestSwarmFeed spot = new TestSwarmFeed(primaryValue);
         ParameterizedVault vaultWithSpot = new ParameterizedVault(
             address(collateral), address(0), address(0), address(primary), address(health), address(spot)
         );
@@ -433,16 +451,18 @@ contract WorkCeilingTest is WorkBackingFixture {
         vm.stopPrank();
         assertEq(vaultWithSpot.workCeiling(), 25 ether);
 
-        uint256 tolerance = 1 ether * vaultWithSpot.maxDivergenceBps() / 10_000;
-        spot.setValue(1 ether + tolerance + 1);
+        // Scaled off the feed's own figure, not a hardcoded 1e18: the primary quotes IMD in wei of
+        // ETH, so the band is a fraction of THAT, whatever the vault then denominates in.
+        uint256 tolerance = primaryValue * vaultWithSpot.maxDivergenceBps() / 10_000;
+        spot.setValue(primaryValue + tolerance + 1);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
         vaultWithSpot.mintFromWork(1);
-        spot.setValue(1 ether - tolerance - 1);
+        spot.setValue(primaryValue - tolerance - 1);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
         vaultWithSpot.mintFromWork(1);
-        spot.setValue(1 ether);
+        spot.setValue(primaryValue);
         spot.setStale(true);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.StaleFeed.selector);
@@ -451,7 +471,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertEq(rights.mintingRights(WORKER), type(uint128).max);
 
         spot.setStale(false);
-        spot.setValue(1 ether + tolerance);
+        spot.setValue(primaryValue + tolerance);
         vm.prank(WORKER);
         vaultWithSpot.mintFromWork(25 ether);
         vm.prank(WORKER);

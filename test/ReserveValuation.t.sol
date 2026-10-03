@@ -86,7 +86,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         vm.expectRevert(abi.encodeWithSelector(Governed.TooEarly.selector, eta));
         parameters.applyPending();
         _apply();
-        assertEq(reserve.reserveValueUsd(), 100_000 ether);
+        assertEq(reserve.reserveValueUsd(), 50 ether);
         assertEq(backedVault.reserveValue(), 50 ether);
         assertEq(backedVault.workCeiling(), 50 ether);
     }
@@ -158,13 +158,13 @@ contract ReserveValuationTest is WorkBackingFixture {
         _register(second, flaky, 5000);
         second.mint(address(reserve), 10 ether);
         _openDebt(100 ether);
-        assertEq(reserve.reserveValueOf(second), 10_000 ether);
-        assertEq(reserve.reserveValueUsd(), 30_000 ether);
+        assertEq(reserve.reserveValueOf(second), 5 ether);
+        assertEq(reserve.reserveValueUsd(), 15 ether);
         assertEq(backedVault.workCeiling(), 40 ether);
 
         flaky.setBroken(true, false);
         assertEq(reserve.reserveValueOf(second), 0, "a source that cannot say whether it is stale is stale");
-        assertEq(reserve.reserveValueUsd(), 20_000 ether, "the other asset still counts");
+        assertEq(reserve.reserveValueUsd(), 10 ether, "the other asset still counts");
         assertEq(backedVault.workCeiling(), 35 ether);
         flaky.setBroken(false, true);
         assertEq(reserve.reserveValueOf(second), 0, "a source with no price prices nothing");
@@ -184,7 +184,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         flaky.setBroken(true, true);
         _register(second, ISwarmFeed(address(0)), 0);
         assertFalse(reserve.isReserveAsset(second));
-        assertEq(reserve.reserveValueUsd(), 20_000 ether);
+        assertEq(reserve.reserveValueUsd(), 10 ether);
     }
 
     function test_tokenClaimingMoreThanSeventySevenDecimalsIsRefusedAndSeventySevenIsNot() public {
@@ -225,12 +225,13 @@ contract ReserveValuationTest is WorkBackingFixture {
     function test_fullHaircutValuesEntireAssetAndAuthorizesOnlyItsValue() public {
         _register(asset, reservePrice, 10_000);
         asset.mint(address(reserve), 2 ether + 1);
-        uint256 expectedUsd = (2 ether + 1) * 2000;
-        uint256 expected = 2 ether + 1;
+        // USD and the vault's unit are the same now, so the register's figure IS the ceiling's term.
+        uint256 expectedUsd = 2 ether + 1;
+        uint256 expected = expectedUsd;
         assertEq(reserve.reserveAsset(asset).haircutBps, 10_000);
         assertEq(reserve.reserveValueOf(asset), expectedUsd);
         assertEq(reserve.reserveValueUsd(), expectedUsd);
-        assertEq(backedVault.reserveValue(), expected, "every unit of a one-ETH token, in ETH");
+        assertEq(backedVault.reserveValue(), expected, "every unit of a one-dollar token, in dollars");
         assertEq(backedVault.totalDebt(), 0);
         assertEq(backedVault.workCeiling(), expected);
         _mintWork(WORKER, expected);
@@ -265,7 +266,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(backedVault.reserveValue(), _inVaultUnit(expected));
         assertEq(backedVault.workCeiling(), _inVaultUnit(expected));
         assertLe(expected, marked);
-        assertLe(_inVaultUnit(expected) * ETH_USD / 1e18, expected, "conversion rounds against the ceiling");
+        assertEq(_inVaultUnit(expected), expected, "no conversion: the register and the vault share a unit");
     }
 
     function test_largeReserveProductUsesFullPrecisionBeforeDecimalScaling() public {
@@ -274,7 +275,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         asset.mint(address(reserve), balance);
         reservePrice.setValue(1e24);
         assertEq(reserve.reserveValueUsd(), balance * 1e6 / 2);
-        assertEq(backedVault.reserveValue(), balance * 1e6 / 2 / 2000, "USD x 1e18 overflows; mulDiv does not");
+        assertEq(backedVault.reserveValue(), balance * 1e6 / 2, "USD x 1e18 overflows; mulDiv does not");
     }
 
     function test_registerSumsDifferentDecimalsAndRepricingDoesNotDuplicateAsset() public {
@@ -283,29 +284,29 @@ contract ReserveValuationTest is WorkBackingFixture {
         _fundReserve(7 ether);
         _register(six, dollars, 5000);
         six.mint(address(reserve), 3e6);
-        assertEq(reserve.reserveValueUsd(), 20_000 ether);
+        assertEq(reserve.reserveValueUsd(), 10 ether);
         assertEq(backedVault.reserveValue(), 10 ether);
         _register(six, reservePrice, 5000);
         assertEq(reserve.reserveAssetCount(), 2);
-        assertEq(reserve.reserveValueUsd(), 17_000 ether);
+        assertEq(reserve.reserveValueUsd(), 8.5 ether);
         assertEq(backedVault.reserveValue(), 8.5 ether);
         _register(asset, ISwarmFeed(address(0)), 0);
         assertEq(reserve.reserveAssetCount(), 1);
         assertEq(address(reserve.reserveAssets()[0]), address(six));
-        assertEq(reserve.reserveValueUsd(), 3000 ether);
+        assertEq(reserve.reserveValueUsd(), 1.5 ether);
         assertEq(backedVault.reserveValue(), 1.5 ether);
         _register(six, ISwarmFeed(address(0)), 0);
         assertEq(reserve.reserveValueUsd(), 0);
         assertEq(reserve.reserveAssetCount(), 0);
         _register(asset, reservePrice, 5000);
-        assertEq(reserve.reserveValueUsd(), 14_000 ether);
+        assertEq(reserve.reserveValueUsd(), 7 ether);
         assertEq(backedVault.reserveValue(), 7 ether);
     }
 
     function test_valuationReadsLiveCustodyWithoutRequiringSync() public {
         _fundReserve(10 ether);
         assertEq(reserve.totalReceived(asset), 0);
-        assertEq(reserve.reserveValueUsd(), 20_000 ether);
+        assertEq(reserve.reserveValueUsd(), 10 ether);
         assertEq(backedVault.reserveValue(), 10 ether);
         assertEq(reserve.sync(asset), 20 ether);
         assertEq(reserve.sync(asset), 0);
@@ -314,7 +315,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         reserve.withdraw(asset, OTHER_WORKER, 2 ether);
         assertEq(reserve.totalReceived(asset), 24 ether);
         assertEq(reserve.lastSynced(asset), 22 ether);
-        assertEq(reserve.reserveValueUsd(), 22_000 ether);
+        assertEq(reserve.reserveValueUsd(), 11 ether);
         assertEq(backedVault.reserveValue(), 11 ether);
         assertEq(reserve.sync(asset), 0);
     }
@@ -331,7 +332,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         vm.expectRevert(CDPVault.StaleFeed.selector);
         backedVault.mintFromWork(1);
         primary.setStale(false);
-        assertEq(reserve.reserveValueUsd(), 2000 ether);
+        assertEq(reserve.reserveValueUsd(), 1 ether);
         assertEq(backedVault.reserveValue(), 1 ether);
     }
 
@@ -341,7 +342,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         vm.warp(timestamp + ETH_USD_MAX_AGE);
         assertFalse(backedVault.usdPriceFeed().isStale());
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), ETH_USD, "exactly at the maximum age is fresh");
-        assertEq(reserve.reserveValueUsd(), 2000 ether);
+        assertEq(reserve.reserveValueUsd(), 1 ether);
         assertEq(backedVault.reserveValue(), 1 ether);
         vm.warp(vm.getBlockTimestamp() + 1);
         assertFalse(primary.isStale());
@@ -350,8 +351,11 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(reserve.reserveValueUsd(), 0);
         assertEq(backedVault.reserveValue(), 0);
         assertEq(backedVault.workCeiling(), 0);
+        // StaleFeed rather than WorkCeilingReached: the vault denominates in USD, so it refuses to act
+        // at all on a price it cannot read, before it ever consults the ceiling. Still cannot authorise
+        // new work, by a stricter route.
         vm.prank(WORKER);
-        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        vm.expectRevert(CDPVault.StaleFeed.selector);
         backedVault.mintFromWork(1);
         assertEq(workOracle.mintingRights(WORKER), type(uint128).max);
         _refreshEthUsd();
@@ -384,21 +388,26 @@ contract ReserveValuationTest is WorkBackingFixture {
         _register(collateral, backedVault.usdPriceFeed(), 5000);
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(address(reserve), 2 ether);
-        assertEq(reserve.reserveValueUsd(), 26_000 ether);
+        assertEq(reserve.reserveValueUsd(), 13 ether);
         assertEq(backedVault.reserveValue(), 13 ether);
-        // A dead ETH/USD answer drops the IMD leg from the register, and because the same leg is
-        // what converts the register into the vault's unit, the whole reserve term goes to zero
-        // even though the other asset is still valued in USD by its own source.
+        // A dead ETH/USD answer drops the IMD leg from the register, because that leg is what prices
+        // IMD in dollars. The other asset keeps its own USD source and keeps counting — the dead leg
+        // no longer converts anything, it only stops the vault acting.
         usd.set(0, vm.getBlockTimestamp());
         assertTrue(backedVault.usdPriceFeed().isStale());
-        assertEq(reserve.reserveValueUsd(), 24_000 ether);
+        assertEq(reserve.reserveValueUsd(), 12 ether);
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), 0);
-        assertEq(backedVault.reserveValue(), 0);
-        assertEq(backedVault.workCeiling(), 0);
+        // The register is in USD and so is the vault, so a dead ETH/USD leg no longer shrinks the
+        // reserve term. It halts every priced action instead, which is asserted below.
+        assertEq(backedVault.reserveValue(), 12 ether, "assets priced without the dead leg still count");
+        vm.prank(WORKER);
+        vm.expectRevert(CDPVault.StaleFeed.selector);
+        backedVault.mintFromWork(1);
+        assertEq(backedVault.workCeiling(), 12 ether, "the surviving asset still backs work once the leg returns");
         reservePrice.setValue(0);
         assertEq(reserve.reserveValueUsd(), 0);
         _refreshEthUsd();
-        assertEq(reserve.reserveValueUsd(), 2000 ether, "only the IMD leg is priced now");
+        assertEq(reserve.reserveValueUsd(), 1 ether, "only the IMD leg is priced now");
         assertEq(backedVault.reserveValue(), 1 ether);
     }
 
@@ -424,7 +433,10 @@ contract ReserveValuationTest is WorkBackingFixture {
         vm.prank(BORROWER);
         stable.transfer(WORKER, 60 ether);
         vm.warp(vm.getBlockTimestamp() + 365 days);
-        primary.setValue(0.6 ether);
+        // The USD leg would be a year stale, which halts a vault denominated in USD. This test is
+        // about where revenue lands, not about staleness, so the leg is refreshed with the clock.
+        usd.set(ETH_USD_ANSWER, vm.getBlockTimestamp());
+        _setVaultPrice(0.6 ether);
         health.setValue(0.6 ether); // Zero grace, preserving the exact accrued fee read below.
         vm.prank(OTHER_WORKER);
         backedVault.markUnderwater(BORROWER);
@@ -460,7 +472,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         _register(collateral, backedVault.usdPriceFeed(), 5000);
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(address(reserve), 2 ether);
-        assertEq(reserve.reserveValueUsd(), 2000 ether);
+        assertEq(reserve.reserveValueUsd(), 1 ether);
     }
 
     function _assertUsdUnavailable() internal view {

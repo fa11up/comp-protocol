@@ -53,6 +53,27 @@ contract ReserveUsdAggregator {
     }
 }
 
+/// @notice An ETH/USD leg that is never stale, for suites that are not about staleness.
+/// @dev `ParameterizedVault` denominates in USD, so it halts once the Chainlink leg passes
+/// `ETH_USD_MAX_AGE` — correct behaviour, but it means any test that warps a day forward must either
+/// refresh the answer or use this. Reports `block.timestamp`, so time can pass freely.
+contract FreshUsdAggregator {
+    uint8 public decimals = 8;
+    int256 public answer = 1e8;
+
+    function set(int256 answer_) external {
+        answer = answer_;
+    }
+
+    function setDecimals(uint8 next) external {
+        decimals = next;
+    }
+
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        return (1, answer, block.timestamp, block.timestamp, 1);
+    }
+}
+
 abstract contract WorkBackingFixture is Test {
     address internal constant BORROWER = address(0xBA);
     address internal constant WORKER = address(0xCA);
@@ -61,10 +82,10 @@ abstract contract WorkBackingFixture is Test {
     /// is what `UsdPriceFeed.ethUsdPrice` reports and what `ParameterizedVault.reserveValue` divides by.
     int256 internal constant ETH_USD_ANSWER = 2000e8;
     uint256 internal constant ETH_USD = 2000 ether;
-    /// @dev USD per reserve-asset token. Pinned to the ETH/USD price so one token is worth exactly one
-    /// ETH, the vault's unit of account: the register stays in USD, the conversion through the
-    /// Chainlink leg is exercised on every valuation, and the ceiling arithmetic reads in whole units.
-    uint256 internal constant ASSET_USD = 2000 ether;
+    /// @dev USD per reserve-asset token. One dollar, which is one unit of the vault's account now that
+    /// `_price()` denominates in USD — so the register needs no conversion and the ceiling arithmetic
+    /// reads in whole units. It was pinned to the ETH/USD price while the vault measured in ETH.
+    uint256 internal constant ASSET_USD = 1 ether;
     MockIMD internal collateral;
     ParameterizedVault internal backedVault;
     CompToken internal stable;
@@ -80,7 +101,10 @@ abstract contract WorkBackingFixture is Test {
     function setUp() public virtual {
         vm.warp(1_000_000);
         collateral = new MockIMD();
-        primary = new TestSwarmFeed(1 ether);
+        // One dollar per IMD, which is 1e18/ETH_USD of an ETH. Pinned in the unit the swarm feed
+        // quotes so that one IMD is worth one unit of the vault's USD account, as before this vault
+        // denominated in dollars one IMD was worth one ETH.
+        primary = new TestSwarmFeed(uint256(1 ether) * 1e18 / ETH_USD);
         health = new TestSwarmFeed(0.85 ether);
         MirroredSwarmFeed spot = new MirroredSwarmFeed(address(primary));
         backedVault = new ParameterizedVault(
@@ -117,8 +141,18 @@ abstract contract WorkBackingFixture is Test {
     }
 
     /// @dev What `reserveValue` must report for a USD figure at the fixture's ETH/USD price.
+    /// @dev Sets the primary feed so the VAULT reads `valueInVaultUnit` dollars per collateral unit.
+    /// The feed quotes IMD in wei of ETH and the vault multiplies by ETH/USD, so a test that cares
+    /// what the vault sees has to divide by the leg rather than set the figure directly.
+    function _setVaultPrice(uint256 valueInVaultUnit) internal {
+        primary.setValue(Math.mulDiv(valueInVaultUnit, 1e18, ETH_USD));
+    }
+
+    /// @dev The identity, now that the vault denominates in USD and the register is kept in USD. It
+    /// used to divide by ETH/USD, because the vault measured collateral in ETH. Kept as a named helper
+    /// rather than inlined so the places that care about the unit still read as caring about it.
     function _inVaultUnit(uint256 usdValue) internal pure returns (uint256) {
-        return Math.mulDiv(usdValue, 1e18, ETH_USD);
+        return usdValue;
     }
 
     function _register(IERC20 token, ISwarmFeed feed, uint256 haircut) internal {

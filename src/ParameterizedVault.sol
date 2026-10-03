@@ -88,22 +88,46 @@ contract ParameterizedVault is CDPVault {
         return parameters.workRatioBps();
     }
 
-    /// @notice The Treasury's reserve in this vault's own unit of account: `reserveValueUsd()` divided
-    /// by Chainlink ETH/USD. Zero while that leg is stale, so a dead USD price only tightens the ceiling.
-    /// @dev The vault's unit is whatever the primary feed prices collateral in — the pinned question
-    /// asks for wei of ETH per IMD, so one COMP of debt is one ETH-worth of collateral to `minCR`,
-    /// `liquidate` and `debtCeiling`. The register is kept in USD, as the design specifies, and the
-    /// conversion happens here where the unit is known, so the two terms of `workCeiling` are added in
-    /// the same unit. For IMD priced through `usdPriceFeed` the ETH/USD leg cancels exactly and the
-    /// reserve is worth balance x primary price x haircut, which is what the vault itself would lend
-    /// against. REVISION (finding 9366455): before this the USD figure was added to debt unconverted,
-    /// authorising ETH/USD times more work minting than the reserve was worth in the vault's unit.
+    /// @notice The Treasury's reserve in this vault's unit of account, which is USD.
+    /// @dev No conversion, because `_price()` denominates this vault in dollars and the register is
+    /// already kept in dollars. Both terms of `workCeiling` are therefore added in the same unit by
+    /// construction rather than by arithmetic.
+    ///
+    /// It used to divide by Chainlink ETH/USD, because the vault priced collateral in ETH while the
+    /// register was in USD. REVISION (finding 9366455) added that conversion after the USD figure was
+    /// found being added to an ETH-denominated debt term unconverted, authorising ETH/USD times more
+    /// work minting than the reserve was worth. Denominating the vault in USD removes the mismatch at
+    /// its source, so the conversion goes rather than being maintained.
+    ///
+    /// Still zero while the USD price is unusable: `reserveValueUsd` prices IMD through `usdPriceFeed`,
+    /// so a dead leg values the reserve at nothing and only tightens the ceiling.
     function reserveValue() public view returns (uint256) {
-        uint256 usd = treasury.reserveValueUsd();
-        if (usd == 0) return 0;
-        uint256 ethUsd = usdPriceFeed.ethUsdPrice();
-        if (ethUsd == 0) return 0;
-        return Math.mulDiv(usd, 1e18, ethUsd);
+        return treasury.reserveValueUsd();
+    }
+
+    /// @notice One COMP of debt is one USD-worth of collateral.
+    /// @dev What makes COMP a dollar stablecoin rather than an ETH-denominated CDP token. The swarm
+    /// feed quotes IMD in wei of ETH, so the base vault measures a position in ETH and a borrower's
+    /// required collateral moved whenever ETH moved even with IMD/ETH flat. Pricing through
+    /// `usdPriceFeed` — the same feed times Chainlink ETH/USD — denominates the ratio and the
+    /// liquidation seizure in dollars and changes neither formula, because both are ratios in `_price()`.
+    ///
+    /// The divergence guard is unaffected and must stay that way: it compares the RAW primary feed
+    /// against spot, both quoting IMD in ETH, so the ETH/USD factor never enters it. Comparing a
+    /// denominated price against spot would sit them an ETH price apart and refuse every action.
+    function _price() internal view override returns (uint256 price) {
+        (price,) = usdPriceFeed.latestValue();
+        if (price == 0) revert InvalidPrice();
+    }
+
+    /// @notice Stale if either leg of the USD price is, on top of the base vault's own feeds.
+    /// @dev Adding a way to halt is the cost of denominating in a unit this protocol does not publish
+    /// itself. It is the right direction — a position cannot be safely liquidated at a price nobody
+    /// knows — but it is a real dependency: a dead Chainlink ETH/USD leg stops minting, marking and
+    /// liquidation here, where in `workCeiling` it only zeroes the reserve term. `ETH_USD_MAX_AGE`
+    /// bounds how long a dead leg takes to read as stale.
+    function _pricingStale() internal view override returns (bool) {
+        return super._pricingStale() || usdPriceFeed.isStale();
     }
 
     /// @notice The principal the ratio term may count: `totalDebt`, capped at what it was when this

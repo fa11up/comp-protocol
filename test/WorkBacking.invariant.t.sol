@@ -93,9 +93,18 @@ contract WorkBackingHandler is WorkBackingFixture {
     }
 
     function borrow(uint256 raw) external {
+        // The vault denominates in USD, so a stale ETH/USD leg halts every priced action. A halted
+        // vault is modelled by taking no action, not by reverting the campaign.
+        if (ethUsdStale) return;
         uint256 amount = bound(raw, 1, 1000 ether);
-        // Pay for enough collateral to cover both new borrowing and all accrued obligations.
-        uint256 topUp = (backedVault.debtOf(BORROWER) + amount) * 2;
+        // Pay for enough collateral to cover both new borrowing and all accrued obligations, PRICED.
+        // The vault denominates in USD, so the ETH/USD leg this handler moves changes what a unit of
+        // collateral is worth — it used to touch only the reserve term. A fixed multiple of the debt
+        // was enough while one unit of collateral was one unit of account; now the top-up has to be
+        // divided by the live price or a cheap ETH leaves the position under minCR.
+        (uint256 price,) = backedVault.usdPriceFeed().latestValue();
+        if (price == 0) return;
+        uint256 topUp = Math.mulDiv((backedVault.debtOf(BORROWER) + amount) * 2, 1e18, price);
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(BORROWER, topUp);
         vm.startPrank(BORROWER);
@@ -108,6 +117,10 @@ contract WorkBackingHandler is WorkBackingFixture {
     }
 
     function repay(uint256 raw) external {
+        // The vault denominates in USD, so a stale ETH/USD leg halts every priced action. A halted
+        // vault is modelled by taking no action, not by reverting the campaign.
+        if (ethUsdStale) return;
+
         uint256 available = stable.balanceOf(BORROWER);
         uint256 debt = backedVault.debtOf(BORROWER);
         if (debt < available) available = debt;
@@ -122,8 +135,16 @@ contract WorkBackingHandler is WorkBackingFixture {
     }
 
     function withdrawCollateral(uint256 raw) external {
+        // The vault denominates in USD, so a stale ETH/USD leg halts every priced action. A halted
+        // vault is modelled by taking no action, not by reverting the campaign.
+        if (ethUsdStale) return;
+
         (uint256 deposited, uint256 debt) = backedVault.positions(BORROWER);
-        uint256 required = (debt * 150 + 99) / 100;
+        // Priced, for the same reason borrow's top-up is: the vault measures collateral in USD, so
+        // what minCR requires depends on the ETH/USD leg this handler moves.
+        (uint256 price,) = backedVault.usdPriceFeed().latestValue();
+        if (price == 0) return;
+        uint256 required = Math.mulDiv((debt * 150 + 99) / 100, 1e18, price) + 1;
         if (deposited <= required) return;
         uint256 amount = bound(raw, 1, deposited - required);
         vm.prank(BORROWER);
@@ -132,6 +153,10 @@ contract WorkBackingHandler is WorkBackingFixture {
     }
 
     function mintWork(uint256 raw, bool overCeiling) external {
+        // The vault denominates in USD, so a stale ETH/USD leg halts every priced action. A halted
+        // vault is modelled by taking no action, not by reverting the campaign.
+        if (ethUsdStale) return;
+
         uint256 ceiling = backedVault.workCeiling();
         uint256 minted = backedVault.totalWorkMinted();
         uint256 remaining = ceiling > minted ? ceiling - minted : 0;
@@ -172,14 +197,18 @@ contract WorkBackingHandler is WorkBackingFixture {
         assertEq(reserve.reserveAsset(asset).haircutBps, reserveHaircutBps);
         assertEq(reserve.reserveValueUsd(), value, "the register is a USD figure");
         uint256 ethUsd = uint256(ethUsdAnswer) * 1e10;
-        uint256 reserveTerm = ethUsdStale ? 0 : Math.mulDiv(value, 1e18, ethUsd);
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), ethUsdStale ? 0 : ethUsd);
-        assertEq(backedVault.reserveValue(), reserveTerm, "and the ceiling reads it in the vault's unit");
+        // The register IS the ceiling's reserve term now, with no conversion, because the vault
+        // denominates in USD. This assertion used to divide by ETH/USD and to zero on a stale leg;
+        // both were consequences of the vault measuring in ETH while the register was in dollars.
+        // A stale ETH/USD leg no longer shrinks the reserve term — it halts the vault instead, which
+        // the handler asserts where it toggles staleness.
+        assertEq(backedVault.reserveValue(), value, "the ceiling's reserve term is the register itself");
         uint256 principal = debtMinted - principalRepaid;
         assertEq(backedVault.totalDebt(), principal);
         assertEq(backedVault.totalBadDebt(), 0, "a borrower kept at or above minCR never leaves bad debt");
         assertEq(backedVault.backedDebt(), principal, "between transactions every open position counts");
-        assertEq(backedVault.workCeiling(), reserveTerm + principal * backedVault.workRatioBps() / 10_000);
+        assertEq(backedVault.workCeiling(), value + principal * backedVault.workRatioBps() / 10_000);
         assertLe(backedVault.workRatioBps(), 2500);
         assertEq(backedVault.totalWorkMinted(), workMinted);
         assertEq(workOracle.mintingRights(WORKER) + workMinted, type(uint128).max);
@@ -267,31 +296,32 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
         assertEq(handler.rejectedWorkCalls(), 3);
     }
 
-    function test_handlerEthUsdLegMovesAndExpiresTheReserveTermOnly() public {
+    /// @dev Inverted by USD denomination, and the inversion is the point. The register is kept in
+    /// dollars and the vault now measures in dollars, so the ETH price does not move the reserve term
+    /// at all — it used to divide it. And an expired leg no longer shrinks the ceiling: it halts every
+    /// priced action, because a position cannot be measured at a price nobody knows.
+    function test_ethUsdDoesNotMoveTheCeilingAndAnExpiredLegHaltsTheVault() public {
         handler.governRatio(0);
         handler.checkAccounting();
         assertEq(handler.backedVaultCeiling(), 100 ether);
-        // Twice the ETH price halves what the same dollars of reserve back.
+
+        // Twice the ETH price, same dollars of reserve, same ceiling.
         handler.setEthUsd(4000e8, false);
         handler.checkAccounting();
-        assertEq(handler.backedVaultCeiling(), 50 ether);
-        handler.mintWork(50 ether, false);
+        assertEq(handler.backedVaultCeiling(), 100 ether, "the ETH price is not in the vault's unit any more");
+        handler.mintWork(100 ether, false);
         handler.mintWork(1, true);
-        // An expired leg removes the reserve term; the debt term is untouched.
+
+        // An expired leg halts every priced action rather than removing the reserve term. The ceiling
+        // itself is a view over the register and keeps reading, which is why the handler models a
+        // halted vault by doing nothing: its actions would all revert StaleFeed.
         handler.setEthUsd(4000e8, true);
-        handler.checkAccounting();
-        assertEq(handler.backedVaultCeiling(), 0);
-        handler.mintWork(1, false);
-        handler.governRatio(2500);
-        handler.checkAccounting();
-        assertEq(handler.backedVaultCeiling(), 100 ether);
-        handler.mintWork(50 ether, false);
-        handler.mintWork(1, true);
-        // A fresh answer restores it.
-        handler.setEthUsd(1000e8, false);
-        handler.checkAccounting();
-        assertEq(handler.backedVaultCeiling(), 300 ether);
-        assertEq(handler.acceptedWorkCalls(), 2);
-        assertEq(handler.rejectedWorkCalls(), 3);
+        assertEq(handler.backedVaultCeiling(), 100 ether, "the register is unchanged by a dead leg");
+        uint256 accepted = handler.acceptedWorkCalls();
+        uint256 rejected = handler.rejectedWorkCalls();
+        handler.mintWork(1 ether, false);
+        handler.borrow(1 ether);
+        assertEq(handler.acceptedWorkCalls(), accepted, "no work is minted while the vault is halted");
+        assertEq(handler.rejectedWorkCalls(), rejected);
     }
 }

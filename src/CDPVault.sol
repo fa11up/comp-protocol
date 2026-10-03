@@ -515,7 +515,7 @@ contract CDPVault is ReentrancyGuard {
     }
 
     function _requireFreshFeeds() private view {
-        if (priceFeed.isStale() || nhiFeed.isStale()) revert StaleFeed();
+        if (_pricingStale()) revert StaleFeed();
         _price();
     }
 
@@ -526,7 +526,12 @@ contract CDPVault is ReentrancyGuard {
         if (spotFeed.isStale()) revert StaleFeed();
         (uint256 spot,) = spotFeed.latestValue();
         if (spot == 0) revert InvalidPrice();
-        uint256 primary = _price();
+        // The RAW primary feed, deliberately, not `_price()`. Both legs quote IMD in the same unit the
+        // swarm asks for, so the comparison is a ratio and holds whatever debt is denominated in. A
+        // subclass that denominates `_price()` differently — ParameterizedVault prices in USD — would
+        // otherwise be comparing a USD figure against an ETH one and diverge by the ETH price itself.
+        (uint256 primary,) = priceFeed.latestValue();
+        if (primary == 0) revert InvalidPrice();
         uint256 difference = primary > spot ? primary - spot : spot - primary;
         if (difference > Math.mulDiv(primary, maxDivergenceBps(), 10_000)) revert PriceDivergence();
     }
@@ -591,9 +596,24 @@ contract CDPVault is ReentrancyGuard {
         _recordedBadDebt[owner] = current;
     }
 
-    function _price() private view returns (uint256 price) {
+    /// @notice What one 1e18 of collateral is worth, in the unit debt is denominated in.
+    /// @dev Virtual because the denomination is the subclass's choice, and every formula that reads it
+    /// is a ratio: `collateralRatio` is collateral x price / debt and `liquidate` seizes debt / price,
+    /// so neither cares what the unit is as long as it is the one debt is in. Here it is the unit the
+    /// primary feed quotes — wei of ETH per IMD — so one COMP of debt is one ETH-worth of collateral.
+    /// ParameterizedVault overrides it to price in USD, which is what makes a COMP a dollar.
+    /// Not governable, and deliberately: `priceFeed` is immutable and this is chosen at compile time,
+    /// so no key can change what a position is measured against.
+    function _price() internal view virtual returns (uint256 price) {
         (price,) = priceFeed.latestValue();
         if (price == 0) revert InvalidPrice();
+    }
+
+    /// @notice True when the inputs a position is measured against cannot be trusted.
+    /// @dev Virtual alongside `_price()`: a subclass that prices through another feed has another way
+    /// to go stale, and refusing to act is the only safe answer to not knowing a price.
+    function _pricingStale() internal view virtual returns (bool) {
+        return priceFeed.isStale() || nhiFeed.isStale();
     }
 
     function _minCR(uint256 nhi) private pure returns (uint256) {

@@ -9,8 +9,10 @@ import {Governed} from "../src/Governed.sol";
 import {Parameters, ICheckpointedVault} from "../src/Parameters.sol";
 import {ParameterizedVault} from "../src/ParameterizedVault.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
+import {FreshUsdAggregator} from "./helpers/WorkBackingFixture.sol";
 import {
     APPROVED_OPERATOR,
+    CHAINLINK_ETH_USD,
     MARKER_SHARE_BPS,
     MAX_DIVERGENCE_BPS,
     PROTOCOL_BONUS_SHARE_BPS,
@@ -34,6 +36,13 @@ contract ParametersTest is Test {
     function setUp() public {
         vm.chainId(11155111);
         vm.warp(10 days);
+        // ParameterizedVault denominates in USD, so its price has a Chainlink leg. One dollar per ETH
+        // keeps every figure in this suite in the unit the feeds already quote — the suite is about
+        // governance, not pricing — and an always-fresh leg lets it warp years forward, which several
+        // of these tests do, without the vault halting on a stale USD price.
+        vm.etch(CHAINLINK_ETH_USD, address(new FreshUsdAggregator()).code);
+        FreshUsdAggregator(CHAINLINK_ETH_USD).setDecimals(8);
+        FreshUsdAggregator(CHAINLINK_ETH_USD).set(1e8);
         imd = new MockIMD();
         price = new TestSwarmFeed(1 ether);
         spot = new TestSwarmFeed(1 ether);
