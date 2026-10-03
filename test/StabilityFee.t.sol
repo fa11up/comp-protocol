@@ -26,9 +26,10 @@ abstract contract StabilityFeeFixture is Test {
     /// @dev Which rate this suite runs at. The fixture funds and approves whatever this returns, so a
     /// suite cannot end up approving one vault and exercising another.
     function _deployVault() internal virtual returns (CDPVault) {
-        return new BaselineVault(
-            address(collateral), address(0), address(0), address(primary), address(nhi), address(spot)
-        );
+        return
+            new BaselineVault(
+                address(collateral), address(0), address(0), address(primary), address(nhi), address(spot)
+            );
     }
 
     function setUp() public virtual {
@@ -115,6 +116,7 @@ contract StabilityFeeTest is StabilityFeeFixture {
     function test_zeroRateTouchedAndUntouchedDebtPreserveSupplyWithWorkMinting() public {
         _open(BORROWER, 100 ether);
         _open(SECOND_BORROWER, 40 ether);
+        assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 7 ether);
         vm.prank(SECOND_BORROWER);
         vault.mintFromWork(7 ether);
         _assertZeroFeeAccounting(140 ether, 7 ether);
@@ -326,6 +328,7 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
         assertEq(vault.totalFeesMinted(), 0);
         assertEq(comp.balanceOf(FEE_RECIPIENT), 0);
 
+        assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 10 ether);
         vm.startPrank(SECOND_BORROWER);
         vault.mintFromWork(10 ether);
         comp.transfer(BORROWER, 10 ether);
@@ -357,9 +360,7 @@ contract ShippedRateStabilityFeeTest is StabilityFeeFixture {
     }
 
     function _deployVault() internal override returns (CDPVault) {
-        return new CDPVault(
-            address(collateral), address(0), address(0), address(primary), address(nhi), address(spot)
-        );
+        return new CDPVault(address(collateral), address(0), address(0), address(primary), address(nhi), address(spot));
     }
 
     function test_shippedRateAccruesLinearlyAndMintsNothingUntilRepayment() public {

@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -101,7 +102,7 @@ contract AdversarialCollateral is ERC20, ReentryProbe {
     }
 }
 
-contract AdversarialTest is Test {
+contract AdversarialTest is LegacyWorkBacking {
     address internal alice = address(0xA11CE);
     CompToken internal comp;
     CDPVault internal vault;
@@ -132,6 +133,7 @@ contract AdversarialTest is Test {
     }
 
     function test_oracleCallbackCannotReenterAnyVaultAction() public {
+        _establishWorkBacking(vault, 100 ether);
         vm.startPrank(alice);
         vault.depositCollateral(150 ether);
         vault.mintFromWork(100 ether);
@@ -145,6 +147,7 @@ contract AdversarialTest is Test {
     }
 
     function test_revertingOracleRollsBackWorkRightsAndSupply() public {
+        _establishWorkBacking(vault, 100 ether);
         oracle.setFail(true);
         vm.startPrank(alice);
         vault.depositCollateral(150 ether);
@@ -153,7 +156,7 @@ contract AdversarialTest is Test {
         vm.stopPrank();
         (, uint256 debt) = vault.positions(alice);
         assertEq(debt, 0);
-        assertEq(comp.totalSupply(), 0);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)]);
         assertEq(vault.totalWorkMinted(), 0);
         assertEq(oracle.mintingRights(alice), 100 ether);
         assertEq(oracle.blockedCallbacks(), 0);
