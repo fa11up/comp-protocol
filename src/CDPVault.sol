@@ -58,6 +58,7 @@ contract CDPVault is ReentrancyGuard {
     error PriceDivergence();
     error InvalidBonusShares();
     error InvalidBeneficiary();
+    error WorkCeilingReached();
 
     event OracleSet(address indexed oracle);
     event CollateralDeposited(address indexed account, uint256 amount);
@@ -120,6 +121,22 @@ contract CDPVault is ReentrancyGuard {
     /// rather than seizing more, so raising it never makes liquidation harsher for the borrower.
     function protocolBonusShareBps() public view virtual returns (uint256) {
         return PROTOCOL_BONUS_SHARE_BPS;
+    }
+
+    /// @notice Where the protocol's revenue lands: its bonus share, in IMD, and paid stability fees,
+    /// in COMP. The FEE_RECIPIENT account here; ParameterizedVault overrides this with the Treasury
+    /// it creates in its own constructor, so no deployment can route protocol revenue to a wallet.
+    function feeRecipient() public view virtual returns (address) {
+        return FEE_RECIPIENT;
+    }
+
+    /// @notice Maximum cumulative COMP the work channel may have minted, in COMP units.
+    /// @dev Unlimited here, exactly as `debtCeiling` is: this contract has no reserve to read and no
+    /// governed ratio, so a bound would be a number pulled from the air. ParameterizedVault overrides
+    /// it with reserveValueUsd + totalDebt * workRatioBps / 10000, the bound docs/COMPUTE-BACKING-
+    /// DESIGN.md section 3 derives, and `mintFromWork` enforces whatever this returns.
+    function workCeiling() public view virtual returns (uint256) {
+        return type(uint256).max;
     }
 
     /// @notice Outstanding minted principal, as used by the unchanged debt ceiling.
@@ -234,12 +251,16 @@ contract CDPVault is ReentrancyGuard {
     /// @dev With this vault as sole minter/burner, supply = summed accrued debt + totalWorkMinted
     /// + totalFeesMinted - all fees accrued (paid and unpaid). Equivalently it is outstanding minted
     /// principal + totalWorkMinted. Unpaid fees are claims, not supply. Neither repayment path restores rights.
+    /// Refuses any amount that would carry totalWorkMinted past `workCeiling()`: rights say who may
+    /// mint, the ceiling says how much backing exists for anyone to mint against.
     function mintFromWork(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _requireFreshFeeds();
         if (compToken.vault() != address(this)) revert NotInitialized();
         if (oracle.mintingRights(msg.sender) < amount) revert InsufficientRights();
-        totalWorkMinted += amount;
+        uint256 resultingWork = totalWorkMinted + amount;
+        if (resultingWork > workCeiling()) revert WorkCeilingReached();
+        totalWorkMinted = resultingWork;
         oracle.consumeRights(msg.sender, amount);
         compToken.mint(msg.sender, amount);
         emit WorkMinted(msg.sender, amount);
@@ -355,7 +376,7 @@ contract CDPVault is ReentrancyGuard {
             imdToken.safeTransfer(msg.sender, collateralSeized - protocolCut - markerCut);
             if (markerCut != 0) imdToken.safeTransfer(marker, markerCut);
         }
-        if (protocolCut != 0) imdToken.safeTransfer(FEE_RECIPIENT, protocolCut);
+        if (protocolCut != 0) imdToken.safeTransfer(feeRecipient(), protocolCut);
         emit Liquidated(owner, msg.sender, debtToRepay, collateralSeized);
     }
 
@@ -512,7 +533,7 @@ contract CDPVault is ReentrancyGuard {
         compToken.burn(msg.sender, amount);
         if (feePaid != 0) {
             totalFeesMinted += feePaid;
-            compToken.mint(FEE_RECIPIENT, feePaid);
+            compToken.mint(feeRecipient(), feePaid);
         }
     }
 

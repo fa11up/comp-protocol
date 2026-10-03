@@ -11,6 +11,7 @@ import {MockIMD} from "../src/MockIMD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {
     APPROVED_OPERATOR,
+    FEE_RECIPIENT,
     ORACLE_ATTESTER,
     ATTESTATION_RELAYER,
     ATTESTATION_CHAIN_ID,
@@ -122,6 +123,10 @@ contract DeployComp is Script {
         MockWorkOracle workOracle = MockWorkOracle(address(vault.oracle()));
         require(workOracle.deployer() == APPROVED_OPERATOR, "oracle: faucet authority is not the pinned operator");
         require(workOracle.vault() == address(vault), "oracle: not bound to vault");
+        // The plain vault keeps the compiled-in economics: revenue to the pinned account, and the work
+        // channel unbounded. The governed stack (DeployGoverned) is the one with a Treasury and a ceiling.
+        require(vault.feeRecipient() == FEE_RECIPIENT, "vault: fee recipient is not the pinned one");
+        require(vault.workCeiling() == type(uint256).max, "vault: a plain vault has no work ceiling to enforce");
 
         PriceFeed[3] memory feeds = [priceFeed, PriceFeed(address(nhiFeed)), PriceFeed(address(spotFeed))];
         for (uint256 i = 0; i < feeds.length; ++i) {

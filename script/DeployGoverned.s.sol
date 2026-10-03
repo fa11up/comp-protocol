@@ -9,16 +9,19 @@ import {ParameterizedVault} from "../src/ParameterizedVault.sol";
 import {Parameters, ICheckpointedVault} from "../src/Parameters.sol";
 import {Registry} from "../src/Registry.sol";
 import {Treasury} from "../src/Treasury.sol";
+import {UsdPriceFeed} from "../src/UsdPriceFeed.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {
     APPROVED_OPERATOR,
     ATTESTATION_RELAYER,
+    CHAINLINK_ETH_USD,
     FEED_REPORTER_0,
     MARKER_SHARE_BPS,
     MAX_DIVERGENCE_BPS,
     PROTOCOL_BONUS_SHARE_BPS,
-    STABILITY_FEE_BPS
+    STABILITY_FEE_BPS,
+    WORK_RATIO_BPS
 } from "../src/DeploymentConfig.sol";
 
 /// @notice The governed variant of the stack: same feeds, same vault logic, economics in a contract.
@@ -61,8 +64,11 @@ contract DeployGoverned is Script {
         ParameterizedVault vault =
             new ParameterizedVault(imd, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
         Parameters parameters = vault.parameters();
+        // The Treasury is the vault's too, for the same reason: created in the same construction,
+        // it is where the vault's revenue lands from the first liquidation, its register answers to
+        // this vault's Parameters, and nothing had to be deployed first or pointed at it afterwards.
+        Treasury treasury = vault.treasury();
 
-        Treasury treasury = new Treasury();
         Registry registry = new Registry(address(treasury), address(vault.oracle()));
 
         vm.stopBroadcast();
@@ -73,12 +79,38 @@ contract DeployGoverned is Script {
         console2.log("Parameters         ", address(parameters));
         console2.log("ParameterizedVault ", address(vault));
         console2.log("Registry           ", address(registry));
-        console2.log("Treasury           ", address(treasury));
+        console2.log("Treasury    (inner)", address(treasury));
+        console2.log("UsdPriceFeed(inner)", address(vault.usdPriceFeed()));
         console2.log("CompToken   (inner)", address(vault.compToken()));
         console2.log("MockWorkOracle(in) ", address(vault.oracle()));
 
         verify(vault, parameters, registry, treasury, priceFeed, nhiFeed, spotFeed);
+        verifyBacking(vault, parameters, treasury, priceFeed);
         console2.log("\nAll authority and governance checks passed.");
+    }
+
+    /// @dev The compute-backing increment: revenue lands in the vault's own Treasury, the register is
+    /// governed by the vault's own Parameters, and the work channel opens with nothing to mint against.
+    function verifyBacking(ParameterizedVault vault, Parameters parameters, Treasury treasury, PriceFeed priceFeed)
+        internal
+        view
+    {
+        require(treasury.vault() == address(vault), "treasury: not created by this vault");
+        require(vault.feeRecipient() == address(treasury), "vault: revenue does not land in its treasury");
+        require(treasury.withdrawer() == APPROVED_OPERATOR, "treasury: wrong withdrawer");
+        require(treasury.registrar() == address(parameters), "treasury: register not governed by the vault's parameters");
+        require(treasury.reserveAssetCount() == 0, "treasury: opens with a reserve register");
+        require(treasury.reserveValueUsd() == 0, "treasury: opens valuing a reserve it does not hold");
+
+        UsdPriceFeed usd = vault.usdPriceFeed();
+        require(address(usd.imdEthFeed()) == address(priceFeed), "usd feed: IMD leg is not the primary feed");
+        require(address(usd.ETH_USD()) == CHAINLINK_ETH_USD, "usd feed: ETH/USD leg drifted from source");
+
+        require(vault.workRatioBps() == WORK_RATIO_BPS, "params: work ratio drifted from source");
+        require(parameters.MAX_WORK_RATIO_BPS() == 2_500, "params: work ratio bound is not 2500");
+        require(vault.workRatioBps() <= parameters.MAX_WORK_RATIO_BPS(), "params: shipped ratio above its own bound");
+        require(vault.workCeiling() == 0, "vault: work ceiling opens nonzero with nothing backing it");
+        require(vault.totalWorkMinted() == 0, "vault: opens with work already minted");
     }
 
     /// @dev Read back off chain, not compared to a local copy of the same literal.

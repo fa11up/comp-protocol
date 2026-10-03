@@ -1,21 +1,27 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Governed} from "./Governed.sol";
+import {Treasury} from "./Treasury.sol";
+import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 import {
     MARKER_SHARE_BPS,
     MAX_DIVERGENCE_BPS,
     PROTOCOL_BONUS_SHARE_BPS,
-    STABILITY_FEE_BPS
+    STABILITY_FEE_BPS,
+    WORK_RATIO_BPS
 } from "./DeploymentConfig.sol";
 
 /// @notice The vault's economic knobs, moved out of source constants into a governed contract.
 interface ICheckpointedVault {
     function totalDebt() external view returns (uint256);
     function pokeIndex() external;
+    function treasury() external view returns (address);
 }
 
-/// @notice The five numbers that set the protocol's economics, changeable under a delay.
+/// @notice The numbers that set the protocol's economics, and the reserve register that backs its
+/// work minting, changeable under a delay.
 /// @dev Why these and not everything: a parameter is safe to govern when the worst a wrong value can
 /// do is price the protocol badly. A fee can be too high, a ceiling too tight, a divergence bound too
 /// loose — each is a bad business decision that a borrower can see coming and exit ahead of. The
@@ -36,7 +42,24 @@ contract Parameters is Governed {
         uint256 markerShareBps;
     }
 
+    /// @notice What a pending payload changes. One Governed slot, three shapes of change: the
+    /// payload's first word says which, so the 48-hour delay, the public pending window and the
+    /// permissionless application are the same code for all of them.
+    /// @dev The work ratio and the register travel separately from the five-value set rather than
+    /// inside it, so a listing can be queued without restating every fee and a fee change without
+    /// naming an asset — and so the set a borrower prices against keeps its shape.
+    enum Change {
+        Economics,
+        WorkRatio,
+        ReserveAsset
+    }
+
     uint256 private constant BPS = 10_000;
+
+    /// @notice Hard cap on the work ceiling's ratio term. 5000 is the cliff where worst-case backing
+    /// touches one at the loosest NHI (minCR 150); this is half of it, 120% with an empty reserve.
+    /// A constant, so governance can lower the ratio and can never raise it past here.
+    uint256 public constant MAX_WORK_RATIO_BPS = 2_500;
 
     /// @notice Hard cap on the annual stability fee. 10% is high for a fee this protocol charges on
     /// its own stablecoin; above it the fee stops being a cost of borrowing and becomes a way to
@@ -54,6 +77,9 @@ contract Parameters is Governed {
     /// @notice The live values.
     ParamSet private _current;
 
+    /// @notice The live ratio term of the vault's work ceiling, in basis points of totalDebt.
+    uint256 private _workRatioBps;
+
     /// @notice The vault these parameters govern: its creator, fixed at construction.
     /// @dev Needed for two things that cannot be done without it: checking a proposed ceiling
     /// against debt that is actually outstanding, and checkpointing the fee index before the rate
@@ -66,6 +92,7 @@ contract Parameters is Governed {
     error DivergenceOutOfRange(uint256 bps);
     error SharesExceedBonus(uint256 markerBps, uint256 protocolBps);
     error ZeroCeiling();
+    error WorkRatioTooHigh(uint256 bps);
 
     /// @dev Seeded from the shipped constants, so a fresh Parameters is exactly the configuration
     /// the vault would have had with them compiled in — including the unlimited default ceiling,
@@ -93,16 +120,37 @@ contract Parameters is Governed {
             maxDivergenceBps: MAX_DIVERGENCE_BPS,
             markerShareBps: MARKER_SHARE_BPS
         });
+        // The shipped ratio is subject to the same bound as any proposal; a constant above the cap
+        // is a misconfiguration this contract refuses to be deployed with.
+        if (WORK_RATIO_BPS > MAX_WORK_RATIO_BPS) revert WorkRatioTooHigh(WORK_RATIO_BPS);
+        _workRatioBps = WORK_RATIO_BPS;
     }
 
     /// @notice Queue a complete replacement set. Always all five, so the pending payload is the whole
     /// configuration a borrower will face rather than a diff they have to apply themselves.
     function propose(ParamSet calldata next) external {
-        _propose(abi.encode(next));
+        _propose(abi.encode(Change.Economics, next));
+    }
+
+    /// @notice Queue a change to the work ceiling's ratio term. Refused above MAX_WORK_RATIO_BPS.
+    function proposeWorkRatio(uint256 bps) external {
+        _propose(abi.encode(Change.WorkRatio, bps));
+    }
+
+    /// @notice Queue a listing, repricing or (with a zero price source) delisting of one of the
+    /// Treasury's reserve assets. The Treasury's own rules apply at proposal — COMP is refused with
+    /// `CompIsNotReserve`, a haircut must be below 10000 — so a change the register would refuse
+    /// never occupies the slot. Applying it, like every other change, is anyone's to do after the delay.
+    function proposeReserveAsset(IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps) external {
+        _propose(abi.encode(Change.ReserveAsset, asset, priceFeed, haircutBps));
     }
 
     function current() external view returns (ParamSet memory) {
         return _current;
+    }
+
+    function workRatioBps() external view returns (uint256) {
+        return _workRatioBps;
     }
 
     function debtCeiling() external view returns (uint256) {
@@ -125,13 +173,62 @@ contract Parameters is Governed {
         return _current.markerShareBps;
     }
 
+    /// @notice What kind of change is waiting, and when it can be applied; eta is zero if nothing is.
+    function pendingChange() public view returns (Change kind, uint256 eta) {
+        if (pendingEta == 0) return (kind, 0);
+        return (_kind(pending), pendingEta);
+    }
+
+    /// @notice The pending five-value set, or an empty one with a zero eta if the pending change is
+    /// of another kind or there is none. `pendingChange` says which.
     function pendingSet() external view returns (ParamSet memory next, uint256 eta) {
-        if (pendingEta == 0) return (next, 0);
-        return (abi.decode(pending, (ParamSet)), pendingEta);
+        (Change kind, uint256 at) = pendingChange();
+        if (at == 0 || kind != Change.Economics) return (next, 0);
+        (, next) = abi.decode(pending, (Change, ParamSet));
+        return (next, at);
+    }
+
+    function pendingWorkRatio() external view returns (uint256 bps, uint256 eta) {
+        (Change kind, uint256 at) = pendingChange();
+        if (at == 0 || kind != Change.WorkRatio) return (0, 0);
+        (, bps) = abi.decode(pending, (Change, uint256));
+        return (bps, at);
+    }
+
+    function pendingReserveAsset()
+        external
+        view
+        returns (IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps, uint256 eta)
+    {
+        (Change kind, uint256 at) = pendingChange();
+        if (at == 0 || kind != Change.ReserveAsset) return (asset, priceFeed, 0, 0);
+        (, asset, priceFeed, haircutBps) = abi.decode(pending, (Change, IERC20, ISwarmFeed, uint256));
+        return (asset, priceFeed, haircutBps, at);
+    }
+
+    function _kind(bytes memory payload) private pure returns (Change) {
+        return abi.decode(payload, (Change));
+    }
+
+    function _treasury() private view returns (Treasury) {
+        return Treasury(vault.treasury());
     }
 
     function _validate(bytes memory payload) internal view override {
-        ParamSet memory next = abi.decode(payload, (ParamSet));
+        Change kind = _kind(payload);
+        if (kind == Change.WorkRatio) {
+            (, uint256 bps) = abi.decode(payload, (Change, uint256));
+            if (bps > MAX_WORK_RATIO_BPS) revert WorkRatioTooHigh(bps);
+            return;
+        }
+        if (kind == Change.ReserveAsset) {
+            (, IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps) =
+                abi.decode(payload, (Change, IERC20, ISwarmFeed, uint256));
+            // The register's rules, applied where they fail fast and with the register's own errors.
+            _treasury().validateReserveAsset(asset, priceFeed, haircutBps);
+            return;
+        }
+        (, ParamSet memory next) = abi.decode(payload, (Change, ParamSet));
 
         if (next.stabilityFeeBps > MAX_STABILITY_FEE_BPS) revert FeeTooHigh(next.stabilityFeeBps);
         if (next.maxDivergenceBps < MIN_DIVERGENCE_BPS || next.maxDivergenceBps > MAX_DIVERGENCE_BPS_LIMIT) {
@@ -164,10 +261,21 @@ contract Parameters is Governed {
     }
 
     function _apply(bytes memory payload) internal override {
+        Change kind = _kind(payload);
+        if (kind == Change.WorkRatio) {
+            (, _workRatioBps) = abi.decode(payload, (Change, uint256));
+            return;
+        }
+        if (kind == Change.ReserveAsset) {
+            (, IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps) =
+                abi.decode(payload, (Change, IERC20, ISwarmFeed, uint256));
+            _treasury().setReserveAsset(asset, priceFeed, haircutBps);
+            return;
+        }
         // Freeze accrual to date at the old rate, in this transaction, before the new rate is
         // readable. The vault's index is linear from its last checkpoint, so without this the change
         // would reach time that has already passed.
         vault.pokeIndex();
-        _current = abi.decode(payload, (ParamSet));
+        (, _current) = abi.decode(payload, (Change, ParamSet));
     }
 }
