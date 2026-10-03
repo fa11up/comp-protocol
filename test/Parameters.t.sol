@@ -221,21 +221,29 @@ contract ParametersTest is Test {
         vm.stopPrank();
     }
 
-    /// @dev The bound that needs live state: a ceiling is checked against debt outstanding at
-    /// application, not at proposal, because that is when it would take effect.
-    function test_aCeilingBelowOutstandingDebtIsRefusedAtApplication() public {
+    /// @dev The ceiling is NOT checked against outstanding debt, which an audit showed was a
+    /// griefing vector rather than a protection: minting is permissionless up to the current ceiling,
+    /// so a borrower could keep totalDebt above any proposed figure and stall the whole payload. A low
+    /// ceiling strands nobody — repay, withdraw and liquidate are not ceiling-gated — so a proposal
+    /// that tightens below current debt simply stops further growth.
+    function test_aTightCeilingStopsGrowthWithoutStrandingAnyone() public {
         vm.prank(BORROWER);
         vault.mintCOMP(100 ether);
 
-        vm.prank(APPROVED_OPERATOR);
-        params.propose(_set(150 ether, 0, STABILITY_FEE_BPS, 500, 1_000)); // valid when proposed
+        _govern(_set(50 ether, 0, STABILITY_FEE_BPS, 500, 1_000));
+        assertEq(vault.debtCeiling(), 50 ether, "a ceiling below outstanding debt still applies");
 
         vm.prank(BORROWER);
-        vault.mintCOMP(60 ether); // debt is now 160, past the pending ceiling
+        vm.expectRevert(CDPVault.DebtCeilingReached.selector);
+        vault.mintCOMP(1);
 
-        vm.warp(block.timestamp + params.TIMELOCK());
-        vm.expectRevert(abi.encodeWithSelector(Parameters.CeilingBelowDebt.selector, 150 ether, 160 ether));
-        params.applyPending();
+        // The position is fully operable: the borrower is not trapped by a ceiling they are past.
+        vm.startPrank(BORROWER);
+        comp.approve(address(vault), type(uint256).max);
+        vault.repayCOMP(10 ether);
+        vault.withdrawCollateral(1 ether);
+        vm.stopPrank();
+        assertGt(vault.debtOf(BORROWER), 0);
     }
 
 

@@ -66,7 +66,6 @@ contract Parameters is Governed {
     error DivergenceOutOfRange(uint256 bps);
     error SharesExceedBonus(uint256 markerBps, uint256 protocolBps);
     error ZeroCeiling();
-    error CeilingBelowDebt(uint256 ceiling, uint256 outstanding);
 
     /// @dev Seeded from the shipped constants, so a fresh Parameters is exactly the configuration
     /// the vault would have had with them compiled in — including the unlimited default ceiling,
@@ -152,12 +151,16 @@ contract Parameters is Governed {
         }
         if (next.debtCeiling == 0) revert ZeroCeiling();
 
-        // A ceiling below what is already borrowed does not strand anyone — repayment and withdrawal
-        // are not ceiling-gated — but it does make the protocol report a limit it is already past,
-        // and it is far more likely to be a mistyped figure than a decision. Checked against live
-        // debt at application, not at proposal, because that is when it takes effect.
-        uint256 outstanding = vault.totalDebt();
-        if (next.debtCeiling < outstanding) revert CeilingBelowDebt(next.debtCeiling, outstanding);
+        // There is deliberately NO check that the ceiling clears outstanding debt, and an independent
+        // audit is why (job c71449d1, low). Checking it at application made the proposal's success
+        // depend on a figure third parties control: minting is permissionless up to the CURRENT
+        // ceiling, so any borrower with collateral could front-run applyPending with mintCOMP to keep
+        // totalDebt above the proposed figure, then repay next block and repeat. The whole five-value
+        // payload travelled in one struct, so a fee or divergence change could be held hostage too.
+        //
+        // The check was also protecting nothing. A ceiling below outstanding debt strands no one: it
+        // gates new minting only, and repayment, withdrawal and liquidation are not ceiling-gated. So
+        // the worst a low ceiling does is stop growth, which is what a ceiling is for.
     }
 
     function _apply(bytes memory payload) internal override {
