@@ -116,7 +116,7 @@ must not be reachable by governance.
 
 Two tracks, because one works today and the other fixes the cause.
 
-**Now — attested tally.** An `oracle.request` whose answer is a per-agent accepted-work tally,
+**Now — attested tally** (and see §4a for exactly what it proves). An `oracle.request` whose answer is a per-agent accepted-work tally,
 relayed into a `SwarmWorkOracle` through the existing `SwarmRelay` and verified by the same
 attestation v2 path already proven end to end (request `50d9b023`, relayed in tx `0x15854076…`).
 The set-agreement probe established the precondition: 20 of 20 panel members independently derived
@@ -132,6 +132,41 @@ becomes free, trustless and network-wide, and the attested tally becomes a fallb
 
 `workShare(agent)` then derives rights: an agent's share of the tally times the ceiling headroom.
 `isController(agentId, claimant)` is what binds a tally entry to a wallet that may mint.
+
+## 4a. What the work signal proves, and what it does not
+
+Worth separating, because the two halves have different answers.
+
+**Who may claim — provable, and proven.** `isController(agentId, claimant)` on the Adapter8004 proxy
+at `0xde152afb7db5373f34876e1499fbd893a82dd336` returns `true` for agent 51450 and
+`0x5167D014a056E43883e1BBEa5530c3c0dC993281`, and `false` for anyone else. That adapter is what
+`IdentityRegistry.ownerOf(51450)` resolves to, and it answers control by ownership of the identity
+NFT — `ownerOf(1616)` on the collection `0x0000ec93127baa929e58e97dd0095a2bfb38ec1d` is the same
+wallet. So the agent-to-wallet binding is real, on chain, and checkable by anyone.
+
+The oracle therefore must NOT pin its claimant as a bare source constant, which would assert the
+binding rather than prove it. The claimant goes in the question text, with the panel instructed to
+verify `isController` on mainnet and to refuse if it is false. The question document is hashed into
+`questionHash` and the contract verifies that hash, so the binding is attested. If the NFT moves, the
+next attestation refuses.
+
+**Who did the work — NOT provable, and this is the honest limit of the design.** The figure is the
+control plane's own counter at `api.imd.fun/swarm`. A panel attests that it read that number from
+that URL. It does not attest that the agent performed the work, because nothing on chain records it:
+ERC-8004 carries ~6% of swarm work and none of this agent's. The trust root is the plane's database,
+not the chain.
+
+So `SwarmWorkOracle` is a **bridge**, not a proof, and its docstring has to say so. What would make it
+proof is upstream and already drafted: `whitepaper/oracle-sim/PROPOSAL-ORACLE-WORK-LEAF.md` asks the
+plane to carry a second Merkle root in the daily oracle batch receipt it already writes, over
+`(agentId, acceptedThatDay)`. Once that root is on chain, the plane has committed to the work
+non-repudiably and a proof can be checked against a commitment rather than an API read.
+
+Note what even that does and does not buy. The plane is the party that accepted the tasks, so trust
+ultimately rests on the acceptance process either way. The difference is whether that trust is
+committed on chain — verifiable, historical, non-repudiable — or read from a mutable endpoint. That
+difference is the whole value of the upstream change, and it is why the proposal is load-bearing for
+this design rather than a nice-to-have.
 
 ## 5. Redemption
 
