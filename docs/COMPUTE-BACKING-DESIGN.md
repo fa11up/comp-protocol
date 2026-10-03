@@ -150,6 +150,33 @@ verify `isController` on mainnet and to refuse if it is false. The question docu
 `questionHash` and the contract verifies that hash, so the binding is attested. If the NFT moves, the
 next attestation refuses.
 
+**Agent wallets are already supported on chain, and that splits one role into two.** The mainnet
+rails exist today, unset for us: `Adapter8004.setAgentWallet(agentId, newWallet, deadline, signature)`
+requires the NFT controller to call it AND the new wallet to sign an EIP-712 proof of key possession
+(EOA, EIP-7702 or ERC-1271), after which `getAgentWallet(agentId)` returns it. `getAgentWallet(51450)`
+is `address(0)` now, so nothing is assigned.
+
+`isController` is NOT that wallet. It resolves to live ownership of the bound token
+(`_hasBindingControl`: `ownerOf(tokenId) == account` for ERC-721), so controller and agent wallet are
+deliberately different addresses.
+
+The consequence for this design is that **submitting a proof and receiving the credit must be separate
+roles**, and designing them as one would have to be undone the moment an agent gets a wallet:
+
+- **submission is permissionless.** A Merkle proof steals nothing; anyone may push an agent's tally on
+  chain, including the agent's own hot wallet paying its own gas. That is what lets an agent keep its
+  record current with no human in the loop.
+- **credit resolves to the controller**, never to `msg.sender`. Otherwise a worker holding a hot key
+  could mint to itself, and this repository's own rule is that no wallet key belongs on a box where
+  strangers' tasks execute. With the split, that key's compromise costs gas and nothing else.
+
+This is also why the upstream tally must key on `agentId` and never on an address: the controller can
+change when the NFT moves and the agent wallet can be reassigned, and neither should orphan work
+already recorded.
+
+On mainnet none of the claimant plumbing needs an oracle — `isController` and `getAgentWallet` are
+same-chain view calls. Pinning the claimant inside the attested question is a Sepolia-only stopgap.
+
 **Who did the work — NOT provable, and this is the honest limit of the design.** The figure is the
 control plane's own counter at `api.imd.fun/swarm`. A panel attests that it read that number from
 that URL. It does not attest that the agent performed the work, because nothing on chain records it:
