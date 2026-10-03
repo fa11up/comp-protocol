@@ -77,3 +77,104 @@ Previous-round verification: offline `forge build` passed; default `forge test` 
 The new explicit-divergence and automatic-recovery regressions were run against a disposable copy of the vault before the recovery fix: both failed because invalid observations cleared the mark. They pass against the accepted source. The copied source was confined to `test/scratch` and removed afterward; the submitted tests import the current production contract.
 
 Revision verification: offline `forge build` passed, and `forge test` reported **202 passed, 0 failed, 2 skipped** across 22 suites, including all three invariant campaigns. The skips remain the live Sepolia suite and the nonzero-rate contract under the shipped zero constant. The supplemental 1,000-BPS runner separately passed all **6 tests**, including exact linear accrual. No new contract defect was reproduced. Only this coverage note and `DivergenceGuard.t.sol` changed.
+
+## Work ceiling and reserve valuation
+
+`WorkCeiling.t.sol` exercises the deployed `ParameterizedVault`: an empty ceiling,
+reserve-only and debt-only backing, sum and rounding arithmetic, full-precision
+products, multiple workers sharing one ceiling, exact mint boundaries, atomic
+failure, the 2500-bps governance limit, and contraction after repayments,
+withdrawals or ratio changes. The backing-ratio fuzz property compares exact
+cross-products at `minCR`, avoiding fixed-point rounding that could hide the
+surplus as reserves grow. Strict backing greater than one requires positive debt;
+reserve-only backing is exactly one and the empty balance sheet has no ratio.
+
+`ReserveValuation.t.sol` covers decimal scaling, aggregate valuation, governance,
+COMP exclusion, stale or unavailable USD legs, and a liquidation that sends both
+collateral revenue and minted stability fees to the vault-created Treasury.
+Haircut endpoint regressions require zero backing at 0 and full market value at
+10000, including rejection of work without valued backing and of one wei past
+fully valued backing. Valuation fuzzing varies the retained factor across the
+entire 0–10000 range together with token decimals, balances and prices.
+The Chainlink leg is a local fixture at the source-pinned address; no network or
+environment mutation is required.
+
+`WorkBacking.invariant.t.sol` runs 256 sequences of 128 calls through the real
+ParameterizedVault and Treasury. Deposit/withdrawal, debt/fee, work-right and
+custody histories independently reconcile after random borrowing, repayments,
+work mints, reserve price changes, donations, withdrawals, syncs and governance
+of the work ratio and reserve haircut. The expected retained factor is tracked
+independently, including deterministic sequences through both haircut endpoints.
+A successful work mint must respect the ceiling at execution. The invariant does
+not falsely require previously minted work to remain below a ceiling that later
+falls after an authorized withdrawal, price change or repayment.
+
+The older mechanics suites deliberately use CDPVault subclasses with pinned
+zero/ten-percent economics. `LegacyWorkBacking.sol` funds a distinct borrower and
+opens real collateral-backed debt before their successful work mints. Added
+principal and collateral are included explicitly in the existing accounting
+assertions. Random work actions in the existing handlers use available debt
+backing; initialization and failure-path checks retain their original expected
+errors. No successful work test is replaced by an expected ceiling revert.
+
+The prior haircut endpoint finding is resolved in the accepted source. The
+regressions above exercise the corrected behavior without changing production
+contracts or weakening the earlier ceiling, stale-feed or fee-routing tests.
+
+### Revised ceiling formula (independent review of 2026-10-03)
+
+The accepted revision changed three things the suites above now pin, and the
+fixture was re-based so the arithmetic still reads in whole units. The reserve
+asset is priced at 2000 USD, the fixture's Chainlink ETH/USD answer, so one token
+is worth one ETH: `reserveValueUsd` is asserted in dollars and `reserveValue`,
+`backedDebt` and `workCeiling` in the vault's unit.
+
+- **Unit conversion.** `reserveValue` must equal `reserveValueUsd x 1e18 / ethUsdPrice`,
+  rounded down, for fuzzed balances and ETH/USD answers; the unconverted USD
+  figure is refused as a mint amount; a dearer ETH shrinks the reserve term with
+  the register unchanged; an ETH/USD leg one second past `ETH_USD_MAX_AGE` zeroes
+  the reserve term while the asset's own USD source stays fresh and the debt term
+  survives. For IMD priced through `UsdPriceFeed` the leg cancels to
+  `balance x primary x haircut`. Eight- and eighteen-place aggregator answers scale
+  to the same 1e18 price.
+- **Same-transaction debt.** Every top-level test call is its own transaction, so
+  the transient cap is reached through an `AtomicWorkBorrower` contract that
+  chains the calls: borrow-then-mint, the full borrow/mint/repay/withdraw round
+  trip, and a read of `backedDebt`/`workCeiling` inside the transaction all see
+  zero for debt opened in that transaction, while the same position counts in
+  full one transaction later. A repayment in the same transaction tightens the
+  term immediately (the smaller of the start-of-transaction and live totals).
+- **Bad debt.** A liquidation that drains a position at exactly its 110% payout
+  leaves residual principal in `totalDebt` that `backedDebt` excludes; after a
+  year of fees a one-wei repayment re-records the residual as accrued debt above
+  the principal, and the subtraction saturates to zero instead of reverting; a
+  healthy position opened afterwards counts less that over-count, which only
+  tightens.
+- **Divergence.** Against a finite ceiling, a spot price one wei beyond either
+  divergence bound reverts `PriceDivergence`, a stale spot reverts `StaleFeed`, and
+  the exact bound is accepted (independent spot feed on a second vault).
+- **Backing bound on chain.** In addition to the pure-arithmetic fuzz, a 1000-run
+  fuzz opens the only position at exactly `minCR` (collateral rounded up to the
+  wei), funds any reserve size, governs any ratio up to 2500, mints the whole
+  ceiling and checks collateral-plus-reserve exceeds all COMP by at least
+  `(minCR - 1 - r) x D`.
+- **Register validation.** A source with code that reverts on, or returns short
+  words from, either `isStale` or `latestValue` is refused at proposal with
+  `InvalidPriceSource`; a token claiming 78 decimals is refused and 77 is valued
+  without a panic; a source that dies after listing counts for nothing without
+  reverting the ceiling, and can still be delisted.
+
+The invariant handler now also moves and expires the ETH/USD leg, tracks the
+expected reserve term in the vault's unit, and asserts `totalBadDebt` stays zero
+and `backedDebt` equals outstanding principal between transactions.
+
+One defect was found and is reported in `.imd-findings.json` rather than tested
+around: `Treasury.reserveValueOf` wraps both feed reads but not the token's
+`balanceOf`, so a listed token that later reverts there makes `reserveValueUsd`,
+`reserveValue`, `workCeiling` and every `mintFromWork` revert until a delisting
+matures, against the view's documented promise never to revert. Low: only a
+governance-listed token reaches it and the delisting path reads nothing from the
+token.
+
+Verification: offline `forge build` passed and `forge test` reported **319 passed,
+0 failed, 2 skipped** across 37 suites, including all four invariant campaigns.

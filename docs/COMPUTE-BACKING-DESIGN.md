@@ -68,12 +68,13 @@ reserveValueUsd = Σ_assets  haircutBps[a]/10000 × balance[a] × priceUsd[a]
 
 Each asset needs a USD price source and a haircut. IMD's price is the existing `PriceFeed`
 (IMD/ETH) multiplied by Chainlink ETH/USD — on Sepolia `0x694AA1769357215DE4FAC081bf1f309aDC325306`,
-verified live at $2,675.82, 8 decimals. The haircut is what stops a volatile reserve asset from
-authorizing supply it cannot support; a stablecoin's haircut is near zero, IMD's is not.
+verified live at $2,675.82, 8 decimals. Here `haircutBps` is the retained-value factor: zero counts
+for nothing and 10000 counts in full. A stablecoin's factor would be near 10000, while a lower
+factor for IMD limits the supply its volatile reserve value can authorize.
 
 **This makes reserve value oracle-dependent and reflexive.** If IMD falls, reserve value falls, and
-COMP already minted against it becomes under-backed. The haircut is the only defence, so it belongs
-in code with a hard floor, not in governance alone.
+COMP already minted against it becomes under-backed. The reserve factor reduces the credited
+backing and is bounded in code to 0–10000; its governed value determines the discount.
 
 ## 3. The work ceiling
 
@@ -111,6 +112,31 @@ point at the loosest NHI, 120% worst-case backing with an empty reserve. 5000 is
 must not be reachable by governance.
 
 `workCeiling` and `workRatioBps` are new governed parameters, under the existing 48-hour delay.
+
+### 3a. What the independent review of the build changed (2026-10-03)
+
+Three corrections to the formula as built, none to the bound it derives:
+
+- **One unit.** `D` is denominated in the primary feed's unit — the pinned question asks for wei of
+  ETH per IMD, so a COMP of debt is an ETH-worth of collateral to `minCR` and `liquidate` — while
+  `reserveValueUsd` is USD. Added unconverted, the reserve authorised ETH/USD times more work
+  minting than the vault valued it at. The vault now converts the reserve at the Chainlink ETH/USD
+  leg (`reserveValue()`), zero while that leg is stale. For IMD priced through `UsdPriceFeed` the leg
+  cancels and `R` is `balance × primary × haircut`. Changing what denominates `D` stays out of scope.
+- **`D` counts only debt that existed before the transaction began.** The derivation assumes the
+  surplus collateral behind `D` is there when `W` is minted against it. A rights holder could raise
+  `D` with their own position, mint `rD` of work, repay and withdraw in one call, leaving `W` with
+  nothing behind it. `backedDebt()` caps `D` at its value at the start of the transaction (transient
+  storage), so the ratio term is only ever backed by positions that pre-date the caller. A position
+  held across transactions counts in full: the ceiling remains point-in-time for the slow version of
+  the same round trip, by design, and its cost is capital at risk in an open position rather than gas.
+- **`D` excludes recorded bad debt.** After a liquidation drains a position its residual principal
+  stays in `totalDebt` with no collateral behind it. `backedDebt()` subtracts `totalBadDebt`,
+  saturating at zero; the record is accrued debt while `totalDebt` is principal, so the subtraction
+  over-counts by unpaid fees, in the tightening direction.
+
+Because a finite ceiling is now priced off the primary feed, `mintFromWork` on the governed vault
+applies the same primary/spot agreement check as every other price-dependent action.
 
 ## 4. The work signal
 
@@ -290,7 +316,7 @@ All under the existing 48-hour delay, all hard-bounded in the parameters contrac
 | `workRatioBps` | ratio term of `workCeiling` | 2500 | ≤ 2500 (cliff is `minCR − 1` = 5000) |
 | `redemptionCeilingCR` | above this a position cannot be redeemed against | 200 | ≥ `minCR`, ≤ 400 |
 | `feeBurnShareBps` | share of COMP fees burned on arrival | 10000 at first | no bound needed |
-| `haircutBps[asset]` | per-asset reserve discount | 0 stables, high for IMD | floor per asset class |
+| `haircutBps[asset]` | per-asset retained-value factor | near 10000 stables, lower for IMD | 0–10000 |
 | `targetWeightBps[asset]` | basket weight driving channel B's fee | — | must sum to 10000 |
 | `REDEMPTION_FEE_FLOOR` / `_MAX` | the peg band | 50 / 500 | constants, not governed |
 

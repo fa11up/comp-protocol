@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {CompToken} from "./CompToken.sol";
+import {MockIMD} from "./MockIMD.sol";
 import {MockWorkOracle} from "./MockWorkOracle.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
@@ -37,6 +38,10 @@ contract CDPVault is ReentrancyGuard {
         address marker;
     }
 
+    /// @notice Passed as the collateral token to ask this vault to deploy a testnet faucet instead.
+    /// @dev Deliberately not `address(0)`: see the note in the constructor.
+    address internal constant COLLATERAL_FAUCET = 0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF;
+
     error InvalidToken();
     error InvalidOracle();
     error InvalidFeed();
@@ -58,6 +63,7 @@ contract CDPVault is ReentrancyGuard {
     error PriceDivergence();
     error InvalidBonusShares();
     error InvalidBeneficiary();
+    error WorkCeilingReached();
 
     event OracleSet(address indexed oracle);
     event CollateralDeposited(address indexed account, uint256 amount);
@@ -122,6 +128,22 @@ contract CDPVault is ReentrancyGuard {
         return PROTOCOL_BONUS_SHARE_BPS;
     }
 
+    /// @notice Where the protocol's revenue lands: its bonus share, in IMD, and paid stability fees,
+    /// in COMP. The FEE_RECIPIENT account here; ParameterizedVault overrides this with the Treasury
+    /// it creates in its own constructor, so no deployment can route protocol revenue to a wallet.
+    function feeRecipient() public view virtual returns (address) {
+        return FEE_RECIPIENT;
+    }
+
+    /// @notice Maximum cumulative COMP the work channel may have minted, in COMP units.
+    /// @dev Unlimited here, exactly as `debtCeiling` is: this contract has no reserve to read and no
+    /// governed ratio, so a bound would be a number pulled from the air. ParameterizedVault overrides
+    /// it with reserveValueUsd + totalDebt * workRatioBps / 10000, the bound docs/COMPUTE-BACKING-
+    /// DESIGN.md section 3 derives, and `mintFromWork` enforces whatever this returns.
+    function workCeiling() public view virtual returns (uint256) {
+        return type(uint256).max;
+    }
+
     /// @notice Outstanding minted principal, as used by the unchanged debt ceiling.
     /// @dev Accrued, unpaid stability fees are additional obligations returned by debtOf/positions.
     uint256 public totalDebt;
@@ -160,6 +182,21 @@ contract CDPVault is ReentrancyGuard {
         address nhiFeed_,
         address spotFeed_
     ) {
+        // An EXPLICIT sentinel, not zero, asks the vault to deploy its own testnet collateral faucet.
+        //
+        // Why it exists: a launch manifest names at most four contracts, and a deployment that fills
+        // them with three feeds and the vault has no slot left for the collateral token. The parked
+        // round-4 manifest therefore passed a LITERAL address, which has code only on the chain it was
+        // deployed to, and this constructor requires code — so the project could not be constructed
+        // anywhere else, which is how the launch failed with "project constructor failed".
+        //
+        // Why not zero, the convention compToken_ and oracle_ use: zero is what an unset field looks
+        // like, and a mainnet vault that quietly took a MOCK token as its collateral would accept a
+        // worthless asset against real debt. The existing guard refuses zero deliberately and still
+        // does; this is an unmistakable opt-in that nobody passes by accident.
+        if (imdToken_ == COLLATERAL_FAUCET) {
+            imdToken_ = address(new MockIMD());
+        }
         if (
             imdToken_.code.length == 0 || (compToken_ != address(0) && compToken_.code.length == 0)
                 || imdToken_ == compToken_
@@ -224,6 +261,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 resultingTotal = totalDebt + amount;
         if (resultingTotal > debtCeiling()) revert DebtCeilingReached();
         totalDebt = resultingTotal;
+        _debtChanged(resultingTotal - amount);
         position.debt += amount;
         _clearMark(msg.sender);
         compToken.mint(msg.sender, amount);
@@ -234,12 +272,23 @@ contract CDPVault is ReentrancyGuard {
     /// @dev With this vault as sole minter/burner, supply = summed accrued debt + totalWorkMinted
     /// + totalFeesMinted - all fees accrued (paid and unpaid). Equivalently it is outstanding minted
     /// principal + totalWorkMinted. Unpaid fees are claims, not supply. Neither repayment path restores rights.
+    /// Refuses any amount that would carry totalWorkMinted past `workCeiling()`: rights say who may
+    /// mint, the ceiling says how much backing exists for anyone to mint against.
     function mintFromWork(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _requireFreshFeeds();
         if (compToken.vault() != address(this)) revert NotInitialized();
         if (oracle.mintingRights(msg.sender) < amount) revert InsufficientRights();
-        totalWorkMinted += amount;
+        uint256 resultingWork = totalWorkMinted + amount;
+        uint256 ceiling = workCeiling();
+        // REVISION (finding aba99865): a finite ceiling is priced off the primary feed —
+        // ParameterizedVault values its reserve through it — so minting against one is a
+        // price-dependent action and is refused while primary and spot disagree, like every other.
+        // The unlimited ceiling here reads no price, and this vault's work channel stays open through
+        // a divergence halt exactly as it did before (script/checks/CDPVaultIncrement.t.sol pins it).
+        if (ceiling != type(uint256).max) _requirePriceAgreement();
+        if (resultingWork > ceiling) revert WorkCeilingReached();
+        totalWorkMinted = resultingWork;
         oracle.consumeRights(msg.sender, amount);
         compToken.mint(msg.sender, amount);
         emit WorkMinted(msg.sender, amount);
@@ -355,7 +404,7 @@ contract CDPVault is ReentrancyGuard {
             imdToken.safeTransfer(msg.sender, collateralSeized - protocolCut - markerCut);
             if (markerCut != 0) imdToken.safeTransfer(marker, markerCut);
         }
-        if (protocolCut != 0) imdToken.safeTransfer(FEE_RECIPIENT, protocolCut);
+        if (protocolCut != 0) imdToken.safeTransfer(feeRecipient(), protocolCut);
         emit Liquidated(owner, msg.sender, debtToRepay, collateralSeized);
     }
 
@@ -497,6 +546,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 principalPaid = amount - feePaid;
         position.debt -= principalPaid;
         totalDebt -= principalPaid;
+        _debtChanged(totalDebt + principalPaid);
         uint256 previous = _recordedBadDebt[owner];
         if (previous != 0) {
             // Include new fees while collateral is exhausted. After recapitalization, only reduce
@@ -508,11 +558,17 @@ contract CDPVault is ReentrancyGuard {
         }
     }
 
+    /// @dev Called with the previous total every time `totalDebt` moves. Nothing here: this vault's
+    /// ceiling is unlimited and reads no debt. ParameterizedVault overrides it to remember the debt
+    /// level a transaction began at, so debt created and repaid inside one transaction never counts
+    /// toward the work ceiling's ratio term.
+    function _debtChanged(uint256 previousTotal) internal virtual {}
+
     function _payDebt(uint256 amount, uint256 feePaid) private {
         compToken.burn(msg.sender, amount);
         if (feePaid != 0) {
             totalFeesMinted += feePaid;
-            compToken.mint(FEE_RECIPIENT, feePaid);
+            compToken.mint(feeRecipient(), feePaid);
         }
     }
 

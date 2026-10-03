@@ -9,6 +9,13 @@ optimizer = true
 optimizer_runs = 200
 bytecode_hash = "none"
 
+# Each top-level call is its own transaction, which is what clears transient storage between them.
+# ParameterizedVault.backedDebt() reads the debt a transaction STARTED at, held in transient storage,
+# so that debt opened inside a transaction cannot raise that transaction's own work ceiling. Without
+# this, a whole test body is one transaction, every position reads as opened "this transaction", and
+# 17 tests fail against a contract that is correct. Found when a launch parked (round 4, 2026-10-03).
+isolate = true
+
 [profile.default.fuzz]
 runs = 256
 

@@ -29,14 +29,14 @@
       ]
     },
     {
-      "contract": "CDPVault",
+      "contract": "ParameterizedVault",
       "constructorArgs": [
-        "0xe44ab81ce23d34e29383dd158a1dffeb1c10d439",
+        "0xffffffffffffffffffffffffffffffffffffffff",
         "0x0000000000000000000000000000000000000000",
         "0x0000000000000000000000000000000000000000",
-        "PriceFeed",
-        "NhiFeed",
-        "SpotFeed"
+        "$contract:PriceFeed",
+        "$contract:NhiFeed",
+        "$contract:SpotFeed"
       ]
     }
   ],
@@ -46,5 +46,5 @@
     "tickSpacing": 60,
     "initialPrice": "79228162514264337593543950336"
   },
-  "notes": "SpotFeed is a third named SwarmFeed artifact, added so the manifest can name the vault's three feeds separately: a manifest identifies a deployment by contract name and has no alias field, so deploying PriceFeed twice was unrepresentable and parked the launch. CDPVault takes the existing MockIMD collateral (never redeployed), zero CompToken and zero work oracle so it creates and permanently binds both during construction, then the three feed addresses. Feed authority, payload chainId 1, answerType 3, quorum 1 and the vault scalars are pinned in DeploymentConfig.sol and are not manifest arguments. Both price feeds and the NHI feed start unseeded. LaunchToken is COMP Launch (CPL), 18 decimals, separate from the elastic CompToken the vault mints."
+  "notes": "Sepolia (11155111) application deployment. LaunchToken is COMP Launch (CPL), 18 decimals, separate from the vault's elastic CompToken. PriceFeed, NhiFeed and SpotFeed precede ParameterizedVault. Feed constructor arguments are maxAge in seconds and maxDeviationBps: 86400/2000, 86400/2000 and 3600/2000. These preserve the existing manifest settings; the deployment scripts instead use 5000 for maxDeviationBps. ParameterizedVault reuses the specified existing MockIMD collateral, which must have code at deployment. Zero CompToken and work-oracle arguments create and bind fresh CompToken and MockWorkOracle contracts during construction. The vault also creates its own Parameters, Treasury and UsdPriceFeed; they are not additional manifest deployments. Protocol liquidation revenue and minted stability fees go to that Treasury. workCeiling is reserveValue() plus backedDebt() times workRatioBps divided by 10000. reserveValue() converts Treasury reserveValueUsd() to the vault's ETH-denominated debt unit using ETH/USD, counting reserves as zero when that quote is unavailable or stale. backedDebt() is the lesser of current and transaction-start totalDebt, less totalBadDebt, floored at zero. The ratio starts at 2500 and Parameters caps it at 2500. Feeds start unseeded and the Treasury reserve register starts empty. No initialization calls are included. Feed authorities, the existing attestation relayer, payload chainId 1, answerType 3, quorum 1, Chainlink USD source and approved operator remain source-defined. No constructor accepts an owner and no privileged wallet is supplied by this manifest; source-defined authority remains subject to independent policy and authorization review. The pool pairs CPL with native ETH. The factory supplies the LP, MerkleDistributor and initialization-only PoolInitializationGuard. Services own policy, signed artifact linkage, admission and deployment; these notes do not authorize them."
 }

@@ -533,6 +533,7 @@ contract LiquidationTest is ProtocolFixture {
     function test_workMintedCOMPCanFundLiquidationWithoutReducingWorkMintedCounter() public {
         priceFeed.setValue(2 ether);
         _open(alice, 140 ether, 100 ether);
+        _establishWorkBacking(vault, 100 ether);
         vm.prank(bob);
         vault.mintFromWork(100 ether);
         priceFeed.setValue(1 ether);
@@ -545,7 +546,7 @@ contract LiquidationTest is ProtocolFixture {
         assertEq(comp.balanceOf(bob), 0);
         _assertDefaultSplit(imd.balanceOf(bob) - 1000 ether, 110 ether, 100 ether);
         assertEq(vault.totalWorkMinted(), 100 ether);
-        assertEq(comp.totalSupply(), vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted());
         assertEq(oracle.mintingRights(bob), 900 ether);
         assertEq(oracle.mintingRights(alice), 1000 ether);
     }
@@ -626,12 +627,11 @@ contract LiquidationTest is ProtocolFixture {
     /// the liquidator on top of the formula payout, and is deliberately outside the bonus, so
     /// neither the marker's share nor the protocol's grows with it. The return value stays the
     /// formula payout so the rounding assertions above it keep measuring the formula.
-    function _assertDefaultSplit(
-        uint256 liquidatorReceived,
-        uint256 payout,
-        uint256 principalCollateral,
-        uint256 swept
-    ) private view returns (uint256 formulaPayout) {
+    function _assertDefaultSplit(uint256 liquidatorReceived, uint256 payout, uint256 principalCollateral, uint256 swept)
+        private
+        view
+        returns (uint256 formulaPayout)
+    {
         uint256 expectedMarker = (payout - principalCollateral) * vault.markerShareBps() / 10_000;
         assertEq(vault.protocolBonusShareBps(), 0);
         assertEq(imd.balanceOf(address(this)), expectedMarker, "distinct marker receives its bonus share");

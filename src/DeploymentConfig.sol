@@ -12,7 +12,19 @@ address constant APPROVED_OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
 /// platform's own address on launch 519, not to the requester.
 /// MUST NOT be the feed's reporter or relayer — whoever sets the price would otherwise profit from
 /// liquidations they can trigger. Nothing on chain enforces that; see SPEC-ceiling-and-fee.md.
+/// Read only by the plain CDPVault: ParameterizedVault creates a Treasury in its constructor and
+/// routes both the bonus share and the minted stability fees there instead (`feeRecipient()`).
 address constant FEE_RECIPIENT = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+
+/// @dev Chainlink ETH/USD on Sepolia (8 decimals), the USD leg of UsdPriceFeed. A price authority, so
+/// it is pinned in source like the attester and the feeds rather than supplied by a deployer.
+address constant CHAINLINK_ETH_USD = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
+
+/// @dev Oldest ETH/USD answer UsdPriceFeed treats as fresh. Chainlink's Sepolia heartbeat is an hour,
+/// but the IMD/ETH leg it is multiplied with is deployed with a one-day maxAge, so the composite is
+/// bounded by its slower leg either way. A stale USD price only shrinks the work ceiling (a reserve
+/// asset it prices counts for nothing); it never reaches a liquidation.
+uint256 constant ETH_USD_MAX_AGE = 1 days;
 
 // ---------------------------------------------------------------------------------------------
 // Feed authority and attestation policy — pinned in source, never supplied by a deployer.
@@ -108,3 +120,11 @@ uint256 constant PROTOCOL_BONUS_SHARE_BPS = 3_333;
 /// @dev Annual stability fee on open debt, in basis points, accrued linearly from deployment.
 /// Ships at zero so this increment changes no existing behaviour; a later deployment turns it on.
 uint256 constant STABILITY_FEE_BPS = 200;
+
+/// @dev The ratio term of the work-minting ceiling, in basis points of collateral-backed debt:
+/// workCeiling = reserveValueUsd + totalDebt * WORK_RATIO_BPS / 10000. Section 3 of
+/// docs/COMPUTE-BACKING-DESIGN.md derives the bound: backing stays above one for every reserve size
+/// exactly when this ratio is below minCR - 1, which is 5000 at the loosest NHI. 2500 is half that
+/// cliff, 120% worst-case backing with an empty reserve. Parameters refuses any proposal above
+/// MAX_WORK_RATIO_BPS, which is also 2500, so governance can lower it and never raise it past here.
+uint256 constant WORK_RATIO_BPS = 2_500;
