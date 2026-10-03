@@ -294,6 +294,62 @@ Burning is the safe default and needs nothing to exist. The held remainder is th
 eventually become real backing, but it requires COMP liquidity, a swap route and a sell policy, so
 it accumulates first and converts later. Held COMP is **never** counted in `reserveValueUsd`.
 
+## 5b. Who captures the value an update creates
+
+Publishing a fresh price enables liquidations, and whoever acts on it first takes the margin. That
+value is Oracle Extractable Value, and in this protocol it is created by our own attestation relay
+rather than by an external feed.
+
+**The payer of an update is not guaranteed to capture it.** Two public facts combine:
+
+- `GET /oracle/requests` lists the last hundred requests — ids, questions and statuses — with no
+  authentication, and `GET /oracle/requests/<id>/attestation` serves the signed attestation the same
+  way. Checked 2026-10-03: both `200` unauthenticated.
+- `SwarmRelay` is permissionless by design, and the feeds pin it.
+
+So anyone can poll the list, pull the attestation for a request we paid 0.5 IMD for, and
+relay-and-liquidate ahead of us. `relayAndLiquidate` makes the update and the liquidation atomic; it
+does not make the payer first. The window is the couple of minutes between the panel attesting and
+our relay landing.
+
+**What is NOT at risk, and it is the larger half.** `liquidate` pays `protocolCut` to `feeRecipient()`
+and `markerCut` to the recorded marker, both independent of `msg.sender`; only the remainder goes to
+the caller. So the protocol is paid its `protocolBonusShareBps` share whoever liquidates. The
+contestable amount is the liquidator's own margin plus the 0.5 IMD spent on an update somebody else
+monetised — a revenue question, not a solvency one. That is what makes this an optimisation rather
+than a blocker.
+
+**Decision (2026-10-03): run the keeper in-house, and ship.** It is the fastest route to a working
+mainnet deployment and it wins in practice, because we know a `requestId` at the moment we pay for it
+while a searcher has to discover it by polling. Being first is a matter of not waiting.
+
+What that keeper actually needs, stated plainly because two of these are easy to underestimate:
+
+- **COMP inventory, not just gas.** `liquidate` burns the CALLER's COMP, so a keeper must already hold
+  the stablecoin it repays with. That is working capital, sourced by minting against its own
+  collateral or buying, and it is the real constraint on keeping one running.
+- **Its own key, on its own machine.** Not the worker box: strangers' tasks execute there, and this
+  repository's rule is that no wallet key belongs on it. The keeper is separate infrastructure.
+- **To poll its own requests, not the public list**, so it acts on the attestation as soon as the
+  panel issues it.
+- **To tolerate being beaten.** Losing a race costs the keeper's margin and the request fee. The
+  protocol's cut is unaffected, so a down keeper is lost revenue rather than a halt.
+
+**Deferred, and the only real fix:** give the relayer of an update a short exclusive window to act on
+it, so the party that paid for the price captures what it enables. That is a protocol change with its
+own fairness question — it privileges one address over a permissionless path we deliberately built —
+so it waits until there is liquidation volume worth arguing about.
+
+**Chainlink SVR was assessed and does not apply** (2026-10-03). It recaptures OEV from liquidations a
+*Chainlink* update enables, splitting it with the protocol through a private transmission channel to
+searchers. Ours are not Chainlink-triggered: `_price()` reads only the swarm `priceFeed`, and
+`usdPriceFeed` appears nowhere in the liquidation path — only in `reserveValue()` for the work
+ceiling. A Chainlink move cannot make a position liquidatable here, so there is nothing for it to
+recapture. It is also mainnet/Base/Arbitrum/BNB/Monad only, not Sepolia. It would only ever apply if
+the primary price moved to Chainlink, which §Design Philosophy rules out. Recorded so it is not
+re-evaluated: the useful part is that an independent product arrived at the same two mechanisms we
+built — bundling the update with the action, and splitting the recaptured value with the protocol.
+
 ## 6. What to build, in order
 
 1. `workCeiling()` + `workRatioBps` as governed parameters, and the ceiling check in `mintFromWork`.
@@ -306,6 +362,10 @@ it accumulates first and converts later. Held COMP is **never** counted in `rese
 4. Redemption channel A (IMD against CDPs). The hard floor, and the largest new surface.
 5. Redemption channel B (reserve assets, weight-priced fee).
 6. Upstream: the oracle-batch second-root PR.
+7. The in-house keeper (§5b). Off-chain, so it is not contract work and belongs in no `workflow.open`:
+   poll our own oracle requests, relay-and-liquidate atomically, hold COMP inventory, run on its own
+   machine with its own key. The relayer automation and the price-movement watcher of the cadence
+   finding are the same daemon — all three want the same key and the same loop.
 
 ## 7. New governed parameters
 
