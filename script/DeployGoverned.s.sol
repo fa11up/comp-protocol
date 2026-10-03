@@ -55,15 +55,12 @@ contract DeployGoverned is Script {
         NhiFeed nhiFeed = new NhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
         SpotFeed spotFeed = new SpotFeed(SPOT_MAX_AGE, MAX_DEVIATION_BPS);
 
-        // Parameters before the vault: the vault's reference to it is immutable, so the order is
-        // forced. It opens holding exactly the shipped constants, so deploying it changes nothing.
-        Parameters parameters = new Parameters(ICheckpointedVault(address(0)));
-        ParameterizedVault vault = new ParameterizedVault(
-            imd, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed), parameters
-        );
-        // Needs no governor signature: the only vault bindVault accepts is the one already naming
-        // this Parameters, so the reporter key can complete the whole stack in one broadcast.
-        parameters.bindVault(ICheckpointedVault(address(vault)));
+        // The vault creates its own Parameters, so there is nothing to deploy first and nothing to
+        // bind afterwards. It opens holding exactly the shipped constants, so this changes no
+        // economics; see the audit fix note in ParameterizedVault for why it cannot be passed one.
+        ParameterizedVault vault =
+            new ParameterizedVault(imd, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
+        Parameters parameters = vault.parameters();
 
         Treasury treasury = new Treasury();
         Registry registry = new Registry(address(treasury), address(vault.oracle()));

@@ -15,11 +15,6 @@ interface ICheckpointedVault {
     function pokeIndex() external;
 }
 
-/// @notice Read back off a candidate vault to prove it already names this parameters contract.
-interface IParameterized {
-    function parameters() external view returns (address);
-}
-
 /// @notice The five numbers that set the protocol's economics, changeable under a delay.
 /// @dev Why these and not everything: a parameter is safe to govern when the worst a wrong value can
 /// do is price the protocol badly. A fee can be too high, a ceiling too tight, a divergence bound too
@@ -59,37 +54,38 @@ contract Parameters is Governed {
     /// @notice The live values.
     ParamSet private _current;
 
-    /// @notice The vault these parameters govern, bound once after both exist.
+    /// @notice The vault these parameters govern: its creator, fixed at construction.
     /// @dev Needed for two things that cannot be done without it: checking a proposed ceiling
     /// against debt that is actually outstanding, and checkpointing the fee index before the rate
     /// changes. The binding is one-way and one-time — it is an address this contract reads, never an
     /// authority over the vault beyond the permissionless `pokeIndex`.
     ICheckpointedVault public vault;
 
-    error AlreadyBound();
     error ZeroVault();
-    error NotOurVault(address named);
-    error VaultNotBound();
     error FeeTooHigh(uint256 bps);
     error DivergenceOutOfRange(uint256 bps);
     error SharesExceedBonus(uint256 markerBps, uint256 protocolBps);
     error ZeroCeiling();
     error CeilingBelowDebt(uint256 ceiling, uint256 outstanding);
 
-    event VaultBound(address indexed vault);
-
     /// @dev Seeded from the shipped constants, so a fresh Parameters is exactly the configuration
     /// the vault would have had with them compiled in — including the unlimited default ceiling,
     /// which CDPVault pins as a literal rather than a named constant. Governance starts from the
     /// status quo, so binding it to a live vault changes nothing by itself.
-    /// @param vault_ the vault these parameters govern, or zero to bind it later with `bindVault`.
-    /// @dev A vault that creates its own Parameters passes itself here, because the verification
-    /// `bindVault` performs is impossible during construction: the vault has no code yet, so reading
-    /// its `parameters()` back would revert. No verification is needed on this path — the creator IS
-    /// the vault — and on the standalone path an unverified address could at worst make this contract
-    /// useless to itself, never reach the vault it names: all it may do there is read `totalDebt` and
-    /// call the permissionless `pokeIndex`.
+    /// @param vault_ the vault these parameters govern, which is always its creator.
+    /// @dev AUDIT FIX (two mediums, job c71449d1). Parameters used to be deployable standalone and
+    /// bound afterwards, which was unsafe in two ways that share one root cause — the binding was a
+    /// separate transaction. An attacker could front-run the deployer and bind an impostor whose
+    /// `pokeIndex` does nothing, so rate changes reached the real vault with no checkpoint; and a
+    /// second vault could be pointed at an already-bound Parameters and read a rate it is never
+    /// checkpointed for. Both end in `stabilityFeeOf` underflowing and freezing positions.
+    ///
+    /// There is no fix that keeps a separate binding transaction: a mid-construction callback cannot
+    /// verify the caller, because the vault has no code yet. So the transaction is gone. A vault
+    /// creates its own Parameters and is the only thing it can ever govern, which also means a
+    /// deployment comes up linked with nothing sent afterwards — what a launch manifest requires.
     constructor(ICheckpointedVault vault_) {
+        if (address(vault_) == address(0)) revert ZeroVault();
         vault = vault_;
         _current = ParamSet({
             debtCeiling: type(uint256).max,
@@ -98,21 +94,6 @@ contract Parameters is Governed {
             maxDivergenceBps: MAX_DIVERGENCE_BPS,
             markerShareBps: MARKER_SHARE_BPS
         });
-    }
-
-    /// @notice Record the vault these parameters govern. Callable once, by anyone.
-    /// @dev Deliberately not governor-gated, because it confers no choice. The only vault that can
-    /// be bound is one whose own immutable `parameters` already points here — fixed at that vault's
-    /// construction and unforgeable afterwards — so this transaction records a link that already
-    /// exists rather than creating one. Gating it would have bought nothing and would have put a
-    /// governor signature in the middle of a deployment broadcast from the reporter key.
-    function bindVault(ICheckpointedVault vault_) external {
-        if (address(vault) != address(0)) revert AlreadyBound();
-        if (address(vault_) == address(0)) revert ZeroVault();
-        address named = IParameterized(address(vault_)).parameters();
-        if (named != address(this)) revert NotOurVault(named);
-        vault = vault_;
-        emit VaultBound(address(vault_));
     }
 
     /// @notice Queue a complete replacement set. Always all five, so the pending payload is the whole
@@ -159,6 +140,13 @@ contract Parameters is Governed {
         }
         // The vault pays the marker out of the liquidator's bonus and keeps the protocol's cut from
         // the same bonus; together they cannot exceed it, or a liquidation owes more than it earns.
+        //
+        // AUDIT NOTE (job c71449d1, info): this bound is economically empty at its top. At
+        // protocolBonusShareBps 10000 a liquidator who did not mark receives exactly the principal
+        // back — no reward for the stablecoin, the inventory risk or the gas — so liquidations stop
+        // and bad debt accumulates. It stays a bound rather than a tighter cap because the borrower's
+        // loss is identical at every split and the change is visible for 48 hours, so this is a trust
+        // assumption to state plainly, not a bypass to close.
         if (next.markerShareBps + next.protocolBonusShareBps > BPS) {
             revert SharesExceedBonus(next.markerShareBps, next.protocolBonusShareBps);
         }
@@ -168,23 +156,15 @@ contract Parameters is Governed {
         // are not ceiling-gated — but it does make the protocol report a limit it is already past,
         // and it is far more likely to be a mistyped figure than a decision. Checked against live
         // debt at application, not at proposal, because that is when it takes effect.
-        ICheckpointedVault bound = vault;
-        if (address(bound) != address(0)) {
-            uint256 outstanding = bound.totalDebt();
-            if (next.debtCeiling < outstanding) revert CeilingBelowDebt(next.debtCeiling, outstanding);
-        } else if (next.stabilityFeeBps != _current.stabilityFeeBps) {
-            // Without the binding there is no way to checkpoint the index before the rate moves, and
-            // an unpoked rate change reprices every second already elapsed.
-            revert VaultNotBound();
-        }
+        uint256 outstanding = vault.totalDebt();
+        if (next.debtCeiling < outstanding) revert CeilingBelowDebt(next.debtCeiling, outstanding);
     }
 
     function _apply(bytes memory payload) internal override {
-        ICheckpointedVault bound = vault;
         // Freeze accrual to date at the old rate, in this transaction, before the new rate is
         // readable. The vault's index is linear from its last checkpoint, so without this the change
         // would reach time that has already passed.
-        if (address(bound) != address(0)) bound.pokeIndex();
+        vault.pokeIndex();
         _current = abi.decode(payload, (ParamSet));
     }
 }

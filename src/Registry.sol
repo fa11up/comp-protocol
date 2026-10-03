@@ -5,6 +5,18 @@ import {Governed} from "./Governed.sol";
 import {ATTESTATION_RELAYER} from "./DeploymentConfig.sol";
 
 /// @notice The protocol's replaceable counterparties, under the same delay as its parameters.
+/// @dev NOT YET WIRED, and an independent audit was right to call that out (job c71449d1, low). No
+/// contract reads this: the three feeds read ATTESTATION_RELAYER as a source constant, CDPVault reads
+/// FEE_RECIPIENT as one, and the work oracle is a vault constructor argument. So a rotation recorded
+/// here changes nothing today, and anyone relying on it would be wrong.
+///
+/// It is kept rather than deleted because the compute-backing design needs exactly this: the work
+/// oracle it describes does not exist yet, and the Treasury it names as the reserve is the one address
+/// most likely to move. Wiring it means a feed resolving its relayer through a pinned Registry instead
+/// of an immutable, which turns an immutable authority check into an external call on the attestation
+/// path and makes one contract a single point of failure for all three feeds. That is a deliberate
+/// change to make with the work oracle, not a line to slip in beforehand. Until then this is a
+/// published record of intent, and the docstring says so.
 /// @dev Split from Parameters by blast radius, not by type. These three are addresses the protocol
 /// SENDS to or ASKS, where a wrong value costs the protocol money or stops a mechanism — recoverable
 /// damage, visible in advance, worth being able to fix without a migration:

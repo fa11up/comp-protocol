@@ -69,6 +69,13 @@ abstract contract Governed {
     }
 
     /// @notice Apply the pending change once its delay has run. Callable by anyone.
+    /// @dev AUDIT NOTE (job c71449d1, info): nothing bounds how long AFTER eta a payload may sit, so
+    /// the guarantee a borrower actually has is "these values will not change for at least TIMELOCK
+    /// after Proposed", not "they change at eta". A matured proposal nobody applies can be applied by
+    /// the governor weeks later at a chosen moment — the very thing permissionless application was
+    /// meant to prevent. An expiry window would close it; it is left open deliberately for now
+    /// because adding one lets a change be blocked by simply not applying it until it lapses, and the
+    /// ceiling finding below already shows third parties can stall an application.
     function applyPending() external {
         uint256 eta = pendingEta;
         if (eta == 0) revert NothingPending();

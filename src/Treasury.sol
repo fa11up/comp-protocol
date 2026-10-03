@@ -69,10 +69,19 @@ contract Treasury {
         if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
         if (to == address(0) || to == address(this)) revert InvalidRecipient();
         if (amount == 0) revert ZeroAmount();
+        // AUDIT FIX (job c71449d1, low): credit anything that arrived since the last sync BEFORE
+        // moving the baseline. Clamping first silently dropped that revenue from totalReceived
+        // forever — no funds lost, but the one number this contract exists to answer was wrong.
+        uint256 before = token.balanceOf(address(this));
+        uint256 counted = lastSynced[token];
+        if (before > counted) {
+            uint256 credited = before - counted;
+            totalReceived[token] += credited;
+            emit Received(token, credited, totalReceived[token]);
+        }
         token.safeTransfer(to, amount);
         // Keep the baseline honest, so the next sync does not read the withdrawal as fresh revenue.
-        uint256 balance = token.balanceOf(address(this));
-        if (lastSynced[token] > balance) lastSynced[token] = balance;
+        lastSynced[token] = token.balanceOf(address(this));
         emit Withdrawn(token, to, amount);
     }
 }

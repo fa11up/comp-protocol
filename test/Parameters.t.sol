@@ -38,12 +38,9 @@ contract ParametersTest is Test {
         price = new TestSwarmFeed(1 ether);
         spot = new TestSwarmFeed(1 ether);
         nhi = new TestSwarmFeed(0.9 ether);
-        params = new Parameters(ICheckpointedVault(address(0)));
-        vault = new ParameterizedVault(
-            address(imd), address(0), address(0), address(price), address(nhi), address(spot), params
-        );
+        vault = new ParameterizedVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
+        params = vault.parameters();
         comp = vault.compToken();
-        params.bindVault(ICheckpointedVault(address(vault)));
         vm.prank(APPROVED_OPERATOR);
         imd.mint(BORROWER, 1_000 ether);
         vm.startPrank(BORROWER);
@@ -241,41 +238,27 @@ contract ParametersTest is Test {
         params.applyPending();
     }
 
-    function test_theRateCannotMoveWhileNoVaultIsBound() public {
-        Parameters loose = new Parameters(ICheckpointedVault(address(0)));
-        Parameters.ParamSet memory next = _set(type(uint256).max, 0, 500, 500, 1_000);
+
+    /// @dev AUDIT FIX (two mediums): a vault's Parameters is the one it created, and there is no way
+    /// to pass another in or to bind one afterwards. So neither the front-run that bound an impostor
+    /// nor the second vault borrowing an already-bound Parameters is expressible any more. The proofs
+    /// for both live in audit/proofs/, outside the compiled tree, because they no longer compile.
+    function test_everyVaultGovernsThroughItsOwnParametersAndNothingElse() public {
+        ParameterizedVault other =
+            new ParameterizedVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
+        Parameters theirs = other.parameters();
+
+        assertTrue(address(theirs) != address(params), "two vaults must not share one Parameters");
+        assertEq(address(theirs.vault()), address(other), "each Parameters governs its creator");
+        assertEq(address(params.vault()), address(vault));
+
+        // A rate change on one reaches only that one, so the other is never left uncheckpointed.
         vm.prank(APPROVED_OPERATOR);
-        vm.expectRevert(Parameters.VaultNotBound.selector);
-        loose.propose(next);
-
-        // Everything else is still governable without a vault; only the rate needs the checkpoint.
-        vm.prank(APPROVED_OPERATOR);
-        loose.propose(_set(1 ether, 0, STABILITY_FEE_BPS, 500, 1_000));
-        assertGt(loose.pendingEta(), 0);
-    }
-
-    /// @dev The binding needs no authority because it confers no choice: the only vault it will
-    /// accept is one already pointing at this contract through its own immutable.
-    function test_theBindingAcceptsOnlyTheVaultThatAlreadyNamesIt() public {
-        Parameters fresh = new Parameters(ICheckpointedVault(address(0)));
-
-        vm.startPrank(STRANGER);
-        vm.expectRevert(Parameters.ZeroVault.selector);
-        fresh.bindVault(ICheckpointedVault(address(0)));
-        // `vault` reads `params`, not `fresh`, so no one can bind it here.
-        vm.expectRevert(abi.encodeWithSelector(Parameters.NotOurVault.selector, address(params)));
-        fresh.bindVault(ICheckpointedVault(address(vault)));
-        vm.stopPrank();
-
-        ParameterizedVault ours = new ParameterizedVault(
-            address(imd), address(0), address(0), address(price), address(nhi), address(spot), fresh
-        );
-        vm.prank(STRANGER);
-        fresh.bindVault(ICheckpointedVault(address(ours)));
-        assertEq(address(fresh.vault()), address(ours), "a stranger may record a link that already exists");
-
-        vm.expectRevert(Parameters.AlreadyBound.selector);
-        fresh.bindVault(ICheckpointedVault(address(ours)));
+        theirs.propose(Parameters.ParamSet(type(uint256).max, 0, 400, 500, 1_000));
+        vm.warp(block.timestamp + theirs.TIMELOCK());
+        theirs.applyPending();
+        assertEq(other.stabilityFeeBps(), 400);
+        assertEq(vault.stabilityFeeBps(), STABILITY_FEE_BPS, "the other vault is untouched");
     }
 
     // --- what made the rate governable at all --------------------------------
@@ -361,9 +344,8 @@ contract ParametersTest is Test {
     /// calls and names at most four contracts, so the vault creates its own Parameters and the pair
     /// comes up mutually linked with nothing sent afterwards.
     function test_aSelfContainedVaultComesUpAlreadyLinked() public {
-        ParameterizedVault solo = new ParameterizedVault(
-            address(imd), address(0), address(0), address(price), address(nhi), address(spot), Parameters(address(0))
-        );
+        ParameterizedVault solo =
+            new ParameterizedVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
         Parameters own = solo.parameters();
         assertTrue(address(own) != address(0), "the vault created its parameters");
         assertEq(address(own.vault()), address(solo), "and they already name it, with no post-deploy call");
@@ -378,8 +360,6 @@ contract ParametersTest is Test {
 
         // And it is a DIFFERENT Parameters from this fixture's: one per vault, never shared.
         assertTrue(address(own) != address(params), "a vault does not borrow another vault's parameters");
-        vm.expectRevert(Parameters.AlreadyBound.selector);
-        own.bindVault(ICheckpointedVault(address(vault)));
     }
 
     /// @dev `pokeIndex` is permissionless and can only move the index forward, so calling it

@@ -25,17 +25,15 @@ contract ParameterizedVault is CDPVault {
         address oracle_,
         address priceFeed_,
         address nhiFeed_,
-        address spotFeed_,
-        Parameters parameters_
+        address spotFeed_
     ) CDPVault(imdToken_, compToken_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {
-        // Zero means self-contained, the same convention compToken_ and oracle_ already use: create
-        // the Parameters contract here and bind it in its own constructor, so the pair comes up
-        // mutually linked with no post-deploy transaction. A launch manifest makes no post-deploy
-        // calls and can name at most four contracts, so this is what lets the governed stack deploy
-        // from one: three feeds and this vault, with Parameters created inside it.
-        parameters = address(parameters_) == address(0)
-            ? new Parameters(ICheckpointedVault(address(this)))
-            : parameters_;
+        // AUDIT FIX (job c71449d1): there is deliberately no way to pass a Parameters in. Accepting
+        // one allowed an attacker to bind an impostor ahead of the deployer, and allowed a second
+        // vault to borrow a Parameters already bound elsewhere and read a rate it is never
+        // checkpointed for. The vault creates its own, which also means the pair comes up linked with
+        // no post-deploy transaction — what a launch manifest requires, since it makes none and can
+        // name at most four contracts.
+        parameters = new Parameters(ICheckpointedVault(address(this)));
     }
 
     function debtCeiling() public view override returns (uint256) {

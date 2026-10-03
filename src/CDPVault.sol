@@ -72,6 +72,9 @@ contract CDPVault is ReentrancyGuard {
 
     uint256 public constant LIQUIDATION_BONUS_PERCENT = 10;
     uint256 private constant INDEX_SCALE = 1e18;
+    /// @notice When this vault was deployed. NOT the accrual origin: the fee index runs from
+    /// `indexCheckpointAt`, which moves. Kept because it is a stable deployment timestamp, and
+    /// deliberately not removed — tests anchor elapsed time to it.
     uint256 public immutable deployedAt = block.timestamp;
 
     /// @notice Debt index as of `indexCheckpointAt`; starts at `INDEX_SCALE` and never decreases.

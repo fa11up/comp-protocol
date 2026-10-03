@@ -15,11 +15,9 @@ contract TreasuryLostReceiptTest is Test {
     MockIMD private token;
 
     function setUp() public {
-        // Auditor-supplied proof, preserved verbatim apart from this gate. It is EXPECTED TO
-        // FAIL until the finding is fixed; run with AUDIT_PROOFS=true to reproduce it. Gated so
-        // the default suite stays green, because a permanently red test is one no agent can
-        // make pass and it burns a build node's whole revision budget.
-        if (!vm.envOr("AUDIT_PROOFS", false)) vm.skip(true);
+        // Auditor-supplied proof, preserved verbatim apart from this note. It FAILED against
+        // cbd9e609 and PASSES now: the accounting bug it found is fixed, so it is an ungated
+        // regression test rather than an outstanding finding.
 
         treasury = new Treasury();
         token = new MockIMD();
