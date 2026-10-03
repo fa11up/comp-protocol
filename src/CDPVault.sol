@@ -9,7 +9,13 @@ import {CompToken} from "./CompToken.sol";
 import {MockWorkOracle} from "./MockWorkOracle.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
-import {FEE_RECIPIENT, MAX_DIVERGENCE_BPS, MARKER_SHARE_BPS, STABILITY_FEE_BPS, PROTOCOL_BONUS_SHARE_BPS} from "./DeploymentConfig.sol";
+import {
+    FEE_RECIPIENT,
+    MAX_DIVERGENCE_BPS,
+    MARKER_SHARE_BPS,
+    STABILITY_FEE_BPS,
+    PROTOCOL_BONUS_SHARE_BPS
+} from "./DeploymentConfig.sol";
 
 /// @notice Price-aware COMP borrowing and independent work-credit minting on Sepolia.
 /// @dev Both tokens use 18 decimals; price is COMP per IMD scaled by 1e18.
@@ -62,10 +68,17 @@ contract CDPVault is ReentrancyGuard {
     event Liquidated(address indexed owner, address indexed liquidator, uint256 debtRepaid, uint256 collateralSeized);
     event UnderwaterMarked(address indexed owner, uint256 markedAt, uint256 grace);
     event UnderwaterMarkCleared(address indexed owner);
+    event IndexCheckpointed(uint256 index, uint256 at);
 
     uint256 public constant LIQUIDATION_BONUS_PERCENT = 10;
     uint256 private constant INDEX_SCALE = 1e18;
     uint256 public immutable deployedAt = block.timestamp;
+
+    /// @notice Debt index as of `indexCheckpointAt`; starts at `INDEX_SCALE` and never decreases.
+    uint256 public indexCheckpoint = INDEX_SCALE;
+
+    /// @notice Timestamp the index was last checkpointed at.
+    uint256 public indexCheckpointAt = block.timestamp;
 
     /// @notice Maximum collateral-backed minted principal, in stablecoin units (fees are additional).
     /// @dev Unlimited by default so behaviour is unchanged; a deployment that wants a cap overrides
@@ -75,9 +88,6 @@ contract CDPVault is ReentrancyGuard {
         return type(uint256).max;
     }
 
-    /// @notice Share of the liquidation bonus paid to FEE_RECIPIENT, in basis points of the bonus.
-    /// @dev Zero by default. The borrower's loss is identical either way: this splits the existing
-    /// 10% bonus rather than seizing more, so turning it on never makes liquidation harsher.
     /// @notice Tolerated gap between the primary average price and the spot price, in basis points.
     /// @dev Virtual like every other economic knob here, so a deployment that reads its parameters
     /// from somewhere governed can override it without this contract changing. The default is pinned
@@ -91,14 +101,20 @@ contract CDPVault is ReentrancyGuard {
         return MARKER_SHARE_BPS;
     }
 
-    /// @notice Annual stability fee on open debt, in basis points, accrued linearly from deployment.
+    /// @notice Annual stability fee on open debt, in basis points, accrued linearly from the last
+    /// index checkpoint.
     /// @dev Virtual for the same reason debtCeiling and protocolBonusShareBps are: a deployment pins
     /// it in source, and a test can hold it at another value without rewriting the source to do it.
-    /// There is no setter, so a deployment's rate is permanent for that vault.
+    /// This contract has no setter, so the rate is permanent unless a subclass reads it from
+    /// somewhere governed — in which case that governor MUST call `pokeIndex` in the same
+    /// transaction as the change, or the new rate reaches time that has already elapsed.
     function stabilityFeeBps() public view virtual returns (uint256) {
         return STABILITY_FEE_BPS;
     }
 
+    /// @notice Share of the liquidation bonus paid to FEE_RECIPIENT, in basis points of the bonus.
+    /// @dev The borrower's loss is identical whatever this is: it splits the existing 10% bonus
+    /// rather than seizing more, so raising it never makes liquidation harsher for the borrower.
     function protocolBonusShareBps() public view virtual returns (uint256) {
         return PROTOCOL_BONUS_SHARE_BPS;
     }
@@ -354,16 +370,31 @@ contract CDPVault is ReentrancyGuard {
         return (_positions[owner].collateral, debtOf(owner));
     }
 
-    /// @notice Deployment-based linear index; no per-second compounding or mutable rate.
+    /// @notice Linear index accumulated from the last checkpoint; no per-second compounding.
+    /// @dev Accrual is measured from `indexCheckpointAt`, not from deployment, so a change to
+    /// `stabilityFeeBps()` applies only to the time after it. Computing from deployment at the
+    /// current rate would reprice every elapsed second, and a rate cut would make the subtraction
+    /// in `stabilityFeeOf` underflow, reverting `_accrue` and freezing every position.
     function debtIndex() public view returns (uint256) {
-        return INDEX_SCALE + Math.mulDiv(block.timestamp - deployedAt, stabilityFeeBps() * INDEX_SCALE, 365 days * 10_000);
+        return indexCheckpoint
+            + Math.mulDiv(block.timestamp - indexCheckpointAt, stabilityFeeBps() * INDEX_SCALE, 365 days * 10_000);
+    }
+
+    /// @notice Freezes accrual to date at the rate in force, so a later rate change is forward-only.
+    /// @dev Permissionless by design: it can only move the index forward by time already elapsed,
+    /// and it MUST be called in the same transaction that changes the rate, before the change.
+    function pokeIndex() public {
+        uint256 index = debtIndex();
+        indexCheckpoint = index;
+        indexCheckpointAt = block.timestamp;
+        emit IndexCheckpointed(index, block.timestamp);
     }
 
     /// @notice Unpaid fees on principal since its last debt change, plus previously accrued unpaid fees.
     /// @dev Fees never themselves earn interest. Reads and collateral/mark changes cannot capitalize fees.
     function stabilityFeeOf(address owner) public view returns (uint256) {
         uint256 principal = _positions[owner].debt;
-        if (principal == 0 || stabilityFeeBps() == 0) return _stabilityFees[owner];
+        if (principal == 0) return _stabilityFees[owner];
         return _stabilityFees[owner] + Math.mulDiv(principal, debtIndex() - debtIndexOf[owner], INDEX_SCALE);
     }
 
