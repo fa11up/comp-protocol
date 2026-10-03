@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
@@ -10,7 +11,7 @@ import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
-abstract contract ProtocolFixture is Test {
+abstract contract ProtocolFixture is LegacyWorkBacking {
     address internal constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
     MockIMD internal imd;
     CompToken internal comp;

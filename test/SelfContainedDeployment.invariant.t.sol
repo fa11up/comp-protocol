@@ -84,6 +84,7 @@ contract SelfContainedDeploymentHandler is Test {
             imd.approve(address(vault), type(uint256).max);
             vault.depositCollateral(300 ether);
             vault.mintCOMP(100 ether);
+            assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 25 ether);
             vault.mintFromWork(25 ether);
             vm.stopPrank();
             deposited[actor] = 300 ether;
@@ -116,10 +117,14 @@ contract SelfContainedDeploymentHandler is Test {
     function mintWork(uint256 seed, uint256 amount) external {
         address actor = actors[seed % 4];
         uint256 rights = oracle.mintingRights(actor);
+        uint256 ceiling = vault.totalDebt() / 4;
+        if (ceiling <= vault.totalWorkMinted()) return;
+        rights = _min(rights, ceiling - vault.totalWorkMinted());
         if (rights == 0) return;
         amount = bound(amount, 1, _min(rights, 1000 ether));
         vm.prank(actor);
         vault.mintFromWork(amount);
+        assertLe(vault.totalWorkMinted(), ceiling, "work mint has backing");
         workMinted[actor] += amount;
     }
 
@@ -306,11 +311,7 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
             walletIMD += handler.imd().balanceOf(actor);
             assertEq(c, handler.deposited(actor) - handler.withdrawn(actor), "collateral history");
             // positions() reports debtOf(), principal plus accrued fee; the history models principal.
-            assertEq(
-                d - vault.stabilityFeeOf(actor),
-                handler.debtMinted(actor) - handler.repaid(actor),
-                "debt history"
-            );
+            assertEq(d - vault.stabilityFeeOf(actor), handler.debtMinted(actor) - handler.repaid(actor), "debt history");
             assertEq(
                 comp.balanceOf(actor),
                 handler.debtMinted(actor) + handler.workMinted(actor) + handler.received(actor) - handler.repaid(actor)
@@ -365,10 +366,7 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
             assertEq(remainingCollateral, 0, "all deposits redeemable");
             assertEq(remainingDebt, 0, "all debt repayable");
         }
-        assertEq(
-            handler.comp().totalSupply(),
-            handler.vault().totalWorkMinted() + handler.vault().totalFeesMinted()
-        );
+        assertEq(handler.comp().totalSupply(), handler.vault().totalWorkMinted() + handler.vault().totalFeesMinted());
         assertEq(handler.comp().balanceOf(handler.actors(0)), handler.vault().totalWorkMinted());
         assertEq(handler.imd().balanceOf(address(handler.vault())), 0);
         invariant_constructorLinksSupplyRightsAndCustodyRemainConsistent();
@@ -376,7 +374,7 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
 
     function test_handlerExercisesConstructorOnlyBorrowingFailuresAndFullExit() public {
         handler.deposit(0, 30 ether);
-        handler.mintDebt(0, 10 ether);
+        handler.mintDebt(0, 28 ether);
         handler.mintWork(0, 7 ether);
         handler.transferCOMP(0, 1, 5 ether);
         handler.repay(1, 20 ether);

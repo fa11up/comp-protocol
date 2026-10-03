@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {CompToken} from "../src/CompToken.sol";
 import {CDPVault} from "../src/CDPVault.sol";
@@ -31,7 +32,7 @@ contract ApplicationConstructionFactory {
     }
 }
 
-contract FactoryDeploymentTest is Test {
+contract FactoryDeploymentTest is LegacyWorkBacking {
     address private constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
     address private constant RELAYER = address(0x1001);
     address private constant ORIGIN = address(0x1002);
@@ -99,9 +100,12 @@ contract FactoryDeploymentTest is Test {
         vault.mintCOMP(100 ether);
         assertEq(vault.collateralRatio(BORROWER), 150);
         assertEq(oracle.mintingRights(BORROWER), 40 ether);
+        vm.stopPrank();
+        _establishWorkBacking(vault, 40 ether);
+        vm.startPrank(BORROWER);
         vault.mintFromWork(40 ether);
         assertEq(comp.balanceOf(BORROWER), 140 ether);
-        assertEq(comp.totalSupply(), 140 ether);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 140 ether);
         assertEq(vault.totalWorkMinted(), 40 ether);
         assertEq(oracle.mintingRights(BORROWER), 0);
         vault.repayCOMP(100 ether);
@@ -110,10 +114,12 @@ contract FactoryDeploymentTest is Test {
         (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
         assertEq(collateral, 0);
         assertEq(debt, 0);
-        assertEq(comp.totalSupply(), vault.totalWorkMinted() + vault.totalFeesMinted());
+        assertEq(
+            comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted() + vault.totalFeesMinted()
+        );
         assertEq(comp.balanceOf(BORROWER), 40 ether);
         assertEq(imd.balanceOf(BORROWER), 150 ether);
-        assertEq(imd.balanceOf(address(vault)), 0);
+        assertEq(imd.balanceOf(address(vault)), backingCollateral[address(vault)]);
     }
 
     function test_factoryRelayerAndOriginHaveNoInitializationOrFaucetAuthority() public {
@@ -164,7 +170,7 @@ contract FactoryDeploymentTest is Test {
 }
 
 /// @dev Exercises the launch's zero/zero constructor path independently of deferred-token fixtures.
-contract SelfContainedFactoryDeploymentTest is Test {
+contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
     address private constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
     address private constant RELAYER = address(0x2001);
     address private constant ORIGIN = address(0x2002);
@@ -259,6 +265,7 @@ contract SelfContainedFactoryDeploymentTest is Test {
     }
 
     function _roundTrip(uint256 collateral, uint256 debt, uint256 work) private {
+        _establishWorkBacking(vault, work);
         vm.prank(OPERATOR);
         imd.mint(BORROWER, collateral);
         vm.startPrank(BORROWER);
@@ -299,11 +306,12 @@ contract SelfContainedFactoryDeploymentTest is Test {
         (uint256 actualCollateral, uint256 actualDebt) = vault.positions(BORROWER);
         assertEq(actualCollateral, collateral);
         assertEq(actualDebt - vault.stabilityFeeOf(BORROWER), debt, "principal, excluding accrued fee");
-        assertEq(imd.balanceOf(address(vault)), collateral);
+        assertEq(imd.balanceOf(address(vault)), backingCollateral[address(vault)] + collateral);
         assertEq(vault.totalWorkMinted(), work);
         assertEq(
             comp.totalSupply(),
-            actualDebt - vault.stabilityFeeOf(BORROWER) + vault.totalWorkMinted() + vault.totalFeesMinted()
+            backingPrincipal[address(vault)] + actualDebt - vault.stabilityFeeOf(BORROWER) + vault.totalWorkMinted()
+                + vault.totalFeesMinted()
         );
     }
 

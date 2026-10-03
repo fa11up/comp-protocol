@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {CompToken} from "src/CompToken.sol";
@@ -11,7 +12,7 @@ import {APPROVED_OPERATOR, FEE_RECIPIENT, MAX_DIVERGENCE_BPS} from "src/Deployme
 import {TestSwarmFeed} from "test/helpers/TestSwarmFeed.sol";
 
 /// @notice Independent primary and spot feeds exercise the guard without an RPC or attestation signer.
-contract DivergenceGuardTest is Test {
+contract DivergenceGuardTest is LegacyWorkBacking {
     enum Action {
         Mint,
         Mark,
@@ -56,6 +57,7 @@ contract DivergenceGuardTest is Test {
         imd.approve(address(vault), type(uint256).max);
         vault.depositCollateral(300 ether);
         vm.stopPrank();
+        _establishWorkBacking(vault, 1000 ether);
         vm.prank(LIQUIDATOR);
         vault.mintFromWork(1000 ether);
     }
@@ -236,7 +238,7 @@ contract DivergenceGuardTest is Test {
         assertEq(debt, 0);
         assertEq(imd.balanceOf(BORROWER), 300 ether);
         assertEq(comp.balanceOf(BORROWER), 0);
-        assertEq(comp.totalSupply(), vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted());
         (,, bool marked,) = vault.liquidationMarks(BORROWER);
         assertFalse(marked, "full repayment must clear the liquidation mark");
     }
@@ -248,7 +250,7 @@ contract DivergenceGuardTest is Test {
         vault.repayCOMP(10 ether);
         assertEq(vault.debtOf(BORROWER), 90 ether);
         assertEq(comp.balanceOf(BORROWER), 90 ether);
-        assertEq(vault.totalDebt(), 90 ether);
+        assertEq(vault.totalDebt(), backingPrincipal[address(vault)] + 90 ether);
         (,, bool marked, address marker) = vault.liquidationMarks(BORROWER);
         assertTrue(marked, "still-underwater position preserves its mark");
         assertEq(marker, MARKER);
@@ -278,7 +280,7 @@ contract DivergenceGuardTest is Test {
         vm.stopPrank();
         assertEq(vault.debtOf(BORROWER), 0);
         assertEq(imd.balanceOf(BORROWER), 300 ether);
-        assertEq(comp.totalSupply(), vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted());
     }
 
     function _prepare(Action action) private {

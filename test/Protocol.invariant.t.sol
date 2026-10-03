@@ -66,6 +66,7 @@ contract ProtocolHandler is Test {
             vault.depositCollateral(150 ether);
             vault.mintCOMP(100 ether);
             // Both supply channels start nonzero, so the retired invariant fails immediately.
+            assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 25 ether);
             vault.mintFromWork(25 ether);
             vm.stopPrank();
             deposited[actor] = 150 ether;
@@ -101,10 +102,14 @@ contract ProtocolHandler is Test {
         if (!_fresh()) return;
         address actor = actors[seed % 4];
         uint256 rights = oracle.mintingRights(actor);
+        uint256 ceiling = vault.totalDebt() / 4;
+        if (ceiling <= vault.totalWorkMinted()) return;
+        rights = _min(rights, ceiling - vault.totalWorkMinted());
         if (rights == 0) return;
         amount = bound(amount, 1, _min(rights, 1000 ether));
         vm.prank(actor);
         vault.mintFromWork(amount);
+        assertLe(vault.totalWorkMinted(), ceiling, "work mint has backing");
         workMinted[actor] += amount;
         ++successfulWorkMints;
     }
@@ -475,8 +480,8 @@ contract ProtocolInvariantTest is StdInvariant, Test {
     }
 
     function test_handlerExercisesBothMintsLiquidationRecoveryAndExit() public {
-        handler.deposit(0, 30 ether);
-        handler.mintDebt(0, 10 ether);
+        handler.deposit(0, 60 ether);
+        handler.mintDebt(0, 40 ether);
         handler.mintWork(0, 10 ether);
         handler.transferCOMP(0, 1, 10 ether);
         handler.repay(1, 5 ether);

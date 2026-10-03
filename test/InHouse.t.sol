@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
+
 import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {Test, console2} from "forge-std/Test.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
@@ -49,19 +51,19 @@ contract CappedFeeVault is CDPVault {
     function protocolBonusShareBps() public view override returns (uint256) {
         return _shareBps;
     }
+
     /// @dev Held at zero so this suite keeps asserting what it is about. The shipped rate is
     /// non-zero and ShippedRateStabilityFeeTest covers it.
     function stabilityFeeBps() public pure override returns (uint256) {
         return 0;
     }
-
 }
 
 /// @notice Fork tests for OUR deployment parameters, against live Sepolia state.
 /// @dev The repo's own suite proves the contracts. This proves the constructor arguments — the
 /// layer that actually failed on launch 519, where `$owner` and an answerType of 1 were both wrong
 /// and immutable. Run with: forge test --match-path test/InHouse.t.sol --fork-url $SEPOLIA_RPC_URL
-contract InHouseTest is Test {
+contract InHouseTest is LegacyWorkBacking {
     // Aliases, not second copies: a literal repeated here would keep passing after someone edited
     // DeploymentConfig, which is exactly the drift this whole change exists to remove.
     address constant ATTESTER = ORACLE_ATTESTER;
@@ -176,6 +178,9 @@ contract InHouseTest is Test {
         assertEq(comp.balanceOf(OPERATOR), debt, "COMP not minted");
 
         MockWorkOracle(address(vault.oracle())).grantRights(OPERATOR, debt);
+        vm.stopPrank();
+        _establishWorkBacking(vault, debt);
+        vm.startPrank(OPERATOR);
         vault.mintFromWork(debt);
         assertEq(vault.totalWorkMinted(), debt, "work mint not recorded");
         (, uint256 d1) = vault.positions(OPERATOR);
@@ -185,7 +190,9 @@ contract InHouseTest is Test {
         (, uint256 d2) = vault.positions(OPERATOR);
         assertEq(d2, 0, "debt not cleared");
         vm.stopPrank();
-        assertEq(comp.totalSupply(), vault.totalWorkMinted(), "supply invariant broken");
+        assertEq(
+            comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted(), "supply invariant broken"
+        );
     }
 
     /// The bug that parked launch 493: the payout must be priced, not a flat 110/100.
