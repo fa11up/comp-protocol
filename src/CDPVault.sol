@@ -51,6 +51,7 @@ contract CDPVault is ReentrancyGuard {
     error DebtCeilingReached();
     error PriceDivergence();
     error InvalidBonusShares();
+    error InvalidBeneficiary();
 
     event OracleSet(address indexed oracle);
     event CollateralDeposited(address indexed account, uint256 amount);
@@ -241,7 +242,23 @@ contract CDPVault is ReentrancyGuard {
     /// retaken, which restarts grace. latestValue cannot reveal a recover-then-fall sequence nobody
     /// transacted through, so bounding a mark's lifetime is what keeps an old mark from turning a later
     /// dip into a same-block liquidation with no effective grace.
-    function markUnderwater(address owner) external nonReentrant {
+    function markUnderwater(address owner) external {
+        markUnderwaterFor(owner, msg.sender);
+    }
+
+    /// @notice Mark a position underwater and credit the marker's bonus share to `beneficiary`.
+    /// @dev The marker is paid at liquidation, so it has to be recorded now, and recording
+    /// `msg.sender` is wrong as soon as the call arrives through anything. A keeper bundling the
+    /// feed update with the mark calls through a relay, and the relay would be recorded as the
+    /// marker: its share would then be paid to a contract with no owner and no way to move it, or
+    /// handed to whichever keeper happened to liquidate. The reward belongs to whoever caused the
+    /// mark, not to whatever contract carried the call.
+    ///
+    /// Naming someone else is allowed and uninteresting: a caller can only give away its own share.
+    /// A zero beneficiary is refused, because the bonus is paid by transfer and burning it silently
+    /// is worse than failing here.
+    function markUnderwaterFor(address owner, address beneficiary) public nonReentrant {
+        if (beneficiary == address(0)) revert InvalidBeneficiary();
         _requireFreshFeeds();
         _requirePriceAgreement();
         Position storage position = _positions[owner];
@@ -249,7 +266,7 @@ contract CDPVault is ReentrancyGuard {
         LiquidationMark storage mark = liquidationMarks[owner];
         if (mark.marked && !_expired(mark)) return;
         uint256 grace = gracePeriod();
-        liquidationMarks[owner] = LiquidationMark(block.timestamp, grace, true, msg.sender);
+        liquidationMarks[owner] = LiquidationMark(block.timestamp, grace, true, beneficiary);
         emit UnderwaterMarked(owner, block.timestamp, grace);
     }
 
