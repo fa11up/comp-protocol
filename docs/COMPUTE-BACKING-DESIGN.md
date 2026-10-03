@@ -136,31 +136,50 @@ becomes free, trustless and network-wide, and the attested tally becomes a fallb
 ## 5. Redemption
 
 The question that has to be answered honestly: without redemption, "1 COMP = 1 USD" is only a unit
-of account plus a hope that arbitrage closes the gap. There is no floor. So redemption is what makes
-the peg real, and there are two different channels because there are two different pools of assets.
+of account plus a hope that arbitrage closes the gap. There is no floor. Redemption is what makes the
+peg real.
 
-**Channel A — IMD, redeemed against CDPs (Liquity-shaped).** `redeem(comp)` burns COMP, repays the
-debt of the *lowest-collateral-ratio* position, and pays the redeemer that position's IMD at the feed
-price minus a fee. This is the hard floor: it is backed by every borrower's collateral, not by the
-reserve, so its capacity is total debt rather than a treasury balance. It also improves system health
-by acting on the riskiest position first.
+A redeemer names an amount of COMP and the asset they want. **The asset chosen determines the
+source**, because the two pools hold different things:
 
-Its cost is real and must be stated: **a redeemed borrower has their position closed involuntarily**,
-at face value, without being liquidated or doing anything wrong. That is the price Liquity pays for a
-hard peg, and it is a borrower-facing tradeoff rather than a technical detail.
+| asset wanted | source | capacity |
+|---|---|---|
+| USDC / USDG / ETH | reserve only | whatever the Treasury holds of it |
+| IMD | reserve first, then eligible CDPs | Treasury IMD, then the debt of eligible positions |
 
-**Channel B — USDC / USDG / ETH, redeemed against the reserve (PSM-shaped).** Capacity is whatever
-the Treasury holds of that asset. Free choice of asset against a heterogeneous reserve is adverse
-selection — the redeemer always takes the best asset and leaves the protocol the worst — so the fee
-per asset must rise as that asset falls below its target weight in the basket. Choice is allowed; the
-choice is priced.
+**Why reserve-first for IMD, rather than CDPs-first.** Both routes improve the backing ratio by the
+same arithmetic — burn `x` COMP, release `x` of assets, and since `B > 1` both numerator and
+denominator falling by `x` raises `B` — so solvency does not choose between them. What chooses is
+that the Treasury's IMD is idle while a borrower's IMD is working as collateral. Spending an idle
+asset before conscripting someone else's working one is both fairer and simpler: no position to
+locate, no ratio to check, nobody closed involuntarily. The reserve is a shallow first tranche that
+absorbs ordinary arbitrage without a borrower ever noticing, and only sustained pressure reaches
+positions at all. Combined with a rising fee (below), a run pays progressively more *before* it
+reaches anyone's collateral.
+
+**Channel A — eligible CDPs.** When reserve IMD is exhausted, `redeem` burns COMP, repays the debt of
+the **lowest-ratio position** and pays the redeemer that position's IMD at the feed price, minus the
+fee. Only positions **below `redemptionCeilingCR`** are eligible, so a borrower can price themselves
+out of redemption entirely by posting more collateral. The floor still holds, because some positions
+always sit near `minCR`. Capacity is the debt of eligible positions rather than the whole pool, which
+is the cost of giving borrowers an opt-out.
+
+**Channel B — reserve assets.** Free choice against a heterogeneous reserve is adverse selection: the
+redeemer takes the best asset and leaves the protocol the worst. So choice is allowed and the choice
+is priced — the per-asset fee rises as that asset falls below its target basket weight.
+
+**The fee.** A decaying base rate, Liquity-shaped, plus the per-asset weight penalty:
 
 ```
-redeem(compAmount, asset):
-    usdOut   = compAmount × (10000 − feeBps(asset)) / 10000
-    amountOut = usdOut / priceUsd[asset]
-    feeBps(asset) = baseRedemptionFeeBps + deviationPenalty(asset)
+on redemption:  baseRate += redeemed / totalSupply / BETA
+over time:      baseRate decays, halving roughly every 12h
+
+feeBps(asset) = min(baseRate + REDEMPTION_FEE_FLOOR + deviationPenalty(asset), REDEMPTION_FEE_MAX)
 ```
+
+Ordinary arbitrage pays near the floor; a run makes itself progressively more expensive. The cap
+matters as much as the floor — an uncapped fee is a redemption halt by another name, and the floor
+is what the peg actually is, since COMP cannot trade far below `1 − feeBps` without being redeemed.
 
 **Redemption must never reach CDP collateral except through channel A's debt repayment.** A
 borrower's IMD is theirs; the protocol may only hand it over in exchange for retiring their debt.
@@ -168,6 +187,24 @@ borrower's IMD is theirs; the protocol may only hand it over in exchange for ret
 Note what channel A implies for work-minted COMP: it has no CDP behind it, so redeeming it consumes
 borrowers' collateral. That is exactly the dilution §3 bounds, and the 120% worst case is the
 guarantee that the collateral pool absorbs it.
+
+**Self-stabilising side effect, worth stating because it is load-bearing.** Redemption shrinks both
+terms of `workCeiling` — the reserve directly, and `totalDebt` through channel A. So COMP trading
+below peg automatically tightens new work-minting. Supply contracts exactly when it should, with no
+governance action and no oracle.
+
+## 5a. Stability fees: burn and convert
+
+Fees arrive in COMP, which cannot back COMP. They are split by a governed share:
+
+```
+feeBurnShareBps      -> burned on arrival: pure deflation, improves B immediately
+remainder            -> held, then converted to reserve assets when a COMP market exists
+```
+
+Burning is the safe default and needs nothing to exist. The held remainder is the part that can
+eventually become real backing, but it requires COMP liquidity, a swap route and a sell policy, so
+it accumulates first and converts later. Held COMP is **never** counted in `reserveValueUsd`.
 
 ## 6. What to build, in order
 
@@ -182,16 +219,30 @@ guarantee that the collateral pool absorbs it.
 5. Redemption channel B (reserve assets, weight-priced fee).
 6. Upstream: the oracle-batch second-root PR.
 
-## 7. Open questions
+## 7. New governed parameters
 
-- **Involuntary redemption of borrowers** (channel A) — accepted as the price of a hard peg, or
-  should redemption be restricted to the reserve only, giving a weaker floor but no borrower risk?
-- **Redemption fee shape** — a fixed base, or Liquity's decaying `baseRate` that rises with recent
-  redemption volume so a run gets progressively more expensive?
+All under the existing 48-hour delay, all hard-bounded in the parameters contract:
+
+| parameter | purpose | proposed | hard bound |
+|---|---|---|---|
+| `workRatioBps` | ratio term of `workCeiling` | 2500 | ≤ 2500 (cliff is `minCR − 1` = 5000) |
+| `redemptionCeilingCR` | above this a position cannot be redeemed against | 200 | ≥ `minCR`, ≤ 400 |
+| `feeBurnShareBps` | share of COMP fees burned on arrival | 10000 at first | no bound needed |
+| `haircutBps[asset]` | per-asset reserve discount | 0 stables, high for IMD | floor per asset class |
+| `targetWeightBps[asset]` | basket weight driving channel B's fee | — | must sum to 10000 |
+| `REDEMPTION_FEE_FLOOR` / `_MAX` | the peg band | 50 / 500 | constants, not governed |
+
+The fee floor and cap are deliberately source constants rather than parameters: the floor *is* the
+peg, and a governable cap is a redemption halt with extra steps.
+
+## 8. Open questions
+
 - **Target basket weights**, which set channel B's fee curve and therefore what the reserve drifts
-  toward.
-- **Does the Treasury burn the COMP it receives from fees, or hold it?** Burning makes the fee
-  deflationary and simplifies the supply identity; holding it gives the protocol a buffer it can
-  deploy. Either way it is not reserve.
+  toward. Needs a view on what the protocol wants to hold.
 - **Who may call the oracle tally update**, and what happens to rights already issued if a later
-  tally revises an agent's count downward.
+  tally revises an agent's count downward. Issued rights should almost certainly be final, with
+  revisions applying only to future issuance, but that needs stating.
+- **When the held fee COMP converts to reserve assets**, and through what route. Blocked on COMP
+  liquidity existing at all.
+- **Whether `redemptionCeilingCR` should move with NHI** the way `minCR` does, so redemption
+  eligibility widens as network health falls.
