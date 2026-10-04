@@ -16,6 +16,12 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     mapping(address => uint256) public withdrawn;
     mapping(address => uint256) public collateralRedeemed;
     mapping(address => uint256) public principal;
+    /// @dev Mirror of the position's fresh-principal record: what it holds, and when it was last
+    /// minted. Read as zero once the window has passed, exactly as the vault reads it.
+    mapping(address => uint256) public freshPrincipal;
+    mapping(address => uint256) public lastMintedAt;
+    uint256 private constant FRESH_WINDOW = 12 hours;
+    uint256 private constant BASE_CAP = 0.045 ether;
     uint256 public collateralIssued;
     uint256 public debtIssued;
     uint256 public workIssued;
@@ -39,6 +45,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         uint256 backing;
         uint256 ceiling;
         uint256 base;
+        uint256 decayedBase;
         uint256 lastAt;
         uint256[4] collateral;
         uint256[4] debt;
@@ -63,15 +70,22 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
             vm.prank(actor);
             backedVault.mintCOMP(100 ether);
             principal[actor] = 100 ether;
+            _recordMint(actor, 100 ether);
             debtIssued += 100 ether;
         }
         _fundIMD(20 ether);
         vm.prank(actors[3]);
         backedVault.mintFromWork(10 ether);
         workIssued = 10 ether;
+    }
 
-        // Every random sequence starts with actual reserve, mixed, and position redemptions.
-        // This also prevents an all-reverting handler from making the invariant vacuous.
+    /// @notice Every random sequence starts with actual reserve, mixed, and position redemptions.
+    /// This also prevents an all-reverting handler from making the invariant vacuous.
+    /// @dev Called by the test's setUp as its own top-level call, NOT from the constructor: the
+    /// vault excludes collateral deposited and principal minted in the current transaction from
+    /// the backing it counts and the supply it divides by, and a constructor shares one
+    /// transaction with everything it deploys, so redemptions seeded there would see no backing.
+    function seedRedemptions() external {
         _redeem(0, 1, 5 ether, false);
         _redeem(0, 1, 20 ether, false);
         _redeem(0, 2, 1 ether, false);
@@ -95,6 +109,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         backedVault.mintCOMP(amount);
         debtIssued += amount;
         principal[actor] += amount;
+        _recordMint(actor, amount);
         ++debtMintCalls;
     }
 
@@ -121,6 +136,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         vm.prank(actor);
         backedVault.repayCOMP(amount);
         principal[actor] -= amount - fee;
+        _retireFresh(actor, amount - fee);
         repaymentBurns += amount;
         feesReminted += fee;
     }
@@ -212,10 +228,17 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         }
         amounts.principalCancelled =
             amounts.cancelled - Math.min(amounts.cancelled, backedVault.stabilityFeeOf(candidate));
+        // The documented curve: the base rises by the burned fraction of pre-burn supply over four,
+        // except for the part of a position burn that cancelled principal younger than the window.
+        uint256 freshCancelled = Math.min(amounts.cancelled, _freshNow(candidate));
+        uint256 expectedBase = _curve(beforeState.decayedBase, amount - freshCancelled, beforeState.supply);
         vm.prank(redeemer);
         uint256 paid = backedVault.redeem(amount, amounts.payout, candidate);
         assertEq(paid, amounts.payout, "exact feed-priced discounted payout");
         _assertRedeemed(beforeState, amounts, redeemer, candidateIndex);
+        assertEq(backedVault.redemptionBaseRate(), expectedBase, "stored base follows the documented curve");
+        assertEq(backedVault.lastRedemptionAt(), block.timestamp, "every successful burn checkpoints decay");
+        _retireFresh(candidate, amounts.principalCancelled);
         principal[candidate] -= amounts.principalCancelled;
         collateralRedeemed[candidate] += amounts.payout - amounts.reserveOut;
         reserveSpent += amounts.reserveOut;
@@ -267,9 +290,15 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         state.supply = stable.totalSupply();
         state.reserveIMD = collateral.balanceOf(address(reserve));
         state.redeemerIMD = collateral.balanceOf(redeemer);
-        state.backing = state.reserveIMD + collateral.balanceOf(address(backedVault));
+        // What the guard may count: all Treasury IMD, plus the vault's IMD only up to minCR
+        // percent of the principal standing behind it. Surplus and debt-free collateral is
+        // withdrawable without a health check and backs no COMP. Each handler call is its own
+        // transaction, so nothing here was deposited or minted "this transaction".
+        uint256 secured = Math.mulDiv(backedVault.totalDebt() - backedVault.totalBadDebt(), backedVault.minCR(), 100);
+        state.backing = state.reserveIMD + Math.min(collateral.balanceOf(address(backedVault)), secured);
         state.ceiling = backedVault.workCeiling();
         state.base = backedVault.redemptionBaseRate();
+        state.decayedBase = backedVault.decayedRedemptionBaseRate();
         state.lastAt = backedVault.lastRedemptionAt();
         for (uint256 i; i < actors.length; ++i) {
             (state.collateral[i], state.debt[i]) = backedVault.positions(actors[i]);
@@ -287,6 +316,26 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
             assertEq(actualCollateral, state.collateral[i], "rejected redemption leaves collateral");
             assertEq(actualDebt, state.debt[i], "rejected redemption leaves debt");
         }
+    }
+
+    function _freshNow(address actor) private view returns (uint256) {
+        return block.timestamp - lastMintedAt[actor] < FRESH_WINDOW ? freshPrincipal[actor] : 0;
+    }
+
+    function _recordMint(address actor, uint256 amount) private {
+        freshPrincipal[actor] = _freshNow(actor) + amount;
+        lastMintedAt[actor] = block.timestamp;
+    }
+
+    function _retireFresh(address actor, uint256 principalPaid) private {
+        uint256 fresh = freshPrincipal[actor];
+        freshPrincipal[actor] = fresh > principalPaid ? fresh - principalPaid : 0;
+    }
+
+    /// @dev floor(effective / supply) / 4 on top of the decayed base, saturating at the cap.
+    function _curve(uint256 decayed, uint256 effective, uint256 supply) private pure returns (uint256) {
+        uint256 increase = effective == 0 ? 0 : (effective * 1e18 / supply) / 4;
+        return Math.min(decayed + increase, BASE_CAP);
     }
 
     function _deposit(address actor, uint256 amount) private {
@@ -366,6 +415,8 @@ contract RedemptionInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         handler = new RedemptionSequenceHandler();
+        // A separate transaction from the construction above: see the handler's note.
+        handler.seedRedemptions();
         bytes4[] memory selectors = new bytes4[](11);
         selectors[0] = handler.fundReserve.selector;
         selectors[1] = handler.deposit.selector;

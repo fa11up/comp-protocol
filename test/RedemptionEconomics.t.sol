@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {Parameters} from "src/Parameters.sol";
@@ -61,7 +62,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
             uint256 backingBefore = collateral.balanceOf(address(backedVault)) + collateral.balanceOf(address(reserve));
             expectedBase += (25 ether * 1e18 / supplyBefore) / 4;
             if (expectedBase > BASE_CAP) expectedBase = BASE_CAP;
-            uint256 fee = FLOOR + expectedBase / 1e14;
+            uint256 fee = FLOOR + Math.ceilDiv(expectedBase, 1e14);
             assertEq(backedVault.redemptionFeeBps(25 ether), fee, "quote uses pre-burn supply");
             if (fee < CAP) assertGt(fee, previousFee, "run raises the fee before saturation");
             else ++cappedCalls;
@@ -80,6 +81,9 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     }
 
     function test_runDrainsReserveThenPositionsUntilTheCandidateLeavesTheBand() public {
+        // Season the principal: debt younger than twelve hours is charged the fee but does not move
+        // the base, and this run is about the documented curve (see test_freshPrincipal... below).
+        _advance(12 hours);
         vm.prank(APPROVED_OPERATOR);
         reserve.withdraw(collateral, APPROVED_OPERATOR, 900 ether);
         uint256 reserveOnlyCalls;
@@ -128,6 +132,44 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         assertEq(collateral.balanceOf(address(backedVault)), collateralBefore);
     }
 
+    /// @dev The documented exception to the curve: principal the candidate minted within one
+    /// half-life is charged the full quoted fee but does not move the base everyone else pays.
+    /// A reserve-funded burn, and principal older than twelve hours, follow the curve as before.
+    function test_freshPrincipalIsChargedTheFullFeeButDoesNotMoveTheBase() public {
+        vm.prank(APPROVED_OPERATOR);
+        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        assertEq(backedVault.redemptionFeeBps(100 ether), 300, "the quote includes the increase");
+        (uint256 collateralBefore,) = backedVault.positions(BORROWER);
+        assertEq(_redeem(100 ether), 97 ether, "fresh principal pays the whole quoted fee");
+        (uint256 collateralAfter, uint256 debtAfter) = backedVault.positions(BORROWER);
+        assertEq(collateralBefore - collateralAfter, 97 ether);
+        assertEq(debtAfter, 900 ether);
+        assertEq(backedVault.redemptionBaseRate(), 0, "principal younger than twelve hours leaves the base");
+        assertEq(backedVault.lastRedemptionAt(), vm.getBlockTimestamp(), "the checkpoint still moves");
+        assertEq(backedVault.redemptionFeeBps(0), FLOOR);
+
+        // One wei short of the window is still fresh; the window itself is not.
+        _advance(12 hours - 1);
+        _redeem(90 ether);
+        assertEq(backedVault.redemptionBaseRate(), 0);
+        _advance(1);
+        assertEq(backedVault.redemptionFeeBps(81 ether), 300);
+        _redeem(81 ether);
+        assertEq(backedVault.redemptionBaseRate(), 0.025 ether, "seasoned principal follows the curve");
+
+        // Principal minted after the window is fresh again, and only that part is excluded.
+        vm.prank(BORROWER);
+        backedVault.mintCOMP(100 ether);
+        uint256 decayed = backedVault.decayedRedemptionBaseRate();
+        uint256 supply = stable.totalSupply();
+        _redeem(150 ether);
+        assertEq(
+            backedVault.redemptionBaseRate(),
+            decayed + (50 ether * 1e18 / supply) / 4,
+            "a burn partly against fresh principal counts only the seasoned part"
+        );
+    }
+
     function test_baseHalvesEveryTwelveHoursAndEventuallyReturnsToFloor() public {
         _redeem(100 ether);
         uint256 storedBase = backedVault.redemptionBaseRate();
@@ -160,7 +202,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         uint256 amount = bound(amountSeed, 1 ether, 500 ether);
         uint256 expected = decayed + (amount * 1e18 / stable.totalSupply()) / 4;
         if (expected > BASE_CAP) expected = BASE_CAP;
-        uint256 fee = FLOOR + expected / 1e14;
+        uint256 fee = FLOOR + Math.ceilDiv(expected, 1e14);
         assertEq(backedVault.redemptionFeeBps(amount), fee);
         assertGe(fee, FLOOR);
         assertLe(fee, CAP);

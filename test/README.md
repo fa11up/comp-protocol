@@ -289,3 +289,50 @@ only the scratch artifact/cache paths documented above. The 49 redemption tests
 all pass without skips; their invariant executes 256 sequences of 96 calls with
 zero unexpected reverts. No new contract defect was reproduced. This revision
 changes only the redemption tests, their handler and this coverage note.
+
+### Revised guards (fee rounding, secured backing, fresh principal)
+
+The source revision after the previous round changed four things these tests
+pin, and the suite was brought up to the accepted source rather than rewritten:
+
+- The charged fee is the floor plus the base rounded **up** to a whole basis
+  point. The two fuzz properties and the run test now expect `ceilDiv`.
+- Principal the candidate minted within twelve hours is charged the full quoted
+  fee but excluded from the stored base. The run test seasons its principal first
+  so it exercises the documented curve; a new economics test pins the exclusion at
+  the window boundary (one second either side) and a burn partly against fresh
+  principal. The invariant handler mirrors the per-position fresh record and
+  asserts the stored base after **every** successful redemption, with time steps
+  of up to twelve hours so both regimes occur.
+- The backing guard counts Treasury IMD plus vault IMD only up to `minCR()`
+  percent of pre-transaction principal less realized bad debt. The invariant's
+  backing model uses that figure; its seeded redemptions moved out of the handler
+  constructor into a separate top-level call, because a constructor shares one
+  transaction with everything it creates and the vault excludes same-transaction
+  deposits and mints, which is exactly what made the previous attempt's `setUp`
+  revert `RedemptionWorsensBacking`.
+- `RedemptionGuards.t.sol` covers the rest: the sub-basis-point remainder
+  (0.39 of a 1000 supply quotes, charges and emits 51 while the stored base keeps
+  the exact fraction, fuzzed over 1,000 amounts); the cap refusing a burn the
+  whole balance would allow and accepting it once principal stands behind the
+  collateral again; stressed NHI raising what counts; realized bad debt deciding
+  a refusal by itself; and, through a contract that makes several vault calls in
+  one transaction (the only way to do that under `isolate = true`), a debt-free
+  same-call deposit counting for nothing, a same-call mint neither diluting the
+  fee nor passing the guard, a first-ever burn saturating at the cap, and the
+  accepted slow path across a transaction boundary succeeding.
+
+**Reported, not asserted:** the twelve-hour freshness window is re-dated whole
+by any mint inside it, so one wei of new principal per half-day keeps any amount
+of principal permanently excluded from the base, and a run against such a
+position pays only the floor however large it is. That contradicts the brief's
+curve and the source's own cost claim, so it is in `.imd-findings.json` with a
+proof rather than pinned here. The guard closing channel A entirely when secured
+backing per COMP falls below one minus the fee is noted there as well, as a
+design consequence for the requester.
+
+Current verification: `forge build` passed; the full default `forge test` passed
+**422 tests, 0 failed, 2 existing optional skips** across 45 suites. The 60
+redemption tests pass without skips; the invariant runs 256 sequences of 96
+calls with zero unexpected reverts. The scratch proof fails on the current source
+for the stated reason and is not part of the submitted suite.

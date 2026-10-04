@@ -533,7 +533,8 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 initialCollateral = Math.mulDiv(debt, 1.9 ether, price, Math.Rounding.Ceil);
         _open(BORROWER, initialCollateral, debt);
         _giveCOMP(amount);
-        uint256 fee = 50 + Math.min(amount * 1e18 / debt / 4, 0.045 ether) / 1e14;
+        // Whole basis points, rounded against the redeemer.
+        uint256 fee = 50 + Math.ceilDiv(Math.min(amount * 1e18 / debt / 4, 0.045 ether), 1e14);
         uint256 expectedOut = Math.mulDiv(amount, (10_000 - fee) * 1e14, price);
         uint256 reserveBefore = bound(reserveSeed, 0, expectedOut);
         _reserveIMD(reserveBefore);
