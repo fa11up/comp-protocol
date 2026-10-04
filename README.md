@@ -28,9 +28,16 @@ it is ours.
 | `MockIMD` / `MockWorkOracle` / `LaunchToken` | testnet collateral faucet, the work-credit faucet `SwarmWorkOracle` replaces, launch token |
 
 Three feed leaves exist rather than two `PriceFeed` instances because a launch manifest identifies a
-deployment by contract name, has no alias field, and **names at most four contracts**. That cap is why
-`CompToken`, `Parameters`, `Treasury` and `UsdPriceFeed` are created inside the vault's constructor
-rather than deployed beside it.
+deployment by contract name and has no alias field, so it cannot name one artifact twice.
+
+The manifest is the **`evm_contracts`** kind: application contracts only, with **no token, no liquidity
+pool and no reward distributor**, and `$token` does not resolve in it. Earlier rounds had to launch a
+throwaway ERC-20 alongside the protocol because `evm_project` requires one; that is no longer true, and
+the manifest names four contracts and nothing else. The cap is **eight**, not the four an earlier
+revision of this file claimed. `CompToken`, `Parameters`, `Treasury` and `UsdPriceFeed` are still
+created inside the vault's constructor, now because that is what makes the deployment come up fully
+linked with no transaction sent afterwards — a manifest makes none — rather than because slots are
+scarce.
 
 `SwarmWorkOracle` cannot be, and the reason is a measurement rather than a preference: its creation
 code is 16,478 bytes and `ParameterizedVault` has 12,222 bytes of EIP-3860 headroom, so a vault that

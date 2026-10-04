@@ -48,7 +48,7 @@ contract ParameterizedVault is CDPVault {
         // vault to borrow a Parameters already bound elsewhere and read a rate it is never
         // checkpointed for. The vault creates its own, which also means the pair comes up linked with
         // no post-deploy transaction — what a launch manifest requires, since it makes none and can
-        // name at most four contracts.
+        // name only a bounded number of contracts.
         parameters = new Parameters(ICheckpointedVault(address(this)));
         // The same idiom for the other two, and for the same reasons: a Treasury passed in could be
         // anyone's wallet (which is what FEE_RECIPIENT is today), and a manifest has no fifth slot

@@ -190,7 +190,7 @@ contract CDPVault is ReentrancyGuard {
     ) {
         // An EXPLICIT sentinel, not zero, asks the vault to deploy its own testnet collateral faucet.
         //
-        // Why it exists: a launch manifest names at most four contracts, and a deployment that fills
+        // Why it exists: a launch manifest names a bounded number of contracts, and a deployment that fills
         // them with three feeds and the vault has no slot left for the collateral token. The parked
         // round-4 manifest therefore passed a LITERAL address, which has code only on the chain it was
         // deployed to, and this constructor requires code — so the project could not be constructed

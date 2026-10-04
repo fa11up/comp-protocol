@@ -379,6 +379,13 @@ built — bundling the update with the action, and splitting the recaptured valu
    **it costs nothing to wait**, because `workCeiling()` is zero on a fresh stack regardless of what
    the oracle says.
 
+   **A note on the manifest cap, since it shaped this whole section.** It was four contracts; it is now
+   eight, and a new `evm_contracts` kind deploys application contracts with no token, no pool and no
+   reward distributor at all. The in-constructor creation of `CompToken`, `Parameters`, `Treasury` and
+   `UsdPriceFeed` therefore no longer rests on scarcity — it rests on the better reason, which is that
+   a manifest makes no post-deploy calls, so a stack that is not linked by its own constructors comes
+   up unlinked. Nothing here changes; the justification does.
+
    A **factory** deploys it, which is a size result and not a preference: `SwarmWorkOracle` is 16,478
    bytes of creation code and `ParameterizedVault` had 12,222 of EIP-3860 headroom, so a vault that
    created its own would be undeployable. `WorkOracleFactory` holds that creation code instead, the
