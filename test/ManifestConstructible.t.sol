@@ -58,14 +58,14 @@ contract ManifestConstructibleTest is Test {
         assertGt(address(vault.treasury()).code.length, 0);
     }
 
-    /// @notice What the manifest does NOW, since the contract cap rose to eight: it deploys MockIMD as
-    /// a NAMED artifact and the vault takes `$contract:MockIMD`.
-    /// @dev Strictly better than the sentinel for a launch, and the reason is the one that parked
-    /// round 4. A `$contract:` reference is resolved by the launch on whatever chain it is
-    /// constructing on, so the collateral always has code there; a literal address has code only on
-    /// the chain it was deployed to. The harness constructs the project on a bare chain, so no
-    /// instruction to the swarm could have saved a literal — only a per-chain reference can. This is
-    /// that reference's shape, in order: the token first, then the feeds, then the vault naming them.
+    /// @notice The shape a manifest WOULD use if it could name the collateral: deploy MockIMD as its
+    /// own artifact and have the vault reference it.
+    /// @dev Kept as a test, not shipped in launch.json, and the reason is a pair of caps that differ.
+    /// A launch MANIFEST takes eight contracts, but the REQUEST's `draft.contracts` takes four, and a
+    /// request is what approves a manifest — round 3 parked on a manifest that "omits the approved
+    /// vault". So a five-contract manifest cannot be declared, and a manifest naming more than the
+    /// request approved is the divergence class that has parked four rounds. The sentinel below is
+    /// what ships. This test exists so the better shape is proven and ready if that cap moves too.
     function test_theManifestShapeConstructsWithTheTokenAsANamedArtifact() public {
         MockIMD collateral = new MockIMD();
         (address p, address n, address s) = _feeds();
@@ -80,9 +80,9 @@ contract ManifestConstructibleTest is Test {
         assertTrue(address(vault.usdPriceFeed()) != address(0), "and the USD price feed");
     }
 
-    /// @dev The sentinel is not removed, only unused by the manifest: a caller with no manifest to
-    /// deploy a token for them still needs it, and it is the audited path.
-    function test_theSentinelStillDeploysAFaucetForCallersWithoutAManifest() public {
+    /// @dev The sentinel is what the manifest actually passes, and what makes the project
+    /// constructible on the bare chain the protected-invariant harness builds on.
+    function test_theSentinelDeploysAFaucetSoTheProjectConstructsAnywhere() public {
         (address p, address n, address s) = _feeds();
         ParameterizedVault vault = new ParameterizedVault(FAUCET, address(0), address(0), p, n, s);
         assertTrue(address(vault.imdToken()) != FAUCET, "the sentinel is replaced, never used as a token");

@@ -35,13 +35,18 @@ pool and no reward distributor**, and `$token` does not resolve in it. Earlier r
 throwaway ERC-20 alongside the protocol because `evm_project` requires one; that is no longer true. The
 cap is **eight**, not the four an earlier revision of this file claimed.
 
-It names five: `MockIMD`, the three feeds, then `ParameterizedVault` referencing them. The collateral is
-a **named artifact** rather than a literal address, and that is the fix for the failure that parked
-round 4. A launch constructs the project on a **bare chain** before it deploys anywhere, so a literal
-Sepolia address has no code there and the vault's constructor refuses it — no instruction to the swarm
-could have changed that. A `$contract:` reference is resolved by the launch *per chain*, so the
-collateral always has code wherever it builds. The vault's faucet sentinel still exists for callers
-with no manifest to deploy a token for them, but the manifest no longer needs it. `CompToken`, `Parameters`, `Treasury` and `UsdPriceFeed` are still
+**Two different caps, which is worth knowing before designing around either.** A launch *manifest*
+takes up to eight contracts; the *request*'s `draft.contracts` still takes four, and a request is what
+approves a manifest. So the manifest names four: the three feeds, then `ParameterizedVault`.
+
+The vault's collateral argument is an explicit **faucet sentinel**, not an address, which tells the
+constructor to deploy a fresh `MockIMD` itself. That is the fix for the failure that parked round 4,
+and the failure was never instruction-fixable: a launch constructs the project on a **bare chain**
+before it deploys anywhere, so a literal Sepolia address has no code there and the constructor refuses
+it. No wording given to the swarm can put code at an address on a chain it was never deployed to — only
+a value the constructor can resolve locally can. Zero is deliberately *not* that value: zero is what an
+unset manifest field looks like, and a vault quietly accepting a mock token as collateral would take a
+worthless asset against real debt. `CompToken`, `Parameters`, `Treasury` and `UsdPriceFeed` are still
 created inside the vault's constructor, now because that is what makes the deployment come up fully
 linked with no transaction sent afterwards — a manifest makes none — rather than because slots are
 scarce.
