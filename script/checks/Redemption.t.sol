@@ -946,15 +946,186 @@ contract RedemptionTest is Test {
         vm.warp(block.timestamp + 12 hours);
         vm.prank(ALICE);
         vault.mintCOMP(100 ether);
-        // Repayment pays accrued fees first, so exactly that much of the fresh principal survives it.
+        // REVISION (finding 5ee3f2bc): the whole burn retires the record, fees included. Repayment
+        // pays accrued fees first, and retiring only the principal part left a fee-sized remainder of
+        // the new tranche fresh after every mint/repay pair; converting a fee obligation into
+        // principal adds no exposure, so nothing of the 100 is fresh once 100 has been repaid.
         uint256 fees = vault.stabilityFeeOf(ALICE);
+        assertGt(fees, 0);
         vm.prank(ALICE);
         vault.repayCOMP(100 ether);
         _giveComp(100 ether);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
         vault.redeem(100 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether - fees, 1 ether, supply) / 4);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4);
+    }
+
+    // --- revision: findings 7cd5035c and 5ee3f2bc -------------------------------------------------
+
+    function test_debtFreeDepositHeldAcrossTransactionsIsNotBackingWhenPositionsAreBelowMinCR() public {
+        // The reviewer's scenario: 550 of listed reserve, ALICE 1500 / 1000, the whole 800 work
+        // ceiling minted, then IMD halves. Collateral 750 and reserve 275 back 1800 COMP (0.569 each),
+        // so a 100 COMP burn paying 98.11 is refused: it would take more than its 56.9 share.
+        _registerImdReserve(10_000);
+        _fundReserve(550 ether);
+        _open(ALICE, 1500 ether, 1000 ether);
+        assertEq(vault.workCeiling(), 800 ether);
+        vm.prank(REDEEMER);
+        vault.mintFromWork(800 ether);
+        _price(0.5 ether);
+        assertEq(vault.collateralRatio(ALICE), 75);
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+
+        // A debt-free deposit in its own transaction used to fill the gap between what ALICE holds
+        // (750) and the cap (1500): it is not in the transient tally, bears no debt and comes back
+        // the next transaction. Bounded per position, it contributes nothing.
+        vm.prank(BOB);
+        vault.depositCollateral(1500 ether);
+        assertEq(vault.securedCollateral(), 1500 ether, "only ALICE's collateral is secured");
+        uint256 treasuryBefore = imd.balanceOf(address(treasury));
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+        // One wei of debt contributes one wei's worth of IMD, not the deposit.
+        vm.prank(BOB);
+        vault.mintCOMP(1);
+        assertEq(vault.securedCollateral(), 1500 ether + 4, "two wei of USD at half a dollar");
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+        assertEq(imd.balanceOf(address(treasury)), treasuryBefore, "nothing left the reserve");
+
+        // The variant without a price move: the operator withdraws reserve and NHI falls to 0.60.
+        _price(1 ether);
+        vm.prank(BOB);
+        vault.repayCOMP(1);
+        vm.prank(APPROVED_OPERATOR);
+        treasury.withdraw(imd, APPROVED_OPERATOR, 400 ether);
+        nhi.setValue(0.6 ether);
+        assertEq(vault.minCR(), 200);
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+        vm.prank(BOB);
+        vault.withdrawCollateral(1500 ether);
+        assertEq(vault.securedCollateral(), 1500 ether);
+    }
+
+    function test_securedCollateralIsBoundedPerPositionAndRepricedWhenTouched() public {
+        _open(ALICE, 3000 ether, 1000 ether);
+        assertEq(vault.securedCollateral(), 2000 ether, "twice the principal at one dollar");
+        vm.prank(BOB);
+        vault.depositCollateral(500 ether);
+        assertEq(vault.securedCollateral(), 2000 ether, "a debt-free position adds nothing");
+        vm.prank(ALICE);
+        vault.withdrawCollateral(1500 ether);
+        assertEq(vault.securedCollateral(), 1500 ether, "inside the bound, collateral counts whole");
+        // A fall in price raises the IMD the bound buys; the term is re-priced only when touched.
+        _price(0.5 ether);
+        assertEq(vault.securedCollateral(), 1500 ether);
+        vm.prank(ALICE);
+        vault.depositCollateral(1500 ether);
+        assertEq(vault.securedCollateral(), 3000 ether, "4000 IMD of bound at half a dollar");
+        _price(1 ether);
+        vm.prank(ALICE);
+        vault.repayCOMP(500 ether);
+        assertEq(vault.securedCollateral(), 1000 ether, "re-priced and re-bounded by the repayment");
+        vm.prank(ALICE);
+        vault.repayCOMP(500 ether);
+        assertEq(vault.securedCollateral(), 0, "no principal, no term");
+        (uint256 collateral,) = vault.positions(ALICE);
+        assertEq(collateral, 3000 ether, "the collateral itself is untouched");
+    }
+
+    function test_healthyPositionCountsWholeAtAnyPrice() public {
+        // The bound is converted at the price, so a 180% position is inside it at five cents as at
+        // a dollar. Counting principal in dollars against collateral in IMD would have made this
+        // position look ten percent backed and refused every burn.
+        _price(0.05 ether);
+        _open(ALICE, 36_000 ether, 1000 ether);
+        assertEq(vault.collateralRatio(ALICE), 180);
+        assertEq(vault.securedCollateral(), 36_000 ether);
+        _giveComp(100 ether);
+        vm.prank(REDEEMER);
+        assertEq(vault.redeem(100 ether, 0, ALICE), 1940 ether);
+    }
+
+    function test_mintRepayRoundTripsCannotKeepPrincipalFresh() public {
+        _open(ALICE, 1800 ether, 1000 ether);
+        // Three days: every six hours, five mint/repay pairs that change nothing on net. The old
+        // record retired each pair at its mean age, leaving the 1000 younger every time.
+        for (uint256 i; i < 12; ++i) {
+            vm.warp(block.timestamp + 6 hours);
+            vm.startPrank(ALICE);
+            for (uint256 j; j < 5; ++j) {
+                vault.mintCOMP(190 ether);
+                vault.repayCOMP(190 ether);
+            }
+            vm.stopPrank();
+        }
+        _giveComp(100 ether);
+        uint256 supply = comp.totalSupply();
+        assertEq(vault.redemptionFeeBps(100 ether), 300);
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4, "nothing is fresh");
+        assertEq(vault.redemptionFeeBps(0), 300);
+    }
+
+    function test_aRoundTripReturnsTheRecordToWhereItWas() public {
+        _open(ALICE, 1800 ether, 1000 ether);
+        uint256 start = block.timestamp;
+        vm.warp(start + 6 hours);
+        vm.startPrank(ALICE);
+        vault.mintCOMP(190 ether);
+        vault.repayCOMP(190 ether);
+        vm.stopPrank();
+        _giveComp(20 ether);
+        // Still fresh a second before the 1000 would have aged out on its own...
+        vm.warp(start + 12 hours - 1);
+        uint256 fees = vault.stabilityFeeOf(ALICE);
+        uint256 supply = comp.totalSupply();
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4);
+        // ...and aged out exactly when it would have: the pair neither re-dated nor re-aged it.
+        vm.warp(start + 12 hours);
+        uint256 decayed = vault.decayedRedemptionBaseRate();
+        supply = comp.totalSupply();
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / 4);
+    }
+
+    function test_repayingPartOfAFreshRecordKeepsItsPrincipalTime() public {
+        // 1000 then 500 more six hours later: the record is dated two hours after the first (see
+        // test_equalTranchesAgeOutAtTheirAverageAge). Repaying 250 retires the youngest 250, so the
+        // remaining 1250 carries the whole record's principal-time: 1500 x 4h / 1250 = 4.8h at the
+        // repayment, and the record ages out at 13h12m rather than 14h.
+        _open(ALICE, 2400 ether, 1000 ether);
+        uint256 start = block.timestamp;
+        vm.warp(start + 6 hours);
+        vm.startPrank(ALICE);
+        vault.mintCOMP(500 ether);
+        vault.repayCOMP(250 ether);
+        vm.stopPrank();
+        assertLt(vault.collateralRatio(ALICE), 200, "eligible");
+        _giveComp(20 ether);
+        vm.warp(start + 13 hours + 12 minutes - 1);
+        uint256 fees = vault.stabilityFeeOf(ALICE);
+        uint256 supply = comp.totalSupply();
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4, "fresh at 13h12m - 1");
+        vm.warp(start + 13 hours + 12 minutes);
+        uint256 decayed = vault.decayedRedemptionBaseRate();
+        supply = comp.totalSupply();
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / 4, "aged out at 13h12m");
     }
 
     function test_feeRoundsFractionalBasisPointsAgainstTheRedeemer() public {

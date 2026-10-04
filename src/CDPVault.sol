@@ -37,6 +37,8 @@ contract CDPVault is ReentrancyGuard {
         /// its amount-weighted mint time. Only redemption reads them: see `_redeemPosition`.
         uint256 recentlyMinted;
         uint256 mintedAt;
+        /// @dev This position's term in `securedCollateral`, as last written by `_resecure`.
+        uint256 secured;
     }
 
     struct LiquidationMark {
@@ -203,16 +205,38 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @dev What the current transaction has added, in transient storage the EVM clears when it ends:
-    /// collateral deposited and principal minted. Redemption reads them so that capital which exists
-    /// only for the length of the call can neither inflate the backing the guard measures nor dilute
-    /// the supply the fee is measured against. The slow version of either round trip, held across
-    /// transactions, is the accepted design — the same one ParameterizedVault.backedDebt documents —
-    /// and costs real capital in an open position, not gas.
-    /// keccak256("comp.CDPVault.collateralDepositedThisTransaction") and
+    /// secured collateral (see `securedCollateral`) and principal minted. Redemption reads them so that
+    /// capital which exists only for the length of the call can neither inflate the backing the guard
+    /// measures nor dilute the supply the fee is measured against. The slow version of either round
+    /// trip, held across transactions, is the accepted design — the same one
+    /// ParameterizedVault.backedDebt documents — and costs real capital in an open position, not gas.
+    /// keccak256("comp.CDPVault.securedCollateralAddedThisTransaction") and
     /// keccak256("comp.CDPVault.principalMintedThisTransaction").
-    uint256 private constant DEPOSITED_THIS_TX_SLOT =
-        0x0b3aef4352b583766dc98aca4a3d7791c7c530b475b68a32eecc695c20e93e63;
+    uint256 private constant SECURED_THIS_TX_SLOT = 0xf45fbc7390d8fe64766790eac1c1a0c998865663167e91e17d360ad63faf32cb;
     uint256 private constant MINTED_THIS_TX_SLOT = 0x7863d18732bd3fc443c44a39552cffecac393d3fbf3094322f7f794631746012;
+
+    /// @notice Sum over positions of min(collateral, SECURED_COLLATERAL_MULTIPLE x principal / price),
+    /// in IMD, each term at the price in force when that position last changed.
+    /// @dev REVISION (finding 7cd5035c): the backing guard read the vault's whole balance, less what
+    /// this transaction deposited, and capped it at minCR x prior principal. The cap assumes indebted
+    /// positions hold at least that much; whenever they hold less (a price fall, an NHI fall raising
+    /// minCR) there is a gap, and a debt-free deposit made in an EARLIER transaction filled it: not
+    /// in the transient tally, no debt, no health check, withdrawable the next transaction, so it
+    /// cost nothing and let a redemption take the reserve above its pro-rata share. Collateral is
+    /// now counted per position and bounded by that position's own principal, maintained wherever
+    /// either changes, so a position with no debt contributes nothing and one wei of debt contributes
+    /// two wei's worth. The multiple is the largest minCR, fixed so the sum stays well defined as NHI
+    /// moves; the aggregate minCR cap in `_securedCollateralValue` still applies on top of it.
+    /// Principal is denominated in the unit `_price()` quotes and collateral in IMD, so the bound
+    /// needs a price, and a sum cannot be revalued for every position when the feed moves: each
+    /// term is fixed at the price its position was last touched at. Positions whose collateral is
+    /// inside their bound (at most 200% at that price, which includes every redeemable one) are
+    /// counted exactly in IMD and revalue with the feed like the balance did. Only the surplus above
+    /// 200% is approximated: after a price fall such a position counts for less than it should, which
+    /// tightens the guard until the position is touched, and after a rise for more, which the
+    /// aggregate cap bounds. A deposit, repayment or any other change re-prices the position's term.
+    uint256 public securedCollateral;
+    uint256 private constant SECURED_COLLATERAL_MULTIPLE = 2;
 
     /// @notice Outstanding minted principal, as used by the unchanged debt ceiling.
     /// @dev Accrued, unpaid stability fees are additional obligations returned by debtOf/positions.
@@ -305,8 +329,9 @@ contract CDPVault is ReentrancyGuard {
     function depositCollateral(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         uint256 beforeBalance = imdToken.balanceOf(address(this));
-        _positions[msg.sender].collateral += amount;
-        _transientAdd(DEPOSITED_THIS_TX_SLOT, amount);
+        Position storage position = _positions[msg.sender];
+        position.collateral += amount;
+        _resecure(position, _priceOrZero());
         imdToken.safeTransferFrom(msg.sender, address(this), amount);
         if (imdToken.balanceOf(address(this)) - beforeBalance != amount) revert UnexpectedCollateralReceived();
         _clearIfRecovered(msg.sender);
@@ -327,6 +352,7 @@ contract CDPVault is ReentrancyGuard {
             if (!_healthy(remaining, debt)) revert UnsafeCollateralRatio();
         }
         position.collateral = remaining;
+        _resecure(position, _priceOrZero());
         _clearMark(msg.sender);
         imdToken.safeTransfer(msg.sender, amount);
         emit CollateralWithdrawn(msg.sender, amount);
@@ -346,6 +372,7 @@ contract CDPVault is ReentrancyGuard {
         totalDebt = resultingTotal;
         _debtChanged(resultingTotal - amount);
         position.debt += amount;
+        _resecure(position, _priceOrZero());
         _transientAdd(MINTED_THIS_TX_SLOT, amount);
         // REVISION (finding 883fa030): a top-up re-dated the whole record, so one wei every twelve
         // hours kept any amount of principal fresh forever. The record's timestamp now moves toward
@@ -457,21 +484,24 @@ contract CDPVault is ReentrancyGuard {
         return backingOut > Math.mulDiv(backing, amount, compToken.totalSupply());
     }
 
-    /// @dev The vault's collateral the guard may count as backing: what was here before this
+    /// @dev The vault's collateral the guard may count as backing: what stood behind debt before this
     /// transaction, and no more than the debt that existed before it holds at minCR.
     /// REVISION (finding 8936befa): the whole balance counted, including collateral posted against no
     /// debt and every borrower's surplus, which is withdrawable with no feed or health check and backs
     /// no COMP. A redeemer deposited debt-free, redeemed and withdrew in one call, and the deposit
-    /// passed the guard for any amount. Deposits made in this transaction are excluded, as backedDebt
-    /// excludes same-transaction debt; and the remainder counts only up to minCR times the principal
-    /// that existed before this transaction (less bad debt), the surplus every borrower must keep in
-    /// place and the figure section 3 of docs/COMPUTE-BACKING-DESIGN.md backs work minting against.
-    /// One-for-one with debt would be wrong the other way: it would refuse the brief's own flow of
-    /// redeeming work-issued COMP against an eligible position in a fully backed system.
+    /// passed the guard for any amount. Secured collateral added in this transaction is excluded, as
+    /// backedDebt excludes same-transaction debt; and the remainder counts only up to minCR times the
+    /// principal that existed before this transaction (less bad debt), the surplus every borrower must
+    /// keep in place and the figure section 3 of docs/COMPUTE-BACKING-DESIGN.md backs work minting
+    /// against. One-for-one with debt would be wrong the other way: it would refuse the brief's own
+    /// flow of redeeming work-issued COMP against an eligible position in a fully backed system.
+    /// REVISION (finding 7cd5035c): the balance is replaced by `securedCollateral`, which is bounded
+    /// position by position, so the slow version of the same deposit no longer fills the gap the cap
+    /// leaves open when indebted positions hold less than minCR.
     function _securedCollateralValue(uint256 price) private view returns (uint256) {
-        uint256 balance = imdToken.balanceOf(address(this));
-        uint256 deposited = _transient(DEPOSITED_THIS_TX_SLOT);
-        uint256 held = balance > deposited ? balance - deposited : 0;
+        uint256 secured = securedCollateral;
+        uint256 added = _transient(SECURED_THIS_TX_SLOT);
+        uint256 held = secured > added ? secured - added : 0;
         uint256 minted = _transient(MINTED_THIS_TX_SLOT);
         uint256 prior = totalDebt > minted ? totalDebt - minted : 0;
         uint256 bad = totalBadDebt;
@@ -510,6 +540,7 @@ contract CDPVault is ReentrancyGuard {
         // Only principal can be fresh: cancelled fees move the rate like any other part of the burn.
         freshCancelled = Math.min(principalCancelled, fresh);
         position.collateral -= imdOut;
+        _resecure(position, price);
         _recordBadDebt(candidate);
         _clearIfRecovered(candidate);
         // Unlike repayment/liquidation, redemption burns everything and remints no stability fees.
@@ -556,6 +587,29 @@ contract CDPVault is ReentrancyGuard {
     /// has aged out whole.
     function _recentlyMinted(Position storage position) private view returns (uint256) {
         return block.timestamp - position.mintedAt < FRESH_DEBT_WINDOW ? position.recentlyMinted : 0;
+    }
+
+    /// @dev A position's contribution to `securedCollateral` at `price`: its collateral, bounded by
+    /// the IMD that the multiple of its principal buys at that price. Never reverts, because deposit
+    /// and repayment promise not to: an unpriced feed counts the position for nothing, and a bound too
+    /// large to represent counts it whole.
+    function _secured(Position storage position, uint256 price) private view returns (uint256) {
+        uint256 collateral = position.collateral;
+        uint256 principal = position.debt;
+        if (principal == 0 || price == 0) return 0;
+        if (principal > type(uint256).max / (SECURED_COLLATERAL_MULTIPLE * 1e18)) return collateral;
+        return Math.min(collateral, principal * (SECURED_COLLATERAL_MULTIPLE * 1e18) / price);
+    }
+
+    /// @dev Called after a position's collateral or principal moved: replaces the term the position
+    /// last contributed with its term at `price`. Any increase is also tallied for the transaction,
+    /// so what the guard measures never includes capital that arrived in the same call.
+    function _resecure(Position storage position, uint256 price) private {
+        uint256 before = position.secured;
+        uint256 current = _secured(position, price);
+        position.secured = current;
+        securedCollateral = securedCollateral - before + current;
+        if (current > before) _transientAdd(SECURED_THIS_TX_SLOT, current - before);
     }
 
     function _transientAdd(uint256 slot, uint256 amount) private {
@@ -660,6 +714,7 @@ contract CDPVault is ReentrancyGuard {
         }
         uint256 feePaid = _reduceDebt(owner, debtToRepay);
         position.collateral -= collateralSeized;
+        _resecure(position, price);
         _recordBadDebt(owner);
         _clearIfRecovered(owner);
         _payDebt(debtToRepay, feePaid);
@@ -815,8 +870,32 @@ contract CDPVault is ReentrancyGuard {
         _stabilityFees[owner] = fees - feePaid;
         uint256 principalPaid = amount - feePaid;
         position.debt -= principalPaid;
-        // Retired principal is no longer fresh, whichever path retired it.
-        position.recentlyMinted = position.recentlyMinted > principalPaid ? position.recentlyMinted - principalPaid : 0;
+        _resecure(position, _priceOrZero());
+        // Retired debt is no longer fresh, whichever path retired it.
+        // REVISION (finding 5ee3f2bc): the record's amount-weighted date did not move when principal
+        // was retired, so a mint-then-repay pair retired the new tranche at the record's MEAN age and
+        // left the old principal younger each time: twenty pairs kept any amount fresh for gas. The
+        // youngest debt is retired first, which with one date per record means what remains keeps the
+        // whole record's principal-time: (now - mintedAt') x remaining equals (now - mintedAt) x fresh.
+        // Two details make a round trip return the record to where it was. The whole burn retires
+        // fresh debt, fees included: fees are paid first, so retiring only the principal part left a
+        // fee-sized remainder of the new tranche in the record every time, and once a tranche dwarfs
+        // the record the integer-second mean age of the merged record rounds to zero, so that
+        // remainder stayed fresh forever. Converting a fee obligation into principal adds no exposure
+        // and no new borrowing, which is what the record measures, so it is not fresh either. And the
+        // conserved age rounds up (older), undoing the second `mintCOMP` rounds toward the present.
+        // A record whose remaining debt would be dated outside the window simply ages out.
+        uint256 fresh = _recentlyMinted(position);
+        uint256 remaining = fresh > amount ? fresh - amount : 0;
+        if (fresh == 0 || remaining == 0) {
+            position.recentlyMinted = remaining;
+        } else {
+            uint256 age = Math.mulDiv(block.timestamp - position.mintedAt, fresh, remaining, Math.Rounding.Ceil);
+            // A chain younger than the age is a test fixture, not a possibility; treated as aged out.
+            bool stillFresh = age < FRESH_DEBT_WINDOW && age <= block.timestamp;
+            position.recentlyMinted = stillFresh ? remaining : 0;
+            position.mintedAt = stillFresh ? block.timestamp - age : position.mintedAt;
+        }
         totalDebt -= principalPaid;
         _debtChanged(totalDebt + principalPaid);
         uint256 previous = _recordedBadDebt[owner];
