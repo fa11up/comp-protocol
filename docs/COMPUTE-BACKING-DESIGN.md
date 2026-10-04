@@ -350,6 +350,66 @@ the primary price moved to Chainlink, which §Design Philosophy rules out. Recor
 re-evaluated: the useful part is that an independent product arrived at the same two mechanisms we
 built — bundling the update with the action, and splitting the recaptured value with the protocol.
 
+## 5c. Yield-bearing collateral: sIMD (measured 2026-10-04)
+
+IdentityMD's staking contract is `StakedIMD` at `0x9efa934d9fad4ae28c998a40195646b965a97247`, and the
+facts that decide whether it is usable were read from chain, not from its marketing page:
+
+| | |
+|---|---|
+| shape | Solady **ERC-4626**, `symbol() == "sIMD"`, `asset() == IMD` |
+| proxy | **none** — `proxy_type` null, no implementations. The bytecode is final. |
+| `owner()` | **`address(0)`** — renounced |
+| `paused()` | false, and `renounceOwnership` reverts `RenounceWhilePaused`, so it was renounced in the good state and can never be paused again |
+| TVL | 1,752,556 IMD ≈ **$14.89M**; 220,456 whole sIMD; **$67.55 per whole sIMD** |
+| decimals | **sIMD 24, IMD 18** |
+| hold | `SameBlockRedeem`: cannot redeem in the block you deposited, and **a transfer inherits the sender's hold** |
+
+The vault's own docs advertise that the owner "can pause, and can sweep any balance including staked
+IMD" — `setPaused`, `rescueERC20` and `rescueETH` are all `onlyOwner`, and with a zero owner none of
+them is reachable by anyone. A fork test calls both as a stranger and asserts they revert, rather than
+reading the modifier and trusting it.
+
+**The design is to accept sIMD AS the collateral token, not to stake borrowers' IMD ourselves.** That
+is what removes every objection at once:
+
+* **Nothing is ever unstaked.** Liquidation transfers sIMD like any ERC-20, so no redeem sits on a hot
+  path and the one-block hold never matters. That hold is also contagious — any incoming transfer bumps
+  the recipient's — so a design that redeems could be griefed with dust. A design that never redeems
+  cannot.
+* **Yield needs no accounting.** Share count fixed, backing grows, so a borrower's collateral value and
+  therefore their CR rise on their own. The position repairs itself against the stability fee instead of
+  decaying. "Their yield minus our fee" is already exactly what happens: their net is yield minus
+  `stabilityFeeBps`, with no distribution machinery and no per-position accrual.
+* **It adds no new price risk.** Burns stream in and nothing can take assets out, so the sIMD/IMD leg is
+  **monotone non-decreasing**. The only price risk is still IMD/USD.
+
+**It does NOT justify a lower `minCR`, and that is not a close call.** Yield is drift; `minCR` covers
+tails. A 10% APY contributes 0.027% a day against the 44.6% single-day move we measured — it covers
+about 0.06% of it. Treating expected return as a substitute for tail risk is how CDP protocols fail.
+
+**The decimal trap, which is the real work.** `CDPVault`'s docstring says "Both tokens use 18 decimals"
+and it never reads `decimals()`, so handing it a 24-decimal token priced per whole token would misvalue
+every position by **1e6**. `src/SharePriceFeed.sol` cannot make that mistake because every quantity in
+it is **per 1e18 raw units** — the convention the live oracle questions already use ("per 1e18 raw units
+of IMD"), and `convertToAssets(1e18)` is by definition that figure:
+
+```
+value = convertToAssets(1e18) * assetValue / 1e18
+      = (underlying raw per 1e18 share raw) * (USD per 1e18 underlying raw) / 1e18
+      = USD per 1e18 share raw
+```
+
+The composition is therefore decimal-agnostic and needs to know neither token's decimals.
+`test/SharePriceFeedFork.t.sol` checks it against the pool's own totals two ways and agrees to within
+1e-6 %: $14,894,401.65 from `totalAssets x IMD/USD`, and the same figure from
+`totalSupply x value / 1e18`. **No vault change is required** — the collateral token is already an
+immutable constructor argument, so mainnet is a deployment choice plus this adapter.
+
+Open, and not decided: whether the Treasury's reserve holds IMD or sIMD. sIMD earns, but redemption
+channel A pays "the collateral asset" from the reserve first, so a sIMD reserve pays sIMD — acceptable,
+since it redeems for IMD a block later, but it changes what a redeemer receives.
+
 ## 6. What to build, in order
 
 1. `workCeiling()` + `workRatioBps` as governed parameters, and the ceiling check in `mintFromWork`.

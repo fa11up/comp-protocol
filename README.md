@@ -22,6 +22,7 @@ it is ours.
 | `Treasury` | where the protocol's own revenue lands |
 | `Registry` | replaceable counterparties — **written, not yet wired to anything** |
 | `UsdPriceFeed` | the IMD/ETH feed × Chainlink ETH/USD, so one COMP of debt is one **dollar** of collateral |
+| `SharePriceFeed` | prices any ERC-4626 share from a feed for its asset, in USD per 1e18 raw units — built for sIMD |
 | `SwarmWorkOracle` | minting rights earned from an attested work tally; extends `SwarmFeed`, so it inherits question binding |
 | `WorkOracleFactory` | deploys the above, because its creation code will not fit in the vault's |
 | `CompToken` | the stablecoin; minted and burned only by its vault |
@@ -193,6 +194,7 @@ Other things learned the expensive way:
 ```bash
 forge test                                                              # 362, InHouse self-skips
 forge test --match-path test/InHouse.t.sol --fork-url $SEPOLIA_RPC_URL   # 14, live state
+forge test --match-path test/SharePriceFeedFork.t.sol --fork-url $MAINNET_RPC_URL  # 12, live sIMD
 AUDIT_PROOFS=true forge test --match-path 'test/audit/*'                 # auditor proofs
 ```
 
