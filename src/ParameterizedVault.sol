@@ -115,9 +115,8 @@ contract ParameterizedVault is CDPVault {
     /// The divergence guard is unaffected and must stay that way: it compares the RAW primary feed
     /// against spot, both quoting IMD in ETH, so the ETH/USD factor never enters it. Comparing a
     /// denominated price against spot would sit them an ETH price apart and refuse every action.
-    function _price() internal view override returns (uint256 price) {
+    function _priceOrZero() internal view override returns (uint256 price) {
         (price,) = usdPriceFeed.latestValue();
-        if (price == 0) revert InvalidPrice();
     }
 
     /// @notice Stale if either leg of the USD price is, on top of the base vault's own feeds.

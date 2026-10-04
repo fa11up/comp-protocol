@@ -68,15 +68,24 @@ contract UsdPriceFeed is ISwarmFeed {
         return Math.min(imdEthFeed.maxAge(), ETH_USD_MAX_AGE);
     }
 
+    /// @dev AUDIT FIX (job da7d5b1c, low): a FUTURE timestamp is unusable, not fresh. The old test
+    /// only looked backwards, so an answer dated ahead of the chain read as fresh for ETH_USD_MAX_AGE
+    /// past its own stamp — and a frozen one stayed acceptable for as long as that date was ahead.
     function _tooOld(uint64 at) private view returns (bool) {
-        return block.timestamp > at && block.timestamp - at > ETH_USD_MAX_AGE;
+        if (at > block.timestamp) return true;
+        return block.timestamp - at > ETH_USD_MAX_AGE;
     }
 
     /// @dev (0, 0, 0) for anything that is not a well-formed positive answer with a timestamp.
     function _ethUsd() private view returns (uint256 price, uint64 updatedAt, uint8 decimals) {
         (bool ok, bytes memory data) = address(ETH_USD).staticcall(abi.encodeCall(IAggregatorV3.latestRoundData, ()));
         if (!ok || data.length < 160) return (0, 0, 0);
-        (, int256 answer,, uint256 at,) = abi.decode(data, (uint80, int256, uint256, uint256, uint80));
+        // AUDIT FIX (job da7d5b1c, low): decode as five plain words. Decoding straight into
+        // (uint80, int256, uint256, uint256, uint80) made the DISCARDED round identifiers load-bearing
+        // — a word too large for uint80 panics in this frame, before any of the checks below run, so
+        // malformed padding reverted instead of reading as the documented zero. The round ids are not
+        // used for anything, so they must not be able to fail.
+        (, int256 answer,, uint256 at,) = abi.decode(data, (uint256, int256, uint256, uint256, uint256));
         if (answer <= 0 || at == 0 || at > type(uint64).max) return (0, 0, 0);
         (ok, data) = address(ETH_USD).staticcall(abi.encodeCall(IAggregatorV3.decimals, ()));
         if (!ok || data.length < 32) return (0, 0, 0);

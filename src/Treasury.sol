@@ -126,10 +126,16 @@ contract Treasury {
         // made reserveValueUsd — and so the vault's work ceiling and every mintFromWork — revert
         // until a delisting matured 48 hours later. Probe both reads here, where the listing fails
         // instead, with the same leniency a typed call applies to the returned length.
-        (bool ok, bytes memory data) = address(priceFeed).staticcall(abi.encodeCall(ISwarmFeed.isStale, ()));
-        if (!ok || data.length < 32) revert InvalidPriceSource();
-        (ok, data) = address(priceFeed).staticcall(abi.encodeCall(ISwarmFeed.latestValue, ()));
-        if (!ok || data.length < 64) revert InvalidPriceSource();
+        // AUDIT FIX (job da7d5b1c, medium): the length alone is not the encoding. This used to probe
+        // "with the same leniency a typed call applies to the returned length", which let a source
+        // answering 2 for a bool, or a timestamp above uint64, pass the listing and then be refused
+        // at valuation. Both layers now agree on what a well-formed answer is: refuse it here, where
+        // the proposal fails for free, AND count it for nothing there, where reverting is not allowed.
+        (bool stale, bool ok) = _readBool(priceFeed, abi.encodeCall(ISwarmFeed.isStale, ()));
+        stale; // staleness at listing time is not disqualifying; only a malformed answer is.
+        if (!ok) revert InvalidPriceSource();
+        (, bool priced) = _readValue(priceFeed);
+        if (!priced) revert InvalidPriceSource();
         // Both endpoints are valid: zero backing through full market value.
         if (haircutBps > BPS) revert HaircutOutOfRange(haircutBps);
         // Reverts here if the token has no decimals(), which is also what prices it correctly later.
@@ -173,20 +179,50 @@ contract Treasury {
     function reserveValueOf(IERC20 asset) public view returns (uint256) {
         ReserveAsset storage entry = _reserve[asset];
         if (address(entry.priceFeed) == address(0)) return 0;
-        try entry.priceFeed.isStale() returns (bool stale) {
-            if (stale) return 0;
-        } catch {
-            return 0;
-        }
-        uint256 price;
-        try entry.priceFeed.latestValue() returns (uint256 value, uint64) {
-            price = value;
-        } catch {
-            return 0;
-        }
-        if (price == 0) return 0;
-        uint256 marked = Math.mulDiv(asset.balanceOf(address(this)), price, 10 ** entry.decimals);
+        // AUDIT FIX (job da7d5b1c, two mediums): every one of these three reads is a raw staticcall
+        // with its own decoding, because try/catch DOES NOT COVER DECODING. `try` catches a revert
+        // inside the callee; the returned bytes are decoded in THIS frame, and a bad encoding panics
+        // here where no catch clause can see it. A listed feed answering `abi.encode(uint256(2))` for
+        // a bool, or one word for `(uint256,uint64)`, therefore reverted reserveValueUsd() — and with
+        // it workCeiling() and every mintFromWork — rather than counting for nothing. The third read
+        // is balanceOf, which was never isolated at all: a token that stops answering balances took
+        // the whole reserve sum down with it, including unrelated healthy assets.
+        (bool stale, bool ok) = _readBool(entry.priceFeed, abi.encodeCall(ISwarmFeed.isStale, ()));
+        if (!ok || stale) return 0;
+        (uint256 price, bool priced) = _readValue(entry.priceFeed);
+        if (!priced || price == 0) return 0;
+        (uint256 balance, bool held) = _readBalance(asset);
+        if (!held || balance == 0) return 0;
+        uint256 marked = Math.mulDiv(balance, price, 10 ** entry.decimals);
         return Math.mulDiv(marked, entry.haircutBps, BPS);
+    }
+
+    /// @dev A word that is a valid ABI bool is exactly 0 or 1. Anything else is not a bool, and the
+    /// caller treats "not a bool" the same as "no answer": this asset counts for nothing.
+    function _readBool(ISwarmFeed feed, bytes memory call) private view returns (bool value, bool ok) {
+        (bool success, bytes memory data) = address(feed).staticcall(call);
+        if (!success || data.length < 32) return (false, false);
+        uint256 word = abi.decode(data, (uint256));
+        if (word > 1) return (false, false);
+        return (word == 1, true);
+    }
+
+    /// @dev `(uint256, uint64)`: two words, the second of which must actually fit in uint64. The
+    /// timestamp is discarded — staleness is the feed's own answer — but a word that cannot be a
+    /// uint64 means the response is not the tuple it claims to be, so it is refused wholesale.
+    function _readValue(ISwarmFeed feed) private view returns (uint256 value, bool ok) {
+        (bool success, bytes memory data) = address(feed).staticcall(abi.encodeCall(ISwarmFeed.latestValue, ()));
+        if (!success || data.length < 64) return (0, false);
+        (uint256 first, uint256 second) = abi.decode(data, (uint256, uint256));
+        if (second > type(uint64).max) return (0, false);
+        return (first, true);
+    }
+
+    function _readBalance(IERC20 asset) private view returns (uint256 balance, bool ok) {
+        (bool success, bytes memory data) =
+            address(asset).staticcall(abi.encodeCall(IERC20.balanceOf, (address(this))));
+        if (!success || data.length < 32) return (0, false);
+        return (abi.decode(data, (uint256)), true);
     }
 
     function _remove(IERC20 asset) private {
@@ -251,9 +287,19 @@ contract Treasury {
             totalReceived[token] += credited;
             emit Received(token, credited, totalReceived[token]);
         }
+        // AUDIT FIX (job da7d5b1c, low): move the baseline BEFORE the transfer. Crediting first and
+        // clamping afterwards left the old baseline visible for the length of an external call, so a
+        // recipient callback calling permissionless `sync` credited the remaining balance a second
+        // time. The record is this contract's whole purpose, so a reentrant double-credit corrupts
+        // the one number it answers. Setting it to the post-transfer balance up front is exact for a
+        // well-behaved token and is re-derived below for one that moves a different amount.
+        lastSynced[token] = before > amount ? before - amount : 0;
         token.safeTransfer(to, amount);
-        // Keep the baseline honest, so the next sync does not read the withdrawal as fresh revenue.
-        lastSynced[token] = token.balanceOf(address(this));
+        // Fee-on-transfer and rebasing tokens do not move exactly `amount`. Re-reading closes that
+        // gap; a callback during the transfer has already seen the conservative baseline above, so it
+        // can credit at most what genuinely arrived.
+        uint256 remaining = token.balanceOf(address(this));
+        if (remaining < lastSynced[token]) lastSynced[token] = remaining;
         emit Withdrawn(token, to, amount);
     }
 }

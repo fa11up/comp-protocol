@@ -604,8 +604,16 @@ contract CDPVault is ReentrancyGuard {
     /// ParameterizedVault overrides it to price in USD, which is what makes a COMP a dollar.
     /// Not governable, and deliberately: `priceFeed` is immutable and this is chosen at compile time,
     /// so no key can change what a position is measured against.
-    function _price() internal view virtual returns (uint256 price) {
+    /// @dev AUDIT FIX (job da7d5b1c, medium): the VIRTUAL is now the non-reverting read, and `_price`
+    /// is the reverting wrapper built on it. Every acting path wants the revert; `_clearIfRecovered`
+    /// must not have it, because it runs inside deposit and repay and promises not to block them. One
+    /// seam serves both, so a subclass still denominates in exactly one place.
+    function _priceOrZero() internal view virtual returns (uint256 price) {
         (price,) = priceFeed.latestValue();
+    }
+
+    function _price() internal view returns (uint256 price) {
+        price = _priceOrZero();
         if (price == 0) revert InvalidPrice();
     }
 
@@ -638,14 +646,24 @@ contract CDPVault is ReentrancyGuard {
         uint256 debt = debtOf(owner);
         if (debt == 0) {
             _clearMark(owner);
-        } else if (!priceFeed.isStale() && !nhiFeed.isStale() && !spotFeed.isStale()) {
-            (uint256 price,) = priceFeed.latestValue();
+        } else if (!_pricingStale() && !spotFeed.isStale()) {
+            // AUDIT FIX (job da7d5b1c, medium): TWO prices, because they answer different questions.
+            // The divergence comparison takes the RAW primary, since both legs quote IMD in the same
+            // unit and the ETH/USD factor would cancel anyway. The health check takes the DENOMINATED
+            // price, because it is compared against minCR like every other health check. Reading one
+            // price for both put ETH-valued collateral against USD-denominated debt the moment
+            // ParameterizedVault denominated in dollars, understating the ratio by the whole ETH/USD
+            // factor — so a position restored to health kept its mark, and a liquidator could reuse
+            // that stale grace after a later decline.
+            (uint256 primary,) = priceFeed.latestValue();
             (uint256 spot,) = spotFeed.latestValue();
-            uint256 difference = price > spot ? price - spot : spot - price;
+            uint256 difference = primary > spot ? primary - spot : spot - primary;
+            uint256 priced = _priceOrZero();
             // Invalid recovery observations preserve the mark without blocking deposits or repayments.
             if (
-                price != 0 && spot != 0 && difference <= Math.mulDiv(price, maxDivergenceBps(), 10_000)
-                    && _collateralRatio(position.collateral, debt, price) >= minCR()
+                primary != 0 && spot != 0 && priced != 0
+                    && difference <= Math.mulDiv(primary, maxDivergenceBps(), 10_000)
+                    && _collateralRatio(position.collateral, debt, priced) >= minCR()
             ) {
                 _clearMark(owner);
             }
