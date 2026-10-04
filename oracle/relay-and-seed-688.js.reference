@@ -1,0 +1,144 @@
+/**
+ * Relay the attested price into launch 688's PriceFeed, then seed SpotFeed and NhiFeed from it.
+ *
+ * Signs with W0, derived from sim.config.js exactly as sim.js does. The mnemonic is read by this
+ * process and is never printed.
+ *
+ *   node relay-and-seed-688.js            # verify everything, send nothing
+ *   node relay-and-seed-688.js --execute  # send
+ *
+ * ORDER IS LOAD-BEARING: SwarmFeed._checkValue applies its deviation bound only when the feed
+ * already holds a fresh value, so the FIRST value a feed accepts is unconstrained. The price comes
+ * from the attestation, bought while PriceFeed was empty; spot is then set to that EXACT figure so
+ * divergence is zero rather than merely in bounds, and NHI to 0.9e18 (minCR 150, 6h grace).
+ *
+ * TESTNET ONLY for the seeding half: it uses the reporter fallback, the mainnet hole this protocol
+ * is deleting. Only W0 holds `isReporter` on these feeds; relaying itself is permissionless.
+ */
+const { ethers } = require('ethers');
+const fs = require('fs');
+const cfg = require('./sim.config.js');
+
+const EXECUTE = process.argv.includes('--execute');
+const RPC = cfg.RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com';
+const ATT_PATH = process.env.ATT || '/private/tmp/claude-501/-Users-azp-a11-imd/f3f717a8-458d-4bd6-a0cb-84f73375bc52/scratchpad/comp/oracle/attestation-e2c85027.json';
+
+const W0_EXPECTED = '0x1d0074aB2ba9dA4cCbc67cFC0026E570D0E93951';
+const PRICE_FEED  = '0x5bbFA44200AcE481388B0B69355F7Bd1FeAb0462';
+const NHI_FEED    = '0xd7C9a4604d9FbFE192232D7c4B7215EFe0005bbB';
+const SPOT_FEED   = '0x73BF2ebfc5Bf181AC23799D2d79AC2B48F20284b';
+const RELAY       = '0xe36FFc2688Bf5974f2187AC9086492e372926D40';
+const VAULT       = '0x850B0d7a6dD95bE3e842c0ef14EEFE0008f2c68F';
+const NHI_SEED    = ethers.utils.parseUnits('0.9', 18);
+
+const ATT_TUPLE = '(bytes32,uint256,bytes32,uint8,bytes,uint256,uint64,uint64,bytes32,bytes32,uint16,uint16,uint16,uint64,uint64)';
+const RELAY_ABI = [`function relay(address feed, ${ATT_TUPLE} attestation, bytes signature)`];
+const FEED_ABI = [
+  'function latestValue() view returns (uint256, uint256)',
+  'function isStale() view returns (bool)',
+  'function isReporter(address) view returns (bool)',
+  'function usedRequests(bytes32) view returns (bool)',
+  'function expectedQuestionHash(uint64,uint64) view returns (bytes32)',
+  'function maxDeviationBps() view returns (uint256)',
+  'function report(uint256 value)',
+];
+const VAULT_ABI = ['function minCR() view returns (uint256)'];
+const TYPES = { bool: 0, address: 1, bytes32: 2, uint256: 3 };
+
+function fail(msg) { console.error('  FAIL: ' + msg); process.exit(1); }
+
+(async () => {
+  const provider = new ethers.providers.JsonRpcProvider(RPC);
+  const node = ethers.utils.HDNode.fromMnemonic(cfg.MNEMONIC);
+  const w0 = new ethers.Wallet(node.derivePath("m/44'/60'/0'/0/0").privateKey, provider);
+
+  console.log('signer:  ' + w0.address);
+  if (w0.address.toLowerCase() !== W0_EXPECTED.toLowerCase())
+    fail(`derived ${w0.address}, expected W0 ${W0_EXPECTED}. Wrong mnemonic or path — nothing sent.`);
+  const bal = await provider.getBalance(w0.address);
+  console.log('balance: ' + ethers.utils.formatEther(bal) + ' ETH');
+  if (bal.lt(ethers.utils.parseEther('0.001'))) fail('balance too low');
+
+  const a = JSON.parse(fs.readFileSync(ATT_PATH, 'utf8'));
+  const m = a.message;
+  const tuple = [
+    m.requestId, m.chainId, m.questionHash, TYPES[m.answerType], m.answer,
+    ethers.BigNumber.from(m.figure), m.fromBlock, m.toBlock, m.blockHash, m.panelJobId,
+    m.panelSize, m.quorum, m.agreed, m.issuedAt, m.expiresAt,
+  ];
+  console.log('\nattestation ' + a.requestId);
+  console.log('  figure ' + m.figure + '  panel ' + m.panelSize + '/' + m.agreed +
+              '  window ' + m.fromBlock + '..' + m.toBlock);
+
+  const price = new ethers.Contract(PRICE_FEED, FEED_ABI, w0);
+  const spot  = new ethers.Contract(SPOT_FEED,  FEED_ABI, w0);
+  const nhi   = new ethers.Contract(NHI_FEED,   FEED_ABI, w0);
+
+  // The check that matters: the feed must agree the attestation answers ITS question.
+  const pinned = await price.expectedQuestionHash(m.fromBlock, m.toBlock);
+  console.log('  feed pins    ' + pinned);
+  console.log('  attestation  ' + m.questionHash);
+  if (pinned.toLowerCase() !== m.questionHash.toLowerCase())
+    fail('question hash mismatch — the feed would refuse this');
+  console.log('  question hash MATCHES');
+
+  if (Number(m.expiresAt) * 1000 < Date.now()) fail('attestation has expired');
+
+  for (const [n, c] of [['Spot', spot], ['Nhi', nhi]])
+    if (!(await c.isReporter(w0.address))) fail(`W0 is not a reporter on ${n}Feed`);
+
+  let [pv] = await price.latestValue();
+  console.log('\nPriceFeed before: ' + pv.toString());
+
+  // ---- 1. relay ----------------------------------------------------------------------------
+  if (pv.toString() === m.figure.toString()) {
+    console.log('  already holds the attested figure — skipping the relay');
+  } else {
+    const relay = new ethers.Contract(RELAY, RELAY_ABI, w0);
+    await relay.callStatic.relay(PRICE_FEED, tuple, a.signature);
+    console.log('  relay simulates OK');
+    if (!EXECUTE) { console.log('\n(verify only — pass --execute to send)'); return; }
+    const tx = await relay.relay(PRICE_FEED, tuple, a.signature);
+    console.log('  relay tx ' + tx.hash);
+    const r = await tx.wait();
+    console.log('  mined in block ' + r.blockNumber + ', gas ' + r.gasUsed.toString());
+    [pv] = await price.latestValue();
+    if (!pv.eq(ethers.BigNumber.from(m.figure))) fail('feed did not take the attested figure');
+    console.log('  PriceFeed now: ' + pv.toString() + '  (= the attested figure)');
+    console.log('  replay protection engaged: ' + await price.usedRequests(m.requestId));
+  }
+
+  // ---- 2. seed spot and nhi ----------------------------------------------------------------
+  const [sv] = await spot.latestValue();
+  const [nv] = await nhi.latestValue();
+  if (!EXECUTE) {
+    await spot.callStatic.report(pv); await nhi.callStatic.report(NHI_SEED);
+    console.log('\nspot/nhi reports simulate OK  (verify only — pass --execute to send)');
+    return;
+  }
+  if (sv.eq(pv)) console.log('\nSpotFeed already matches — skipping');
+  else {
+    await spot.callStatic.report(pv);
+    const t = await spot.report(pv); console.log('\nspot tx ' + t.hash); await t.wait();
+  }
+  if (nv.eq(NHI_SEED)) console.log('NhiFeed already seeded — skipping');
+  else {
+    await nhi.callStatic.report(NHI_SEED);
+    const t = await nhi.report(NHI_SEED); console.log('nhi tx ' + t.hash); await t.wait();
+  }
+
+  // ---- 3. read everything back off chain ---------------------------------------------------
+  const [p2] = await price.latestValue();
+  const [s2] = await spot.latestValue();
+  const [n2] = await nhi.latestValue();
+  console.log('\nread back:');
+  console.log('  PriceFeed ' + p2.toString() + '  stale=' + await price.isStale());
+  console.log('  SpotFeed  ' + s2.toString() + '  stale=' + await spot.isStale());
+  console.log('  NhiFeed   ' + n2.toString() + '  stale=' + await nhi.isStale());
+  const gap = p2.gt(s2) ? p2.sub(s2) : s2.sub(p2);
+  console.log('  divergence ' + gap.toString() + ' wei');
+  if (!gap.isZero()) fail('nonzero divergence after seeding');
+  const minCR = await new ethers.Contract(VAULT, VAULT_ABI, provider).minCR();
+  console.log('  vault minCR ' + minCR.toString());
+  console.log('\nSEEDED. The vault can price, and divergence is exactly zero.');
+})().catch(e => { console.error('\nERROR: ' + (e.reason || e.message)); process.exit(1); });
