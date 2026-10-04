@@ -355,19 +355,46 @@ suite was brought up to them rather than rewritten:
   share from `stabilityFeeOf` immediately before each burn under the shipped 2%
   annual rate, and a dedicated test checks the fee-first order of cancellation.
 
-**Reported, not asserted:** repayment retires principal from the record without
-moving its timestamp, so a mint-then-repay round trip of any size the health check
-allows multiplies the record's age by `F / (F + X)` at a cost of gas only, and
-twenty such pairs every six hours keep a position's whole principal "fresh"
-indefinitely. A redemption against it then excludes the entire principal part from
-the stored base, which is the pump-cost bypass `883fa030` described. It is in
-`.imd-findings.json` with a self-contained proof (plain `CDPVault`, a control case
-without the round trips) rather than pinned here.
+The round-trip bypass reported in that round (repayment retired principal from
+the record without moving its timestamp, so mint-then-repay pairs kept a
+position's whole principal "fresh" for gas) was accepted as finding `5ee3f2bc`
+and fixed in the source revision the next subsection covers.
+
+Previous-round verification: `forge build` passed; the full default `forge test`
+passed **427 tests, 0 failed, 2 existing optional skips** across 45 suites.
+
+### Per-position secured collateral and youngest-first retirement (source revision for findings 7cd5035c and 5ee3f2bc)
+
+The accepted source changed two things these tests pin, and the suite was brought
+up to them rather than rewritten:
+
+- The backing guard no longer reads the vault's IMD balance. It reads
+  `securedCollateral`, the sum over positions of collateral bounded by twice the
+  position's principal, so a debt-free deposit counts for nothing whether or not a
+  transaction boundary separates it from the burn. The guards test that used to
+  show the slow debt-free deposit succeeding now shows it refused, checks the
+  secured sum stays at the indebted position's 150, and shows the accepted slow
+  path instead: debt minted against that collateral in a later transaction (100
+  IMD at 0.8 securing 50 of principal) lets the same burn through at the quote.
+- Repayment, liquidation and redemption retire the youngest debt first, fees
+  included. The invariant handler's mirror now applies the same rule after every
+  repayment and position burn: the remaining record keeps its principal-time with
+  the conserved age rounded up, and ages out whole when that date would fall
+  outside the window. The base-rate exclusion is unchanged, so the handler still
+  excludes only the principal part of a burn that was fresh before the burn.
+
+Also fixed on the way, from an advisory finding against the shipped tree: the
+`WorkBacking.invariant.t.sol` handler's priced collateral top-up floored to zero
+when a 1-wei borrow met a cleared debt and an ETH/USD answer above two dollars
+per unit, and `depositCollateral(0)` reverted `ZeroAmount`, which
+`fail_on_revert` turned into a failed campaign (replayed deterministically as
+`repay(max); setEthUsd(13856, false); borrow(0)`). The top-up now rounds up, so it
+is never zero and still leaves the position at twice its debt.
 
 Current verification: `forge build` passed; the full default `forge test` passed
-**427 tests, 0 failed, 2 existing optional skips** across 45 suites. The 64
-redemption tests pass without skips; the invariant runs 256 sequences of 96
-calls with zero unexpected reverts. The scratch proof fails on the current source
-for the stated reason and is not part of the submitted suite. This revision
-changes only the redemption economics tests, the invariant handler's freshness
-mirror and this coverage note.
+**429 tests, 0 failed, 2 existing optional skips** across 46 suites. The 64
+redemption tests pass without skips; the redemption invariant runs 256 sequences
+of 96 calls and the work-backing invariant 256 sequences of 128 calls, both with
+zero unexpected reverts, under the default seed and seeds 1, 2 and 3. No new
+contract defect was reproduced. This revision changes only one guards test, the
+two invariant handlers and this coverage note.

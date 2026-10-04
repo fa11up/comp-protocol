@@ -27,6 +27,10 @@ contract AtomicActor {
         vault.depositCollateral(amount);
     }
 
+    function mint(uint256 amount) external {
+        vault.mintCOMP(amount);
+    }
+
     function depositAndRedeem(uint256 depositAmount, uint256 burn, address candidate) external returns (uint256) {
         vault.depositCollateral(depositAmount);
         return vault.redeem(burn, 0, candidate);
@@ -209,12 +213,23 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         actor.depositAndRedeem(100 ether, 10 ether, BORROWER);
         assertEq(collateral.balanceOf(address(actor)), 100 ether, "the whole call rolled back");
         assertEq(stable.balanceOf(address(actor)), 25 ether);
-        // The slow version is the accepted design: collateral left across a transaction counts
-        // up to the cap, and costs real capital exposed in the vault for that time.
+        // Source revision for finding 7cd5035c: the guard counts collateral per position, bounded by
+        // twice the position's principal, so a debt-free deposit counts for nothing across a
+        // transaction boundary too. It used to fill the gap the cap left open when the indebted
+        // position held less than minCR (as here, at 120%), for the cost of gas.
         actor.deposit(100 ether);
+        assertEq(backedVault.securedCollateral(), 150 ether, "no principal, no secured term");
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        actor.redeem(10 ether, BORROWER);
+        // The slow version with debt against the collateral is the accepted design: 100 IMD at 0.8
+        // secures 50 of principal (bound 125 IMD), 200 of value for 175 of supply, and it costs
+        // real capital exposed in the vault for that time.
+        actor.mint(50 ether);
+        assertEq(backedVault.securedCollateral(), 250 ether, "one position's term is its whole collateral");
         uint256 out = _quote(10 ether);
         assertEq(actor.redeem(10 ether, BORROWER), out);
         assertEq(collateral.balanceOf(address(actor)), out);
+        assertEq(stable.balanceOf(address(actor)), 65 ether);
     }
 
     function test_principalMintedInTheSameTransactionDoesNotDiluteTheFee() public {

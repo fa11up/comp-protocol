@@ -136,7 +136,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         vm.prank(actor);
         backedVault.repayCOMP(amount);
         principal[actor] -= amount - fee;
-        _retireFresh(actor, amount - fee);
+        _retireFresh(actor, amount);
         repaymentBurns += amount;
         feesReminted += fee;
     }
@@ -239,7 +239,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         _assertRedeemed(beforeState, amounts, redeemer, candidateIndex);
         assertEq(backedVault.redemptionBaseRate(), expectedBase, "stored base follows the documented curve");
         assertEq(backedVault.lastRedemptionAt(), block.timestamp, "every successful burn checkpoints decay");
-        _retireFresh(candidate, amounts.principalCancelled);
+        _retireFresh(candidate, amounts.cancelled);
         principal[candidate] -= amounts.principalCancelled;
         collateralRedeemed[candidate] += amounts.payout - amounts.reserveOut;
         reserveSpent += amounts.reserveOut;
@@ -335,9 +335,21 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         freshPrincipal[actor] = fresh + amount;
     }
 
-    function _retireFresh(address actor, uint256 principalPaid) private {
-        uint256 fresh = freshPrincipal[actor];
-        freshPrincipal[actor] = fresh > principalPaid ? fresh - principalPaid : 0;
+    /// @dev A burn retires the youngest debt first, fees included (source revision for finding
+    /// 5ee3f2bc): what remains keeps the record's principal-time, so its date moves back by the
+    /// conserved age rounded up (older), and a record that would be dated outside the window ages
+    /// out whole. `burned` is the whole amount `_reduceDebt` saw, not only the principal part.
+    function _retireFresh(address actor, uint256 burned) private {
+        uint256 fresh = _freshNow(actor);
+        uint256 remaining = fresh > burned ? fresh - burned : 0;
+        if (fresh == 0 || remaining == 0) {
+            freshPrincipal[actor] = remaining;
+            return;
+        }
+        uint256 age = Math.mulDiv(block.timestamp - lastMintedAt[actor], fresh, remaining, Math.Rounding.Ceil);
+        bool stillFresh = age < FRESH_WINDOW && age <= block.timestamp;
+        freshPrincipal[actor] = stillFresh ? remaining : 0;
+        if (stillFresh) lastMintedAt[actor] = block.timestamp - age;
     }
 
     /// @dev floor(effective / supply) / 4 on top of the decayed base, saturating at the cap.
