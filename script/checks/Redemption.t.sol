@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ParameterizedVault} from "../../src/ParameterizedVault.sol";
 import {CDPVault} from "../../src/CDPVault.sol";
 import {Parameters} from "../../src/Parameters.sol";
@@ -304,19 +305,30 @@ contract RedemptionTest is Test {
         assertEq(comp.balanceOf(REDEEMER), 50 ether);
     }
 
+    /// @dev The payout is no longer fixed at par, so a SOLE position cannot be made worse: the
+    /// figure the payout is capped at IS that position's own ratio, and removing value at a
+    /// position's own ratio leaves the ratio where it was, with the fee making it better. The ratio
+    /// guard is still needed for a candidate BELOW the aggregate — see the next test.
     function test_insolventCandidateCannotBeMadeWorseByRedemption() public {
         _open(ALICE, 180 ether, 100 ether);
         _giveComp(50 ether);
         _price(0.4 ether);
-        bytes32 before = _state(ALICE);
-        vm.expectRevert();
-        vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
-        assertEq(_state(ALICE), before);
+        assertEq(vault.collateralRatio(ALICE), 72);
+        assertEq(vault.backingPerComp(), 0.72 ether, "one position is the whole protocol");
+        (uint256 collateralWas, uint256 debtWas) = vault.positions(ALICE);
+        uint256 payout = _expectCapped(10 ether, ALICE);
+        (uint256 collateralNow, uint256 debtNow) = vault.positions(ALICE);
+        assertEq(collateralNow, collateralWas - payout);
+        assertGt(collateralNow * debtWas, collateralWas * debtNow, "the exact ratio strictly improves");
     }
 
+    /// @dev A second, healthy position lifts the aggregate the cap is computed from above this
+    /// candidate's own ratio, which is the only way the gap the ratio guard covers can open now.
+    /// The point of the test is unchanged: whole-percent `collateralRatio` would hide the
+    /// deterioration, and the guard compares the exact fractions instead.
     function test_ratioRegressionHiddenByIntegerCRRoundingIsStillRejected() public {
         _open(ALICE, 180 ether, 100 ether);
+        _open(BOB, 1000 ether, 100 ether);
         _giveComp(1 ether);
         _price(0.538 ether);
         uint256 payout = _quote(1 ether, 0.538 ether);
@@ -499,14 +511,14 @@ contract RedemptionTest is Test {
         assertEq(vault.reserveValue(), 100 ether);
         assertEq(comp.totalSupply(), 250 ether);
         assertEq(vault.redemptionFeeBps(10 ether), 150);
-        assertEq(_quote(10 ether, 1 ether), 9.85 ether);
-        bytes32 before = _state(ALICE);
-
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, address(0));
-
-        assertEq(_state(ALICE), before, "rejection restores balances, debt, fee and Treasury accounting");
+        // Every borrower is gone: 100 of reserve stands behind 250 of supply and nothing else does,
+        // so a COMP is backed at 0.4. Par would pay 9.85 and worsen the ratio, which is what the
+        // old halt refused; the cap pays 40% of that instead and cannot.
+        assertEq(vault.backingPerComp(), 0.4 ether, "100 of reserve, 250 of supply");
+        assertEq(_parQuote(10 ether, 1 ether), 9.85 ether, "what par would have paid");
+        assertEq(_quote(10 ether, 1 ether), 3.94 ether, "40% of par, less the 150 bps fee");
+        assertEq(_expectCapped(10 ether, address(0)), 3.94 ether);
+        assertGt(vault.backingPerComp(), 0.4 ether, "and the fee leaves it strictly better");
     }
 
     function test_reserveRedemptionAllowsExactlyUnchangedBacking() public {
@@ -515,13 +527,19 @@ contract RedemptionTest is Test {
         _mintWorkAndUnwind();
         uint256 assetsBefore = vault.reserveValue();
         uint256 supplyBefore = comp.totalSupply();
-
-        vm.prank(REDEEMER);
-        assertEq(vault.redeem(10 ether, 9.85 ether, address(0)), 9.85 ether);
-
-        assertEq(vault.reserveValue() * supplyBefore, assetsBefore * comp.totalSupply());
+        // 246.25 of reserve against 250 of supply was the level at which a PAR payout of 9.85 left
+        // backing EXACTLY unchanged — the equality the old guard allowed. The payout now tracks
+        // backing (0.985 of par) rather than sitting at par, so the same burn pays less and backing
+        // comes out strictly BETTER. The boundary stops being a boundary, which is the point.
+        assertEq(_parQuote(10 ether, 1 ether), 9.85 ether, "par at the old equality point");
+        uint256 payout = _expectCapped(10 ether, address(0));
+        assertGt(
+            vault.reserveValue() * supplyBefore,
+            assetsBefore * comp.totalSupply(),
+            "strictly better, where par was exactly neutral"
+        );
         assertEq(comp.totalSupply(), 240 ether);
-        assertEq(imd.balanceOf(REDEEMER), 9.85 ether);
+        assertEq(imd.balanceOf(REDEEMER), payout);
     }
 
     function test_reserveRedemptionRefusesBackingOneWeiBelowBoundary() public {
@@ -530,18 +548,20 @@ contract RedemptionTest is Test {
         _mintWorkAndUnwind();
         uint256 assetsBefore = vault.reserveValue();
         uint256 supplyBefore = comp.totalSupply();
+        // One wei below the boundary a PAR payout crosses the exact ratio line, which is what the
+        // old guard refused. The capped payout does not cross it here or anywhere else, so there
+        // is no longer a cliff one wei either side of 246.25.
         assertLt(
+            (assetsBefore - _parQuote(10 ether, 1 ether)) * supplyBefore,
+            assetsBefore * (supplyBefore - 10 ether),
+            "one wei of backing crosses the exact ratio boundary at par"
+        );
+        assertGe(
             (assetsBefore - _quote(10 ether, 1 ether)) * supplyBefore,
             assetsBefore * (supplyBefore - 10 ether),
-            "one wei of backing crosses the exact ratio boundary"
+            "the capped payout stays on the right side of it"
         );
-        bytes32 before = _state(ALICE);
-
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, address(0));
-
-        assertEq(_state(ALICE), before);
+        _expectCapped(10 ether, address(0));
     }
 
     function test_borrowerRedemptionCannotWorsenAggregateBackingDespiteImprovingPosition() public {
@@ -564,17 +584,17 @@ contract RedemptionTest is Test {
         vault.withdrawCollateral(120);
         vm.stopPrank();
         assertEq(comp.totalSupply(), 4);
-        assertEq(_quote(1, 0.2 ether), 4);
         assertEq(vault.reserveValue(), 1);
+        // 9 IMD wei at 0.2 floors to 1 wei of value behind 4 of supply, so a COMP is backed at a
+        // quarter and the burn is paid 1 wei, not the 4 par would pay. Paying 4 is the loss the
+        // rounding hides: 5 of 9 still floors to 1, while the exact fraction falls from 9/4 to 5/3.
+        assertEq(vault.backingPerComp(), 0.25 ether, "1 of value, 4 of supply");
+        assertEq(_parQuote(1, 0.2 ether), 4, "par would have paid four times that");
         assertEq(Math.mulDiv(9 - 4, 0.2 ether, 1 ether), 1, "rounded remaining backing would hide the loss");
         assertLt(uint256((9 - 4) * 4), uint256(9 * (4 - 1)), "exact underlying backing would fall");
-        bytes32 before = _state(ALICE);
-
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(1, 0, address(0));
-
-        assertEq(_state(ALICE), before);
+        assertEq(_expectCapped(1, address(0)), 1, "a quarter of par, less the fee, floored");
+        assertEq(imd.balanceOf(address(treasury)), 8);
+        assertGt(uint256(8 * 4), uint256(9 * 3), "8/3 beats 9/4 even in exact arithmetic");
     }
 
     function test_haircutReserveRejectsUnsafeBurnAndAllowsFundedBurn() public {
@@ -582,18 +602,19 @@ contract RedemptionTest is Test {
         _fundReserve(100 ether);
         _mintWorkAndUnwind();
         assertEq(vault.reserveValue(), 50 ether);
-        bytes32 before = _state(ALICE);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, address(0));
-        assertEq(_state(ALICE), before);
+        _expectCapped(10 ether, address(0));
 
         _fundReserve(500 ether);
         uint256 assetsBefore = vault.reserveValue();
         uint256 supplyBefore = comp.totalSupply();
-        assertEq(assetsBefore, 300 ether);
+        // The retained factor halves the REGISTERED value, but the guard values the IMD it would
+        // actually pay at the redemption price on both sides, so backing clears par and this burn
+        // is paid par minus the fee. The haircut is work-ceiling policy, not a redemption discount.
+        assertEq(vault.backingPerComp(), 1e18);
+        uint256 payout = _quote(10 ether, 1 ether);
+        assertEq(payout, _parQuote(10 ether, 1 ether), "the cap does not bind once the reserve is funded");
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(10 ether, 9.85 ether, address(0)), 9.85 ether);
+        assertEq(vault.redeem(10 ether, payout, address(0)), payout);
         assertGt(vault.reserveValue() * supplyBefore, assetsBefore * comp.totalSupply());
     }
 
@@ -693,29 +714,30 @@ contract RedemptionTest is Test {
         _fundReserve(100 ether);
         _mintWorkAndUnwind();
         assertEq(comp.totalSupply(), 250 ether);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, address(0));
+        // Smaller burns than the old version used: those reverted and left the redeemer's COMP
+        // alone, and these actually spend it.
+        _expectCapped(50 ether, address(0));
 
         // Across transactions: a debt-free deposit, then the same burn.
         vm.prank(BOB);
         vault.depositCollateral(1000 ether);
-        bytes32 before = _state(BOB);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, address(0));
-        assertEq(_state(BOB), before);
+        _expectCapped(50 ether, address(0));
 
-        // Inside one transaction: deposit, burn, withdraw.
+        // Inside one transaction: deposit, burn, withdraw. No longer refused — the payout is capped
+        // at the backing the call FOUND, so the deposit buys the redeemer nothing. The defence is
+        // the same one, expressed as a price rather than as a revert.
         AtomicRedeemer atomic = new AtomicRedeemer();
         vm.prank(REDEEMER);
         comp.transfer(address(atomic), 100 ether);
         vm.prank(APPROVED_OPERATOR);
         imd.mint(address(atomic), 1000 ether);
-        (bool ok,) = atomic.run(vault, imd, 1000 ether, 0, 100 ether, address(0));
-        assertFalse(ok, "a same-transaction deposit let the burn through");
-        assertEq(imd.balanceOf(address(treasury)), 100 ether, "nothing left the reserve");
-        assertEq(comp.totalSupply(), 250 ether);
+        uint256 quoted = _quote(100 ether, 1 ether);
+        uint256 treasuryBefore = imd.balanceOf(address(treasury));
+        (bool ok, uint256 out) = atomic.run(vault, imd, 1000 ether, 0, 100 ether, address(0));
+        assertTrue(ok, "a capped payout replaces the refusal");
+        assertEq(out, quoted, "the in-call deposit did not raise the payout by one wei");
+        assertEq(imd.balanceOf(address(treasury)), treasuryBefore - quoted, "only the capped payout left");
+        assertEq(comp.totalSupply(), 50 ether);
     }
 
     function test_oneWeiOfDebtDoesNotTurnADepositIntoBacking() public {
@@ -724,10 +746,7 @@ contract RedemptionTest is Test {
         _mintWorkAndUnwind();
         _open(BOB, 1000 ether, 1);
         bytes32 before = _state(BOB);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, address(0));
-        assertEq(_state(BOB), before);
+        _expectCapped(100 ether, address(0));
     }
 
     function test_collateralCountsAtMostMinCRTimesPriorPrincipal() public {
@@ -757,17 +776,18 @@ contract RedemptionTest is Test {
         _mintWorkAndUnwind();
         assertEq(vault.reserveValue(), 0, "unlisted, as at launch");
         assertEq(vault.redemptionReserve(), 100 ether);
-        bytes32 before = _state(ALICE);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
-        assertEq(_state(ALICE), before);
+        // Unlisted, so `reserveValue` reads zero — but the guard values this IMD at the redemption
+        // price on BOTH sides, which is the whole point of finding 998ff6b2, so backing is 100/250.
+        assertEq(vault.backingPerComp(), 0.4 ether, "valued at the redemption price, not the register");
+        uint256 firstPayout = _expectCapped(10 ether, ALICE);
 
-        // The same boundary the registered case has: 246.25 against 250 holds the ratio exactly.
+        // Recapitalizing to the old boundary level raises the cap; the burn is still paid below par
+        // because 246.25 against 240 of supply is still short of it.
         _fundReserve(146.25 ether);
+        uint256 payout = _quote(10 ether, 1 ether);
+        assertGt(payout, firstPayout, "a larger reserve pays the same burn more");
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(10 ether, 9.85 ether, address(0)), 9.85 ether);
-        assertEq(imd.balanceOf(address(treasury)) * 250 ether, 246.25 ether * 240 ether);
+        assertEq(vault.redeem(10 ether, payout, address(0)), payout);
     }
 
     function test_registeredFactorDoesNotChangeHowTheGuardValuesIMD() public {
@@ -778,17 +798,24 @@ contract RedemptionTest is Test {
         _fundReserve(246.25 ether - 1);
         _mintWorkAndUnwind();
         assertEq(vault.reserveValue(), 0);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, address(0));
+        // Zero retained factor, but the guard still sees the Treasury's IMD at the redemption price
+        // on both sides, so backing is NOT zero and the payout is capped at it rather than refused.
+        assertGt(vault.backingPerComp(), 0.9 ether, "a zero factor does not blind the guard to IMD");
+        assertLt(vault.backingPerComp(), 1e18, "but the reserve is a hair short of par");
+        _expectCapped(10 ether, address(0));
         _fundReserve(1);
+        uint256 payout = _quote(10 ether, 1 ether);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(10 ether, 9.85 ether, address(0)), 9.85 ether);
+        assertEq(vault.redeem(10 ether, payout, address(0)), payout);
     }
 
     function test_sameTransactionMintCannotDiluteTheFee() public {
         _open(ALICE, 3000 ether, 1000 ether);
-        _fundReserve(200 ether);
+        // Funded past the cap up front. This test pins FEE figures, and a capped payout would
+        // confound every one of them; the backing cap has its own cases above. The old version
+        // opened with an under-reserved run asserting the burn was refused outright, which is the
+        // one half of it the cap replaces rather than preserves.
+        _fundReserve(10_000 ether);
         assertEq(vault.redemptionFeeBps(100 ether), 300);
         AtomicRedeemer atomic = new AtomicRedeemer();
         _giveComp(100 ether);
@@ -796,16 +823,10 @@ contract RedemptionTest is Test {
         comp.transfer(address(atomic), 100 ether);
         vm.prank(APPROVED_OPERATOR);
         imd.mint(address(atomic), 13_500 ether);
-        // The guard still measures supply as it stands, so the 9000 minted inside the call count
-        // against a backing that excludes their collateral: the burn is refused outright.
+        assertEq(vault.backingPerComp(), 1e18, "the cap is not what this test measures");
+        // The fee is the one a tenth of the supply that existed BEFORE the call pays, and that is
+        // the base the next redeemer inherits: the 9000 minted inside the call do not dilute it.
         (bool ok, uint256 out) = atomic.run(vault, imd, 13_500 ether, 9000 ether, 100 ether, address(0));
-        assertFalse(ok);
-        assertEq(comp.totalSupply(), 1000 ether);
-        assertEq(vault.redemptionBaseRate(), 0);
-        // With enough reserve for the guard to pass, the fee is the one a tenth of the supply that
-        // existed before the call pays, and that is the base the next redeemer inherits.
-        _fundReserve(9800 ether);
-        (ok, out) = atomic.run(vault, imd, 13_500 ether, 9000 ether, 100 ether, address(0));
         assertTrue(ok);
         assertEq(out, 97 ether, "a same-transaction mint bought a cheaper fee");
         assertEq(vault.redemptionBaseRate(), 0.025 ether);
@@ -975,43 +996,56 @@ contract RedemptionTest is Test {
         vault.mintFromWork(800 ether);
         _price(0.5 ether);
         assertEq(vault.collateralRatio(ALICE), 75);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
+        _expectCapped(100 ether, ALICE);
 
         // A debt-free deposit in its own transaction used to fill the gap between what ALICE holds
         // (750) and the cap (1500): it is not in the transient tally, bears no debt and comes back
         // the next transaction. Bounded per position, it contributes nothing.
+        // Now that the consequence is a capped payout rather than a refusal, "contributes nothing"
+        // is DIRECTLY measurable: the same burn is quoted at exactly the same figure either side of
+        // the deposit. That is a stronger statement than the old revert, which only said the burn
+        // was somewhere past a threshold.
+        uint256 quotedBefore = _quote(100 ether, 0.5 ether);
         vm.prank(BOB);
         vault.depositCollateral(1500 ether);
         assertEq(vault.securedCollateral(), 1500 ether, "only ALICE's collateral is secured");
-        uint256 treasuryBefore = imd.balanceOf(address(treasury));
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
+        assertEq(_quote(100 ether, 0.5 ether), quotedBefore, "1500 idle IMD bought the redeemer nothing");
+        _expectCapped(100 ether, ALICE);
         // One wei of debt contributes one wei's worth of IMD, not the deposit.
         vm.prank(BOB);
         vault.mintCOMP(1);
         assertEq(vault.securedCollateral(), 1500 ether + 4, "two wei of USD at half a dollar");
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
-        assertEq(imd.balanceOf(address(treasury)), treasuryBefore, "nothing left the reserve");
+        _expectCapped(100 ether, ALICE);
 
         // The variant without a price move: the operator withdraws reserve and NHI falls to 0.60.
         _price(1 ether);
         vm.prank(BOB);
         vault.repayCOMP(1);
+        // Half of what is actually left, not a literal 400: the three burns above now PAY (they
+        // used to revert and leave the reserve at its initial 550), so a fixed figure overdraws it.
+        // Read FIRST: a view inside the argument list consumes the prank (this reverted
+        // Unauthorized once already), so the balance is hoisted out of the pranked call.
+        uint256 half = imd.balanceOf(address(treasury)) / 2;
         vm.prank(APPROVED_OPERATOR);
-        treasury.withdraw(imd, APPROVED_OPERATOR, 400 ether);
+        treasury.withdraw(imd, APPROVED_OPERATOR, half);
         nhi.setValue(0.6 ether);
         assertEq(vault.minCR(), 200);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        // The cap does NOT bind here, and that is the correct reading rather than a weaker test: the
+        // price is back at 1 and minCR 200 lets twice ALICE's principal count, so her whole 1500
+        // qualifies and a COMP is backed to par. The burn is paid par minus the fee.
+        assertEq(vault.backingPerComp(), 1e18, "a higher minCR lets all of ALICE's collateral count");
+        uint256 parPayout = _quote(100 ether, 1 ether);
+        assertEq(parPayout, _parQuote(100 ether, 1 ether));
+        uint256 backingWas = _econBacking();
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
+        assertEq(vault.redeem(100 ether, parPayout, ALICE), parPayout);
+        assertGe(_econBacking(), backingWas, "a redemption must not worsen backing");
+        // BOB's 1500 was never backing, so he can still take all of it back out.
         vm.prank(BOB);
         vault.withdrawCollateral(1500 ether);
-        assertEq(vault.securedCollateral(), 1500 ether);
+        // Still the full 1500: the reserve covered the whole payout, so ALICE's position never
+        // funded it and her secured term is untouched.
+        assertEq(vault.securedCollateral(), 1500 ether, "only ALICE's collateral, and all of it");
     }
 
     function test_securedCollateralIsBoundedPerPositionAndRepricedWhenTouched() public {
@@ -1190,14 +1224,18 @@ contract RedemptionTest is Test {
             180 ether * (100 ether - canceled),
             "the candidate's own ratio would improve"
         );
-        assertLt((assetsBefore - payout) * 350 ether, assetsBefore * 340 ether, "aggregate backing would worsen");
+        // The candidate's own ratio improves, which the ratio guard allows, and under a PAR payout
+        // the aggregate would still worsen — that gap is exactly what RedemptionWorsensBacking was
+        // for. The capped payout closes it by arithmetic: par worsens the aggregate, this does not.
+        assertLt(
+            (assetsBefore - _parQuote(10 ether, 1 ether)) * 350 ether,
+            assetsBefore * 340 ether,
+            "a par payout would worsen aggregate backing"
+        );
+        assertGe((assetsBefore - payout) * 350 ether, assetsBefore * 340 ether, "the capped payout does not");
         bytes32 before = _state(BOB);
 
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, BOB);
-
-        assertEq(_state(BOB), before);
+        _expectCapped(10 ether, BOB);
     }
 
     function _price(uint256 price) private {
@@ -1205,12 +1243,29 @@ contract RedemptionTest is Test {
         spot.setValue(price);
     }
 
+    /// @dev Mirrors the vault: par minus the fee, then capped at what actually backs a COMP.
     function _payoutScale(uint256 amount) private view returns (uint256) {
-        return (10_000 - vault.redemptionFeeBps(amount)) * 1e14;
+        return Math.mulDiv(vault.backingPerComp(), 10_000 - vault.redemptionFeeBps(amount), 10_000);
     }
 
     function _quote(uint256 amount, uint256 price) private view returns (uint256) {
         return Math.mulDiv(amount, _payoutScale(amount), price);
+    }
+
+    /// @dev A burn the old `RedemptionWorsensBacking` halt refused. It now goes through at a payout
+    /// capped at backing per COMP: strictly below par minus the fee, exact to the wei, improving
+    /// economic backing, and leaving a state that actually moved. Replaces an `expectRevert` plus a
+    /// `_state` fingerprint asserting nothing changed — which asserted the halt, not the property.
+    function _expectCapped(uint256 amount, address candidate) private returns (uint256 payout) {
+        (uint256 price,) = vault.usdPriceFeed().latestValue();
+        payout = _quote(amount, price);
+        assertLt(payout, _parQuote(amount, price), "the cap binds below par minus the fee");
+        uint256 backingWas = _econBacking();
+        bytes32 stateWas = _state(candidate);
+        vm.prank(REDEEMER);
+        assertEq(vault.redeem(amount, payout, candidate), payout, "paid exactly the capped figure");
+        assertGe(_econBacking(), backingWas, "a redemption must not worsen backing");
+        assertNotEq(_state(candidate), stateWas, "a successful burn moves the state");
     }
 
     function _assertPosition(address owner, uint256 collateral, uint256 debt) private view {
@@ -1245,5 +1300,26 @@ contract RedemptionTest is Test {
         vm.expectRevert();
         vm.prank(REDEEMER);
         vault.redeem(10 ether, 0, ALICE);
+    }
+
+    /// @notice Collateral plus reserve, per COMP, in the vault's unit — the ECONOMIC backing figure.
+    /// @dev Deliberately NOT `vault.backingPerComp()`, which counts only collateral with minCR times
+    /// its value in principal behind it and therefore FALLS when a redemption cancels debt (it
+    /// disqualifies minCR of collateral to retire one COMP of supply). That measure is not monotone
+    /// and must not be asserted as if it were. This one is, under a pro-rata payout, and it is read
+    /// from balances rather than from the vault so it can disagree with it.
+    function _econBacking() private view returns (uint256) {
+        uint256 supply = comp.totalSupply();
+        if (supply == 0) return type(uint256).max;
+        (uint256 price,) = vault.usdPriceFeed().latestValue();
+        uint256 others = vault.reserveValue() - treasury.reserveValueOf(IERC20(address(imd)));
+        uint256 backing = others
+            + Math.mulDiv(imd.balanceOf(address(treasury)) + imd.balanceOf(address(vault)), price, 1e18);
+        return Math.mulDiv(backing, 1e18, supply);
+    }
+
+    /// @dev What the payout would be with no backing cap: par minus the fee.
+    function _parQuote(uint256 amount, uint256 price) private view returns (uint256) {
+        return Math.mulDiv(amount, (10_000 - vault.redemptionFeeBps(amount)) * 1e14, price);
     }
 }

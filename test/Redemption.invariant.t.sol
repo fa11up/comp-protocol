@@ -43,6 +43,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         uint256 reserveIMD;
         uint256 redeemerIMD;
         uint256 backing;
+        uint256 econBacking;
         uint256 ceiling;
         uint256 base;
         uint256 decayedBase;
@@ -191,7 +192,12 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         assertLe(feeBps, 500, "fee never exceeds the source cap");
         RedemptionAmounts memory amounts;
         amounts.burned = amount;
-        amounts.payout = Math.mulDiv(amount, 10_000 - feeBps, 10_000);
+        // The payout is capped at backing per COMP, so the model has to cap it too. This used to be
+        // par-minus-fee unconditionally, with a separate branch below expecting a revert whenever
+        // that exceeded the burn's share of backing — which is the halt that is gone.
+        amounts.payout = Math.mulDiv(
+            Math.mulDiv(amount, _backingPerComp(beforeState.backing, beforeState.supply), 1e18), 10_000 - feeBps, 10_000
+        );
         amounts.reserveOut = Math.min(amounts.payout, beforeState.reserveIMD);
         amounts.cancelled = amounts.reserveOut == amounts.payout
             ? 0
@@ -212,12 +218,9 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
                 failure = CDPVault.RedemptionWorsensRatio.selector;
             }
         }
-        // IMD is $1 and the registered reserve retains 100% in this fixture. Compare
-        // exact fractions independently: payout / burn must not exceed backing / supply.
-        // Debt exits can break that bound even when the candidate's own ratio improves.
-        if (failure == bytes4(0) && amounts.payout * beforeState.supply > beforeState.backing * amount) {
-            failure = CDPVault.RedemptionWorsensBacking.selector;
-        }
+        // No backing branch any more: a payout capped at backing per COMP cannot exceed the burn's
+        // share of backing, so there is no state in which the vault refuses a redemption for it. The
+        // bound this branch asserted is now structural and is checked below as a property instead.
         if (failure != bytes4(0)) {
             vm.expectRevert(failure);
             vm.prank(redeemer);
@@ -250,6 +253,13 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         else ++mixedCalls;
     }
 
+    /// @dev A helper rather than a local: the handler is already at the stack limit, and one more
+    /// variable in it makes the whole file fail to compile without viaIR.
+    function _backingPerComp(uint256 backing, uint256 supply) private pure returns (uint256) {
+        if (supply == 0) return 1e18;
+        return Math.min(1e18, Math.mulDiv(backing, 1e18, supply));
+    }
+
     function _assertRedeemed(
         BeforeRedemption memory beforeState,
         RedemptionAmounts memory amounts,
@@ -267,7 +277,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         uint256 backingAfter = collateral.balanceOf(address(backedVault)) + collateral.balanceOf(address(reserve));
         assertGe(
             backingAfter * beforeState.supply,
-            beforeState.backing * stable.totalSupply(),
+            beforeState.econBacking * stable.totalSupply(),
             "backing ratio cannot fall, including after debt unwinds"
         );
         for (uint256 i; i < actors.length; ++i) {
@@ -295,8 +305,16 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         // percent of the principal standing behind it. Surplus and debt-free collateral is
         // withdrawable without a health check and backs no COMP. Each handler call is its own
         // transaction, so nothing here was deposited or minted "this transaction".
+        // The vault bounds this by `securedCollateral` -- the per-position sum, each term capped at
+        // twice that position's own principal -- NOT by its whole balance. A debt-free deposit makes
+        // the balance exceed it, and modelling the payout off the balance overstates it, which
+        // surfaced as MinimumOutNotMet where an eligibility revert was expected.
         uint256 secured = Math.mulDiv(backedVault.totalDebt() - backedVault.totalBadDebt(), backedVault.minCR(), 100);
-        state.backing = state.reserveIMD + Math.min(collateral.balanceOf(address(backedVault)), secured);
+        state.backing = state.reserveIMD + Math.min(backedVault.securedCollateral(), secured);
+        // The ECONOMIC figure, which is the one a pro-rata payout makes monotone. Kept separate
+        // because `backing` above is deliberately conservative and is NOT monotone: cancelling a
+        // borrower's debt disqualifies minCR worth of collateral to retire one COMP of supply.
+        state.econBacking = state.reserveIMD + collateral.balanceOf(address(backedVault));
         state.ceiling = backedVault.workCeiling();
         state.base = backedVault.redemptionBaseRate();
         state.decayedBase = backedVault.decayedRedemptionBaseRate();
@@ -374,6 +392,11 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         collateral.mint(address(reserve), amount);
         collateralIssued += amount;
         reserveFunded += amount;
+    }
+
+    /// @dev For the sequence tests: the figure the vault caps a redemption payout at.
+    function vaultBackingPerComp() external view returns (uint256) {
+        return backedVault.backingPerComp();
     }
 
     function assertAccounting() external view {
@@ -499,8 +522,25 @@ contract RedemptionInvariantTest is StdInvariant, Test {
         handler.withdraw(3, 180 ether);
         handler.fundReserve(10 ether);
         uint256 rejected = handler.rejectedCalls();
+        uint256 spentBefore = handler.reserveSpent();
+        // WAS "unsafe payout must be rejected". Every borrower is gone, so 10 of reserve stands
+        // behind the work-issued COMP and nothing else does: a COMP is backed well below par. The
+        // burn is now PAID that fraction rather than refused, which is how the halt goes away
+        // without the protocol overpaying. The handler models the capped figure and asserts the
+        // payout to the wei, so "not rejected" here is backed by an exact expectation.
+        uint256 backingBefore = handler.vaultBackingPerComp();
+        assertLt(backingBefore, 1e18, "work-issued COMP with no borrowers is underbacked");
         handler.redeem(3, 0, 1 ether);
-        assertEq(handler.rejectedCalls(), rejected + 1, "unsafe payout must be rejected");
+        assertEq(handler.rejectedCalls(), rejected, "a capped payout is not a rejection");
+        // The handler asserts the capped payout to the wei inside `_redeem`, so this adds only what
+        // it cannot: the reserve really paid, and it paid far below par for a 1 COMP burn.
+        uint256 paid = handler.reserveSpent() - spentBefore;
+        assertGt(paid, 0, "the reserve actually paid");
+        // The price is one here, so the payout for 1 COMP is directly comparable to the backing
+        // figure: it is below it by the fee, and well below the 1 IMD that par would have paid.
+        assertLt(paid, backingBefore, "capped at backing, and the fee takes a little more");
+        assertLt(paid, 1 ether, "par would have paid a whole IMD");
+        assertGt(handler.vaultBackingPerComp(), 0, "and the protocol is still measurably backed");
         handler.assertAccounting();
     }
 }

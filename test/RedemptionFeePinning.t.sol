@@ -123,8 +123,10 @@ contract RedemptionFeePinningTest is WorkBackingFixture {
         vm.stopPrank();
     }
 
+    /// @dev Mirrors the vault: par minus the fee, then capped at what actually backs a COMP.
     function _quote(uint256 amount) private view returns (uint256) {
         (uint256 price,) = backedVault.usdPriceFeed().latestValue();
-        return Math.mulDiv(amount, (10_000 - backedVault.redemptionFeeBps(amount)) * 1e14, price);
+        uint256 scale = Math.mulDiv(backedVault.backingPerComp(), 10_000 - backedVault.redemptionFeeBps(amount), 10_000);
+        return Math.mulDiv(amount, scale, price);
     }
 }

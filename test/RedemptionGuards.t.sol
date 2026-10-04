@@ -118,16 +118,28 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         assertEq(collateral.balanceOf(address(backedVault)), 150 ether);
         assertEq(stable.totalSupply(), 35 ether);
         assertEq(backedVault.collateralRatio(BORROWER), 1500);
+        // WAS a RedemptionWorsensBacking halt. The surplus is excluded from the figure the payout is
+        // capped at instead, which is the same defence stated as a number rather than a refusal:
+        // the 160 of balance would put a COMP at par, the 25 actually secured puts it at 25/35.
+        assertEq(
+            backedVault.backingPerComp(),
+            Math.mulDiv(25 ether, 1e18, 35 ether),
+            "the secured figure, not the whole balance"
+        );
         uint256 out = _quote(10 ether);
-        assertLe(out * 35 ether, 160 ether * 10 ether, "the whole balance would allow this burn");
-        assertGt(out * 35 ether, 25 ether * 10 ether, "the secured figure refuses it");
+        assertLt(out, _parQuote(10 ether), "so the burn is paid below par minus the fee");
+        assertEq(out, Math.mulDiv(10 ether, Math.mulDiv(Math.mulDiv(25 ether, 1e18, 35 ether), 9500, 10_000), 1e18));
+        uint256 backingBefore1 = _econBacking();
         vm.prank(WORKER);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        backedVault.redeem(10 ether, 0, BORROWER);
-        // The same burn is accepted once enough principal stands behind the collateral again.
+        assertEq(backedVault.redeem(10 ether, out, BORROWER), out);
+        assertGt(_econBacking(), backingBefore1, "and the fee leaves backing strictly better");
+        // Once principal stands behind the collateral again a COMP is fully backed and the same burn
+        // is paid par minus the fee: the cap stops binding, rather than a closed channel reopening.
         vm.prank(BORROWER);
         backedVault.mintCOMP(90 ether);
+        assertEq(backedVault.backingPerComp(), 1e18, "principal behind the collateral restores par");
         out = _quote(10 ether);
+        assertEq(out, _parQuote(10 ether), "an unbound cap pays exactly par minus the fee");
         vm.prank(WORKER);
         assertEq(backedVault.redeem(10 ether, out, BORROWER), out);
     }
@@ -142,19 +154,43 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         vm.prank(APPROVED_OPERATOR);
         reserve.withdraw(collateral, APPROVED_OPERATOR, 100 ether);
         assertEq(stable.totalSupply(), 320 ether);
+        assertEq(collateral.balanceOf(address(backedVault)), 350 ether);
+        // 350 is held against 320 of supply, so the balance alone would put a COMP at par. What may
+        // COUNT is bounded by minCR times the principal behind it, and at minCR 150 that bound bites
+        // at 300 — so a COMP is backed at 300/320 and the payout is capped there, not at par.
+        assertEq(backedVault.minCR(), 150);
+        assertEq(
+            backedVault.backingPerComp(), Math.mulDiv(300 ether, 1e18, 320 ether), "minCR 150 bounds it to 300"
+        );
         uint256 out = _quote(10 ether);
-        // 350 held. At minCR 150 only 300 counts, which is short of a 99.2% payout on 320 of supply.
-        assertGt(out * 320 ether, 300 ether * 10 ether);
-        assertLe(out * 320 ether, 350 ether * 10 ether);
-        vm.prank(WORKER);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        backedVault.redeem(10 ether, 0, SECOND_BORROWER);
-        // At minCR 200 up to 400 counts, so all 350 does. Same burn, same candidate, same price.
+        assertLt(out, _parQuote(10 ether), "below par minus the fee, by exactly the shortfall in backing");
+
+        // Stressing NHI raises minCR, so the SAME collateral may count for more: at minCR 200 the
+        // bound is 400, the whole 350 counts, and a COMP is backed to par. That is this test's
+        // subject, and it now reads as a figure instead of as which burns happen to revert.
         health.setValue(0.6 ether);
         assertEq(backedVault.minCR(), 200);
-        assertEq(_quote(10 ether), out);
+        assertEq(backedVault.backingPerComp(), 1e18, "at minCR 200 the whole balance counts");
+        assertEq(_quote(10 ether), _parQuote(10 ether), "and the cap no longer binds");
+
+        // Back at the base minCR the capped burn goes through and cannot worsen economic backing.
+        health.setValue(0.85 ether);
+        assertEq(backedVault.minCR(), 150);
+        uint256 backingBefore2 = _econBacking();
         vm.prank(WORKER);
         assertEq(backedVault.redeem(10 ether, out, SECOND_BORROWER), out);
+        assertGt(_econBacking(), backingBefore2, "a redemption must not worsen backing");
+
+        // And the stressed reading reaches par again from the state the redemption left, so the
+        // next burn of the same size is paid par minus the fee rather than the capped amount.
+        health.setValue(0.6 ether);
+        assertEq(backedVault.minCR(), 200);
+        assertEq(backedVault.backingPerComp(), 1e18);
+        uint256 atPar = _quote(10 ether);
+        assertEq(atPar, _parQuote(10 ether));
+        assertGt(atPar, out, "the same burn is paid more once the bound stops biting");
+        vm.prank(WORKER);
+        assertEq(backedVault.redeem(10 ether, atPar, SECOND_BORROWER), atPar);
     }
 
     /// @dev After a liquidation drains a position, its residual principal is still in totalDebt
@@ -183,53 +219,92 @@ contract RedemptionGuardsTest is WorkBackingFixture {
 
         uint256 held = collateral.balanceOf(address(backedVault));
         uint256 supply = stable.totalSupply();
+        assertEq(backedVault.minCR(), 150);
+        uint256 secured = backedVault.securedCollateral(); // price is back to 1, so value == amount
+        uint256 withResidual = Math.min(secured, Math.mulDiv(backedVault.totalDebt(), 150, 100));
+        uint256 withoutResidual = Math.min(secured, Math.mulDiv(backedVault.totalDebt() - bad, 150, 100));
+        assertLt(withoutResidual, withResidual, "the realized loss shrinks the secured principal");
+        // WAS a RedemptionWorsensBacking halt. The loss is removed from the principal the backing
+        // figure is bounded by instead, so it CAPS the payout rather than refusing the burn — and
+        // the subtraction is now readable as a figure instead of inferred from which burns revert.
+        uint256 reserveTerm = _reserveBacking(1e18); // the liquidation's protocol cut, not zero
+        assertEq(
+            backedVault.backingPerComp(),
+            Math.mulDiv(reserveTerm + withoutResidual, 1e18, supply),
+            "backing is bounded by the loss-adjusted principal"
+        );
         uint256 out = _quote(10 ether);
-        uint256 withResidual = Math.min(held, Math.mulDiv(backedVault.totalDebt(), 150, 100));
-        uint256 withoutResidual = Math.min(held, Math.mulDiv(backedVault.totalDebt() - bad, 150, 100));
-        assertLe(out, Math.mulDiv(withResidual, 10 ether, supply), "counting the residual would allow this burn");
-        assertGt(out, Math.mulDiv(withoutResidual, 10 ether, supply), "the realized loss refuses it");
+        assertLt(out, _parQuote(10 ether), "so the burn is paid below par minus the fee");
+        assertLt(
+            out,
+            Math.mulDiv(10 ether, Math.min(1e18, Math.mulDiv(reserveTerm + withResidual, 1e18, supply)), 1e18),
+            "counting the residual would have paid more"
+        );
+        uint256 backingBefore3 = _econBacking();
         vm.prank(WORKER);
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        backedVault.redeem(10 ether, 0, SECOND_BORROWER);
-        assertEq(collateral.balanceOf(address(backedVault)), held);
-        assertEq(stable.totalSupply(), supply);
+        assertEq(backedVault.redeem(10 ether, out, SECOND_BORROWER), out);
+        assertGt(_econBacking(), backingBefore3, "a redemption must not worsen backing");
+        // The reserve pays first and the candidate covers the rest, so what left in total is `out`.
+        assertEq(
+            collateral.balanceOf(address(backedVault)) + collateral.balanceOf(address(reserve)),
+            held + reserveTerm - out,
+            "the reserve paid first, the candidate covered the rest"
+        );
+        assertEq(stable.totalSupply(), supply - 10 ether);
     }
 
     // --- one transaction -------------------------------------------------------------------------
 
     function test_debtFreeDepositInTheSameTransactionDoesNotCountAsBacking() public {
         _open(BORROWER, 150 ether, 100 ether);
-        _mintWork(WORKER, 25 ether);
+        _mintWork(WORKER, 25 ether); // the ceiling exactly: no reserve, a quarter of 100 of debt
         vm.prank(WORKER);
         stable.transfer(address(actor), 25 ether);
         vm.prank(APPROVED_OPERATOR);
-        collateral.mint(address(actor), 100 ether);
+        collateral.mint(address(actor), 400 ether);
         _setVaultPrice(0.8 ether);
-        // 120 of value, capped at 150, for 125 of supply: short of a 97.5% payout.
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        actor.redeem(10 ether, BORROWER);
-        // A debt-free deposit in the same call is not counted, however large.
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        actor.depositAndRedeem(100 ether, 10 ether, BORROWER);
-        assertEq(collateral.balanceOf(address(actor)), 100 ether, "the whole call rolled back");
-        assertEq(stable.balanceOf(address(actor)), 25 ether);
-        // Source revision for finding 7cd5035c: the guard counts collateral per position, bounded by
-        // twice the position's principal, so a debt-free deposit counts for nothing across a
-        // transaction boundary too. It used to fill the gap the cap left open when the indebted
-        // position held less than minCR (as here, at 120%), for the cost of gas.
+        // 150 IMD at 0.8 is 120 of value, under the 150 that 100 of principal would allow, for 125
+        // of supply. WAS a RedemptionWorsensBacking halt; the payout is capped at 120/125 instead,
+        // so what a deposit does to backing is now a figure rather than a question of which burns
+        // revert. The whole point of this test is that the answer is "nothing".
+        uint256 capped = Math.mulDiv(120 ether, 1e18, 125 ether);
+        assertEq(backedVault.backingPerComp(), capped, "120 of value against 125 of supply");
+
+        // A debt-free deposit in the SAME call buys the depositor nothing: the figure the payout is
+        // capped at is the one the call found, so 100 extra IMD does not raise what it is paid.
+        uint256 econBefore = _econBacking();
+        uint256 withDeposit = actor.depositAndRedeem(100 ether, 10 ether, BORROWER);
+        assertGt(_econBacking(), econBefore, "an in-call deposit cannot worsen backing either");
+        assertEq(
+            withDeposit,
+            Math.mulDiv(10 ether, Math.mulDiv(capped, 10_000 - 250, 10_000), 0.8 ether),
+            "paid against the backing the call found, not the backing it brought"
+        );
+
+        // Source revision for finding 7cd5035c: the secured term is counted per position and bounded
+        // by that position's own principal, so a debt-free deposit counts for nothing ACROSS a
+        // transaction boundary too. It used to fill the gap the aggregate cap left open when the
+        // indebted position held less than minCR (as here, at 120%), for the cost of gas.
+        // The burn above took its payout out of the candidate, so the secured term is no longer the
+        // 150 it started at. What matters is that the deposit does not move it.
+        uint256 securedAfterBurn = backedVault.securedCollateral();
+        assertEq(securedAfterBurn, 150 ether - withDeposit, "only the payout left the secured term");
+        uint256 beforeDeposit = backedVault.backingPerComp();
         actor.deposit(100 ether);
-        assertEq(backedVault.securedCollateral(), 150 ether, "no principal, no secured term");
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        actor.redeem(10 ether, BORROWER);
-        // The slow version with debt against the collateral is the accepted design: 100 IMD at 0.8
-        // secures 50 of principal (bound 125 IMD), 200 of value for 175 of supply, and it costs
-        // real capital exposed in the vault for that time.
+        assertEq(backedVault.securedCollateral(), securedAfterBurn, "no principal, no secured term");
+        assertEq(backedVault.backingPerComp(), beforeDeposit, "200 idle IMD in the vault changes nothing");
+
+        // The slow version with debt against the collateral is the accepted design, and it is the
+        // only thing that moves the cap: 50 of principal at 0.8 secures 125 of the actor's 200, and
+        // it costs real capital exposed in an open position rather than one transaction of gas.
         actor.mint(50 ether);
-        assertEq(backedVault.securedCollateral(), 250 ether, "one position's term is its whole collateral");
+        assertEq(
+            backedVault.securedCollateral(), securedAfterBurn + 125 ether, "bounded by twice its own principal"
+        );
+        assertGt(backedVault.backingPerComp(), beforeDeposit, "principal behind collateral is what counts");
         uint256 out = _quote(10 ether);
+        assertGt(out, withDeposit, "so the same burn is now paid more");
         assertEq(actor.redeem(10 ether, BORROWER), out);
-        assertEq(collateral.balanceOf(address(actor)), out);
-        assertEq(stable.balanceOf(address(actor)), 65 ether);
     }
 
     function test_principalMintedInTheSameTransactionDoesNotDiluteTheFee() public {
@@ -269,20 +344,28 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         vm.stopPrank();
         _reserveIMD(5 ether);
         vm.prank(APPROVED_OPERATOR);
-        collateral.mint(address(actor), 1800 ether);
-        // An eligible position opened in the same call: its collateral counts for nothing, its
-        // principal counts for nothing, and the burn is refused on backing with everything rolled back.
-        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
-        actor.depositMintAndRedeem(1800 ether, 1000 ether, 10 ether, address(actor));
-        assertEq(stable.totalSupply(), 25 ether);
-        assertEq(backedVault.totalDebt(), 0);
-        assertEq(collateral.balanceOf(address(actor)), 1800 ether);
+        // Twice what the old version minted: the in-call redemption used to revert and give the
+        // collateral back, and now it goes through, so the second deposit needs its own.
+        collateral.mint(address(actor), 3600 ether);
+        // 5 IMD of reserve stands behind 25 of work-issued supply and nothing else does.
+        uint256 capped = Math.mulDiv(5 ether, 1e18, 25 ether);
+        assertEq(backedVault.backingPerComp(), capped, "a fifth of par, and that is the honest figure");
+        // An eligible position opened in the same call: its collateral and principal both count for
+        // nothing, so the burn is priced against the backing that existed before the call. It is no
+        // longer refused — the payout is capped at a fifth of par instead, which is the same
+        // defence without the halt, and the attacker's 1800 IMD buys them nothing.
+        uint256 backingBeforeOpen = _econBacking();
+        uint256 inCall = actor.depositMintAndRedeem(1800 ether, 1000 ether, 10 ether, address(actor));
+        assertGt(_econBacking(), backingBeforeOpen, "an in-call position cannot worsen backing");
+        assertLt(inCall, 10 ether / 4, "capped near a fifth of par, not paid at par");
         // The same position held across a transaction is the accepted slow path: its principal
         // then stands behind 150% of its collateral, and its surplus is exposed in the meantime.
         actor.depositAndMint(1800 ether, 1000 ether);
+        assertEq(backedVault.backingPerComp(), 1e18, "capital held across a transaction does count");
         uint256 out = _quote(10 ether);
+        assertEq(out, _parQuote(10 ether), "so the burn is paid par minus the fee");
+        assertGt(out, inCall * 4, "four times what the same burn got inside one transaction");
         assertEq(actor.redeem(10 ether, address(actor)), out);
-        assertEq(stable.totalSupply(), 1015 ether);
     }
 
     // --- helpers ---------------------------------------------------------------------------------
@@ -318,7 +401,41 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         collateral.mint(address(reserve), amount);
     }
 
+    /// @dev Mirrors the vault: par minus the fee, then capped at what actually backs a COMP.
     function _quote(uint256 amount) private view returns (uint256) {
+        (uint256 price,) = backedVault.usdPriceFeed().latestValue();
+        uint256 scale = Math.mulDiv(backedVault.backingPerComp(), 10_000 - backedVault.redemptionFeeBps(amount), 10_000);
+        return Math.mulDiv(amount, scale, price);
+    }
+
+    /// @notice Collateral plus reserve, per COMP, in the vault's unit — the ECONOMIC backing figure.
+    /// @dev Distinct from `backingPerComp()` on purpose, and the difference is the point. That one is
+    /// deliberately conservative: it counts only collateral with minCR times its value in principal
+    /// behind it, so cancelling a borrower's debt DISQUALIFIES minCR worth of collateral while
+    /// retiring only one COMP of supply, and the measure falls. Measured: four successive 10 COMP
+    /// redemptions walk it 0.9375 -> 0.9194 -> 0.9000 -> 0.8793 -> 0.8571 while the economic figure
+    /// below rises 1.0938 -> 1.1219 every step. The conservative measure is not monotone and must
+    /// not be asserted as if it were; THIS figure is the one the pro-rata payout makes monotone, and
+    /// it is computed here from balances rather than from the vault, so it can disagree with it.
+    function _econBacking() private view returns (uint256) {
+        uint256 supply = stable.totalSupply();
+        if (supply == 0) return type(uint256).max;
+        (uint256 price,) = backedVault.usdPriceFeed().latestValue();
+        uint256 backing = _reserveBacking(price) + Math.mulDiv(collateral.balanceOf(address(backedVault)), price, 1e18);
+        return Math.mulDiv(backing, 1e18, supply);
+    }
+
+    /// @dev The reserve's contribution, composed exactly as ParameterizedVault composes it: IMD at
+    /// this vault's own price whether or not governance listed it, every other asset at its
+    /// registered value. Liquidations pay a protocol cut into the Treasury, so this is rarely zero
+    /// even in a test that drained it.
+    function _reserveBacking(uint256 price) private view returns (uint256) {
+        uint256 others = backedVault.reserveValue() - reserve.reserveValueOf(IERC20(address(collateral)));
+        return others + Math.mulDiv(backedVault.redemptionReserve(), price, 1e18);
+    }
+
+    /// @dev What the payout would be with no backing cap: par minus the fee.
+    function _parQuote(uint256 amount) private view returns (uint256) {
         (uint256 price,) = backedVault.usdPriceFeed().latestValue();
         return Math.mulDiv(amount, (10_000 - backedVault.redemptionFeeBps(amount)) * 1e14, price);
     }

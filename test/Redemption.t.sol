@@ -327,14 +327,51 @@ contract RedemptionTest is WorkBackingFixture {
         );
     }
 
+    /// @dev The payout is no longer fixed at par, so a SOLE position can no longer lose ratio to a
+    /// redemption: the figure the payout is capped at IS that position's own ratio, and removing
+    /// value at a position's own ratio leaves the ratio where it was. The fee makes it strictly
+    /// better. The ratio guard is not dead — see the next test, where the candidate is worse than
+    /// the aggregate the cap is computed from, which is the only way the gap can open.
     function test_deeplyUnderwaterPositionCannotLoseRatioToFixedPriceRedemption() public {
         _open(BORROWER, 180 ether, 100 ether);
         _giveCOMP(10 ether);
         _setVaultPrice(0.5 ether);
         assertEq(backedVault.collateralRatio(BORROWER), 90);
+        // The only position is the whole protocol, so backing per COMP is its ratio: 0.9.
+        assertEq(backedVault.backingPerComp(), 0.9 ether);
+        uint256 out = _quote(10 ether);
+        assertLt(out, _parQuote(10 ether), "a par payout is what used to worsen the ratio");
+        vm.prank(REDEEMER);
+        assertEq(backedVault.redeem(10 ether, out, BORROWER), out);
+        // The improvement is sub-whole-percent, so compare the exact fractions the guard compares
+        // rather than the rounded ratio: 162.315/90 against 180/100.
+        (uint256 c, uint256 d) = backedVault.positions(BORROWER);
+        assertEq(backedVault.collateralRatio(BORROWER), 90, "unchanged at whole-percent precision");
+        assertGt(c * 100 ether, uint256(180 ether) * d, "and strictly better exactly, by the fee");
+    }
+
+    /// @dev The ratio guard is still live and still necessary. `backingPerComp` is an AGGREGATE, so
+    /// a candidate whose own ratio is below it would be worsened by a payout the aggregate affords;
+    /// one overcollateralized position is enough to open that gap. This is the case the cap cannot
+    /// cover and the per-candidate guard must.
+    function test_redemptionWorsensRatioStillRefusesACandidateBelowAggregateBacking() public {
+        _open(BORROWER, 180 ether, 100 ether);
+        // Eligible itself (CR 170 is under the 200 ceiling) but healthy enough to lift the
+        // aggregate above the weak candidate's ratio, which is all the gap needs.
+        _open(SECOND_BORROWER, 340 ether, 100 ether);
+        _giveCOMP(20 ether);
+        _setVaultPrice(0.5 ether);
+        assertEq(backedVault.collateralRatio(BORROWER), 90);
+        assertEq(backedVault.collateralRatio(SECOND_BORROWER), 170);
+        assertGt(backedVault.backingPerComp(), 0.9 ether, "the aggregate is above this candidate's ratio");
         _expectUnchanged(
             10 ether, 0, BORROWER, REDEEMER, abi.encodeWithSelector(CDPVault.RedemptionWorsensRatio.selector)
         );
+        // The same burn against the healthy candidate is fine, so it is the candidate that is
+        // refused and not the burn.
+        uint256 out = _quote(10 ether);
+        vm.prank(REDEEMER);
+        assertEq(backedVault.redeem(10 ether, out, SECOND_BORROWER), out);
     }
 
     function test_stalePrimaryAndNhiEachRefuseEvenReserveOnlyRedemption() public {
@@ -412,37 +449,59 @@ contract RedemptionTest is WorkBackingFixture {
         _reserveIMD(100 ether);
         _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
         assertEq(backedVault.reserveValue(), 100 ether);
-        assertEq(_quote(10 ether), 9.85 ether);
-        assertLt(uint256(90.15 ether) * 250 ether, uint256(100 ether) * 240 ether);
-        _expectUnchanged(
-            10 ether, 0, BORROWER, WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector)
-        );
+        // The borrower is gone: 100 of reserve stands behind 250 of work-issued COMP and nothing
+        // else does, so a COMP is backed at 0.4. Paying par here is exactly what the old
+        // RedemptionWorsensBacking halt existed to stop — 90.15 of reserve against 240 of supply is
+        // worse than 100 against 250 — and the cap stops it by paying the right amount instead.
+        assertEq(backedVault.backingPerComp(), 0.4 ether, "100 of reserve, 250 of supply");
+        assertLt(uint256(90.15 ether) * 250 ether, uint256(100 ether) * 240 ether, "par would deteriorate it");
+        assertEq(_quote(10 ether), 3.94 ether, "40% of par, less the 150 bps fee");
+        assertLt(_quote(10 ether), _parQuote(10 ether));
+        _expectProRata(10 ether, 0, BORROWER, WORKER);
+        assertEq(backedVault.reserveValue(), 96.06 ether);
+        assertGt(backedVault.backingPerComp(), 0.4 ether, "and the fee leaves it strictly better");
     }
 
     function test_underbackedReserveBoundaryRejectsOneWeiBelowAndAcceptsEquality() public {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _reserveIMD(246.25 ether - 1);
         _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        // THERE IS NO LONGER A BOUNDARY, and that is this test's result. 246.25 of reserve against
+        // 250 of supply is the level at which a PAR payout of 9.85 exactly preserved backing, so
+        // one wei below it the old guard refused and at it the guard allowed. The payout now scales
+        // with backing instead of being fixed at par, so backing is preserved or improved at EVERY
+        // reserve level and the one wei either side of 246.25 is no longer a cliff.
         uint256 out = _quote(10 ether);
-        assertEq(out, 9.85 ether);
+        assertEq(_parQuote(10 ether), 9.85 ether, "what par would have paid at the old boundary");
+        assertLt(out, 9.85 ether, "the cap pays less, because backing is below par");
         assertLt(
+            (backedVault.reserveValue() - 9.85 ether) * 250 ether,
+            backedVault.reserveValue() * 240 ether,
+            "one wei below the boundary, a par payout loses backing"
+        );
+        assertGe(
             (backedVault.reserveValue() - out) * 250 ether,
             backedVault.reserveValue() * 240 ether,
-            "one wei below the boundary loses backing"
+            "the capped payout does not, one wei below or anywhere else"
         );
-        _expectUnchanged(
-            10 ether, out, address(0), WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector)
-        );
+        _expectProRata(10 ether, out, address(0), WORKER);
 
+        // At the old boundary exactly: still no cliff, still paid below par, still improving.
         _reserveIMD(1);
         uint256 beforeBacking = backedVault.reserveValue();
         assertLt(beforeBacking, stable.totalSupply(), "safe redemptions can start below 100% backing");
+        uint256 second = _quote(10 ether);
+        assertLt(second, 9.85 ether, "the cap binds at the boundary too");
         vm.prank(WORKER);
-        assertEq(backedVault.redeem(10 ether, out, address(0)), out);
-        assertEq(backedVault.reserveValue() * 250 ether, beforeBacking * stable.totalSupply());
-        assertEq(stable.totalSupply(), 240 ether);
-        assertEq(collateral.balanceOf(WORKER), out);
-        assertEq(backedVault.totalNonPrincipalRedeemed(), 10 ether);
+        assertEq(backedVault.redeem(10 ether, second, address(0)), second);
+        assertGt(
+            backedVault.reserveValue() * 240 ether,
+            beforeBacking * stable.totalSupply(),
+            "strictly better, where par was exactly neutral"
+        );
+        assertEq(stable.totalSupply(), 230 ether);
+        assertEq(collateral.balanceOf(WORKER), out + second);
+        assertEq(backedVault.totalNonPrincipalRedeemed(), 20 ether);
     }
 
     function test_improvingPositionRatioDoesNotPermitWorseningAggregateBacking() public {
@@ -458,32 +517,51 @@ contract RedemptionTest is WorkBackingFixture {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _reserveIMD(9);
         _mintWorkAndUnwind(120, 16, 4);
-        assertEq(_quote(1), 4);
+        // 9 IMD wei at 0.2 floors to 1 USD wei of reserve behind 4 wei of supply, so a COMP is
+        // backed at a quarter and the burn is paid 1 wei, not the 4 that par would pay.
         assertEq(backedVault.reserveValue(), 1);
-        // Flooring both balances would show 1 USD wei before and after paying 4 IMD wei.
-        // The exact asset/supply fraction instead falls from 9/4 to 5/3.
-        assertEq(uint256(5) * 0.2 ether / 1 ether, 1);
-        assertLt(uint256(5) * 4, uint256(9) * 3);
-        _expectUnchanged(1, 0, address(0), WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector));
+        assertEq(backedVault.backingPerComp(), 0.25 ether, "1 of value, 4 of supply");
+        assertEq(_parQuote(1), 4, "par would have paid four times that");
+        assertEq(_quote(1), 1, "a quarter of par, less the fee, floored");
+        // Paying 4 of 9 is the deterioration this test is named for: flooring both balances shows
+        // 1 USD wei before and after, while the exact asset/supply fraction falls from 9/4 to 5/3.
+        assertEq(uint256(5) * 0.2 ether / 1 ether, 1, "the floor hides it");
+        assertLt(uint256(5) * 4, uint256(9) * 3, "the exact fraction does not");
+        // Paying 1 cannot hide anything: 8 of 9 remain against 3 of 4, which is strictly better.
+        _expectProRata(1, 0, address(0), WORKER);
+        assertEq(collateral.balanceOf(address(reserve)), 8);
+        assertEq(stable.totalSupply(), 3);
+        assertGt(uint256(8) * 4, uint256(9) * 3, "8/3 beats 9/4 even in exact arithmetic");
     }
 
     function test_discountedReserveRejectsUnsafePayoutAndAcceptsRecapitalization() public {
         _register(collateral, backedVault.usdPriceFeed(), 5000);
         _reserveIMD(100 ether);
         _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        // A 50% haircut: 100 IMD in the Treasury is 50 of REGISTERED value behind 250 of supply.
         assertEq(backedVault.reserveValue(), 50 ether);
-        _expectUnchanged(
-            10 ether, 0, address(0), WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector)
-        );
+        // But the figure the cap uses is 0.4, not 0.2, and that is correct rather than an oversight:
+        // per finding 998ff6b2 the vault values the Treasury's IMD at its own price on BOTH sides,
+        // because `redemptionReserve` pays that IMD out one for one whether or not governance listed
+        // it or at what factor. One valuation for the IMD held and the IMD leaving is what makes the
+        // comparison mean anything; the haircut governs other assets, which this route cannot pay.
+        assertEq(backedVault.backingPerComp(), 0.4 ether, "IMD at the vault's own price, 100 of 250");
+        uint256 first = _quote(10 ether);
+        assertLt(first, _parQuote(10 ether), "so a discounted reserve pays a discounted redemption");
+        _expectProRata(10 ether, 0, address(0), WORKER);
+        // Recapitalizing raises the cap, and the SAME burn is then paid more. That is the half of
+        // this test that the old halt could only express as "rejected, then accepted".
+        uint256 heldAfterFirst = collateral.balanceOf(address(reserve));
         _reserveIMD(400 ether);
         uint256 beforeBacking = backedVault.reserveValue();
         uint256 out = _quote(10 ether);
+        assertGt(out, first, "a recapitalized reserve pays more for the same burn");
         vm.prank(WORKER);
         assertEq(backedVault.redeem(10 ether, out, address(0)), out);
-        assertEq(backedVault.reserveValue(), (500 ether - out) / 2);
-        assertGt(backedVault.reserveValue() * 250 ether, beforeBacking * stable.totalSupply());
-        assertEq(stable.totalSupply(), 240 ether);
-        assertEq(collateral.balanceOf(WORKER), out);
+        assertEq(backedVault.reserveValue(), (heldAfterFirst + 400 ether - out) / 2);
+        assertGt(backedVault.reserveValue() * 240 ether, beforeBacking * stable.totalSupply());
+        assertEq(stable.totalSupply(), 230 ether);
+        assertEq(collateral.balanceOf(WORKER), first + out);
     }
 
     function _mintWorkAndUnwind(uint256 c, uint256 debt, uint256 work) private {
@@ -511,11 +589,18 @@ contract RedemptionTest is WorkBackingFixture {
             uint256(180 ether) * (100 ether - cancelled),
             "candidate ratio would improve"
         );
+        // The candidate's own ratio improves, which the ratio guard allows, and under a PAR payout
+        // the aggregate would still have deteriorated — that gap is what RedemptionWorsensBacking
+        // was for. The capped payout closes it arithmetically: par deteriorates, this does not.
         uint256 backing = 180 ether + reserveAmount;
-        assertLt((backing - out) * 350 ether, backing * 340 ether, "aggregate backing would deteriorate");
-        _expectUnchanged(
-            10 ether, out, SECOND_BORROWER, WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector)
+        assertLt(
+            (backing - _parQuote(10 ether)) * 350 ether,
+            backing * 340 ether,
+            "a par payout would deteriorate the aggregate"
         );
+        assertGe((backing - out) * 350 ether, backing * 340 ether, "the capped payout does not");
+        assertLt(out, _parQuote(10 ether), "because it pays less than par");
+        _expectProRata(10 ether, out, SECOND_BORROWER, WORKER);
     }
 
     /// forge-config: default.fuzz.runs = 1000
@@ -610,9 +695,11 @@ contract RedemptionTest is WorkBackingFixture {
         collateral.mint(address(reserve), amount);
     }
 
+    /// @dev Mirrors the vault: par minus the fee, then capped at what actually backs a COMP.
     function _quote(uint256 amount) private view returns (uint256) {
         (uint256 price,) = backedVault.usdPriceFeed().latestValue();
-        return Math.mulDiv(amount, (10_000 - backedVault.redemptionFeeBps(amount)) * 1e14, price);
+        uint256 scale = Math.mulDiv(backedVault.backingPerComp(), 10_000 - backedVault.redemptionFeeBps(amount), 10_000);
+        return Math.mulDiv(amount, scale, price);
     }
 
     function _positionState(address candidate) private view returns (bytes32) {
@@ -659,6 +746,16 @@ contract RedemptionTest is WorkBackingFixture {
         );
     }
 
+    /// @dev What the `RedemptionWorsensBacking` expectations became. The payout is capped at backing
+    /// per COMP, so a redemption that used to be refused for removing more than its share now simply
+    /// pays that share — and cannot worsen backing, which is the property the halt was protecting.
+    function _expectProRata(uint256 amount, uint256 minOut, address candidate, address payer) private {
+        uint256 backingBefore1 = _econBacking();
+        vm.prank(payer);
+        backedVault.redeem(amount, minOut, candidate);
+        assertGe(_econBacking(), backingBefore1, "a redemption must not worsen backing");
+    }
+
     function _expectUnchanged(uint256 amount, uint256 minOut, address candidate, address payer, bytes memory error)
         private
     {
@@ -667,5 +764,31 @@ contract RedemptionTest is WorkBackingFixture {
         vm.expectRevert(error);
         backedVault.redeem(amount, minOut, candidate);
         assertEq(_state(candidate, payer), beforeState, "failed redemption left a partial state transition");
+    }
+
+    /// @notice Collateral plus reserve, per COMP, in the vault's unit — the ECONOMIC backing figure.
+    /// @dev Distinct from `backingPerComp()` on purpose, and the difference is the point. That one is
+    /// deliberately conservative: it counts only collateral with minCR times its value in principal
+    /// behind it, so cancelling a borrower's debt DISQUALIFIES minCR worth of collateral while
+    /// retiring only one COMP of supply, and the measure falls. Measured: four successive 10 COMP
+    /// redemptions walk it 0.9375 -> 0.9194 -> 0.9000 -> 0.8793 -> 0.8571 while the economic figure
+    /// below rises 1.0938 -> 1.1219 every step. The conservative measure is not monotone and must
+    /// not be asserted as if it were; THIS figure is the one the pro-rata payout makes monotone, and
+    /// it is computed here from balances rather than from the vault, so it can disagree with it.
+    function _econBacking() private view returns (uint256) {
+        uint256 supply = stable.totalSupply();
+        if (supply == 0) return type(uint256).max;
+        (uint256 price,) = backedVault.usdPriceFeed().latestValue();
+        uint256 others = backedVault.reserveValue() - reserve.reserveValueOf(IERC20(address(collateral)));
+        uint256 backing = others + Math.mulDiv(
+            collateral.balanceOf(address(reserve)) + collateral.balanceOf(address(backedVault)), price, 1e18
+        );
+        return Math.mulDiv(backing, 1e18, supply);
+    }
+
+    /// @dev What the payout would be with no backing cap: par minus the fee.
+    function _parQuote(uint256 amount) private view returns (uint256) {
+        (uint256 price,) = backedVault.usdPriceFeed().latestValue();
+        return Math.mulDiv(amount, (10_000 - backedVault.redemptionFeeBps(amount)) * 1e14, price);
     }
 }

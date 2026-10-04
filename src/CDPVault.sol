@@ -76,7 +76,6 @@ contract CDPVault is ReentrancyGuard {
     error WorkCeilingReached();
     error IneligibleRedemptionPosition();
     error RedemptionWorsensRatio();
-    error RedemptionWorsensBacking();
     error MinimumOutNotMet();
 
     event OracleSet(address indexed oracle);
@@ -442,14 +441,29 @@ contract CDPVault is ReentrancyGuard {
         // REVISION (finding b8aa4a98): whole basis points, rounded against the party paying them.
         uint256 feeBps = REDEMPTION_FEE_FLOOR_BPS + Math.ceilDiv(base, 1e14);
         uint256 price = _price();
-        uint256 payoutScale = (10_000 - feeBps) * 1e14;
+        // THE PAYOUT IS CAPPED AT WHAT BACKS A COMP, and that is what keeps this channel open.
+        //
+        // It used to pay (1 - fee) of PAR unconditionally and then refuse the redemption if that
+        // removed more than its share of backing (`RedemptionWorsensBacking`). The refusal engaged
+        // exactly when backing per COMP fell below 1 - fee, which is a price fall with work-issued
+        // COMP outstanding -- so redemption, the mechanism that defends the peg, halted precisely
+        // when the peg was under stress, and it refused even burns against positions whose own ratio
+        // the redemption would have RAISED. Round 5's review called it "a non-governable [halt] that
+        // engages exactly during the stress the peg is meant to survive", quoting this protocol's own
+        // objection to a governable cap back at it.
+        //
+        // Paying pro-rata instead is exactly neutral on backing by construction: remove B per COMP
+        // from a pool backed at B and the ratio is unchanged, so there is nothing left to guard
+        // against. With the fee applied on top it strictly IMPROVES backing, in every state.
+        //
+        // The honest consequence, which is the point rather than a cost: the peg floor is
+        // min(1 - fee, backing). A protocol backed at 0.96 cannot promise 0.995, and the previous
+        // design's answer to that was to stop redeeming rather than to stop overpaying.
+        uint256 payoutScale = Math.mulDiv(_backingPerComp(price), 10_000 - feeBps, 10_000);
         imdOut = Math.mulDiv(amount, payoutScale, price);
         if (imdOut == 0) revert ZeroAmount();
         if (imdOut < minImdOut) revert MinimumOutNotMet();
         uint256 reserveOut = Math.min(imdOut, redemptionReserve());
-        // Measured before the candidate changes, so the guard compares the state the burn found;
-        // enforced after, so an ineligible or worsened candidate still reports its own error.
-        bool worsensBacking = _redemptionWorsensBacking(amount, imdOut, reserveOut, price);
         uint256 debtCancelled;
         uint256 principalCancelled;
         uint256 freshCancelled;
@@ -459,7 +473,6 @@ contract CDPVault is ReentrancyGuard {
             debtCancelled = amount - Math.mulDiv(reserveOut, price, payoutScale);
             (principalCancelled, freshCancelled) = _redeemPosition(candidate, debtCancelled, imdOut - reserveOut, price);
         }
-        if (worsensBacking) revert RedemptionWorsensBacking();
         totalNonPrincipalRedeemed += amount - principalCancelled;
         // The fresh part of the burn is charged in full but does not move the rate everyone else pays.
         redemptionBaseRate = freshCancelled == 0 ? base : _redemptionRate(amount - freshCancelled);
@@ -470,18 +483,25 @@ contract CDPVault is ReentrancyGuard {
         emit Redeemed(msg.sender, candidate, amount, imdOut, reserveOut, debtCancelled, feeBps);
     }
 
-    function _redemptionWorsensBacking(uint256 amount, uint256 imdOut, uint256 reserveOut, uint256 price)
-        private
-        view
-        returns (bool)
-    {
-        (uint256 backing, uint256 backingOut) = _redemptionReserveBacking(reserveOut, price);
-        // Balances and supply are still pre-payout. A permitted debt unwind can leave work-issued
-        // COMP underbacked, so even a fee-discounted payout must not remove more than its share.
+    /// @notice Value backing one COMP, 1e18-scaled, never above par, at the latest accepted price.
+    /// @dev Public because it is the figure a redeemer is actually paid against and the one a reader
+    /// needs to judge the protocol: below 1e18 it says plainly that a COMP is not fully backed, and
+    /// the redemption payout falls with it instead of the channel closing.
+    function backingPerComp() external view returns (uint256) {
+        return _backingPerComp(_price());
+    }
+
+    /// @notice Value backing one COMP, 1e18-scaled, never above par.
+    /// @dev Reserve plus secured collateral over supply. Capped at 1e18 because a protocol backed
+    /// above par does not pay a premium: the surplus is the borrowers' and the work ceiling's
+    /// headroom, not a redeemer's windfall. Read pre-payout, so it is the state the burn found.
+    function _backingPerComp(uint256 price) private view returns (uint256) {
+        uint256 supply = compToken.totalSupply();
+        if (supply == 0) return 1e18;
+        (uint256 backing,) = _redemptionReserveBacking(0, price);
         backing += _securedCollateralValue(price);
-        backingOut += Math.mulDiv(imdOut - reserveOut, price, 1e18, Math.Rounding.Ceil);
-        // Round backing down and the loss up: fractional-value dust cannot hide deterioration.
-        return backingOut > Math.mulDiv(backing, amount, compToken.totalSupply());
+        uint256 perComp = Math.mulDiv(backing, 1e18, supply);
+        return perComp < 1e18 ? perComp : 1e18;
     }
 
     /// @dev The vault's collateral the guard may count as backing: what stood behind debt before this
