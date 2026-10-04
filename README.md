@@ -8,7 +8,7 @@ Forked from `identity-md-launches/launch-519-mockimd-pricefeed-nhifeed-cdpvault`
 the fork point is the swarm's own build across launches 458 → 493 → 517 → 519 → 586. Everything above
 it is ours.
 
-**275 tests pass** on a plain `forge test`, plus 14 fork tests against live Sepolia state.
+**360 tests pass** on a plain `forge test`, plus 14 fork tests against live Sepolia state.
 
 ## Contracts
 
@@ -18,27 +18,40 @@ it is ours.
 | `ParameterizedVault` | `CDPVault` plus five overrides that read its economics from `Parameters` |
 | `SwarmFeed` | attestation verification; `PriceFeed` / `NhiFeed` / `SpotFeed` are its three leaves |
 | `SwarmRelay` | permissionless relay, and keeper bundling: relay-and-mark, relay-and-liquidate |
-| `Parameters` / `Governed` | the five economic knobs behind a 48-hour delay |
+| `Parameters` / `Governed` | the governed economics and the reserve register, behind a 48-hour delay |
 | `Treasury` | where the protocol's own revenue lands |
 | `Registry` | replaceable counterparties — **written, not yet wired to anything** |
+| `UsdPriceFeed` | the IMD/ETH feed × Chainlink ETH/USD, so one COMP of debt is one **dollar** of collateral |
+| `SwarmWorkOracle` | minting rights earned from an attested work tally; extends `SwarmFeed`, so it inherits question binding |
+| `WorkOracleFactory` | deploys the above, because its creation code will not fit in the vault's |
 | `CompToken` | the stablecoin; minted and burned only by its vault |
-| `MockIMD` / `MockWorkOracle` / `LaunchToken` | testnet collateral faucet, work-credit faucet, launch token |
+| `MockIMD` / `MockWorkOracle` / `LaunchToken` | testnet collateral faucet, the work-credit faucet `SwarmWorkOracle` replaces, launch token |
 
-Three leaves exist rather than two `PriceFeed` instances because a launch manifest identifies a
+Three feed leaves exist rather than two `PriceFeed` instances because a launch manifest identifies a
 deployment by contract name, has no alias field, and **names at most four contracts**. That cap is why
-`CompToken`, `MockWorkOracle` and `Parameters` are created inside the vault's constructor rather than
-deployed beside it.
+`CompToken`, `Parameters`, `Treasury` and `UsdPriceFeed` are created inside the vault's constructor
+rather than deployed beside it.
+
+`SwarmWorkOracle` cannot be, and the reason is a measurement rather than a preference: its creation
+code is 16,478 bytes and `ParameterizedVault` has 12,222 bytes of EIP-3860 headroom, so a vault that
+created its own would be 52,880 bytes of initcode and undeployable. `WorkOracleFactory` holds that
+creation code instead; a vault asks for one by passing `WORK_ORACLE_SENTINEL`, and an **absent factory
+reverts** rather than silently leaving the vault on the faucet.
 
 ## The three numbers
 
 | input | what it decides |
 |---|---|
-| **price** | `collateralRatio = collateral * price * 100 / (debt * 1e18)`, from a window median |
+| **price** | `collateralRatio = collateral * price * 100 / (debt * 1e18)`, from a window median. On `ParameterizedVault` the price is `UsdPriceFeed`, so **one COMP of debt is one USD-worth of collateral**; the base vault prices in ETH |
 | **NHI** | `minCR()` 150 at ≥0.85 rising to 200 at ≤0.60; `gracePeriod()` 6h falling to 0 |
 | **spot** | not a price — a sanity bound. A gap over `MAX_DIVERGENCE_BPS` (500) halts minting, marking and liquidation while still allowing withdrawal |
 
 Shipped economics: stability fee 200 bps, marker share 1000 bps of the liquidation bonus, protocol
-share 3333 bps of it, divergence bound 500 bps.
+share 3333 bps of it, divergence bound 500 bps, work ratio 2500 bps, 0.01 COMP per accepted task.
+
+The divergence guard deliberately reads the **raw** primary feed rather than the denominated price:
+both legs quote IMD in ETH, so the ETH/USD factor cancels, and comparing a denominated price against
+spot would sit them an ETH price apart and refuse every action.
 
 ## Question binding
 
@@ -86,8 +99,9 @@ hashed.
 
 ## Governance
 
-`Parameters` holds five numbers — debt ceiling, protocol bonus share, stability fee, divergence
-bound, marker share — behind a 48-hour delay. One proposal at a time, readable by anyone for the whole
+`Parameters` holds seven numbers — debt ceiling, protocol bonus share, stability fee, divergence
+bound, marker share, the work ceiling's ratio term, and the COMP an accepted task earns — plus the
+Treasury's reserve register, all behind a 48-hour delay. One proposal at a time, readable by anyone for the whole
 window, then applied by **anyone**: a governor who could also withhold application could hold a
 validated change over the protocol and choose its moment. Cancelling is the only instant action,
 because abandoning a change can only return things to what borrowers already priced.
@@ -116,7 +130,8 @@ have frozen every position.
 | MockWorkOracle | `0x7df0f2Ea286738f905ab5b1B8899E9e207996198` *(same)* |
 | MockIMD | `0xe44ab81ce23d34e29383dd158a1dffeb1c10d439` |
 
-**These predate question binding and the governed parameters.** Their bytecode is 5,082 bytes against
+**These predate question binding, the governed parameters, the USD denomination and the attested work
+oracle.** Their bytecode is 5,082 bytes against
 the 8,243 the current source compiles to, and `expectedQuestionHash` reverts on them because the
 function does not exist. They also pin the reporter key as their relayer rather than the `SwarmRelay`
 above — that contract is deployed but no live feed accepts it, and it predates keeper bundling too.
@@ -157,7 +172,7 @@ Other things learned the expensive way:
 ## Testing
 
 ```bash
-forge test                                                              # 275, InHouse self-skips
+forge test                                                              # 360, InHouse self-skips
 forge test --match-path test/InHouse.t.sol --fork-url $SEPOLIA_RPC_URL   # 14, live state
 AUDIT_PROOFS=true forge test --match-path 'test/audit/*'                 # auditor proofs
 ```
@@ -168,17 +183,35 @@ deployed with a manifest placeholder that resolved to the platform's address rat
 answer-type constant that was simply wrong, both immutable. It skips itself off-fork because it reads
 live state. Most public Sepolia RPCs are not archive nodes.
 
-## Audit
+## Audits
 
-`docs/AUDIT-2026-10-03.md`, with the raw record beside it. An independent review of the contracts
-written outside the swarm returned **11 findings: 1 high, 2 medium, 4 low, 4 info**, each with a
-Foundry proof test. All four supplied proofs were re-run and all four failed exactly as described.
+**Two independent reviews, both bought from the swarm, both read-only.**
+
+`docs/AUDIT-2026-10-03.md` reviewed the contracts written outside the swarm and returned
+**11 findings: 1 high, 2 medium, 4 low, 4 info**, each with a Foundry proof test. All four supplied proofs were re-run and all four failed exactly as described.
 
 Every finding is addressed. The high is the question binding above. Both mediums shared one root
 cause — binding a `Parameters` to a vault was a separate transaction — and there is no fix that keeps
 one, because a mid-construction callback cannot verify its caller: the vault has no code yet. So the
 transaction is gone. The two proofs whose API no longer exists live in `audit/proofs/`, outside the
 compiled tree, kept verbatim; the Treasury proof now **passes** and is a regression test.
+
+`docs/AUDIT-2026-10-04.md` reviewed the USD denomination and the work-backing surface and returned
+**5 findings: 3 medium, 2 low**. All five are fixed, with regressions in
+`test/audit/Audit20261004.t.sol`; reverting `src/` to the audited commit fails 8 of 8 of them.
+
+The one that mattered was ours and three hours old: `_clearIfRecovered` read the **raw** primary feed
+and compared an ETH-valued ratio against `minCR`, so after denomination the ratio was understated by
+the whole ETH/USD factor and a position restored to health **kept its liquidation mark**. Two mediums
+in `Treasury` shared one cause — `try/catch` does not cover **decoding**, so a listed feed returning
+`abi.encode(uint256(2))` for a bool panicked in the caller's frame where no catch clause could see it,
+reverting `workCeiling()` and every `mintFromWork`. And one low was a defect in the fix written for the
+*previous* audit. Two audits running, a fix has needed its own review.
+
+A note on retrieval: a read-only job with `github: false` publishes no artifact. The findings live only
+in the work record (`GET /jobs/:id/submissions` → `submissions[0].findings`), and the second audit cited
+an `artifacts/audit.md` it never produced — so its proof sources were lost and had to be rebuilt from
+the written reproductions. Archive the record immediately.
 
 ## Known limits
 
@@ -187,12 +220,16 @@ compiled tree, kept verbatim; the Treasury proof now **passes** and is a regress
 - `Registry` is written and governed but **nothing reads it**, so a rotation recorded there changes
   nothing. Wiring it means a feed resolving its relayer through a pinned registry instead of an
   immutable, which trades an immutable authority check for an external call on the attestation path.
-- `mintFromWork` mints with no collateral, no debt entry and **no ceiling**. `totalWorkMinted` is
-  unbounded, and that is the protocol's largest unbounded risk. `docs/COMPUTE-BACKING-DESIGN.md`
-  specifies the fix and the bound it has to satisfy.
-- Compute backing is not real yet. ERC-8004 records roughly 6% of swarm work and none of the
-  oracle-assess work that is most of it, so a mint keyed to on-chain accepted work would issue almost
-  nothing. The design document measures this before proposing anything.
+- **There is no redemption yet**, so "1 COMP = 1 USD" is a unit of account plus a hope that arbitrage
+  closes the gap. Nothing lets COMP be destroyed at a known price, which is what a peg actually is.
+  `docs/COMPUTE-BACKING-DESIGN.md` §5 specifies both channels; channel A is the next increment.
+- `SwarmWorkOracle` is built but **not yet answerable**. Its question reads the swarm's daily oracle
+  receipts, and the control plane records no agent tally for this seat so far — historical days are
+  deliberately not reconstructed — so a panel must report inability today. It costs nothing to wait:
+  `workCeiling()` is zero on a fresh stack whatever the oracle says.
+- `WORK_ORACLE_FACTORY` is a **placeholder with no code**, so a vault asking for a real work oracle
+  cannot be deployed until `script/DeployPrereqs.s.sol` runs and that constant names the result. The
+  launch manifest therefore still passes zero, which is the faucet, deliberately.
 - `protocolBonusShareBps` is bounded but the bound is economically empty at its top: at 10000 a
   liquidator who did not mark receives exactly the principal back, so liquidations stop.
 - There is no insurance and no write-off path. A liquidation can leave bad debt; `liquidate` sweeps an
@@ -203,6 +240,9 @@ compiled tree, kept verbatim; the Treasury proof now **passes** and is a regress
 | | |
 |---|---|
 | `docs/COMPUTE-BACKING-DESIGN.md` | compute-backed minting and redemption, with the measurements behind it |
-| `docs/AUDIT-2026-10-03.md` | the independent review and every finding |
+| `docs/AUDIT-2026-10-03.md` | the first independent review and every finding |
+| `docs/AUDIT-2026-10-04.md` | the second, on the USD denomination and work backing |
+| `oracle/work-tally-quote.json` | the question `SwarmWorkOracle` pins, read from the daily oracle receipts |
+| `docs/archive/` | superseded per-increment notes, kept for history |
 | `docs/UPSTREAM-STABLE-QUESTION-ID.md` | why `questionHash` is unstable, and why that is not a PR yet |
 | `docs/ABI.md` | the deployed interfaces |

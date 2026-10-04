@@ -178,3 +178,32 @@ token.
 
 Verification: offline `forge build` passed and `forge test` reported **319 passed,
 0 failed, 2 skipped** across 37 suites, including all four invariant campaigns.
+
+## USD denomination, the audit fixes, and attested work
+
+In-house increments, not swarm-delivered. Three changes and the suites that cover them.
+
+**USD denomination.** `ParameterizedVault` overrides the pricing seam so a position is measured in
+dollars rather than wei of ETH, through a `UsdPriceFeed` the vault creates from its primary feed and
+Chainlink ETH/USD. The divergence guard deliberately keeps reading the **raw** primary feed, because
+both legs quote IMD in ETH and the ETH/USD factor cancels. `UsdDenomination.t.sol` covers the
+denomination; 33 expectations across four existing suites moved from ETH to USD terms.
+
+**Audit `da7d5b1c`.** Five findings, all fixed, reproduced in `audit/Audit20261004.t.sol`. Each
+`test_regression_*` fails on the audited commit and passes on the fix; reverting `src/` fails 8 of 8.
+The important one was a mixed-unit path the denomination created — `_clearIfRecovered` compared an
+ETH-valued ratio against `minCR` — and two more were `try/catch` not covering ABI **decoding** in
+`Treasury.reserveValueOf`, which made a malformed listed feed revert `workCeiling()` instead of
+counting for nothing.
+
+**Attested work.** `SwarmWorkOracle` extends `SwarmFeed`, so verification, replay, panel floors,
+freshness and question binding are the inherited audited code. `SwarmWorkOracle.t.sol` covers the
+factory wiring, the rights accounting under a falling count, the governed rate, and pins the Solidity
+`expectedQuestionHash` against the JavaScript one for two windows — so the contract provably computes
+what the service signs. These tests drive the figure through the reporter fallback rather than buying
+an attestation, because the question is not yet answerable.
+
+Verification: offline `forge build` passed; default `forge test` reported **360 passed, 0 failed,
+2 skipped** across 41 suites, and `test/InHouse.t.sol` reported **14 passed** against live Sepolia
+state. All three deploy scripts dry-ran green. The two skips remain the live Sepolia suite off-fork
+and the gated auditor proofs whose API no longer exists.
