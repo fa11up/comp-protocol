@@ -1,39 +1,38 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SwarmFeed} from "src/SwarmFeed.sol";
 import {SwarmWorkOracle} from "src/SwarmWorkOracle.sol";
 import {WorkOracleFactory} from "src/WorkOracleFactory.sol";
-import {SeedableWorkOracle, SeedableWorkOracleFactory} from "./helpers/SeedableFeeds.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {Parameters} from "src/Parameters.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
 import {
     APPROVED_OPERATOR,
-    WORK_AGENT_ID,
-    WORK_CLAIMANT,
+    ERC8004_ADAPTER,
     WORK_ORACLE_FACTORY,
     WORK_ORACLE_SENTINEL,
     WORK_ORACLE_MAX_AGE,
     COMP_PER_TASK_WAD
 } from "src/DeploymentConfig.sol";
 import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
+import {SeedableWorkOracle, SeedableWorkOracleFactory} from "./helpers/SeedableFeeds.sol";
 
-/// @notice The attested work oracle that replaces the grantRights faucet.
-/// @dev The figure it accepts comes from the daily oracle receipts the control plane publishes and
-/// pins to IPFS — the second Merkle root of upstream PR #332, which this protocol is the first
-/// consumer of. The question document in oracle/work-tally-quote.json is what these tests stand in
-/// for: they drive the reporter fallback rather than buying an attestation, because the figure is not
-/// answerable yet (no receipt carries an agent tally for this seat so far).
+/// @notice The swarm-wide work oracle: one attested root a day, any agent's controller claims.
+/// @dev What is worth testing here is not the attestation path — that is SwarmFeed's and is covered
+/// where it lives — but the three things this contract adds: a Merkle proof against a root it has
+/// accepted, credit that accumulates per agent and is priced when claimed, and an authorisation
+/// answer that comes from the ERC-8004 registry rather than from a constant in our source.
 contract SwarmWorkOracleTest is WorkBackingFixture {
-    SeedableWorkOracle internal work;
-    CDPVault internal attestedVault;
-    /// @dev Hoisted, and that is not tidiness. `vm.expectRevert` applies to the NEXT call, and
-    /// `backedVault.spotFeed()` inside an argument list IS a call, so reading it there silently eats
-    /// the expectation and the test passes for the wrong reason.
-    address internal spot;
+    uint256 private constant AGENT_A = 51450;
+    uint256 private constant AGENT_B = 51204;
+    address private constant CONTROLLER_A = address(0xA11CE);
+    address private constant CONTROLLER_B = address(0xB0B);
+    address private constant STRANGER = address(0xBAD);
+
+    SeedableWorkOracle private work;
+    CDPVault private attestedVault;
+    address private spot;
 
     function setUp() public override {
         super.setUp();
@@ -41,346 +40,240 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         SeedableWorkOracleFactory factory = new SeedableWorkOracleFactory();
         vm.etch(WORK_ORACLE_FACTORY, address(factory).code);
         attestedVault = new CDPVault(
-            address(collateral),
-            address(0),
-            WORK_ORACLE_SENTINEL,
-            address(primary),
-            address(health),
-            spot
+            address(collateral), address(0), WORK_ORACLE_SENTINEL, address(primary), address(health), spot
         );
         work = SeedableWorkOracle(address(attestedVault.oracle()));
     }
 
-    // --- wiring ---------------------------------------------------------------------------------
+    // --- the root, and how it gets in ------------------------------------------------------------
 
-    function test_theSentinelYieldsARealOracleLinkedToItsVault() public view {
-        assertEq(work.vault(), address(attestedVault), "the oracle names the vault that asked for it");
-        assertEq(address(attestedVault.oracle()), address(work), "and the vault holds that oracle");
-        assertEq(work.AGENT_ID(), WORK_AGENT_ID, "pinned agent");
-        assertEq(work.CLAIMANT(), WORK_CLAIMANT, "pinned claimant");
-        assertEq(work.maxAge(), WORK_ORACLE_MAX_AGE, "a day, matching the receipts' cadence");
+    function test_aRootIsOnlyClaimableOnceTheFeedHasAcceptedIt() public {
+        (bytes32 root,,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        assertFalse(work.acceptedRoots(root), "nothing is accepted before an attestation");
+        vm.expectRevert(SwarmWorkOracle.UnknownRoot.selector);
+        work.recordRoot();
+
+        work.seed(uint256(root));
+        work.recordRoot();
+        assertTrue(work.acceptedRoots(root), "the attested figure is the root");
     }
 
-    /// @dev The whole reason the sentinel is explicit rather than zero: no silent downgrade to the
-    /// faucet if the factory is not there. This is the shape of the $owner bug that bricked launch 519.
-    function test_anAbsentFactoryRevertsRatherThanFallingBackToTheFaucet() public {
-        vm.etch(WORK_ORACLE_FACTORY, "");
-        vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(
-            address(collateral),
-            address(0),
-            WORK_ORACLE_SENTINEL,
-            address(primary),
-            address(health),
-            spot
-        );
+    /// @dev The reason `_checkValue` is overridden. Two honest roots are unrelated 256-bit numbers,
+    /// so the inherited deviation bound — right for a price — would refuse almost every update.
+    function test_anUnrelatedSecondRootIsAcceptedWhereAPriceWouldBeRefused() public {
+        work.seed(uint256(keccak256("day-1")));
+        work.recordRoot();
+        work.seed(uint256(keccak256("day-2"))); // wildly different; a price feed would revert here
+        work.recordRoot();
+        assertTrue(work.acceptedRoots(keccak256("day-1")), "the older root stays claimable");
+        assertTrue(work.acceptedRoots(keccak256("day-2")));
     }
 
-    /// @dev A zero oracle still means the faucet, which every existing suite and the testnet manifest
-    /// depend on. The two paths must stay distinguishable.
-    function test_zeroStillMeansTheFaucetAndTheSentinelDoesNot() public view {
-        assertTrue(address(backedVault.oracle()) != address(work), "different vaults, different oracles");
-        assertEq(SeedableWorkOracle(address(work)).vault(), address(attestedVault));
+    function test_zeroIsStillRefusedBecauseItIsNotATree() public {
+        vm.expectRevert(SwarmFeed.ZeroValue.selector);
+        work.seed(0);
     }
 
-    /// @dev An oracle the factory made for somebody else is useless to a vault, and refused by it.
-    function test_anOracleBoundToAnotherVaultIsRefused() public {
-        SeedableWorkOracle other = SeedableWorkOracleFactory(WORK_ORACLE_FACTORY).create(WORK_ORACLE_MAX_AGE);
-        assertEq(other.vault(), address(this), "created for its caller");
-        vm.expectRevert(CDPVault.InvalidOracle.selector);
-        new CDPVault(
-            address(collateral),
-            address(0),
-            address(other),
-            address(primary),
-            address(health),
-            spot
-        );
+    // --- claiming ---------------------------------------------------------------------------------
+
+    function test_theControllerOfAnAgentClaimsItsPublishedTally() public {
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(root);
+        _controls(AGENT_A, CONTROLLER_A, true);
+
+        vm.prank(CONTROLLER_A);
+        uint256 rights = work.claim(AGENT_A, 10, 10, proofA, root);
+
+        assertEq(rights, 10 * COMP_PER_TASK_WAD, "ten tasks at the shipped rate");
+        assertEq(work.mintingRights(CONTROLLER_A), rights);
+        assertEq(work.creditedTasks(AGENT_A), 10);
+        assertEq(work.mintingRights(STRANGER), 0, "nobody else gained anything");
     }
 
-    // --- rights accounting ----------------------------------------------------------------------
+    /// @dev No address is privileged in source: a second agent's controller claims independently, and
+    /// neither can touch the other's tally.
+    function test_everyAgentsControllerClaimsIndependently() public {
+        (bytes32 root, bytes32[] memory proofA, bytes32[] memory proofB) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(root);
+        _controls(AGENT_A, CONTROLLER_A, true);
+        _controls(AGENT_B, CONTROLLER_B, true);
 
-    function test_rightsAreTheAttestedCountTimesTheRate() public {
-        _tally(1000);
-        assertEq(work.attestedTasks(), 1000);
-        assertEq(work.compPerTaskWad(), COMP_PER_TASK_WAD, "no parameters on a plain vault");
-        assertEq(work.mintingRights(WORK_CLAIMANT), 1000 * COMP_PER_TASK_WAD);
+        vm.prank(CONTROLLER_A);
+        work.claim(AGENT_A, 10, 10, proofA, root);
+        vm.prank(CONTROLLER_B);
+        work.claim(AGENT_B, 20, 20, proofB, root);
+
+        assertEq(work.mintingRights(CONTROLLER_A), 10 * COMP_PER_TASK_WAD);
+        assertEq(work.mintingRights(CONTROLLER_B), 20 * COMP_PER_TASK_WAD);
     }
 
-    function test_nobodyButTheClaimantHasRights() public {
-        _tally(1000);
-        assertEq(work.mintingRights(address(0xBEEF)), 0);
-        assertEq(work.mintingRights(address(0)), 0);
-        assertEq(work.mintingRights(address(attestedVault)), 0);
+    function test_aStrangerCannotClaimAnotherAgentsTally() public {
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(root);
+        _controls(AGENT_A, STRANGER, false);
+        vm.prank(STRANGER);
+        vm.expectRevert(SwarmWorkOracle.NotTheController.selector);
+        work.claim(AGENT_A, 10, 10, proofA, root);
     }
 
-    function test_onlyTheVaultMayConsume() public {
-        _tally(1000);
-        vm.expectRevert(SwarmWorkOracle.Unauthorized.selector);
-        vm.prank(WORK_CLAIMANT);
-        work.consumeRights(WORK_CLAIMANT, 1);
+    /// @dev The registry has no testnet deployment, so with no adapter nothing answers and every
+    /// claim is refused. The compute channel is inert off mainnet, which is the honest state.
+    function test_withNoRegistryDeployedNobodyCanClaim() public {
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(root);
+        assertEq(ERC8004_ADAPTER.code.length, 0, "no adapter on this chain");
+        vm.prank(CONTROLLER_A);
+        vm.expectRevert(SwarmWorkOracle.NotTheController.selector);
+        work.claim(AGENT_A, 10, 10, proofA, root);
     }
 
-    function test_consumingMoreThanEarnedIsRefused() public {
-        _tally(10);
-        uint256 earned = 10 * COMP_PER_TASK_WAD;
-        vm.prank(address(attestedVault));
-        vm.expectRevert(SwarmWorkOracle.InsufficientRights.selector);
-        work.consumeRights(WORK_CLAIMANT, earned + 1);
+    function test_aProofForTheWrongLeafIsRefused() public {
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(root);
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.prank(CONTROLLER_A);
+        vm.expectRevert(SwarmWorkOracle.BadProof.selector);
+        work.claim(AGENT_A, 10, 999, proofA, root); // inflated cumulative, same proof
     }
 
-    function test_consumingForSomeoneElseIsRefused() public {
-        _tally(10);
-        vm.prank(address(attestedVault));
-        vm.expectRevert(SwarmWorkOracle.InvalidAccount.selector);
-        work.consumeRights(address(0xBEEF), 1);
+    function test_aRootTheFeedNeverAcceptedIsRefused() public {
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.prank(CONTROLLER_A);
+        vm.expectRevert(SwarmWorkOracle.UnknownRoot.selector);
+        work.claim(AGENT_A, 10, 10, proofA, root);
     }
 
-    /// @dev THE ACCOUNTING THAT MATTERS. The figure is read under no tolerance but it can still move
-    /// down for ordinary reasons — the feed can go stale and re-anchor, and a daily receipt only lists
-    /// agents who worked that day. A lower later figure must not claw back what was already consumed.
-    function test_aLowerLaterFigureNeverClawsBackConsumedRights() public {
-        _tally(1000);
-        uint256 spend = 500 * COMP_PER_TASK_WAD;
-        vm.prank(address(attestedVault));
-        work.consumeRights(WORK_CLAIMANT, spend);
-        assertEq(work.mintingRights(WORK_CLAIMANT), 500 * COMP_PER_TASK_WAD, "half left");
-        assertEq(work.creditedTasks(), 1000, "the high-water mark is pinned at consumption");
-
-        _retally(600); // a later, lower reading
-        assertEq(work.attestedTasks(), 1000, "never below what rights were computed against");
-        assertEq(work.mintingRights(WORK_CLAIMANT), 500 * COMP_PER_TASK_WAD, "and the remainder stands");
+    function test_claimingTheSameTallyTwiceCreditsNothingFurther() public {
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(root);
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.startPrank(CONTROLLER_A);
+        work.claim(AGENT_A, 10, 10, proofA, root);
+        vm.expectRevert(SwarmWorkOracle.NothingToClaim.selector);
+        work.claim(AGENT_A, 10, 10, proofA, root);
+        vm.stopPrank();
     }
 
-    /// @dev A stale tally grants nothing NEW and retracts nothing already consumed.
-    function test_aStaleTallyGrantsNothingNewAndRetractsNothing() public {
-        _tally(1000);
-        vm.prank(address(attestedVault));
-        work.consumeRights(WORK_CLAIMANT, 400 * COMP_PER_TASK_WAD);
+    /// @dev Only the INCREMENT is credited, so a later day's larger cumulative pays for the
+    /// difference and never for work already claimed.
+    function test_aLaterDayCreditsOnlyTheIncrement() public {
+        (bytes32 day1, bytes32[] memory p1,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(day1);
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.prank(CONTROLLER_A);
+        work.claim(AGENT_A, 10, 10, p1, day1);
 
-        vm.warp(vm.getBlockTimestamp() + WORK_ORACLE_MAX_AGE + 1);
-        assertTrue(work.isStale(), "past a day");
-        assertEq(work.attestedTasks(), 1000, "the credited count survives staleness");
-        assertEq(work.mintingRights(WORK_CLAIMANT), 600 * COMP_PER_TASK_WAD, "earned minus consumed");
+        (bytes32 day2, bytes32[] memory p2,) = _tree(AGENT_A, 5, 15, AGENT_B, 30, 50);
+        _accept(day2);
+        vm.prank(CONTROLLER_A);
+        uint256 more = work.claim(AGENT_A, 5, 15, p2, day2);
+        assertEq(more, 5 * COMP_PER_TASK_WAD, "only the five new tasks");
+        assertEq(work.mintingRights(CONTROLLER_A), 15 * COMP_PER_TASK_WAD);
     }
 
-    /// @dev Before any attestation there is nothing to claim. The faucet's defining property was that
-    /// one key could change that; here no key can.
-    function test_withNoAttestationThereAreNoRightsAndNoKeyCanGrantThem() public view {
-        assertTrue(work.isStale(), "a feed with no value is stale");
-        assertEq(work.attestedTasks(), 0);
-        assertEq(work.mintingRights(WORK_CLAIMANT), 0);
+    /// @dev An agent idle on a given day is absent from that day's tree, so proving against an OLDER
+    /// root must stay possible. It is always safe: cumulative is monotone, so an old root can only
+    /// under-credit.
+    function test_anOlderRootStaysClaimableForAnAgentAbsentFromTheNewest() public {
+        (bytes32 day1, bytes32[] memory p1,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(day1);
+        _accept(keccak256("day-2-without-agent-a"));
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.prank(CONTROLLER_A);
+        assertEq(work.claim(AGENT_A, 10, 10, p1, day1), 10 * COMP_PER_TASK_WAD);
     }
 
-    function test_thereIsNoGrantRightsFunction() public {
-        (bool ok,) = address(work).call(abi.encodeWithSignature("grantRights(address,uint256)", WORK_CLAIMANT, 1e18));
-        assertFalse(ok, "the faucet's entry point does not exist here");
-    }
+    // --- pricing, and the mistake not repeated ---------------------------------------------------
 
-    // --- the governed rate ----------------------------------------------------------------------
-
-    /// @dev The rate is PROBED, not required, so one oracle serves a plain vault and a governed one.
-    /// A governed vault's oracle reads the parameters; a plain vault's falls back to the constant and
-    /// cannot be changed by anyone at all.
-    function test_theRateIsReadFromTheVaultsParametersWhenItHasThem() public {
+    /// @dev Rights are priced AT CLAIM. Its predecessor recomputed entitlement as `tasks * rate` from
+    /// a fixed origin, so raising the rate re-granted work already minted against. Same defect as an
+    /// accrual index recomputed from deployment; this is the shape that cannot have it.
+    function test_aLaterRateChangeDoesNotRepriceWhatWasAlreadyClaimed() public {
         ParameterizedVault governed = new ParameterizedVault(
-            address(collateral),
-            address(0),
-            WORK_ORACLE_SENTINEL,
-            address(primary),
-            address(health),
-            spot
-        );
-        SeedableWorkOracle governedWork = SeedableWorkOracle(address(governed.oracle()));
-        assertEq(governedWork.compPerTaskWad(), COMP_PER_TASK_WAD, "seeded from the shipped constant");
-
-        // vm.prank applies to the NEXT call, and `governed.parameters()` IS a call, so the view has
-        // to be hoisted out or it eats the prank.
-        Parameters governedParams = governed.parameters();
-        vm.prank(APPROVED_OPERATOR);
-        governedParams.proposeCompPerTask(0.25 ether);
-        vm.warp(governedParams.pendingEta());
-        vm.prank(address(0xA990));
-        governedParams.applyPending();
-
-        assertEq(governedWork.compPerTaskWad(), 0.25 ether, "the oracle follows the governed rate");
-        assertEq(work.compPerTaskWad(), COMP_PER_TASK_WAD, "the plain vault's oracle does not move");
-    }
-
-    function test_aGovernedRateChangeTakesEffectAfterTheDelay() public {
-        vm.prank(APPROVED_OPERATOR);
-        parameters.proposeCompPerTask(0.5 ether);
-        assertEq(parameters.compPerTaskWad(), COMP_PER_TASK_WAD, "not yet");
-        _apply();
-        assertEq(parameters.compPerTaskWad(), 0.5 ether, "after 48 hours");
-    }
-
-    function test_aRateAboveOneCompPerTaskIsRefusedAtProposal() public {
-        vm.prank(APPROVED_OPERATOR);
-        vm.expectRevert(abi.encodeWithSelector(Parameters.CompPerTaskTooHigh.selector, 1 ether + 1));
-        parameters.proposeCompPerTask(1 ether + 1);
-    }
-
-    function test_theRateCapIsOneCompPerTask() public view {
-        assertEq(parameters.MAX_COMP_PER_TASK_WAD(), 1 ether);
-    }
-
-    // --- minting against attested work ----------------------------------------------------------
-
-    /// @dev End to end on a plain vault, whose base `workCeiling` is unbounded: attested work alone
-    /// mints COMP, with no key involved anywhere.
-    function test_attestedWorkMintsComp() public {
-        _tally(1000);
-        uint256 rights = work.mintingRights(WORK_CLAIMANT);
-        assertEq(rights, 1000 * COMP_PER_TASK_WAD, "rights exist");
-
-        vm.prank(WORK_CLAIMANT);
-        attestedVault.mintFromWork(rights);
-        assertEq(attestedVault.compToken().balanceOf(WORK_CLAIMANT), rights, "minted from work");
-        assertEq(work.mintingRights(WORK_CLAIMANT), 0, "and spent");
-        assertEq(work.consumedRights(), rights);
-    }
-
-    /// @dev And on a GOVERNED vault the ceiling binds on top: the work is just as attested, but a
-    /// stack with no reserve and no debt backs nothing, so the claim is refused. Backing bounds the
-    /// amount; work only bounds who may ask.
-    function test_onAGovernedVaultTheCeilingStillBinds() public {
-        ParameterizedVault governed = new ParameterizedVault(
-            address(collateral),
-            address(0),
-            WORK_ORACLE_SENTINEL,
-            address(primary),
-            address(health),
-            spot
-        );
-        SeedableWorkOracle governedWork = SeedableWorkOracle(address(governed.oracle()));
-        governedWork.seed(1000);
-        assertGt(governedWork.mintingRights(WORK_CLAIMANT), 0, "rights exist");
-        assertEq(governed.workCeiling(), 0, "but nothing backs them");
-
-        vm.prank(WORK_CLAIMANT);
-        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        governed.mintFromWork(1);
-    }
-
-    // --- the governed rate cannot reach backwards ---
-
-    /// @dev THE REGRESSION. Round 5's audit_judge: "a compPerTask change reprices work that was
-    /// already credited and consumed, in both directions." Entitlement was
-    /// `attestedTasks() * compPerTaskWad()` — recomputed from a fixed origin at the current rate — so
-    /// doubling the rate re-granted rights for work already minted against. Free COMP for a governance
-    /// action that was only supposed to price FUTURE work.
-    function test_regression_aRateRiseDoesNotRepriceWorkAlreadyConsumed() public {
-        ParameterizedVault governed = _governedVault();
-        SeedableWorkOracle w = SeedableWorkOracle(address(governed.oracle()));
-        Parameters params = governed.parameters();
-        w.seed(1000);
-        uint256 all = w.mintingRights(WORK_CLAIMANT);
-        assertEq(all, 1000 * COMP_PER_TASK_WAD, "1000 tasks at the shipped rate");
-
-        // Spend every right the attested work earns.
-        vm.prank(address(governed));
-        w.consumeRights(WORK_CLAIMANT, all);
-        assertEq(w.mintingRights(WORK_CLAIMANT), 0, "nothing left");
-
-        // Now double the rate. The old behaviour handed out another `all` for the SAME 1000 tasks.
-        _setRate(params, COMP_PER_TASK_WAD * 2);
-        assertEq(w.mintingRights(WORK_CLAIMANT), 0, "a rate rise must not re-grant consumed work");
-        assertEq(w.creditedRights(), all, "the price of credited work is locked");
-    }
-
-    /// @dev The other direction. A cut used to make the recomputed total fall below what had been
-    /// consumed, so rights the claimant had already earned simply vanished.
-    function test_regression_aRateCutDoesNotTakeBackRightsAlreadyEarned() public {
-        ParameterizedVault governed = _governedVault();
-        SeedableWorkOracle w = SeedableWorkOracle(address(governed.oracle()));
-        Parameters params = governed.parameters();
-        w.seed(1000);
-        uint256 half = (1000 * COMP_PER_TASK_WAD) / 2;
-        vm.prank(address(governed));
-        w.consumeRights(WORK_CLAIMANT, half);
-        assertEq(w.mintingRights(WORK_CLAIMANT), half, "half spent, half left");
-
-        _setRate(params, COMP_PER_TASK_WAD / 4);
-        assertEq(w.mintingRights(WORK_CLAIMANT), half, "a cut cannot reach work already credited");
-        assertGe(w.creditedRights(), w.consumedRights(), "credited never falls below consumed");
-    }
-
-    /// @dev And the change does apply where it should: to work that arrives after it.
-    function test_newWorkIsPricedAtTheRateInForceWhenItIsCredited() public {
-        ParameterizedVault governed = _governedVault();
-        SeedableWorkOracle w = SeedableWorkOracle(address(governed.oracle()));
-        Parameters params = governed.parameters();
-        w.seed(1000);
-        uint256 earned = w.mintingRights(WORK_CLAIMANT);
-        vm.prank(address(governed));
-        w.consumeRights(WORK_CLAIMANT, earned); // credits 1000 tasks at the old rate
-
-        _setRate(params, COMP_PER_TASK_WAD * 2);
-        // The deviation bound permits at most a doubling while fresh, so 1000 -> 1500 is acceptable.
-        w.seed(1500);
-        assertEq(w.mintingRights(WORK_CLAIMANT), 500 * COMP_PER_TASK_WAD * 2, "500 new tasks at the new rate");
-    }
-
-    function _governedVault() private returns (ParameterizedVault) {
-        return new ParameterizedVault(
             address(collateral), address(0), WORK_ORACLE_SENTINEL, address(primary), address(health), spot
         );
-    }
+        SeedableWorkOracle w = SeedableWorkOracle(address(governed.oracle()));
+        Parameters params = governed.parameters();
 
-    /// @dev vm.prank applies to the NEXT call, so the view is hoisted out of the pranked one.
-    function _setRate(Parameters params, uint256 wad) private {
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        w.seed(uint256(root));
+        w.recordRoot();
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.prank(CONTROLLER_A);
+        uint256 atOldRate = w.claim(AGENT_A, 10, 10, proofA, root);
+
         vm.prank(APPROVED_OPERATOR);
-        params.proposeCompPerTask(wad);
+        params.proposeCompPerTask(COMP_PER_TASK_WAD * 2);
         vm.warp(params.pendingEta());
         vm.prank(address(0xA990));
         params.applyPending();
         _refreshEthUsd();
+
+        assertEq(w.mintingRights(CONTROLLER_A), atOldRate, "a rate rise cannot reprice a past claim");
+        assertEq(w.compPerTaskWad(), COMP_PER_TASK_WAD * 2, "but it does apply to the next one");
     }
 
-    // --- question binding ------------------------------------------------------------------------
+    // --- consumption ------------------------------------------------------------------------------
 
-    /// @dev THE PROOF THAT THE CONTRACT COMPUTES WHAT THE SERVICE SIGNS. These two hashes were
-    /// produced in JavaScript by `node oracle/question-prefix.mjs oracle/work-tally-quote.json`,
-    /// canonicalising the question document as an RFC 8785 subset and hashing it, then spliced here
-    /// from Solidity's own pinned prefix. If the payload changes by one character they diverge and
-    /// this fails, which is the whole point: the oracle would refuse every attestation and that must
-    /// never be discovered after paying for one.
-    function test_theSolidityQuestionHashMatchesTheJavascriptOne() public view {
-        assertEq(
-            work.expectedQuestionHash(1_000_000, 1_007_200),
-            0x7844956985792293c4edfe4b8b5d1e6a940b71fb0c4470d74f8c98b2eddce935,
-            "window 1000000..1007200"
+    function test_onlyTheVaultMayConsumeAndNotBeyondWhatWasClaimed() public {
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(root);
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.prank(CONTROLLER_A);
+        uint256 rights = work.claim(AGENT_A, 10, 10, proofA, root);
+
+        vm.prank(STRANGER);
+        vm.expectRevert(SwarmWorkOracle.Unauthorized.selector);
+        work.consumeRights(CONTROLLER_A, 1);
+
+        vm.prank(address(attestedVault));
+        vm.expectRevert(SwarmWorkOracle.InsufficientRights.selector);
+        work.consumeRights(CONTROLLER_A, rights + 1);
+
+        vm.prank(address(attestedVault));
+        work.consumeRights(CONTROLLER_A, rights);
+        assertEq(work.mintingRights(CONTROLLER_A), 0);
+    }
+
+    function test_thereIsNoGrantRightsAndNoPinnedClaimant() public {
+        (bool ok,) = address(work).call(abi.encodeWithSignature("grantRights(address,uint256)", CONTROLLER_A, 1e18));
+        assertFalse(ok, "the faucet's entry point does not exist");
+        (ok,) = address(work).call(abi.encodeWithSignature("CLAIMANT()"));
+        assertFalse(ok, "and no address is pinned in source");
+    }
+
+    // --- helpers ----------------------------------------------------------------------------------
+
+    /// @dev A two-leaf StandardMerkleTree: double-hashed leaves, sorted-pair parent. Small enough to
+    /// compute by hand, which is the point — the encoding has to match the upstream receipt exactly.
+    /// @dev `accepted` and `cumulative` are SEPARATE on purpose: the daily count and the all-time
+    /// count differ for any agent that worked before, and a helper that conflated them hid a wrong
+    /// leaf behind a passing proof.
+    function _tree(uint256 idA, uint32 acceptedA, uint64 cumA, uint256 idB, uint32 acceptedB, uint64 cumB)
+        private
+        pure
+        returns (bytes32 root, bytes32[] memory proofA, bytes32[] memory proofB)
+    {
+        bytes32 a = keccak256(bytes.concat(keccak256(abi.encode(idA, acceptedA, cumA))));
+        bytes32 b = keccak256(bytes.concat(keccak256(abi.encode(idB, acceptedB, cumB))));
+        root = a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
+        proofA = new bytes32[](1);
+        proofA[0] = b;
+        proofB = new bytes32[](1);
+        proofB[0] = a;
+    }
+
+    function _accept(bytes32 root) private {
+        work.seed(uint256(root));
+        work.recordRoot();
+    }
+
+    function _controls(uint256 agentId, address who, bool answer) private {
+        vm.mockCall(
+            ERC8004_ADAPTER,
+            abi.encodeWithSignature("isController(uint256,address)", agentId, who),
+            abi.encode(answer)
         );
-        assertEq(
-            work.expectedQuestionHash(23_000_000, 23_007_000),
-            0xfd16adcd61754f55c8af84a062f8a2987577339c4b753468b3a7ff6c5d8b580b,
-            "window 23000000..23007000"
-        );
-    }
-
-    /// @dev This oracle BINDS a question, which is what makes the agentId and the claimant
-    /// unforgeable without a field for either. A feed that pinned nothing would return zero here,
-    /// and SwarmFeed's constructor would have required a trusted relayer instead.
-    function test_thisOraclePinsAQuestionRatherThanTrustingARelayer() public view {
-        bytes32 a = work.expectedQuestionHash(1_000_000, 1_007_200);
-        bytes32 b = work.expectedQuestionHash(1_000_001, 1_007_200);
-        assertTrue(a != bytes32(0), "a question is pinned");
-        assertTrue(a != b, "and the window is part of it");
-    }
-
-    // --- helpers --------------------------------------------------------------------------------
-
-    /// @dev The reporter fallback, which SwarmFeed requires to exist and which these tests use in
-    /// place of buying an attestation. The real path is submitAttestation under question binding,
-    /// covered for this contract's base by test/QuestionBinding.t.sol and test/SwarmFeed.t.sol.
-    function _tally(uint256 count) private {
-        work.seed(count);
-    }
-
-    /// @dev A second reading. The deviation bound permits at most a doubling while the last value is
-    /// fresh, so a fall is always acceptable and a rise may need the value to age first.
-    function _retally(uint256 count) private {
-        work.seed(count);
     }
 }

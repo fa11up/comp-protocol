@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SwarmFeed} from "./SwarmFeed.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {
@@ -9,110 +8,91 @@ import {
     ATTESTATION_RELAYER,
     ATTESTATION_CHAIN_ID,
     ATTESTATION_ANSWER_TYPE,
-    WORK_AGENT_ID,
-    WORK_CLAIMANT,
+    ERC8004_ADAPTER,
     COMP_PER_TASK_WAD,
     WORK_ORACLE_FACTORY
 } from "./DeploymentConfig.sol";
 
-/// @notice Minting rights earned from attested swarm work, replacing the `grantRights` faucet.
-/// @dev It EXTENDS SwarmFeed rather than reimplementing it, which is the whole design. Attestation
-/// verification, the attester signature, replay protection, the panel floors, freshness and question
-/// binding are the code already audited for the three price feeds, and are not written twice. What is
-/// added here is only the accounting that turns a count into rights.
+interface IAdapter8004 {
+    function isController(uint256 agentId, address account) external view returns (bool);
+}
+
+/// @notice Minting rights earned from attested swarm work, for EVERY agent, replacing the faucet.
+/// @dev It EXTENDS SwarmFeed, which is the whole design: the attester signature, replay protection,
+/// panel floors, freshness and question binding are the code already audited for the three price
+/// feeds and are not written twice. What is added here is the accounting that turns a published tally
+/// into rights, and nothing else.
 ///
-/// WHICH AGENT IS NOT A FIELD. The agentId and the claimant sit in the question TEXT, so both are
-/// inside the question document `questionPolicy` pins and `_requireQuestion` recomputes. An
-/// attestation about a different agent, or one naming a different claimant, fails the question check
-/// with no agent field and no extra machinery. That is the reason to build this on SwarmFeed.
+/// WHAT CHANGED, AND WHY IT HAD TO. The first version of this contract named one agentId and one
+/// claimant as source constants. That made the compute channel a private faucet wearing a protocol's
+/// clothes: a currency that mints for its author's own seat is not compute-backed, whatever the
+/// attestation says. It also could not scale — a per-agent question costs 0.5 IMD per agent per
+/// claim, so the whole swarm's work was unaffordable to put on chain one figure at a time.
 ///
-/// WHAT THE FIGURE PROVES, stated here rather than implied away. It is the cumulative count of
-/// distinct accepted oracle jobs in the control plane's own daily receipts, attested by a panel that
-/// read them. Those receipts are committed on chain through the receipt `documentHash` that
-/// `WorkRegistry.recordWork` writes, and archived on IPFS, so the panel is reading frozen bytes
-/// rather than a live mutable counter — which is why this question carries no tolerance band. But
-/// this contract cannot verify that commitment itself: `documentHash` is keccak over a multi-megabyte
-/// canonical document and the on-chain event carries no agent root, so the attestation is still the
-/// bridge. It is evidence that the plane published the work, not proof the work happened.
+/// THE FIGURE IS NOW A MERKLE ROOT COVERING EVERY AGENT. IdentityMD's daily oracle receipt carries a
+/// second root over `["uint256","uint32","uint64"]` = (agentId, accepted, cumulative), which exists
+/// because this protocol contributed it upstream (Identity-md/protocol PR #332, merged). One
+/// attestation a day therefore carries the whole swarm's tally, and the cost stops scaling with the
+/// number of agents: roughly 15 IMD a month for everyone rather than 0.5 IMD per agent per claim.
 ///
-/// ERC-8004 is not a usable alternative and was measured, not assumed: roughly 6% of swarm work
-/// reaches the reputation registry, nothing since 2026-09-29, and this agent has never appeared at
-/// all, because oracle reviews were dropped from the registry for being 99% of the writer's gas.
-/// `getSummary` would return zero.
+/// WHO MAY CLAIM IS ANSWERED BY THE REGISTRY, NOT BY US. `isController(agentId, msg.sender)` on the
+/// ERC-8004 adapter answers control by ownership of the identity NFT, as a same-chain view call on
+/// mainnet. So the claimant problem dissolves rather than being solved: no address is pinned, every
+/// agent's controller claims their own credit, and a sale of the NFT reassigns future credit with no
+/// action from anyone here.
 ///
-/// THE REPORTER FALLBACK IS STILL HERE, and cannot be removed: SwarmFeed requires at least one
-/// reporter with a quorum of at least one. On Sepolia that reporter is the same source constant the
-/// price feeds use. It is the same testnet affordance, stated plainly rather than hidden.
+/// WHAT IT STILL DOES NOT PROVE, stated here rather than implied away. The tally is the control
+/// plane's own count of accepted oracle jobs, attested by a panel that read a receipt. Those receipts
+/// are committed on chain through the `documentHash` that `WorkRegistry.recordWork` writes and pinned
+/// to IPFS, so the panel reads frozen bytes rather than a mutable counter — which is why the question
+/// carries no tolerance band. But this contract cannot verify that commitment itself: `documentHash`
+/// is keccak over a multi-megabyte document and the on-chain event carries no root, so the attestation
+/// remains the bridge. It is evidence that the plane published the work, not proof the work happened.
 contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
     error InvalidVault();
     error Unauthorized();
     error InvalidAccount();
     error ZeroAmount();
     error InsufficientRights();
+    error UnknownRoot();
+    error BadProof();
+    error NotTheController();
+    error NothingToClaim();
 
-    event RightsConsumed(address indexed account, uint256 amount, uint256 creditedTasks);
-
-    /// @notice The agent whose work this oracle credits, and the only address that may claim it.
-    uint256 public constant AGENT_ID = WORK_AGENT_ID;
-    address public constant CLAIMANT = WORK_CLAIMANT;
+    event TallyClaimed(uint256 indexed agentId, address indexed controller, uint256 tasks, uint256 rights);
+    event RightsConsumed(address indexed account, uint256 amount);
+    event RootAccepted(bytes32 indexed root, uint64 toBlock);
 
     /// @notice The only consumer of rights.
     address public immutable vault;
 
-    /// @notice The task count rights have already been computed against, never lowered.
-    /// @dev The high-water mark. A later attestation reporting a LOWER count must not claw back
-    /// rights already consumed, and the figure can move down for ordinary reasons — the feed can go
-    /// stale and re-anchor, and a receipt only lists agents who worked that day. Pinning the count at
-    /// the moment of consumption makes the accounting monotone without anyone having to call a poke.
-    uint256 public creditedTasks;
+    /// @notice Every tally root this feed has accepted, by value.
+    /// @dev A SET rather than only the latest, and that is deliberate. A daily receipt lists only the
+    /// agents that worked that day, so an agent idle today is absent from today's tree. Proving
+    /// against an older root is always safe because `cumulative` is monotone: an old root can only
+    /// under-credit, never over-credit, so nothing is gained by choosing one and nothing is lost by
+    /// being absent from the newest.
+    mapping(bytes32 root => bool accepted) public acceptedRoots;
 
-    /// @notice COMP already minted against work, in wei.
-    uint256 public consumedRights;
+    /// @notice The cumulative tally each agent has already been credited for.
+    mapping(uint256 agentId => uint256 tasks) public creditedTasks;
 
-    /// @notice COMP credited for the tasks up to `creditedTasks`, priced at the rate in force when
-    /// each of them was credited.
-    /// @dev AUDIT FIX (round 5, `audit_judge` LOW: "a compPerTask change reprices work that was
-    /// already credited and consumed, in both directions"). Entitlement used to be recomputed as
-    /// `attestedTasks() * compPerTaskWad()` — a total derived from a FIXED ORIGIN at the CURRENT
-    /// rate — so raising the rate re-granted rights for work already minted against, and cutting it
-    /// made the total fall below what had been consumed.
-    ///
-    /// This is the same defect, in a new place, that `CDPVault.debtIndex()` had: an integral
-    /// recomputed from its origin rather than accumulated. The rule written down after fixing that
-    /// one — before making a rate governable, check whether the integral is recomputed from a fixed
-    /// origin — was the rule this file broke. So the shape of the fix is the same: accumulate, and
-    /// only ever price the SEGMENT that is new.
-    uint256 public creditedRights;
+    /// @notice Rights credited to an address, priced when they were claimed.
+    /// @dev Priced AT CLAIM, which is what makes a later rate change unable to reach backwards. The
+    /// predecessor recomputed entitlement as `tasks * rate` from a fixed origin, so raising the rate
+    /// re-granted work already minted against and cutting it made the total fall below what had been
+    /// consumed. Same defect as an accrual index recomputed from deployment; same shape of fix.
+    mapping(address account => uint256 rights) public creditedRights;
 
-    /// @param vault_ The only consumer. Three ways to be a legitimate one, and nothing else is:
-    /// a vault that already has code; the vault creating this directly from its own constructor,
-    /// which has no code yet and is recognised as the creator; or a vault mid-construction that
-    /// reached here through `WorkOracleFactory`, which passes its OWN caller and so vouches for it.
-    /// The factory clause grants nothing: anyone may call the factory, and what they get back is an
-    /// oracle whose only consumer is themselves.
+    /// @notice COMP already minted against work, per address.
+    mapping(address account => uint256 amount) public consumedRights;
+
+    /// @param vault_ The only consumer. Three ways to be a legitimate one: a vault that already has
+    /// code; the vault creating this from its own constructor, which has no code yet and is
+    /// recognised as the creator; or a vault mid-construction that arrived through
+    /// `WorkOracleFactory`, which passes its OWN caller and so vouches for it.
     constructor(address vault_, uint256 maxAge_)
-        SwarmFeed(
-            ORACLE_ATTESTER,
-            ATTESTATION_RELAYER,
-            ATTESTATION_CHAIN_ID,
-            ATTESTATION_ANSWER_TYPE,
-            maxAge_,
-            // The loosest the base feed allows, and it is NOT unbounded: SwarmFeed caps this
-            // argument at 10,000 bps, which permits at most a DOUBLING of the accepted figure per
-            // update while the previous one is fresh. That is the honest description, and the
-            // consequences both ways are worth stating.
-            //   - In steady state it never binds: a seat with a four-figure cumulative count does
-            //     not double in a day, and these receipts are published daily.
-            //   - At bootstrap it does bind, because small numbers double easily — a jump from one
-            //     accepted job to three is refused. The second attestation then carries it, and the
-            //     bound lifts entirely once a value has aged past maxAge, which is one day here.
-            // Keeping it rather than reaching for something looser is deliberate: it is one more
-            // thing a wrong HIGH figure has to get past, and a wrong figure here mints COMP. The
-            // real guards are question binding, the attester signature and the panel floors — the
-            // pairing the HIGH finding of audit c71449d1 established — plus the work ceiling, which
-            // asks whether backing exists regardless of what this feed says.
-            10_000
-        )
+        SwarmFeed(ORACLE_ATTESTER, ATTESTATION_RELAYER, ATTESTATION_CHAIN_ID, ATTESTATION_ANSWER_TYPE, maxAge_, 10_000)
     {
         if (vault_ != msg.sender && vault_.code.length == 0 && msg.sender != WORK_ORACLE_FACTORY) {
             revert InvalidVault();
@@ -120,47 +100,85 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
         vault = vault_;
     }
 
-    /// @notice The attested count rights are computed from: the live figure when fresh, never below
-    /// what has already been credited.
-    /// @dev A stale feed grants nothing NEW but does not retract what was consumed against.
-    function attestedTasks() public view returns (uint256) {
-        uint256 live = this.isStale() ? 0 : _latest();
-        return live > creditedTasks ? live : creditedTasks;
+    /// @notice Record the tally root an attestation carried, so claims can prove against it.
+    /// @dev Permissionless, and it has to be: the attestation was already verified by
+    /// `submitAttestation` — signature, question, panel floors, freshness, replay — so this only
+    /// copies an accepted figure into the set. Anyone may call it; a root that was never attested
+    /// cannot be added, because `latestValue` is written only by the base.
+    function recordRoot() external {
+        (uint256 value,) = this.latestValue();
+        if (value == 0) revert UnknownRoot();
+        bytes32 root = bytes32(value);
+        if (!acceptedRoots[root]) {
+            acceptedRoots[root] = true;
+            emit RootAccepted(root, lastToBlock);
+        }
     }
 
-    /// @notice COMP earned by all attested work so far, in wei: what was credited at the rates it was
-    /// credited at, plus the tasks since then at today's rate.
-    /// @dev Two properties follow, and they are the whole point of accumulating rather than
-    /// recomputing. A rate RISE cannot re-grant rights for work already consumed, because tasks at or
-    /// below `creditedTasks` keep the price they were credited at. A rate CUT cannot take back
-    /// anything, because `creditedRights` is only ever raised and is never below `consumedRights`.
+    /// @notice THE DEVIATION BOUND DOES NOT APPLY TO A ROOT, and this is where that is said.
+    /// @dev `SwarmFeed._checkValue` refuses a move larger than `maxDeviationBps` while the current
+    /// value is fresh. That is the right guard for a PRICE, which moves continuously, so a large jump
+    /// is evidence of a bad figure. A Merkle root has no magnitude: two consecutive honest roots are
+    /// unrelated 256-bit numbers, so the bound would reject almost every truthful update.
     ///
-    /// A change does reprice work that is attested but NOT YET consumed, and that is deliberate
-    /// rather than overlooked: nobody but the governor can cause it, it travels under the 48-hour
-    /// delay, and the claimant's remedy is to consume before it matures — the same exit the borrower
-    /// has against a fee rise. Freezing it earlier would need a poke, and a permissionless poke would
-    /// let a stranger deny the claimant a rate rise on work already attested.
-    function accruedRights() public view returns (uint256) {
-        uint256 tasks = attestedTasks();
-        // attestedTasks() is the high-water mark, so this subtraction cannot underflow.
-        return creditedRights + (tasks - creditedTasks) * compPerTaskWad();
+    /// What is given up is real and is not hidden: the deviation bound is one of the things standing
+    /// between a wrong figure and this feed's consumers. What remains is question binding, the
+    /// attester signature and the panel floors — which per the HIGH finding of audit c71449d1 are
+    /// what actually guard a feed, the deviation bound having been the fallback for a feed that pinned
+    /// no question. This feed pins one. The zero check stays, because zero is not a tree.
+    function _checkValue(uint256 value) internal view override {
+        if (value == 0) revert ZeroValue();
     }
 
-    /// @notice Accrued minus consumed, and zero for anyone but the claimant.
-    /// @dev Never a stored balance that is topped up: a balance would have to be adjusted whenever
-    /// the count moved, and the count can move either way.
+    /// @notice Claim an agent's published tally. Caller must control the agent.
+    /// @param agentId The agent the leaf is about.
+    /// @param accepted That day's count. Signed into the leaf but not used here; `cumulative` is.
+    /// @param cumulative Distinct jobs ever accepted, which is the figure credit is computed from.
+    /// @param proof The Merkle path to a root this feed has accepted.
+    /// @dev Credit goes to `msg.sender`, who must be the agent's controller NOW. If the identity NFT
+    /// has been sold, the new controller claims the untaken remainder and the previous one keeps what
+    /// they already claimed — which is the right split, because credit is for work the controller
+    /// held the agent through.
+    function claim(uint256 agentId, uint32 accepted, uint64 cumulative, bytes32[] calldata proof, bytes32 root)
+        external
+        returns (uint256 rights)
+    {
+        if (!acceptedRoots[root]) revert UnknownRoot();
+        if (!_controls(agentId, msg.sender)) revert NotTheController();
+        bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(agentId, accepted, cumulative))));
+        if (!_verify(proof, root, leaf)) revert BadProof();
+
+        uint256 already = creditedTasks[agentId];
+        if (cumulative <= already) revert NothingToClaim();
+        rights = (cumulative - already) * compPerTaskWad();
+        creditedTasks[agentId] = cumulative;
+        creditedRights[msg.sender] += rights;
+        emit TallyClaimed(agentId, msg.sender, cumulative, rights);
+    }
+
+    /// @notice Claimed minus consumed.
     function mintingRights(address account) external view override returns (uint256) {
-        if (account != CLAIMANT) return 0;
-        uint256 accrued = accruedRights();
-        uint256 spent = consumedRights;
-        return accrued > spent ? accrued - spent : 0;
+        uint256 credited = creditedRights[account];
+        uint256 spent = consumedRights[account];
+        return credited > spent ? credited - spent : 0;
+    }
+
+    /// @notice Spend rights. Vault only.
+    function consumeRights(address account, uint256 amount) external override {
+        if (msg.sender != vault) revert Unauthorized();
+        if (account == address(0)) revert InvalidAccount();
+        if (amount == 0) revert ZeroAmount();
+        uint256 spent = consumedRights[account];
+        if (creditedRights[account] < spent + amount) revert InsufficientRights();
+        consumedRights[account] = spent + amount;
+        emit RightsConsumed(account, amount);
     }
 
     /// @notice COMP per accepted task, 1e18-scaled, from the vault's governed parameters if it has
     /// any and from the shipped constant otherwise.
-    /// @dev Probed rather than required, so this oracle serves a plain CDPVault and a
-    /// ParameterizedVault without a second artifact. The bound lives in Parameters, which refuses
-    /// more than one COMP per task; a vault with no parameters cannot change the figure at all.
+    /// @dev Probed rather than required, so one oracle serves a plain CDPVault and a ParameterizedVault
+    /// without a second artifact. The bound lives in Parameters, which refuses more than one COMP per
+    /// task; a vault with no parameters cannot change the figure at all.
     function compPerTaskWad() public view returns (uint256) {
         (bool ok, bytes memory data) = vault.staticcall(abi.encodeWithSignature("parameters()"));
         if (!ok || data.length != 32) return COMP_PER_TASK_WAD;
@@ -171,45 +189,42 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
         return abi.decode(data, (uint256));
     }
 
-    /// @notice Spend rights. Vault only.
-    /// @dev Pins the high-water count AND the price of the work counted so far in the same call, so
-    /// neither a later lower figure nor a later rate change can claw back what was spent or re-credit
-    /// work already minted against.
-    function consumeRights(address account, uint256 amount) external override {
-        if (msg.sender != vault) revert Unauthorized();
-        if (account != CLAIMANT) revert InvalidAccount();
-        if (amount == 0) revert ZeroAmount();
-        uint256 tasks = attestedTasks();
-        uint256 accrued = creditedRights + (tasks - creditedTasks) * compPerTaskWad();
-        uint256 spent = consumedRights;
-        if (accrued < spent + amount) revert InsufficientRights();
-        // Lock the price of everything counted so far, in the same call that spends against it. After
-        // this, `creditedRights >= consumedRights` always, which is what makes a rate cut unable to
-        // reach backwards.
-        creditedTasks = tasks;
-        creditedRights = accrued;
-        consumedRights = spent + amount;
-        emit RightsConsumed(account, amount, tasks);
+    /// @dev `isController` through a raw staticcall: an adapter that is absent (every testnet) or
+    /// stops answering reads as "does not control", which refuses claims rather than reverting views.
+    function _controls(uint256 agentId, address account) private view returns (bool) {
+        (bool ok, bytes memory data) =
+            ERC8004_ADAPTER.staticcall(abi.encodeCall(IAdapter8004.isController, (agentId, account)));
+        if (!ok || data.length < 32) return false;
+        return abi.decode(data, (uint256)) == 1;
     }
 
-    function _latest() private view returns (uint256 value) {
-        (value,) = this.latestValue();
+    /// @dev OpenZeppelin's sorted-pair proof, written out because this repository's checkout carries
+    /// only the few utils it needs and `MerkleProof` is not among them. Sorted pairs are what
+    /// `StandardMerkleTree` produces, and the leaf is double-hashed for the same reason it is there:
+    /// a single hash lets an internal node be presented as a leaf.
+    function _verify(bytes32[] calldata proof, bytes32 root, bytes32 leaf) private pure returns (bool) {
+        bytes32 computed = leaf;
+        for (uint256 i; i < proof.length; ++i) {
+            bytes32 sibling = proof[i];
+            computed = computed < sibling
+                ? keccak256(abi.encodePacked(computed, sibling))
+                : keccak256(abi.encodePacked(sibling, computed));
+        }
+        return computed == root;
     }
+bytes internal constant QUESTION_PREFIX = hex"7b22616e7377657254797065223a2275696e74323536222c22636861696e4964223a312c22646566696e6974696f6e73223a7b2265786163746e657373223a22457665727920726563656970742069732066726f7a656e20616e642070696e6e65642c20736f206576657279206d656d626572206f6620746869732070616e656c207265616473206964656e746963616c20627974657320616e64206d757374207265706f727420746865206964656e746963616c20696e74656765722e20446f206e6f7420726f756e642c20646f206e6f74206176657261676520616e6420646f206e6f742061646a75737420746f7761726420616e6f74686572206d656d6265722e20496620796f75722072656275696c6420646973616772656573207769746820616e6f746865722072656164696e672c207265706f727420696e6162696c69747920726174686572207468616e2073706c697474696e672074686520646966666572656e63652e222c22666967757265223a2254686520616e7377657220697320746865206167656e74526f6f74206669656c64206f66207468617420646f63756d656e742c20612033322d627974652076616c7565207772697474656e20617320307820666f6c6c6f7765642062792036342068657861646563696d616c20636861726163746572732c207265706f727465642061732074686520756e7369676e656420696e74656765722074686f736520627974657320726570726573656e7420696e206269672d656e6469616e206f726465722e20446f204e4f54207265706f72742074686520726f6f74206669656c642c207768696368206973206120646966666572656e7420726f6f74206f766572206a6f62206964656e746966696572732e222c2272656365697074223a22466574636820746865207265636569707420646f63756d656e742074686520576f726b5265636f72646564206576656e74277320757269206e616d65732e20416e20697066733a2f2f20757269207265736f6c766573207468726f75676820616e79207075626c696320676174657761792c20696e636c7564696e672068747470733a2f2f697066732e696d642e66756e2e2043616e6f6e6963616c697a652074686520646f63756d656e7420617320616e2052464320383738352073756273657420616e6420636f6e6669726d206b656363616b323536206f662074686f736520627974657320657175616c732074686520646f63756d656e744861736820726561642066726f6d207468652072656769737472792e204120646f63756d656e742077686f7365206861736820646f6573206e6f74206d61746368206973206e6f7420746865207265636569707420616e64206d757374206e6f7420626520757365642e222c227265667573616c223a225265706f727420696e6162696c69747920726174686572207468616e20737562737469747574696e6720616e797468696e67206966207468652072656769737472792063616e6e6f7420626520726561642c206966206e6f207175616c696679696e6720646179206578697374732c2069662074686520726563656970742063616e6e6f7420626520666574636865642c20696620697473206861736820646f6573206e6f74206d61746368207768617420746865207265676973747279207265636f726465642c206f7220696620697473206c656176657320646f206e6f7420726570726f6475636520697473206f776e206167656e74526f6f742e20416e20616273656e74206167656e742074616c6c79206d65616e732074686520636f6e74726f6c20706c616e6520686173206e6f74207075626c6973686564206f6e6520666f7220746861742077696e646f772c20616e642074686520636f727265637420616e7377657220697320696e6162696c6974792c204e4f54207a65726f2e222c227265676973747279223a2254686520576f726b52656769737472792069732074686520636f6e747261637420617420307862366430613138376230353066613562623062383730333361323033663337626563663461373735206f6e20457468657265756d206d61696e6e65742e204561636820555443206461792773206f7261636c652072656365697074206973207265636f7264656420756e6465722061206a6f624964206465726976656420617320746865206669727374207369787465656e206279746573206f66206b656363616b323536206f662074686520415343494920737472696e67206964656e746974796d642d6f7261636c652d62617463683a20666f6c6c6f776564206279207468652064617920696e20595959592d4d4d2d444420666f726d2c20776974682074686520555549442076657273696f6e20616e642076617269616e742062697473207365743a206279746520736978206f662074686f7365207369787465656e20686173206974732068696768206e6962626c65207265706c6163656420627920382c20616e64206279746520656967687420686173206974732074776f20686967682062697473207265706c616365642062792031302e2052656164206c6174657374286a6f6249642920666f72207468652063616e6f6e6963616c20646f63756d656e7448617368206f662074686174206461792e222c2273656c656374696f6e223a225768657265207365766572616c2064617973207175616c6966792c2074616b6520746865206f6e65207769746820746865206772656174657374206461792076616c75652077686f736520646f63756d656e7448617368206973207265636f72646564206174206f72206265666f7265207468652077696e646f772773206c61737420626c6f636b2e2041206461792077697468206e6f206167656e74526f6f7420617420616c6c2c20776869636820697320616e7920726563656970742077686f736520736368656d61206973206964656e746974796d642d6f7261636c652d62617463682d76312c20646f6573206e6f74207175616c6966792e222c22766572696669636174696f6e223a22496e646570656e64656e746c792072656275696c64207468652074726565206265666f726520616e73776572696e672e2054686520646f63756d656e742063617272696573206167656e744c656166456e636f64696e672c207768696368206d757374206265207468652074687265652074797065732075696e743235362c2075696e7433322c2075696e7436342c20616e64206167656e744c65617665732c20616e206172726179206f66206f626a656374732077697468206167656e7449642c20616363657074656420616e642063756d756c61746976652e204275696c6420616e204f70656e5a657070656c696e205374616e646172644d65726b6c6554726565206f7665722074686f7365206c656176657320696e20746865206f7264657220676976656e20616e6420636f6e6669726d2069747320726f6f7420657175616c73206167656e74526f6f742e204120646f63756d656e742077686f7365206c656176657320646f206e6f7420726570726f6475636520697473206f776e20726f6f74206d75737420626520726566757365642e227d2c2265766964656e6365223a2270616e656c222c227175657374696f6e223a225768617420697320746865206167656e742074616c6c79204d65726b6c6520726f6f74206f6620746865206d6f737420726563656e74206461696c79206f7261636c652072656365697074207468617420746865204964656e746974794d4420576f726b526567697374727920686173207265636f72646564206173206f6620746865206c61737420626c6f636b206f66207468652070696e6e65642077696e646f772c206578707265737365642061732074686520756e7369676e6564203235362d62697420696e74656765722077686f7365206269672d656e6469616e20627974657320617265207468617420726f6f743f222c2276223a312c2277696e646f77223a7b2266726f6d426c6f636b223a";
 
     /// @notice The exact question this oracle accepts answers to, and the window span it allows.
     /// @dev DERIVED, NEVER HAND-WRITTEN: emitted by `node oracle/question-prefix.mjs
-    /// oracle/work-tally-quote.json`. Change one character of that payload's question or definitions
+    /// oracle/work-root-quote.json`. Change one character of that payload's question or definitions
     /// and this must be regenerated, or the oracle refuses every attestation — the safe direction.
     ///
     /// BEFORE DEPLOYING: buy one request with that payload and run the generator with
-    /// `--verify <requestId>`; it must print MATCH. Nothing has been bought with it yet, and it is
-    /// not yet answerable — the control plane records no agent tally for this seat so far, so a panel
-    /// must report inability. The contract is ready for the first receipt that carries one.
+    /// `--verify <requestId>`; it must print MATCH. Nothing has been bought with it yet.
     ///
     /// The span bounds a 24-hour window on mainnet at roughly twelve seconds a block. The question
-    /// does not name a day, so one constant serves every day and `lastToBlock` is what forces each
+    /// names no day, so one constant serves every day, and `lastToBlock` is what forces each
     /// attestation to cover newer ground than the last.
-bytes internal constant QUESTION_PREFIX = hex"7b22616e7377657254797065223a2275696e74323536222c22636861696e4964223a312c22646566696e6974696f6e73223a7b2261726368697665223a224561636820726563656970742069732070696e6e656420746f204950465320616e6420697473206f776e20646f63756d656e742063617272696573206167656e74526f6f742c206167656e744c656166456e636f64696e6720616e64206167656e744c65617665732e20576865726520616e20656e747279206e616d65732061204349442c206665746368207468652072656365697074207468726f7567682068747470733a2f2f697066732e696d642e66756e206f7220616e79207075626c696320676174657761792c20636f6e6669726d2069747320736368656d61206973206964656e746974796d642d6f7261636c652d62617463682d76322c20616e6420636f6e6669726d20746865206167656e74526f6f7420696e2074686520617263686976656420646f63756d656e7420657175616c7320746865206167656e74526f6f7420696e207468652070726f6f662e205374617465207768696368206761746577617920616e7377657265642e222c22636f6e74726f6c6c6572223a224265666f726520616e73776572696e672c20766572696679206f6e20457468657265756d206d61696e6e65742074686174206973436f6e74726f6c6c65722835313435302c20307835313637443031346130353645343338383365314242456135353330633363306443393933323831292072657475726e732074727565206f6e207468652041646170746572383030342070726f7879206174203078646531353261666237646235333733663334383736653134393966626438393361383264643333362e205468617420616461707465722069732077686174204964656e7469747952656769737472792e6f776e65724f6628353134353029207265736f6c76657320746f2c20616e6420697420616e737765727320636f6e74726f6c206279206f776e657273686970206f6620746865206964656e74697479204e46542e2049662069742072657475726e732066616c73652c207265706f727420696e6162696c6974793a20746865207072656d697365206f6620746865207175657374696f6e2069732066616c736520616e64206e6f20636f756e742073686f756c6420626520676976656e2e222c2265786163746e657373223a22457665727920656e74727920697320612066726f7a656e20736e617073686f742c20736f206576657279206d656d626572206f6620746869732070616e656c207265616473206964656e746963616c20627974657320616e64206d757374207265706f727420746865206964656e746963616c20696e74656765722e20446f206e6f7420726f756e642c20646f206e6f7420617665726167652c20616e6420646f206e6f742061646a75737420746f7761726420616e6f74686572206d656d6265722e20496620796f757220766572696669636174696f6e20646973616772656573207769746820616e6f746865722072656164696e672c207265706f727420696e6162696c69747920726174686572207468616e2073706c697474696e672074686520646966666572656e63652e222c22666967757265223a2254686520616e73776572206973207468652047524541544553542076616c7565206f66207468652063756d756c6174697665206669656c64206163726f737320657665727920656e7472792074686174207061737365732074686520766572696669636174696f6e2062656c6f772e2063756d756c61746976652069732074686174206167656e74277320636f756e74206f662044495354494e4354206f7261636c65206a6f6273206576657220616363657074656420696e207265636f7264656420736e617073686f74733b206163636570746564206973206f6e6c792074686174206f6e6520646179277320636f756e7420616e64206d757374204e4f542062652073756d6d6564206163726f737320646179732c206265636175736520612072657669736564206a6f622072652d68617368657320696e746f2061206c617465722064617920616e6420776f756c6420626520636f756e7465642074776963652e222c227265667573616c223a225265706f727420696e6162696c69747920726174686572207468616e20737562737469747574696e6720616e6f7468657220736f757263652069662074686520726f7574652063616e6e6f7420626520726561636865642c206966206f7261636c654261746368657320697320656d7074792c206966206e6f20656e74727920737572766976657320766572696669636174696f6e2c206f72206966206973436f6e74726f6c6c65722072657475726e732066616c73652e20496e20706172746963756c617220616e20656d707479206c697374206d65616e732074686520636f6e74726f6c20706c616e6520686173207265636f72646564206e6f206f7261636c652072656365697074206361727279696e6720616e206167656e742074616c6c7920666f7220746869732073656174207965742c20616e642074686520636f727265637420616e73776572206973207468656e20696e6162696c6974792c204e4f54207a65726f2e20446f206e6f742066616c6c206261636b20746f20746865206163636570746564206669656c64206f66204745542068747470733a2f2f6170692e696d642e66756e2f737761726d3a20746861742069732061206c697665206d757461626c6520636f756e746572206f76657220616c6c20736b696c6c732c206974206973206e6f7420746865206669677572652074686973207175657374696f6e2061736b7320666f722c20616e64206974206973206e6f742076657269666961626c6520616761696e737420616e7920617263686976652e222c227363616c65223a2254686520616e73776572206973206120706c61696e2077686f6c65206e756d626572206f66206a6f62732c204e4f54207363616c6564206279203165313820616e64204e4f5420612073756d206f66206461696c7920636f756e74732e222c22736f75726365223a2252656164204745542068747470733a2f2f6170692e696d642e66756e2f6167656e74732f35313435302f6f7261636c652d7265636f726473206f6e63652c20617420616e737765722074696d652e204974206973207075626c696320616e64206e65656473206e6f206b65792e2049742072657475726e7320616e206f7261636c65426174636865732061727261793b206561636820656e747279206973206f6e6520555443206461792773206f7261636c65207265636569707420616e642063617272696573206461792c2061636365707465642c2063756d756c61746976652c206964656e7469747920616e6420612070726f6f66206f626a6563742e20466f6c6c6f77206e6578744265666f726520756e74696c20746865206c6973742069732065786861757374656420736f206e6f20646179206973206d69737365642e222c22766572696669636174696f6e223a22466f72206561636820656e7472792c2072656275696c6420697473206167656e74207472656520616e64207265667573652074686520656e74727920696620697420646f6573206e6f74207265636f6e7374727563742e205468652070726f6f66206f626a6563742063617272696573206167656e74526f6f7420616e642070726f6f662e20546865206c65616620656e636f64696e6720697320746865204f70656e5a657070656c696e205374616e646172644d65726b6c6554726565206f766572207468652074797065732075696e743235362c2075696e7433322c2075696e74363420696e2074686174206f726465722c20686f6c64696e67206167656e7449642c20616363657074656420616e642063756d756c61746976652c20736f2061206c6561662068617368206973206b656363616b323536286b656363616b323536286162692e656e636f64652875696e74323536206167656e7449642c2075696e7433322061636365707465642c2075696e7436342063756d756c617469766529292920616e6420696e7465726e616c2070616972732061726520636f6e636174656e6174656420696e20617363656e64696e672062797465206f726465722e20566572696679207468652070726f6f6620616761696e7374206167656e74526f6f742e20416e20656e7472792077686f73652070726f6f6620646f6573206e6f7420766572696679206973206e6f742065766964656e636520616e64206973206469736361726465642e227d2c2265766964656e6365223a2270616e656c222c227175657374696f6e223a2257686174206973207468652067726561746573742063756d756c617469766520636f756e74206f66206163636570746564206f7261636c65206a6f6273207265636f7264656420666f7220746865204964656e746974794d4420736561742077686f7365206167656e7449642069732035313435302c2074616b656e2066726f6d20746865206461696c79206f7261636c65207265636569707473207075626c697368656420627920746865204964656e746974794d4420636f6e74726f6c20706c616e6520616e6420766572696669656420616761696e737420746865697220495046532061726368697665732c20676976656e207468617420616464726573732030783531363744303134613035364534333838336531424245613535333063336330644339393332383120636f6e74726f6c732074686174206167656e74206f6e20457468657265756d206d61696e6e65743f222c2276223a312c2277696e646f77223a7b2266726f6d426c6f636b223a";
 
     function questionPolicy() internal pure override returns (bytes memory, uint64, uint64) {
         return (QUESTION_PREFIX, 5_000, 9_000);

@@ -119,20 +119,23 @@ uint256 constant STABILITY_FEE_BPS = 200;
 /// MAX_WORK_RATIO_BPS, which is also 2500, so governance can lower it and never raise it past here.
 uint256 constant WORK_RATIO_BPS = 2_500;
 
-// The IdentityMD seat whose attested work backs the compute channel, and the only address that may
-// mint against it.
-// Both appear in the question document `SwarmWorkOracle` pins, so they are not merely asserted
-// here: an attestation about another agent, or naming another claimant, fails the feed's question
-// check. The constant says WHO may claim; the attested question is what proves that who controls the
-// agent, by requiring the panel to read `isController(agentId, claimant)` on the ERC-8004 adapter on
-// mainnet. If the identity NFT moves, the next attestation refuses and the channel stops.
-uint256 constant WORK_AGENT_ID = 51450;
-address constant WORK_CLAIMANT = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+// The ERC-8004 adapter that answers who controls an agent. IdentityRegistry.ownerOf resolves to it,
+// and isController(agentId, account) answers control by ownership of the identity NFT.
+//
+// THIS REPLACED TWO PINNED CONSTANTS, and the replacement is the point. The work oracle used to name
+// one agentId and one claimant in source, which made the compute channel a private faucet: a protocol
+// that mints for its author's own seat is not a compute-backed currency. Asking the registry instead
+// means every agent's controller claims their own credit, a sale of the identity NFT reassigns it with
+// no action from us, and no address is privileged anywhere in this file.
+//
+// MAINNET ONLY. The adapter lives at this address on Ethereum mainnet and has no Sepolia deployment,
+// so on a testnet `isController` is unreachable and no claim can succeed. The compute channel is
+// therefore inert on testnet, which is the honest state rather than a gap.
+address constant ERC8004_ADAPTER = 0xde152AfB7db5373F34876E1499fbD893A82dD336;
 
-// COMP earned per accepted task, 1e18-scaled. Governed through `Parameters`, hard-bounded there at
-// one COMP per task.
-// Shipped at a hundredth of a COMP. The work ceiling binds on top of this, so a claim is
-// bounded twice — by what was earned and by what backs the protocol.
+// COMP earned per accepted task, 1e18-scaled. Governed through `Parameters`, hard-bounded there at one
+// COMP per task. Shipped at a hundredth of a COMP; the work ceiling binds on top, so a claim is
+// bounded twice -- by what was earned and by what backs the protocol.
 uint256 constant COMP_PER_TASK_WAD = 0.01 ether;
 
 // The pre-deployed WorkOracleFactory, and the sentinel a vault passes as its oracle to ask for a real
