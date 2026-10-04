@@ -53,7 +53,7 @@ contract DeployComp is Script {
     // therefore ask for a low quorum — so that it attests at all — while the feed still refuses
     // anything under these. The dev's own example is panelSize >= 5 && agreed >= 4.
     uint16 constant MIN_PANEL_SIZE = 25; // mirrors SwarmFeed.MIN_PANEL_SIZE
-    uint16 constant MIN_AGREED = 15;     // mirrors SwarmFeed.MIN_AGREED
+    uint16 constant MIN_AGREED = 15; // mirrors SwarmFeed.MIN_AGREED
 
     function run() external {
         // Kept only to check the broadcasting key against the authority the source pins. A deployer
@@ -127,6 +127,12 @@ contract DeployComp is Script {
         // channel unbounded. The governed stack (DeployGoverned) is the one with a Treasury and a ceiling.
         require(vault.feeRecipient() == FEE_RECIPIENT, "vault: fee recipient is not the pinned one");
         require(vault.workCeiling() == type(uint256).max, "vault: a plain vault has no work ceiling to enforce");
+        require(vault.redemptionSpread() == 50, "vault: redemption spread is not the shipped default");
+        require(vault.redemptionCeilingCR() == vault.minCR() + 50, "vault: redemption ceiling is not derived");
+        require(vault.REDEMPTION_FEE_FLOOR_BPS() == 50, "vault: redemption fee floor changed");
+        require(vault.REDEMPTION_FEE_CAP_BPS() == 500, "vault: redemption fee cap changed");
+        require(vault.redemptionBaseRate() == 0, "vault: redemption base rate opens nonzero");
+        require(vault.lastRedemptionAt() == block.timestamp, "vault: redemption checkpoint is not now");
 
         PriceFeed[3] memory feeds = [priceFeed, PriceFeed(address(nhiFeed)), PriceFeed(address(spotFeed))];
         for (uint256 i = 0; i < feeds.length; ++i) {
@@ -140,9 +146,7 @@ contract DeployComp is Script {
             require(feeds[i].reporter2() == FEED_REPORTER_2, "feed: reporter2 drifted from source");
             require(feeds[i].quorum() == FEED_QUORUM, "feed: quorum drifted from source");
             require(feeds[i].isReporter(operator), "feed: operator cannot report");
-            require(
-                feeds[i].attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "feed: answerType must be 3 (uint256)"
-            );
+            require(feeds[i].attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "feed: answerType must be 3 (uint256)");
             require(feeds[i].attestationAnswerType() != 1, "feed: answerType is the address enum, as on 519");
             require(feeds[i].attestationChainId() == ATTESTATION_CHAIN_ID, "feed: wrong payload chainId");
             require(feeds[i].maxAge() == (i == 2 ? SPOT_MAX_AGE : MAX_AGE), "feed: wrong maxAge");

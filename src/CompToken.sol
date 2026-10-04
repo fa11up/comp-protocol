@@ -58,7 +58,7 @@ contract CompToken is ERC20 {
     }
 
     /// @notice Burn from an account as instructed by the registered vault, without an ERC-20 allowance.
-    /// @dev CDPVault only burns the caller's tokens during repayment or liquidation.
+    /// @dev CDPVault only burns the caller's tokens during repayment, liquidation or redemption.
     function burn(address account, uint256 amount) external onlyVault {
         _burn(account, amount);
     }

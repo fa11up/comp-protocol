@@ -219,8 +219,7 @@ contract Treasury {
     }
 
     function _readBalance(IERC20 asset) private view returns (uint256 balance, bool ok) {
-        (bool success, bytes memory data) =
-            address(asset).staticcall(abi.encodeCall(IERC20.balanceOf, (address(this))));
+        (bool success, bytes memory data) = address(asset).staticcall(abi.encodeCall(IERC20.balanceOf, (address(this))));
         if (!success || data.length < 32) return (0, false);
         return (abi.decode(data, (uint256)), true);
     }
@@ -275,6 +274,19 @@ contract Treasury {
 
     function withdraw(IERC20 token, address to, uint256 amount) external {
         if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
+        _withdraw(token, to, amount);
+    }
+
+    /// @notice Release reserve IMD for a redemption priced and burned by this Treasury's vault.
+    /// @dev Neither the caller nor governance can select another reserve asset through this path.
+    function redeemIMD(address to, uint256 amount) external {
+        if (msg.sender != vault) revert Unauthorized();
+        address token = _linked(abi.encodeWithSignature("imdToken()"));
+        if (token == address(0)) revert InvalidReserveAsset();
+        _withdraw(IERC20(token), to, amount);
+    }
+
+    function _withdraw(IERC20 token, address to, uint256 amount) private {
         if (to == address(0) || to == address(this)) revert InvalidRecipient();
         if (amount == 0) revert ZeroAmount();
         // AUDIT FIX (job c71449d1, low): credit anything that arrived since the last sync BEFORE

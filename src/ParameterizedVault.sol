@@ -78,6 +78,19 @@ contract ParameterizedVault is CDPVault {
         return parameters.markerShareBps();
     }
 
+    function redemptionSpread() public view override returns (uint256) {
+        return parameters.redemptionSpread();
+    }
+
+    /// @notice All idle IMD is usable, whether or not governance has listed it for reserve valuation.
+    function redemptionReserve() public view override returns (uint256) {
+        return imdToken.balanceOf(address(treasury));
+    }
+
+    function _payRedemptionReserve(uint256 amount) internal override {
+        treasury.redeemIMD(msg.sender, amount);
+    }
+
     /// @notice Both revenue streams land in the Treasury this vault created, never in an account.
     function feeRecipient() public view override returns (address) {
         return address(treasury);

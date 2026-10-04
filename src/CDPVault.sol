@@ -68,6 +68,9 @@ contract CDPVault is ReentrancyGuard {
     error InvalidBonusShares();
     error InvalidBeneficiary();
     error WorkCeilingReached();
+    error IneligibleRedemptionPosition();
+    error RedemptionWorsensRatio();
+    error MinimumOutNotMet();
 
     event OracleSet(address indexed oracle);
     event CollateralDeposited(address indexed account, uint256 amount);
@@ -79,8 +82,27 @@ contract CDPVault is ReentrancyGuard {
     event UnderwaterMarked(address indexed owner, uint256 markedAt, uint256 grace);
     event UnderwaterMarkCleared(address indexed owner);
     event IndexCheckpointed(uint256 index, uint256 at);
+    event Redeemed(
+        address indexed redeemer,
+        address indexed candidate,
+        uint256 compBurned,
+        uint256 imdOut,
+        uint256 reserveOut,
+        uint256 debtCancelled,
+        uint256 feeBps
+    );
 
     uint256 public constant LIQUIDATION_BONUS_PERCENT = 10;
+    uint256 public constant REDEMPTION_FEE_FLOOR_BPS = 50;
+    uint256 public constant REDEMPTION_FEE_CAP_BPS = 500;
+    /// @dev floor(1e18 * 2**(-1/43200)): a twelve-hour half-life, with per-second decay.
+    uint256 private constant REDEMPTION_SECOND_DECAY = 999983955055097432;
+    /// @notice Last redemption's base fee as a fraction scaled by 1e18, capped at 4.5%.
+    uint256 public redemptionBaseRate;
+    uint256 public lastRedemptionAt = block.timestamp;
+    /// @notice Burns against reserve or unminted stability fees, rather than minted principal.
+    /// @dev Supply = totalDebt + totalWorkMinted - totalNonPrincipalRedeemed. Work history is never reset.
+    uint256 public totalNonPrincipalRedeemed;
     uint256 private constant INDEX_SCALE = 1e18;
     /// @notice When this vault was deployed. NOT the accrual origin: the fee index runs from
     /// `indexCheckpointAt`, which moves. Kept because it is a stable deployment timestamp, and
@@ -146,6 +168,24 @@ contract CDPVault is ReentrancyGuard {
     /// DESIGN.md section 3 derives, and `mintFromWork` enforces whatever this returns.
     function workCeiling() public view virtual returns (uint256) {
         return type(uint256).max;
+    }
+
+    /// @notice Ratio points above minCR eligible for redemption; governed in ParameterizedVault.
+    function redemptionSpread() public view virtual returns (uint256) {
+        return 50;
+    }
+
+    function redemptionCeilingCR() public view returns (uint256) {
+        return minCR() + redemptionSpread();
+    }
+
+    /// @notice Idle IMD available before any borrower is reached. The plain vault has no Treasury.
+    function redemptionReserve() public view virtual returns (uint256) {
+        return 0;
+    }
+
+    function _payRedemptionReserve(uint256) internal virtual {
+        revert InsufficientCollateral();
     }
 
     /// @notice Outstanding minted principal, as used by the unchanged debt ceiling.
@@ -285,9 +325,9 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @notice Mint earned COMP by consuming work rights, without collateral or a debt entry.
-    /// @dev With this vault as sole minter/burner, supply = summed accrued debt + totalWorkMinted
-    /// + totalFeesMinted - all fees accrued (paid and unpaid). Equivalently it is outstanding minted
-    /// principal + totalWorkMinted. Unpaid fees are claims, not supply. Neither repayment path restores rights.
+    /// @dev With this vault as sole minter/burner, supply = outstanding minted principal + totalWorkMinted
+    /// - totalNonPrincipalRedeemed. Unpaid fees are claims, not supply. Burning against reserve or
+    /// cancelling unminted fees explains the last term. Neither repayment nor redemption restores rights.
     /// Refuses any amount that would carry totalWorkMinted past `workCeiling()`: rights say who may
     /// mint, the ceiling says how much backing exists for anyone to mint against.
     function mintFromWork(uint256 amount) external nonReentrant {
@@ -319,6 +359,94 @@ contract CDPVault is ReentrancyGuard {
         _payDebt(amount, feePaid);
         _clearIfRecovered(msg.sender);
         emit COMPRepaid(msg.sender, amount);
+    }
+
+    /// @notice Burn exactly `amount` caller COMP for feed-priced IMD, less the capped fee.
+    /// @dev Treasury IMD is spent first; only the shortfall cancels the named candidate's debt.
+    /// No approval, partial fill or fee transfer. All checks and both payouts are atomic.
+    function redeem(uint256 amount, uint256 minImdOut, address candidate)
+        external
+        nonReentrant
+        returns (uint256 imdOut)
+    {
+        if (amount == 0) revert ZeroAmount();
+        _requireFreshFeeds();
+        _requirePriceAgreement();
+        uint256 base = _redemptionRate(amount);
+        uint256 feeBps = REDEMPTION_FEE_FLOOR_BPS + base / 1e14;
+        uint256 price = _price();
+        uint256 payoutScale = (10_000 - feeBps) * 1e14;
+        imdOut = Math.mulDiv(amount, payoutScale, price);
+        if (imdOut == 0) revert ZeroAmount();
+        if (imdOut < minImdOut) revert MinimumOutNotMet();
+        uint256 reserveOut = Math.min(imdOut, redemptionReserve());
+        uint256 debtCancelled;
+        uint256 principalCancelled;
+        if (reserveOut < imdOut) {
+            // Round reserve-funded debt down, so every wei released by a borrower is covered by
+            // cancelled debt. Compute the payout ONCE: its price never depends on the candidate.
+            debtCancelled = amount - Math.mulDiv(reserveOut, price, payoutScale);
+            principalCancelled = _redeemPosition(candidate, debtCancelled, imdOut - reserveOut, price);
+        }
+        totalNonPrincipalRedeemed += amount - principalCancelled;
+        redemptionBaseRate = base;
+        lastRedemptionAt = block.timestamp;
+        compToken.burn(msg.sender, amount);
+        if (reserveOut != 0) _payRedemptionReserve(reserveOut);
+        if (reserveOut < imdOut) imdToken.safeTransfer(msg.sender, imdOut - reserveOut);
+        emit Redeemed(msg.sender, candidate, amount, imdOut, reserveOut, debtCancelled, feeBps);
+    }
+
+    function _redeemPosition(address candidate, uint256 amount, uint256 imdOut, uint256 price)
+        private
+        returns (uint256 principalCancelled)
+    {
+        _accrue(candidate);
+        Position storage position = _positions[candidate];
+        uint256 debt = position.debt + _stabilityFees[candidate];
+        if (debt == 0 || _collateralRatio(position.collateral, debt, price) >= redemptionCeilingCR()) {
+            revert IneligibleRedemptionPosition();
+        }
+        if (amount > debt) revert ExcessRepayment();
+        // Compare the exact collateral/debt fractions, not rounded whole-percent ratios. Deeply
+        // underwater positions cannot fund a fixed-price payout that would worsen their ratio.
+        if (imdOut > Math.mulDiv(position.collateral, amount, debt)) revert RedemptionWorsensRatio();
+        uint256 feesCancelled = _reduceDebt(candidate, amount);
+        principalCancelled = amount - feesCancelled;
+        position.collateral -= imdOut;
+        _recordBadDebt(candidate);
+        _clearIfRecovered(candidate);
+        // Unlike repayment/liquidation, redemption burns everything and remints no stability fees.
+        // Its discount remains in this position as backing, with no recipient or distribution.
+    }
+
+    /// @notice Current decayed base fee, as a fraction scaled by 1e18.
+    function decayedRedemptionBaseRate() public view returns (uint256) {
+        uint256 elapsed = block.timestamp - lastRedemptionAt;
+        uint256 rate = redemptionBaseRate;
+        if (rate == 0) return 0;
+        uint256 factor = REDEMPTION_SECOND_DECAY;
+        uint256 decay = 1e18;
+        while (elapsed != 0) {
+            if (elapsed & 1 != 0) decay = decay * factor / 1e18;
+            elapsed >>= 1;
+            factor = factor * factor / 1e18;
+        }
+        return Math.mulDiv(rate, decay, 1e18);
+    }
+
+    /// @notice Fee for a proposed burn, including its increase against supply BEFORE burning.
+    /// A zero amount quotes just the current floor plus decayed base.
+    function redemptionFeeBps(uint256 amount) external view returns (uint256) {
+        return REDEMPTION_FEE_FLOOR_BPS + _redemptionRate(amount) / 1e14;
+    }
+
+    function _redemptionRate(uint256 amount) private view returns (uint256) {
+        uint256 supply = compToken.totalSupply();
+        if (amount > supply) revert ExcessRepayment();
+        uint256 increase = amount == 0 ? 0 : Math.mulDiv(amount, 1e18, supply) / 4;
+        return
+            Math.min(decayedRedemptionBaseRate() + increase, (REDEMPTION_FEE_CAP_BPS - REDEMPTION_FEE_FLOOR_BPS) * 1e14);
     }
 
     /// @notice Start an underwater position's grace window; repeated marks preserve an active snapshot.
