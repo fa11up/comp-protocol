@@ -10,6 +10,7 @@ import { explained } from "./explain";
 import { ThemeToggle } from "./theme";
 import { LoanBook, useCharts } from "./Charts";
 import { Ticker } from "./motion";
+import { MarketCap } from "./MarketCap";
 export default function App() {
   const [r, setRuntime] = useState<Runtime>();
   const [error, setError] = useState("");
@@ -64,6 +65,7 @@ function Terminal({ r }: { r: Runtime }) {
   );
   const [now, setNow] = useState(BigInt(Math.floor(Date.now() / 1000)));
   const [mobilePane, setMobilePane] = useState("loans");
+  const [desk, setDesk] = useState("position");
   const charts = useCharts(r, s);
   const dialog = useRef<HTMLDialogElement>(null);
   const locked = useRef(false);
@@ -305,15 +307,17 @@ function Terminal({ r }: { r: Runtime }) {
       setBusy("");
     }
   }
-  const panes = [
-    "loans",
-    "position",
-    "redemption",
-    "work",
-    "oracle",
-    "keeper",
-    "backing",
-    "governance",
+  const monitor = [
+    ["loans", "Loan book"],
+    ["oracle", "Oracle"],
+    ["backing", "Backing"],
+  ];
+  const deskTabs = [
+    ["position", "Position"],
+    ["redemption", "Redeem"],
+    ["work", "Work"],
+    ["keeper", "Keeper"],
+    ["governance", "Govern"],
   ];
   return (
     <div className="terminal">
@@ -328,8 +332,8 @@ function Terminal({ r }: { r: Runtime }) {
           <span className="edition">Compute-backed stablecoin</span>
         </div>
         <div className="wallet-bar">
-          <ThemeToggle />
           <span className="network">{r.config.network.name} / testnet</span>
+          <ThemeToggle />
           {account ? (
             <>
               <span className="account" title={account}>
@@ -354,30 +358,6 @@ function Terminal({ r }: { r: Runtime }) {
           )}
         </div>
       </header>
-      <div className="statusbar">
-        <span>
-          <span className="status-dot" />{" "}
-          {readError
-            ? "RPC unavailable"
-            : s
-              ? feedsReady(s)
-                ? "Feeds ready"
-                : "Feeds require attention"
-              : "Verifying deployment"}
-        </span>
-        <span>
-          Supply{" "}
-          <b>
-            <Ticker text={`${fmt(s?.v.supply, 18, 2)} COMP`} />
-          </b>
-        </span>
-        <span>
-          Block <b>{s?.block.toString() ?? "—"}</b>
-        </span>
-        <button disabled={refreshing || !!busy} onClick={() => void refresh()}>
-          {refreshing ? "Refreshing…" : "Refresh state"}
-        </button>
-      </div>
       {walletError || readError || s?.errors.length ? (
         <div className="global-notice" role="alert">
           {walletError ||
@@ -390,89 +370,176 @@ function Terminal({ r }: { r: Runtime }) {
           View pane
           <select
             value={mobilePane}
-            onChange={(e) => setMobilePane(e.target.value)}
+            onChange={(e) => {
+              setMobilePane(e.target.value);
+              if (deskTabs.some(([id]) => id === e.target.value))
+                setDesk(e.target.value);
+            }}
           >
-            {panes.map((p) => (
-              <option key={p} value={p}>
-                {p[0].toUpperCase() + p.slice(1)}
-              </option>
-            ))}
+            {[...monitor.slice(0, 1), ...deskTabs, ...monitor.slice(1)].map(
+              ([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ),
+            )}
           </select>
         </label>
       </nav>
       <main
         id="terminal-main"
-        className="grid"
+        className="workspace"
         data-mobile-pane={mobilePane}
+        data-desk={desk}
         tabIndex={-1}
       >
-        <Pane id="loans" index="00" title="Loan book" tag="Live risk bands">
-          <LoanBook charts={charts} available={!!s} />
-        </Pane>
-        <Pane
-          id="position"
-          index="01"
-          title="Position"
-          tag={account ? "Wallet" : "Disconnected"}
-        >
-          <Position r={r} s={s} actions={actions} />
-        </Pane>
-        <Pane id="redemption" index="02" title="Redemption" tag="Reserve first">
-          <Redemption r={r} s={s} actions={actions} />
-        </Pane>
-        <Pane
-          id="work"
-          index="03"
-          title="Work"
-          tag={
-            s?.work.mode === "attested"
-              ? "Attested"
-              : s?.work.mode === "faucet"
-                ? "Test credits"
-                : "Oracle"
-          }
-        >
-          <Work r={r} s={s} actions={actions} now={now} charts={charts} />
-        </Pane>
-        <Pane id="oracle" index="04" title="Oracle" tag="Feeds">
-          <Oracle r={r} s={s} actions={actions} now={now} charts={charts} />
-        </Pane>
-        <Pane id="keeper" index="05" title="Keeper" tag="Permissionless">
-          <Keeper r={r} s={s} actions={actions} now={now} />
-        </Pane>
-        <Pane id="backing" index="06" title="Backing" tag="Treasury">
-          <Backing r={r} s={s} actions={actions} />
-        </Pane>
-        <Pane id="governance" index="07" title="Governance" tag="Timelock">
-          <Governance r={r} s={s} actions={actions} now={now} />
-        </Pane>
+        <div className="monitor">
+          <Pane id="loans" index="00" title="Loan book" tag="Live risk bands">
+            <LoanBook charts={charts} available={!!s} />
+          </Pane>
+          <div className="monitor-row">
+            <Pane id="oracle" index="01" title="Oracle" tag="Feeds">
+              <Oracle r={r} s={s} now={now} charts={charts} />
+            </Pane>
+            <Pane id="backing" index="02" title="Backing" tag="Treasury">
+              <Backing r={r} s={s} />
+            </Pane>
+          </div>
+        </div>
+        <div className="desk">
+          <div className="desk-tabs" role="tablist" aria-label="Desk">
+            {deskTabs.map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                id={`tab-${id}`}
+                aria-selected={desk === id}
+                aria-controls={`${id}-panel`}
+                tabIndex={desk === id ? 0 : -1}
+                onClick={() => {
+                  setDesk(id);
+                  setMobilePane(id);
+                }}
+                onKeyDown={(e) => {
+                  const i = deskTabs.findIndex(([x]) => x === id);
+                  const step =
+                    e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+                  if (!step) return;
+                  const next =
+                    deskTabs[(i + step + deskTabs.length) % deskTabs.length][0];
+                  setDesk(next);
+                  setMobilePane(next);
+                  document.getElementById(`tab-${next}`)?.focus();
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <Pane
+            desk
+            id="position"
+            index="03"
+            title="Position"
+            tag={account ? "Wallet" : "Disconnected"}
+          >
+            <Position r={r} s={s} actions={actions} />
+          </Pane>
+          <Pane
+            desk
+            id="redemption"
+            index="04"
+            title="Redemption"
+            tag="Reserve first"
+          >
+            <Redemption r={r} s={s} actions={actions} />
+          </Pane>
+          <Pane
+            desk
+            id="work"
+            index="05"
+            title="Work"
+            tag={
+              s?.work.mode === "attested"
+                ? "Attested"
+                : s?.work.mode === "faucet"
+                  ? "Test credits"
+                  : "Oracle"
+            }
+          >
+            <Work r={r} s={s} actions={actions} now={now} charts={charts} />
+          </Pane>
+          <Pane desk id="keeper" index="06" title="Keeper" tag="Permissionless">
+            <Keeper r={r} s={s} actions={actions} now={now} />
+          </Pane>
+          <Pane
+            desk
+            id="governance"
+            index="07"
+            title="Governance"
+            tag="Timelock"
+          >
+            <Governance r={r} s={s} actions={actions} now={now} />
+          </Pane>
+        </div>
       </main>
       <footer>
-        <div className="transaction-status" role="status">
+        <div className="statusbar">
           <span>
-            {busy ? "↳ " : ""}
-            {tx.error || tx.status}
+            <span className="status-dot" />{" "}
+            {readError
+              ? "RPC unavailable"
+              : s
+                ? feedsReady(s)
+                  ? "Feeds ready"
+                  : "Feeds require attention"
+                : "Verifying deployment"}
           </span>
-          {tx.hash && (
-            <a
-              href={`${r.config.network.explorer}/tx/${tx.hash}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              View transaction ↗
-            </a>
-          )}
+          <MarketCap supply={s?.v.supply} />
+          <span>
+            Supply{" "}
+            <b>
+              <Ticker text={`${fmt(s?.v.supply, 18, 2)} COMP`} />
+            </b>
+          </span>
+          <span>
+            Block <b>{s?.block.toString() ?? "—"}</b>
+          </span>
+          <button
+            disabled={refreshing || !!busy}
+            onClick={() => void refresh()}
+          >
+            {refreshing ? "Refreshing…" : "Refresh state"}
+          </button>
         </div>
-        <div className="footer-meta">
-          <span>COMP / v.10</span>
-          <span>
-            {s
-              ? `Read ${Math.max(0, Math.floor((Date.now() - s.loadedAt) / 1000))}s ago`
-              : "Awaiting RPC"}
-          </span>
-          <a href="./imd-deployment.json" target="_blank" rel="noreferrer">
-            Deployment ↗
-          </a>
+        <div className="footer-line">
+          <div className="transaction-status" role="status">
+            <span>
+              {busy ? "↳ " : ""}
+              {tx.error || tx.status}
+            </span>
+            {tx.hash && (
+              <a
+                href={`${r.config.network.explorer}/tx/${tx.hash}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View transaction ↗
+              </a>
+            )}
+          </div>
+          <div className="footer-meta">
+            <span>COMP / v.11</span>
+            <span>
+              {s
+                ? `Read ${Math.max(0, Math.floor((Date.now() - s.loadedAt) / 1000))}s ago`
+                : "Awaiting RPC"}
+            </span>
+            <a href="./imd-deployment.json" target="_blank" rel="noreferrer">
+              Deployment ↗
+            </a>
+          </div>
         </div>
       </footer>
       <dialog

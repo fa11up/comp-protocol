@@ -180,32 +180,90 @@ export function Pane({
   index,
   title,
   tag,
+  desk = false,
   children,
 }: {
   id: string;
   index: string;
   title: string;
   tag?: string;
+  /** A desk pane is a tab panel laid out to fit without scrolling. */
+  desk?: boolean;
   children: ReactNode;
 }) {
   return (
-    <section className={`pane pane-${id}`} aria-labelledby={`${id}-heading`}>
+    <section
+      className={`pane pane-${id}${desk ? " desk-pane" : ""}`}
+      aria-labelledby={`${id}-heading`}
+      id={desk ? `${id}-panel` : undefined}
+      role={desk ? "tabpanel" : undefined}
+    >
       <header className="pane-head">
         <h2 id={`${id}-heading`}>
           <span>{index}</span> {title}
         </h2>
         <span className="tag">
           {tag}
-          <span className="scroll-cue" aria-label="Scroll inside pane for more">
-            {" "}
-            ↕
-          </span>
+          {!desk && (
+            <span
+              className="scroll-cue"
+              aria-label="Scroll inside pane for more"
+            >
+              {" "}
+              ↕
+            </span>
+          )}
         </span>
       </header>
-      <div className="pane-body" tabIndex={0} aria-label={`${title} pane`}>
+      <div
+        className={desk ? "pane-body desk-body" : "pane-body"}
+        tabIndex={desk ? undefined : 0}
+        aria-label={desk ? undefined : `${title} pane`}
+      >
         {children}
       </div>
     </section>
+  );
+}
+/** One of several alternative actions; only the chosen one is drawn, so the column never grows. */
+export function Choice({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: readonly (readonly [string, string])[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="choice" role="group" aria-label={label}>
+      {options.map(([v, text]) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={value === v}
+          onClick={() => onChange(v)}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+export function Col({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="desk-col">
+      <div className="section-label">{label}</div>
+      {children}
+    </div>
   );
 }
 export function Row({

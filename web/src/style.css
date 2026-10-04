@@ -158,7 +158,7 @@ b {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  min-height: 76px;
+  min-height: 60px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--rule);
 }
@@ -186,12 +186,13 @@ b {
 .statusbar {
   display: flex;
   align-items: center;
-  gap: 26px;
-  min-height: 47px;
-  flex-shrink: 0;
+  gap: 22px;
+  min-height: 34px;
   font-size: 11px;
-  border-bottom: 1px solid var(--rule);
   color: var(--muted);
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 .statusbar b {
   color: var(--text);
@@ -216,17 +217,6 @@ b {
   max-height: 70px;
   overflow: auto;
   flex-shrink: 0;
-}
-.grid {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-template-rows: 1fr 1fr;
-  gap: 0;
-  overflow: hidden;
-  margin-block: 16px;
-  border: 1px solid var(--rule);
 }
 .pane {
   display: flex;
@@ -266,43 +256,11 @@ b {
   overscroll-behavior: contain;
   scroll-padding-block: 14px;
 }
-.pane-position {
-  grid-column: 1;
-  grid-row: 1;
-}
-.pane-redemption {
-  grid-column: 2;
-  grid-row: 1 / 3;
-}
-.pane-work {
-  grid-column: 3;
-  grid-row: 1;
-}
-.pane-oracle {
-  grid-column: 4;
-  grid-row: 1;
-  border-inline-end: 0;
-}
-.pane-keeper {
-  grid-column: 1;
-  grid-row: 2;
-  border-top: 1px solid var(--rule);
-}
-.pane-backing {
-  grid-column: 3;
-  grid-row: 2;
-  border-top: 1px solid var(--rule);
-}
-.pane-governance {
-  grid-column: 4;
-  grid-row: 2;
-  border-top: 1px solid var(--rule);
-  border-inline-end: 0;
-}
 .hero-stat {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
+  column-gap: 12px;
   margin-bottom: 12px;
 }
 .hero-stat > span {
@@ -318,6 +276,14 @@ b {
 .hero-stat small {
   font-size: 10px;
   color: var(--muted);
+  text-align: end;
+}
+/* In a narrow monitor pane the caption drops under the figure instead of colliding with it. */
+.monitor .hero-stat {
+  grid-template-columns: minmax(0, 1fr);
+}
+.monitor .hero-stat small {
+  text-align: start;
 }
 .row {
   display: flex;
@@ -503,14 +469,19 @@ pre {
 }
 footer {
   border-top: 1px solid var(--rule);
-  min-height: 47px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: 10px;
+  padding-block: 6px 8px;
+}
+.footer-line {
   display: flex;
   gap: 24px;
   justify-content: space-between;
   align-items: center;
-  flex-shrink: 0;
-  font-size: 10px;
-  padding-block: 8px;
+  min-width: 0;
 }
 .transaction-status {
   display: flex;
@@ -605,44 +576,6 @@ dialog [role="status"] {
   .terminal {
     padding-inline: 12px;
   }
-  .grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: 1fr 1fr 1fr;
-  }
-  .pane-position {
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .pane-redemption {
-    grid-column: 2;
-    grid-row: 1/4;
-  }
-  .pane-work {
-    grid-column: 3;
-    grid-row: 1;
-  }
-  .pane-oracle {
-    grid-column: 1;
-    grid-row: 2;
-    border-top: 1px solid var(--rule);
-    border-inline-end: 1px solid var(--rule);
-  }
-  .pane-keeper {
-    grid-column: 1;
-    grid-row: 3;
-  }
-  .pane-backing {
-    grid-column: 3;
-    grid-row: 2;
-  }
-  .pane-governance {
-    grid-column: 3;
-    grid-row: 3;
-  }
-  .pane-work,
-  .pane-backing {
-    border-inline-end: 0;
-  }
   .pane-head {
     padding-inline: 10px;
   }
@@ -686,9 +619,6 @@ dialog [role="status"] {
     flex-wrap: wrap;
     padding-block: 8px;
   }
-  .statusbar > span:nth-child(2) {
-    display: none;
-  }
   .mobile-nav {
     display: block;
   }
@@ -703,24 +633,6 @@ dialog [role="status"] {
     width: auto;
     margin: 0;
     min-width: 0;
-  }
-  .grid {
-    display: block;
-    margin-block: 0 10px;
-  }
-  .grid .pane {
-    display: none;
-    height: 100%;
-    border: 0;
-  }
-  .grid[data-mobile-pane="position"] .pane-position,
-  .grid[data-mobile-pane="redemption"] .pane-redemption,
-  .grid[data-mobile-pane="work"] .pane-work,
-  .grid[data-mobile-pane="oracle"] .pane-oracle,
-  .grid[data-mobile-pane="keeper"] .pane-keeper,
-  .grid[data-mobile-pane="backing"] .pane-backing,
-  .grid[data-mobile-pane="governance"] .pane-governance {
-    display: flex;
   }
   .pane-body {
     padding: 16px;
@@ -789,28 +701,6 @@ dialog [role="status"] {
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
-}
-.grid {
-  grid-template-rows: minmax(245px, 0.9fr) 1fr 1fr;
-}
-.pane-loans {
-  grid-column: 1 / -1;
-  grid-row: 1;
-  border-inline-end: 0;
-  border-bottom: 1px solid var(--rule);
-}
-.pane-position,
-.pane-work,
-.pane-oracle {
-  grid-row: 2;
-}
-.pane-redemption {
-  grid-row: 2 / 4;
-}
-.pane-keeper,
-.pane-backing,
-.pane-governance {
-  grid-row: 3;
 }
 .pane-loans .pane-body {
   padding-block: 10px;
@@ -1138,30 +1028,7 @@ td span {
     }
   }
 }
-@media (max-width: 1100px) and (min-width: 761px) {
-  .grid {
-    grid-template-rows: minmax(245px, 0.9fr) 1fr 1fr 1fr;
-  }
-  .pane-position,
-  .pane-work {
-    grid-row: 2;
-  }
-  .pane-redemption {
-    grid-row: 2 / 5;
-  }
-  .pane-oracle,
-  .pane-backing {
-    grid-row: 3;
-  }
-  .pane-keeper,
-  .pane-governance {
-    grid-row: 4;
-  }
-}
 @media (max-width: 760px) {
-  .grid[data-mobile-pane="loans"] .pane-loans {
-    display: flex;
-  }
   .book-heading {
     gap: 4px;
   }
@@ -1217,4 +1084,202 @@ td span {
 ::selection {
   background: var(--text);
   color: var(--surface);
+}
+
+/* ---- Workspace: a read-only monitor beside a work desk ---------------------------------------
+   The monitor holds what you watch (loan book, oracle, backing) and may scroll inside its panes.
+   The desk holds what you do, one tab at a time, laid out in two columns so it never scrolls. */
+.workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  margin-block: 12px;
+  border: 1px solid var(--rule);
+  overflow: hidden;
+}
+.monitor {
+  display: grid;
+  grid-template-rows: minmax(0, 0.95fr) minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  border-inline-end: 1px solid var(--rule);
+}
+.monitor > .pane-loans {
+  border-inline-end: 0;
+  border-bottom: 1px solid var(--rule);
+}
+.monitor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+}
+.monitor-row > .pane:last-child {
+  border-inline-end: 0;
+}
+.desk {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--surface);
+}
+.desk-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+.desk-tabs button {
+  flex: 1;
+  min-height: 42px;
+  border: 0;
+  border-inline-end: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.desk-tabs button:last-child {
+  border-inline-end: 0;
+}
+.desk-tabs button[aria-selected="true"] {
+  color: var(--text);
+  background: var(--raised);
+  box-shadow: inset 0 -2px 0 var(--text);
+}
+.desk-pane {
+  display: none;
+  flex: 1;
+  border-inline-end: 0;
+}
+.workspace[data-desk="position"] .pane-position,
+.workspace[data-desk="redemption"] .pane-redemption,
+.workspace[data-desk="work"] .pane-work,
+.workspace[data-desk="keeper"] .pane-keeper,
+.workspace[data-desk="governance"] .pane-governance {
+  display: flex;
+}
+.desk-pane > .pane-head {
+  display: none;
+}
+.desk-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 28px;
+  overflow: visible;
+  align-content: start;
+}
+.desk-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.desk-col > .section-label {
+  margin-top: 0;
+}
+.choice {
+  display: flex;
+  flex-wrap: wrap;
+  margin-block: 2px 10px;
+}
+.choice button {
+  flex: 1 1 auto;
+  min-height: 30px;
+  padding-inline: 8px;
+  font-size: 11px;
+  border-color: var(--rule);
+  margin-inline-start: -1px;
+  color: var(--muted);
+}
+.choice button[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--text);
+  position: relative;
+  z-index: 1;
+}
+.theme-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-color: var(--rule);
+}
+.market-cap b {
+  color: var(--text);
+}
+.cap-bar {
+  color: var(--text);
+  letter-spacing: 0.02em;
+  white-space: pre;
+}
+@media (max-width: 1100px) {
+  /* One pane at a time below desktop width; the desk keeps its two columns while they fit. */
+  .desk-tabs {
+    display: none;
+  }
+  .workspace {
+    display: block;
+    margin-block: 0 10px;
+  }
+  .monitor,
+  .monitor-row,
+  .desk {
+    display: contents;
+  }
+  .workspace .pane {
+    display: none;
+    height: 100%;
+    border: 0;
+  }
+  .desk-pane > .pane-head {
+    display: flex;
+  }
+  .desk-body {
+    overflow: auto;
+  }
+  .workspace[data-mobile-pane="loans"] .pane-loans,
+  .workspace[data-mobile-pane="oracle"] .pane-oracle,
+  .workspace[data-mobile-pane="backing"] .pane-backing,
+  .workspace[data-mobile-pane="position"] .pane-position,
+  .workspace[data-mobile-pane="redemption"] .pane-redemption,
+  .workspace[data-mobile-pane="work"] .pane-work,
+  .workspace[data-mobile-pane="keeper"] .pane-keeper,
+  .workspace[data-mobile-pane="governance"] .pane-governance {
+    display: flex;
+  }
+  .mobile-nav {
+    display: block;
+  }
+  .mobile-nav label {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-block: 8px;
+  }
+  .mobile-nav select {
+    flex: 1;
+    width: auto;
+    margin: 0;
+    min-width: 0;
+  }
+}
+@media (max-width: 760px) {
+  /* A phone cannot hold two columns of controls; they stack and the pane scrolls. */
+  .desk-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .statusbar > span:nth-child(3),
+  .cap-bar {
+    display: none;
+  }
+}
+.footer-meta a,
+.transaction-status a {
+  display: inline-block;
+  min-height: 24px;
+  line-height: 24px;
 }

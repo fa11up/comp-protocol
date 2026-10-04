@@ -9,7 +9,15 @@ import {
 import { Ticker } from "./motion";
 import { type Runtime } from "./config";
 import { type Snapshot, type Question, read, feedsReady } from "./state";
-import { Action, ActionForm, Row, AddressLink, type Actions } from "./actions";
+import {
+  Action,
+  ActionForm,
+  Row,
+  AddressLink,
+  Choice,
+  Col,
+  type Actions,
+} from "./actions";
 import type { Failure } from "./explain";
 import {
   amount,
@@ -26,9 +34,14 @@ import {
   maxDebt,
   requiredCollateral,
 } from "./math";
+import { positionName } from "./history";
 const amt = (name: string) => ({ name, kind: "amount" as const });
 const addr = (name: string) => ({ name, kind: "address" as const });
 const num = (name: string) => ({ name, kind: "uint" as const });
+// A debt ceiling set to the uint256 range is "none", not a 78-digit number.
+const ceilingText = (v?: bigint) =>
+  v === undefined ? "—" : v >= 10n ** 36n ? "No ceiling" : `${fmt(v)} COMP`;
+
 export function Position({
   r,
   s,
@@ -39,6 +52,7 @@ export function Position({
   actions: Actions;
 }) {
   const [input, setInput] = useState("");
+  const [act, setAct] = useState("deposit");
   const v = s?.v || {};
   let n = 0n;
   try {
@@ -50,153 +64,171 @@ export function Position({
     n > 0n && (v.allowance === undefined || v.allowance < n);
   const t = s?.targets;
   const fresh = feedsReady(s);
+  const price = s?.feeds.USD?.value;
+  const collateral = v.positions?.[0] as bigint | undefined;
+  const debt = v.debtOf as bigint | undefined;
+  const sized =
+    collateral !== undefined && debt !== undefined && !!v.minCR && !!price;
+  const liq = sized ? liquidationPrice(collateral, debt, v.minCR) : undefined;
+  const most = sized ? maxDebt(collateral, v.minCR, price) : undefined;
+  const keep = sized ? requiredCollateral(debt, v.minCR, price) : undefined;
   return (
     <>
-      <div className="hero-stat">
-        <span>Collateral ratio</span>
-        <strong>
-          <Ticker text={ratio(v.collateralRatio)} />
-        </strong>
-        <small>
-          minCR <Ticker text={ratio(v.minCR)} />
-        </small>
-      </div>
-      <Row label="Collateral">{fmt(v.positions?.[0])} IMD</Row>
-      <Row label="Accrued debt">{fmt(v.debtOf)} COMP</Row>
-      {(() => {
-        const price = s?.feeds.USD?.value;
-        const collateral = v.positions?.[0] as bigint | undefined;
-        const debt = v.debtOf as bigint | undefined;
-        if (
-          collateral === undefined ||
-          debt === undefined ||
-          !v.minCR ||
-          !price
-        )
-          return null;
-        const liq = liquidationPrice(collateral, debt, v.minCR);
-        const most = maxDebt(collateral, v.minCR, price);
-        const keep = requiredCollateral(debt, v.minCR, price);
-        return (
+      <Col label="Your position">
+        <div className="hero-stat">
+          <span>Collateral ratio</span>
+          <strong>
+            <Ticker text={ratio(v.collateralRatio)} />
+          </strong>
+          <small>
+            minCR <Ticker text={ratio(v.minCR)} />
+          </small>
+        </div>
+        <Row label="Collateral">{fmt(collateral)} IMD</Row>
+        <Row label="Accrued debt">{fmt(debt)} COMP</Row>
+        <Row label="Unpaid stability fee">{fmt(v.stabilityFeeOf)} COMP</Row>
+        <Row label="Liquidation price">
+          {!sized ? "—" : liq === undefined ? "No debt" : `$${fmt(liq)} / IMD`}
+        </Row>
+        {liq !== undefined && (
+          <p className="micro">
+            IMD is ${fmt(price)} now, {cushion(price, liq)}.
+          </p>
+        )}
+        <Row label="Can still borrow">
+          {most === undefined || debt === undefined
+            ? "—"
+            : `${fmt(most > debt ? most - debt : 0n)} COMP`}
+        </Row>
+        <Row label="Can withdraw">
+          {keep === undefined || collateral === undefined
+            ? "—"
+            : `${fmt(collateral > keep ? collateral - keep : 0n)} IMD`}
+        </Row>
+        <Row label="Wallet">
+          {fmt(v.imdBalance)} IMD / {fmt(v.compBalance)} COMP
+        </Row>
+        <p className="micro">
+          COMP debt is USD-denominated. IMD / USD:{" "}
+          {s?.feeds.USD && !s.feeds.USD.stale
+            ? `$${fmt(s.feeds.USD.value)}`
+            : "unavailable"}
+          .
+        </p>
+      </Col>
+      <Col label="Act">
+        <Choice
+          label="Position action"
+          value={act}
+          onChange={setAct}
+          options={[
+            ["deposit", "Deposit"],
+            ["borrow", "Borrow"],
+            ["repay", "Repay"],
+            ["withdraw", "Withdraw"],
+            ["faucet", "Test IMD"],
+          ]}
+        />
+        {act === "deposit" && (
           <>
-            <Row label="Liquidation price">
-              {liq === undefined ? "No debt" : `$${fmt(liq)} / IMD`}
-            </Row>
-            {liq !== undefined && (
-              <p className="micro">
-                IMD is ${fmt(price)} now, {cushion(price, liq)}. At ${fmt(liq)}{" "}
-                this position reaches minCR {v.minCR.toString()}%.
-              </p>
-            )}
-            <Row label="Can still borrow">
-              {fmt(most > debt ? most - debt : 0n)} COMP
-            </Row>
-            <Row label="Can withdraw">
-              {fmt(collateral > keep ? collateral - keep : 0n)} IMD
-            </Row>
+            <label>
+              Deposit IMD
+              <input
+                name="deposit-amount"
+                inputMode="decimal"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+              />
+            </label>
+            <Action
+              id={needsApproval ? "approve" : "deposit"}
+              label={needsApproval ? "Approve IMD" : "Review deposit"}
+              actions={actions}
+              request={() => {
+                const n = amount(input);
+                if (n > v.imdBalance)
+                  throw Error("Deposit exceeds the IMD balance.");
+                if (!t) throw Error("Wait for contract verification.");
+                return needsApproval
+                  ? {
+                      target: t.imdToken,
+                      fn: "approve",
+                      args: [t.ParameterizedVault.address, n],
+                      summary: `Approve exactly ${exact(n)} IMD for the vault. Deposit is a separate transaction.`,
+                    }
+                  : {
+                      target: t.ParameterizedVault,
+                      fn: "depositCollateral",
+                      args: [n],
+                      summary: `Deposit ${exact(n)} IMD as collateral.`,
+                    };
+              }}
+            />
+            <p className="micro">
+              Approval and deposit are two transactions. The approval is for
+              exactly this amount.
+            </p>
           </>
-        );
-      })()}
-      <Row label="Unpaid stability fee">{fmt(v.stabilityFeeOf)} COMP</Row>
-      <Row label="Wallet">
-        {fmt(v.imdBalance)} IMD / {fmt(v.compBalance)} COMP
-      </Row>
-      <div className="section-label">Add collateral</div>
-      <label>
-        Deposit IMD
-        <input
-          name="deposit-amount"
-          inputMode="decimal"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
+        )}
+        {act === "borrow" && (
+          <ActionForm
+            id="borrow"
+            label="Review borrow"
+            actions={actions}
+            target={t?.ParameterizedVault}
+            fn="mintCOMP"
+            fields={[amt("Borrow COMP")]}
+            summary="Add COMP debt to your position."
+            disabled={!fresh}
+            reason="Fresh, agreeing price feeds are required."
+          />
+        )}
+        {act === "repay" && (
+          <ActionForm
+            id="repay"
+            label="Review repayment"
+            actions={actions}
+            target={t?.ParameterizedVault}
+            fn="repayCOMP"
+            fields={[amt("Repay COMP")]}
+            summary="Burn COMP to repay fees first, then principal. No approval required."
+          />
+        )}
+        {act === "withdraw" && (
+          <ActionForm
+            id="withdraw"
+            label="Review withdrawal"
+            actions={actions}
+            target={t?.ParameterizedVault}
+            fn="withdrawCollateral"
+            fields={[amt("Withdraw IMD")]}
+            summary="Remove collateral if the remaining position meets minCR."
+            disabled={!fresh && v.debtOf !== 0n}
+            reason="An indebted position needs fresh feeds to withdraw."
+          />
+        )}
+        {act === "faucet" && (
+          <ActionForm
+            id="faucet"
+            label="Review mint IMD"
+            actions={actions}
+            target={t?.imdToken}
+            fn="mint"
+            fields={[amt("Test IMD")]}
+            mapArgs={(a) => [actions.account, ...a]}
+            summary="Mint test IMD to this wallet. This deployment uses MockIMD."
+            disabled={
+              actions.account?.toLowerCase() !== v.imdDeployer?.toLowerCase()
+            }
+            reason="Only the collateral faucet operator can mint test IMD."
+          />
+        )}
+        <AddressLink
+          value={t?.compToken.address}
+          explorer={r.config.network.explorer}
+          label="COMP"
         />
-      </label>
-      <Action
-        id={needsApproval ? "approve" : "deposit"}
-        label={needsApproval ? "Approve IMD" : "Review deposit"}
-        actions={actions}
-        request={() => {
-          const n = amount(input);
-          if (n > v.imdBalance) throw Error("Deposit exceeds the IMD balance.");
-          if (!t) throw Error("Wait for contract verification.");
-          return needsApproval
-            ? {
-                target: t.imdToken,
-                fn: "approve",
-                args: [t.ParameterizedVault.address, n],
-                summary: `Approve exactly ${exact(n)} IMD for the vault. Deposit is a separate transaction.`,
-              }
-            : {
-                target: t.ParameterizedVault,
-                fn: "depositCollateral",
-                args: [n],
-                summary: `Deposit ${exact(n)} IMD as collateral.`,
-              };
-        }}
-      />
-      <details>
-        <summary>Borrow, repay & withdraw</summary>
-        <ActionForm
-          id="borrow"
-          label="Review borrow"
-          actions={actions}
-          target={t?.ParameterizedVault}
-          fn="mintCOMP"
-          fields={[amt("Borrow COMP")]}
-          summary="Add COMP debt to your position."
-          disabled={!fresh}
-          reason="Fresh, agreeing price feeds are required."
-        />
-        <ActionForm
-          id="repay"
-          label="Review repayment"
-          actions={actions}
-          target={t?.ParameterizedVault}
-          fn="repayCOMP"
-          fields={[amt("Repay COMP")]}
-          summary="Burn COMP to repay fees first, then principal. No approval required."
-        />
-        <ActionForm
-          id="withdraw"
-          label="Review withdrawal"
-          actions={actions}
-          target={t?.ParameterizedVault}
-          fn="withdrawCollateral"
-          fields={[amt("Withdraw IMD")]}
-          summary="Remove collateral if the remaining position meets minCR."
-          disabled={!fresh && v.debtOf !== 0n}
-          reason="An indebted position needs fresh feeds to withdraw."
-        />
-      </details>
-      <details>
-        <summary>Testnet collateral faucet</summary>
-        <ActionForm
-          id="faucet"
-          label="Review mint IMD"
-          actions={actions}
-          target={t?.imdToken}
-          fn="mint"
-          fields={[amt("Test IMD")]}
-          mapArgs={(a) => [actions.account, ...a]}
-          summary="Mint test IMD to this wallet. This deployment uses MockIMD."
-          disabled={
-            actions.account?.toLowerCase() !== v.imdDeployer?.toLowerCase()
-          }
-          reason="Only the collateral faucet operator can mint test IMD."
-        />
-      </details>
-      <p className="micro">
-        COMP debt is denominated in USD. IMD / USD:{" "}
-        {s?.feeds.USD && !s.feeds.USD.stale
-          ? `$${fmt(s.feeds.USD.value)}`
-          : "unavailable"}
-        . No market price for COMP is supplied.
-      </p>
-      <AddressLink
-        value={t?.compToken.address}
-        explorer={r.config.network.explorer}
-        label="COMP"
-      />
+      </Col>
     </>
   );
 }
@@ -213,6 +245,7 @@ export function Work({
   now: bigint;
   charts: ChartData;
 }) {
+  const [act, setAct] = useState("mint");
   const w = s?.work;
   const v = s?.v || {};
   const attested = w?.mode === "attested";
@@ -224,104 +257,100 @@ export function Work({
     : undefined;
   return (
     <>
-      <WorkChart s={s} />
-      <div className="hero-stat">
-        <span>Attested cumulative tasks</span>
-        <strong>
-          <Ticker
-            text={attested ? w.attestedTasks.toLocaleString("en-US") : "—"}
+      <Col label="Swarm tally">
+        <div className="hero-stat">
+          <span>Attested cumulative tasks</span>
+          <strong>
+            <Ticker
+              text={attested ? w.attestedTasks.toLocaleString("en-US") : "—"}
+            />
+          </strong>
+          <small>
+            {attested
+              ? `${w.isStale ? "Stale" : "Fresh"} · ${age(w.latestValue?.[1], now)}`
+              : faucet
+                ? "Faucet mode"
+                : "Awaiting linked oracle"}
+          </small>
+        </div>
+        {attested && (
+          <Sparkline
+            feed={charts.feeds.oracle}
+            live={
+              w
+                ? {
+                    value: w.latestValue[0],
+                    updated: w.latestValue[1],
+                    stale: w.isStale,
+                    maxAge: w.maxAge,
+                  }
+                : undefined
+            }
+            now={now}
+            label="Work tally"
           />
-        </strong>
-        <small>
-          {attested
-            ? `${w.isStale ? "Stale" : "Fresh"} · ${age(w.latestValue?.[1], now)}`
-            : faucet
-              ? "Faucet mode"
-              : "Awaiting linked oracle"}
-        </small>
-      </div>
-      {attested && (
-        <Sparkline
-          feed={charts.feeds.oracle}
-          live={
-            w
-              ? {
-                  value: w.latestValue[0],
-                  updated: w.latestValue[1],
-                  stale: w.isStale,
-                  maxAge: w.maxAge,
-                }
-              : undefined
-          }
-          now={now}
-          label="Work tally"
-        />
-      )}
-      {faucet && (
-        <p className="notice">
-          This vault uses MockWorkOracle. No attested task count or publication
-          age is available; credits are granted by the testnet operator.
-        </p>
-      )}
-      {attested && (
-        <>
-          <Row label="Published tally">
-            {w.latestValue[0].toLocaleString("en-US")} tasks
-          </Row>
-          <Row label="Credited high-water mark">
-            {w.creditedTasks.toLocaleString("en-US")} tasks
-          </Row>
-          <Row label="Publication age">{age(w.latestValue[1], now)}</Row>
-          <Row label="Freshness limit">{w.maxAge.toString()}s</Row>
-        </>
-      )}
-      <Row label="COMP per task">
-        {fmt(attested ? w.compPerTaskWad : v.compPerTaskWad)}
-      </Row>
-      <Row label="Rights earned">
-        {fmt(attested ? w.earnedRights : undefined)} COMP
-      </Row>
-      <Row label="Rights consumed">
-        {fmt(attested ? w.consumedRights : undefined)} COMP
-      </Row>
-      <Row label="Rights remaining">{fmt(remaining)} COMP</Row>
-      <Row label="This wallet can claim">{fmt(v.rights)} COMP</Row>
-      <p className="micro">
-        The count is the swarm’s published tally, attested by a panel. It is not
-        an on-chain proof that the work happened. The Sepolia reporter fallback
-        also exists.
-      </p>
-      {attested && (
-        <>
-          <p className="micro">
-            Agent {w.AGENT_ID.toString()}. Rights belong only to the claimant. A
-            stale tally adds no new tasks; credited tasks are retained. Lowering
-            COMP per task can reduce unconsumed rights.
+        )}
+        {faucet && (
+          <p className="notice">
+            This vault uses MockWorkOracle. Credits are granted by the testnet
+            operator; no task count is attested.
           </p>
-          <AddressLink
-            value={w.CLAIMANT}
-            explorer={r.config.network.explorer}
-            label="Claimant"
+        )}
+        {attested && (
+          <>
+            <Row label="Credited high-water mark">
+              {w.creditedTasks.toLocaleString("en-US")} tasks
+            </Row>
+            <Row label="Freshness limit">{w.maxAge.toString()}s</Row>
+            <Row label="Agent">{w.AGENT_ID.toString()}</Row>
+            <AddressLink
+              value={w.CLAIMANT}
+              explorer={r.config.network.explorer}
+              label="Claimant"
+            />
+          </>
+        )}
+        <p className="micro">
+          The count is the swarm’s published tally, attested by a panel. It is
+          not an on-chain proof that the work happened.
+        </p>
+      </Col>
+      <Col label="Rights">
+        <WorkChart s={s} />
+        <Row label="COMP per task">
+          {fmt(attested ? w.compPerTaskWad : v.compPerTaskWad)}
+        </Row>
+        <Row label="Rights earned / consumed">
+          {fmt(attested ? w.earnedRights : undefined)} /{" "}
+          {fmt(attested ? w.consumedRights : undefined)}
+        </Row>
+        <Row label="Rights remaining">{fmt(remaining)} COMP</Row>
+        <Row label="This wallet can claim">{fmt(v.rights)} COMP</Row>
+        {faucet && (
+          <Choice
+            label="Work action"
+            value={act}
+            onChange={setAct}
+            options={[
+              ["mint", "Mint"],
+              ["grant", "Grant rights"],
+            ]}
           />
-        </>
-      )}
-      <Row label="Work minted / ceiling">
-        {fmt(v.totalWorkMinted)} / {fmt(v.workCeiling)} COMP
-      </Row>
-      <ActionForm
-        id="mint-work"
-        label="Review work mint"
-        actions={actions}
-        target={s?.targets.ParameterizedVault}
-        fn="mintFromWork"
-        fields={[amt("Mint earned COMP")]}
-        summary="Consume work rights permanently. Redemption does not restore them."
-        disabled={!feedsReady(s) || !v.rights || w?.mode === "unknown"}
-        reason="Fresh feeds, available rights and backing headroom are required."
-      />
-      {faucet && (
-        <details>
-          <summary>Operator / grant test rights</summary>
+        )}
+        {(!faucet || act === "mint") && (
+          <ActionForm
+            id="mint-work"
+            label="Review work mint"
+            actions={actions}
+            target={s?.targets.ParameterizedVault}
+            fn="mintFromWork"
+            fields={[amt("Mint earned COMP")]}
+            summary="Consume work rights permanently. Redemption does not restore them."
+            disabled={!feedsReady(s) || !v.rights || w?.mode === "unknown"}
+            reason="Fresh feeds, available rights and backing headroom are required."
+          />
+        )}
+        {faucet && act === "grant" && (
           <ActionForm
             id="grant-rights"
             label="Review grant rights"
@@ -335,32 +364,22 @@ export function Work({
             }
             reason="Only the faucet operator can grant rights."
           />
-        </details>
-      )}
-      <AddressLink
-        value={s?.targets.oracle.address}
-        explorer={r.config.network.explorer}
-        label="Work oracle"
-      />
+        )}
+      </Col>
     </>
   );
 }
 export function Oracle({
   r,
   s,
-  actions,
   now,
   charts,
 }: {
   r: Runtime;
   s?: Snapshot;
-  actions: Actions;
   now: bigint;
   charts: ChartData;
 }) {
-  const [selected, setSelected] = useState("PriceFeed");
-  const [reporter, setReporter] = useState(false);
-  const [error, setError] = useState("");
   const f = s?.feeds || {};
   const primary = f.PriceFeed?.value,
     spot = f.SpotFeed?.value;
@@ -371,9 +390,13 @@ export function Oracle({
   return (
     <>
       <DivergenceChart s={s} />
-      <p className="micro">
-        Primary and spot quote IMD in ETH. USD price combines the primary feed
-        with Chainlink ETH / USD.
+      <Row label="Divergence / allowed">
+        {percent(divergence)} / {percent(s?.v.maxDivergenceBps)}
+      </Row>
+      <p className="notice">
+        {feedsReady(s)
+          ? "Price-dependent actions are available."
+          : "Price-dependent actions are paused until every required feed is fresh and primary agrees with spot."}
       </p>
       {["PriceFeed", "NhiFeed", "SpotFeed", "USD"].map((n) => (
         <div className="feed" key={n}>
@@ -401,71 +424,11 @@ export function Oracle({
           )}
           {n === "USD" && (
             <p className="micro">
-              Derived on chain; no AttestationAccepted events.
+              Primary × Chainlink ETH / USD, derived on chain.
             </p>
           )}
         </div>
       ))}
-      <Row label="Divergence / allowed">
-        {percent(divergence)} / {percent(s?.v.maxDivergenceBps)}
-      </Row>
-      <p className="notice">
-        {feedsReady(s)
-          ? "Price-dependent actions are available."
-          : "Price-dependent actions are paused until every required feed is fresh and primary agrees with spot."}
-      </p>
-      <details>
-        <summary>Reporter fallback</summary>
-        <label>
-          Feed
-          <select
-            value={selected}
-            onChange={(e) => {
-              setSelected(e.target.value);
-              setReporter(false);
-            }}
-          >
-            {["PriceFeed", "NhiFeed", "SpotFeed"].map((n) => (
-              <option key={n}>{n}</option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          disabled={!actions.account || !s}
-          onClick={async () => {
-            setError("");
-            try {
-              setReporter(
-                await read(r, s!.targets[selected], "isReporter", [
-                  actions.account,
-                ]),
-              );
-            } catch (e) {
-              setError(message(e));
-            }
-          }}
-        >
-          Check reporter permission
-        </button>
-        <p className="micro" role="status">
-          {error ||
-            (reporter
-              ? "Reporter permission confirmed."
-              : "Reporter permission has not been confirmed.")}
-        </p>
-        <ActionForm
-          id="report"
-          label="Review feed report"
-          actions={actions}
-          target={s?.targets[selected]}
-          fn="report"
-          fields={[amt("Value (18-decimal units)")]}
-          summary="Publish through the configured testnet reporter fallback."
-          disabled={!reporter}
-          reason="Only a configured reporter can report. Simulation rechecks permission."
-        />
-      </details>
       <details>
         <summary>Feed contracts</summary>
         {r.config.contracts
@@ -510,78 +473,72 @@ export function Keeper({
       return `${position.owner} owes ${fmt(position.debt)} COMP including fees; repay no more than that.`;
     return undefined;
   };
+  const liq =
+    position && s?.v.minCR
+      ? liquidationPrice(position.collateral, position.debt, s.v.minCR)
+      : undefined;
   return (
     <>
-      <p className="micro">
-        Inspect a borrower, record an unhealthy position, then liquidate inside
-        its grace and execution window.
-      </p>
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setLoading(true);
-          setError("");
-          setPosition(undefined);
-          try {
-            if (!s) throw Error("Wait for state to load.");
-            const a = address(owner);
-            const [cr, debt, mark, badDebt, held] = await Promise.all(
-              [
-                "collateralRatio",
-                "debtOf",
-                "liquidationMarks",
-                "badDebtOf",
-                "positions",
-              ].map((fn) => read(r, s.targets.ParameterizedVault, fn, [a])),
-            );
-            setPosition({
-              cr,
-              debt,
-              mark,
-              badDebt,
-              owner: a,
-              collateral: held[0],
-            });
-          } catch (e) {
-            setError(message(e));
-          } finally {
-            setLoading(false);
-          }
-        }}
-      >
-        <label>
-          Borrower address
-          <input
-            required
-            value={owner}
-            onChange={(e) => {
-              setOwner(e.target.value);
-              setPosition(undefined);
-            }}
-            spellCheck={false}
-            placeholder="0x…"
-          />
-        </label>
-        <button type="submit" disabled={!s || loading}>
-          {loading ? "Inspecting…" : "Inspect position"}
-        </button>
-      </form>
-      <p role="status" className="micro">
-        {error}
-      </p>
-      {position && (
-        <>
-          <p className="micro keeper-owner">
-            Acting on borrower: {position.owner}
-          </p>
-          <Row label="Collateral ratio">{ratio(position.cr)}</Row>
-          <Row label="Collateral">{fmt(position.collateral)} IMD</Row>
-          <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
-          {(() => {
-            const liq =
-              s?.v.minCR &&
-              liquidationPrice(position.collateral, position.debt, s.v.minCR);
-            return liq ? (
+      <Col label="Inspect">
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setLoading(true);
+            setError("");
+            setPosition(undefined);
+            try {
+              if (!s) throw Error("Wait for state to load.");
+              const a = address(owner);
+              const [cr, debt, mark, badDebt, held] = await Promise.all(
+                [
+                  "collateralRatio",
+                  "debtOf",
+                  "liquidationMarks",
+                  "badDebtOf",
+                  "positions",
+                ].map((fn) => read(r, s.targets.ParameterizedVault, fn, [a])),
+              );
+              setPosition({
+                cr,
+                debt,
+                mark,
+                badDebt,
+                owner: a,
+                collateral: held[0],
+              });
+            } catch (e) {
+              setError(message(e));
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
+          <label>
+            Borrower address
+            <input
+              required
+              value={owner}
+              onChange={(e) => {
+                setOwner(e.target.value);
+                setPosition(undefined);
+              }}
+              spellCheck={false}
+              placeholder="0x…"
+            />
+          </label>
+          <button type="submit" disabled={!s || loading}>
+            {loading ? "Inspecting…" : "Inspect position"}
+          </button>
+        </form>
+        <p role="status" className="micro">
+          {error}
+        </p>
+        {position ? (
+          <>
+            <Row label="Collateral ratio">{ratio(position.cr)}</Row>
+            <Row label="Collateral">{fmt(position.collateral)} IMD</Row>
+            <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
+            {liq ? (
               <>
                 <Row label="Liquidation price">${fmt(liq)} / IMD</Row>
                 <p className="micro">
@@ -589,86 +546,84 @@ export function Keeper({
                   {cushion(s?.feeds.USD?.value, liq)}.
                 </p>
               </>
-            ) : null;
-          })()}
-          <Row label="Bad debt estimate">{fmt(position.badDebt)} COMP</Row>
-          <Row label="Mark">{position.mark[2] ? "Active" : "None"}</Row>
-          {position.mark[2] && (
-            <>
-              <Row label="Grace remaining">
-                {(position.mark[0] + position.mark[1] > now
-                  ? position.mark[0] + position.mark[1] - now
-                  : 0n
-                ).toString()}
-                s
-              </Row>
-              <Row label="Mark expires">
-                {new Date(
-                  Number(
-                    position.mark[0] +
-                      position.mark[1] +
-                      (s?.v.liquidationWindow || 0n),
-                  ) * 1000,
-                ).toISOString()}
-              </Row>
-            </>
-          )}
-        </>
-      )}
-      <div className="button-row">
-        <Action
-          id="mark"
-          label="Review mark"
+            ) : null}
+            <Row label="Bad debt estimate">{fmt(position.badDebt)} COMP</Row>
+            <Row label="Mark">
+              {position.mark[2]
+                ? now < position.mark[0] + position.mark[1]
+                  ? `Grace ${(position.mark[0] + position.mark[1] - now).toString()}s`
+                  : "Active · liquidatable"
+                : "None"}
+            </Row>
+          </>
+        ) : (
+          <p className="micro">
+            Inspect a borrower, record an unhealthy position, then liquidate
+            inside its grace and execution window. Owners are listed in the loan
+            book.
+          </p>
+        )}
+      </Col>
+      <Col label="Act">
+        {position && (
+          <p className="micro keeper-owner">
+            Acting on {positionName(position.owner)}: {position.owner}
+          </p>
+        )}
+        <div className="button-row">
+          <Action
+            id="mark"
+            label="Review mark"
+            actions={actions}
+            disabled={!feedsReady(s) || !position || position.cr >= s?.v.minCR}
+            reason="Inspect an unhealthy borrower with fresh feeds."
+            request={() => ({
+              target: s!.targets.ParameterizedVault,
+              fn: "markUnderwater",
+              args: [address(owner)],
+              summary: `Mark ${address(owner)} as underwater. The on-chain grace snapshot governs liquidation.`,
+              explain: borrower,
+            })}
+          />
+          <Action
+            id="clear-mark"
+            label="Review clear mark"
+            actions={actions}
+            disabled={!position?.mark[2]}
+            reason="Inspect a marked position."
+            request={() => ({
+              target: s!.targets.ParameterizedVault,
+              fn: "clearRecoveredMark",
+              args: [address(owner)],
+              summary: `Clear the mark only if ${address(owner)} has recovered.`,
+              explain: (f) =>
+                f.name === "UnderwaterPosition" && position
+                  ? `${position.owner} is still at ${ratio(position.cr)}, below minCR ${ratio(s?.v.minCR)}. A mark clears only once the position recovers.`
+                  : undefined,
+            })}
+          />
+        </div>
+        <ActionForm
+          id="liquidate"
+          label="Review liquidation"
           actions={actions}
-          disabled={!feedsReady(s) || !position || position.cr >= s?.v.minCR}
-          reason="Inspect an unhealthy borrower with fresh feeds."
-          request={() => ({
-            target: s!.targets.ParameterizedVault,
-            fn: "markUnderwater",
-            args: [address(owner)],
-            summary: `Mark ${address(owner)} as underwater. The on-chain grace snapshot governs liquidation.`,
-            explain: borrower,
-          })}
+          target={s?.targets.ParameterizedVault}
+          fn="liquidate"
+          fields={[amt("Repay borrower COMP")]}
+          mapArgs={(a) => [address(owner), ...a]}
+          summary="Burn your COMP to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares."
+          explain={borrower}
+          disabled={
+            !feedsReady(s) ||
+            !position?.mark[2] ||
+            now < position.mark[0] + position.mark[1] ||
+            now >
+              position.mark[0] +
+                position.mark[1] +
+                (s?.v.liquidationWindow ?? 0n)
+          }
+          reason="An active mark, elapsed grace, open execution window and fresh feeds are required."
         />
-        <Action
-          id="clear-mark"
-          label="Review clear mark"
-          actions={actions}
-          disabled={!position?.mark[2]}
-          reason="Inspect a marked position."
-          request={() => ({
-            target: s!.targets.ParameterizedVault,
-            fn: "clearRecoveredMark",
-            args: [address(owner)],
-            summary: `Clear the mark only if ${address(owner)} has recovered.`,
-            explain: (f) =>
-              f.name === "UnderwaterPosition" && position
-                ? `${position.owner} is still at ${ratio(position.cr)}, below minCR ${ratio(s?.v.minCR)}. A mark clears only once the position recovers.`
-                : undefined,
-          })}
-        />
-      </div>
-      <ActionForm
-        id="liquidate"
-        label="Review liquidation"
-        actions={actions}
-        target={s?.targets.ParameterizedVault}
-        fn="liquidate"
-        fields={[amt("Repay borrower COMP")]}
-        mapArgs={(a) => [address(owner), ...a]}
-        summary="Burn your COMP to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares."
-        explain={borrower}
-        disabled={
-          !feedsReady(s) ||
-          !position?.mark[2] ||
-          now < position.mark[0] + position.mark[1] ||
-          now >
-            position.mark[0] + position.mark[1] + (s?.v.liquidationWindow ?? 0n)
-        }
-        reason="An active mark, elapsed grace, open execution window and fresh feeds are required."
-      />
-      <details>
-        <summary>Mark for another beneficiary</summary>
         <ActionForm
           id="mark-for"
           label="Review beneficiary mark"
@@ -677,28 +632,19 @@ export function Keeper({
           fn="markUnderwaterFor"
           fields={[addr("Marker beneficiary")]}
           mapArgs={(a) => [address(owner), ...a]}
-          summary="Record the marker reward beneficiary for this borrower."
+          summary="Mark for another beneficiary of the marker reward."
           explain={borrower}
           disabled={!feedsReady(s) || !position}
           reason="Inspect a borrower and wait for fresh feeds."
         />
-      </details>
+      </Col>
     </>
   );
 }
-export function Backing({
-  r,
-  s,
-  actions,
-}: {
-  r: Runtime;
-  s?: Snapshot;
-  actions: Actions;
-}) {
+export function Backing({ r, s }: { r: Runtime; s?: Snapshot }) {
   const v = s?.v || {};
   return (
     <>
-      <SupplyChart s={s} />
       <div className="hero-stat">
         <span>Backing per COMP</span>
         <strong>
@@ -722,6 +668,7 @@ export function Backing({
         A redemption pays the lesser of $1 and this figure per COMP, less the
         fee. It is reserve plus secured collateral over supply, never above par.
       </p>
+      <SupplyChart s={s} />
       <Row label="Reserve value">${fmt(v.reserveValue)}</Row>
       <Row label="Collateral-backed debt">{fmt(v.backedDebt)} COMP</Row>
       <Row label="Secured collateral">{fmt(v.securedCollateral)} IMD</Row>
@@ -744,35 +691,6 @@ export function Backing({
           label="Reserve asset"
         />
       ))}
-      <details>
-        <summary>Treasury actions</summary>
-        <ActionForm
-          id="sync"
-          label="Review reserve sync"
-          actions={actions}
-          target={s?.targets.treasury}
-          fn="sync"
-          fields={[addr("Token to sync")]}
-          summary="Record a token arrival in Treasury accounting."
-        />
-        <ActionForm
-          id="treasury-withdraw"
-          label="Review reserve withdrawal"
-          actions={actions}
-          target={s?.targets.treasury}
-          fn="withdraw"
-          fields={[
-            addr("Token"),
-            addr("Destination"),
-            num("Amount in token base units"),
-          ]}
-          summary="Withdraw reserve tokens to the specified destination. This reduces backing."
-          disabled={
-            actions.account?.toLowerCase() !== v.withdrawer?.toLowerCase()
-          }
-          reason="Only the Treasury withdrawer can withdraw."
-        />
-      </details>
       <AddressLink
         value={s?.targets.treasury.address}
         explorer={r.config.network.explorer}
@@ -781,6 +699,18 @@ export function Backing({
     </>
   );
 }
+const operations = [
+  ["spread", "Propose redemption spread"],
+  ["work-ratio", "Propose work ratio"],
+  ["per-task", "Propose COMP per task"],
+  ["economics", "Propose economics"],
+  ["reserve-proposal", "Propose reserve asset"],
+  ["cancel", "Cancel the pending proposal"],
+  ["checkpoint", "Checkpoint the fee index"],
+  ["sync", "Sync a reserve token"],
+  ["treasury-withdraw", "Withdraw from Treasury"],
+  ["report", "Reporter fallback"],
+] as const;
 export function Governance({
   r,
   s,
@@ -792,6 +722,7 @@ export function Governance({
   actions: Actions;
   now: bigint;
 }) {
+  const [op, setOp] = useState<string>("spread");
   const v = s?.v || {};
   const t = s?.targets.parameters;
   const isGov =
@@ -805,149 +736,255 @@ export function Governance({
     disabled: !isGov,
     reason: "Only the governor can propose or cancel changes.",
   };
+  const kind = pending
+    ? ([
+        "None",
+        "Economics",
+        "Work ratio",
+        "Reserve asset",
+        "COMP per task",
+        "Redemption spread",
+      ][Number(pending[0])] ?? String(pending[0]))
+    : "—";
   return (
     <>
-      <Row label="Stability fee / year">{percent(v.stabilityFeeBps)}</Row>
-      <Row label="Debt ceiling">{fmt(v.debtCeiling)} COMP</Row>
-      <Row label="Governance delay">
-        {v.TIMELOCK === undefined ? "—" : `${v.TIMELOCK / 3600n} hours`}
-      </Row>
-      <Row label="Pending change">
-        {pending
-          ? ([
-              "None",
-              "Economics",
-              "Work ratio",
-              "Reserve asset",
-              "COMP per task",
-              "Redemption spread",
-            ][Number(pending[0])] ?? String(pending[0]))
-          : "—"}
-      </Row>
-      <Row label="Execution">
-        {eta
-          ? now >= eta
-            ? "Ready to apply"
-            : `${eta - now}s remaining`
-          : "No pending change"}
-      </Row>
-      {eta && eta > 0n ? (
-        <details>
-          <summary>Pending payload</summary>
-          <pre>
-            {JSON.stringify(
-              {
-                economics: v.pendingSet,
-                workRatio: v.pendingWorkRatio,
-                reserveAsset: v.pendingReserveAsset,
-                redemptionSpread: v.pendingRedemptionSpread,
-                raw: v.pending,
-              },
-              (_, x) => (typeof x === "bigint" ? x.toString() : x),
-              2,
-            )}
-          </pre>
-        </details>
-      ) : null}
-      <ActionForm
-        id="apply"
-        label="Review apply pending"
-        actions={actions}
-        target={t}
-        fn="applyPending"
-        summary="Apply the visible pending change after the timelock. Anyone may execute."
-        disabled={!eta || now < eta}
-        reason="A pending proposal must finish its timelock."
-      />
-      <details>
-        <summary>Governor / propose a change</summary>
+      <Col label="Parameters">
+        <Row label="Stability fee / year">{percent(v.stabilityFeeBps)}</Row>
+        <Row label="Debt ceiling">{ceilingText(v.debtCeiling)}</Row>
+        <Row label="Governance delay">
+          {v.TIMELOCK === undefined ? "—" : `${v.TIMELOCK / 3600n} hours`}
+        </Row>
+        <Row label="Max divergence">{percent(v.maxDivergenceBps)}</Row>
+        <Row label="Redemption spread">
+          {v.redemptionSpread === undefined
+            ? "—"
+            : `${v.redemptionSpread} ratio points`}
+        </Row>
+        <Row label="Pending change">{kind}</Row>
+        <Row label="Execution">
+          {eta
+            ? now >= eta
+              ? "Ready to apply"
+              : `${eta - now}s remaining`
+            : "No pending change"}
+        </Row>
         <ActionForm
-          {...common}
-          id="spread"
-          label="Review spread proposal"
-          fn="proposeRedemptionSpread"
-          fields={[num("Spread (25–100 ratio points)")]}
-          summary="Set the spread above minCR after the governance delay."
-        />
-        <ActionForm
-          {...common}
-          id="work-ratio"
-          label="Review work ratio proposal"
-          fn="proposeWorkRatio"
-          fields={[num("Work ratio (0–2500 bps)")]}
-          summary="Change the backing fraction available to work issuance."
-        />
-        <ActionForm
-          {...common}
-          id="per-task"
-          label="Review COMP per task"
-          fn="proposeCompPerTask"
-          fields={[{ name: "COMP per task (max 1)", kind: "amount0" }]}
-          summary="Change the COMP earned per task after the delay."
-        />
-        <ActionForm
-          {...common}
-          id="economics"
-          label="Review economics proposal"
-          fn="propose"
-          fields={[
-            { name: "Debt ceiling COMP", kind: "amount0" },
-            num("Protocol bonus share bps"),
-            num("Annual stability fee bps"),
-            num("Max divergence bps"),
-            num("Marker share bps"),
-          ]}
-          mapArgs={(a) => [
-            {
-              debtCeiling: a[0],
-              protocolBonusShareBps: a[1],
-              stabilityFeeBps: a[2],
-              maxDivergenceBps: a[3],
-              markerShareBps: a[4],
-            },
-          ]}
-          summary="Replace all five economic parameters. Simulation enforces their bounds."
-        />
-        <ActionForm
-          {...common}
-          id="reserve-proposal"
-          label="Review reserve proposal"
-          fn="proposeReserveAsset"
-          fields={[
-            addr("Reserve token"),
-            addr("USD price feed (zero to delist)"),
-            num("Retained value (0–10000 bps)"),
-          ]}
-          summary="List, reprice or delist a reserve asset after the delay. COMP cannot be a reserve."
-        />
-        <ActionForm
-          {...common}
-          id="cancel"
-          label="Review cancel proposal"
-          fn="cancel"
-          summary="Cancel the currently pending proposal."
-        />
-      </details>
-      <details>
-        <summary>Index checkpoint</summary>
-        <ActionForm
-          id="checkpoint"
-          label="Review checkpoint"
+          id="apply"
+          label="Review apply pending"
           actions={actions}
-          target={s?.targets.ParameterizedVault}
-          fn="pokeIndex"
-          summary="Checkpoint the accrued stability fee index."
+          target={t}
+          fn="applyPending"
+          summary="Apply the visible pending change after the timelock. Anyone may execute."
+          disabled={!eta || now < eta}
+          reason="A pending proposal must finish its timelock."
         />
-      </details>
-      <AddressLink
-        value={v.governor}
-        explorer={r.config.network.explorer}
-        label="Governor"
-      />
-      <AddressLink
-        value={t?.address}
-        explorer={r.config.network.explorer}
-        label="Parameters"
+        <AddressLink
+          value={v.governor}
+          explorer={r.config.network.explorer}
+          label="Governor"
+        />
+        <AddressLink
+          value={t?.address}
+          explorer={r.config.network.explorer}
+          label="Parameters"
+        />
+      </Col>
+      <Col label="Operator">
+        <label>
+          Operation
+          <select value={op} onChange={(e) => setOp(e.target.value)}>
+            {operations.map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {op === "spread" && (
+          <ActionForm
+            {...common}
+            id="spread"
+            label="Review spread proposal"
+            fn="proposeRedemptionSpread"
+            fields={[num("Spread (25–100 ratio points)")]}
+            summary="Set the spread above minCR after the governance delay."
+          />
+        )}
+        {op === "work-ratio" && (
+          <ActionForm
+            {...common}
+            id="work-ratio"
+            label="Review work ratio proposal"
+            fn="proposeWorkRatio"
+            fields={[num("Work ratio (0–2500 bps)")]}
+            summary="Change the backing fraction available to work issuance."
+          />
+        )}
+        {op === "per-task" && (
+          <ActionForm
+            {...common}
+            id="per-task"
+            label="Review COMP per task"
+            fn="proposeCompPerTask"
+            fields={[{ name: "COMP per task (max 1)", kind: "amount0" }]}
+            summary="Change the COMP earned per task after the delay."
+          />
+        )}
+        {op === "economics" && (
+          <ActionForm
+            {...common}
+            id="economics"
+            label="Review economics proposal"
+            fn="propose"
+            fields={[
+              { name: "Debt ceiling COMP", kind: "amount0" },
+              num("Protocol bonus share bps"),
+              num("Annual stability fee bps"),
+              num("Max divergence bps"),
+              num("Marker share bps"),
+            ]}
+            mapArgs={(a) => [
+              {
+                debtCeiling: a[0],
+                protocolBonusShareBps: a[1],
+                stabilityFeeBps: a[2],
+                maxDivergenceBps: a[3],
+                markerShareBps: a[4],
+              },
+            ]}
+            summary="Replace all five economic parameters. Simulation enforces their bounds."
+          />
+        )}
+        {op === "reserve-proposal" && (
+          <ActionForm
+            {...common}
+            id="reserve-proposal"
+            label="Review reserve proposal"
+            fn="proposeReserveAsset"
+            fields={[
+              addr("Reserve token"),
+              addr("USD price feed (zero to delist)"),
+              num("Retained value (0–10000 bps)"),
+            ]}
+            summary="List, reprice or delist a reserve asset after the delay. COMP cannot be a reserve."
+          />
+        )}
+        {op === "cancel" && (
+          <ActionForm
+            {...common}
+            id="cancel"
+            label="Review cancel proposal"
+            fn="cancel"
+            summary="Cancel the currently pending proposal."
+          />
+        )}
+        {op === "checkpoint" && (
+          <ActionForm
+            id="checkpoint"
+            label="Review checkpoint"
+            actions={actions}
+            target={s?.targets.ParameterizedVault}
+            fn="pokeIndex"
+            summary="Checkpoint the accrued stability fee index. Anyone may call it."
+          />
+        )}
+        {op === "sync" && (
+          <ActionForm
+            id="sync"
+            label="Review reserve sync"
+            actions={actions}
+            target={s?.targets.treasury}
+            fn="sync"
+            fields={[addr("Token to sync")]}
+            summary="Record a token arrival in Treasury accounting. Anyone may call it."
+          />
+        )}
+        {op === "treasury-withdraw" && (
+          <ActionForm
+            id="treasury-withdraw"
+            label="Review reserve withdrawal"
+            actions={actions}
+            target={s?.targets.treasury}
+            fn="withdraw"
+            fields={[
+              addr("Token"),
+              addr("Destination"),
+              num("Amount in token base units"),
+            ]}
+            summary="Withdraw reserve tokens to the specified destination. This reduces backing."
+            disabled={
+              actions.account?.toLowerCase() !== v.withdrawer?.toLowerCase()
+            }
+            reason="Only the Treasury withdrawer can withdraw."
+          />
+        )}
+        {op === "report" && <Reporter r={r} s={s} actions={actions} />}
+      </Col>
+    </>
+  );
+}
+function Reporter({
+  r,
+  s,
+  actions,
+}: {
+  r: Runtime;
+  s?: Snapshot;
+  actions: Actions;
+}) {
+  const [selected, setSelected] = useState("PriceFeed");
+  const [reporter, setReporter] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <>
+      <label>
+        Feed
+        <select
+          value={selected}
+          onChange={(e) => {
+            setSelected(e.target.value);
+            setReporter(false);
+          }}
+        >
+          {["PriceFeed", "NhiFeed", "SpotFeed"].map((n) => (
+            <option key={n}>{n}</option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        disabled={!actions.account || !s}
+        onClick={async () => {
+          setError("");
+          try {
+            setReporter(
+              await read(r, s!.targets[selected], "isReporter", [
+                actions.account,
+              ]),
+            );
+          } catch (e) {
+            setError(message(e));
+          }
+        }}
+      >
+        Check reporter permission
+      </button>
+      <p className="micro" role="status">
+        {error ||
+          (reporter
+            ? "Reporter permission confirmed."
+            : "Reporter permission has not been confirmed.")}
+      </p>
+      <ActionForm
+        id="report"
+        label="Review feed report"
+        actions={actions}
+        target={s?.targets[selected]}
+        fn="report"
+        fields={[amt("Value (18-decimal units)")]}
+        summary="Publish through the testnet reporter fallback."
+        disabled={!reporter}
+        reason="Only a configured reporter can report. Simulation rechecks permission."
       />
     </>
   );

@@ -98,11 +98,25 @@ async function setup({ wallet = true, chain = "0x1" } = {}) {
   await page
     .getByRole("button", { name: "Refresh state", exact: true })
     .waitFor();
+  await tab(page, "work");
   await page
     .locator(".pane-work")
     .getByText("Faucet mode", { exact: true })
     .waitFor();
   return { page, s };
+}
+const deskLabels = {
+  position: "Position",
+  redemption: "Redeem",
+  work: "Work",
+  keeper: "Keeper",
+  governance: "Govern",
+};
+// Desktop switches desk tabs; below 1100px the same panes are reached through the pane picker.
+async function tab(page, id) {
+  const t = page.getByRole("tab", { name: deskLabels[id], exact: true });
+  if (await t.isVisible()) await t.click();
+  else await page.getByLabel("View pane").selectOption(id);
 }
 async function connect(page) {
   await page
@@ -146,6 +160,7 @@ try {
   let { page, s } = await setup({ wallet: false });
   await page.getByRole("button", { name: "Connect wallet" }).click();
   await expectText(page, "No browser wallet found");
+  await tab(page, "redemption");
   assert.equal(
     await page.getByRole("button", { name: "Quote redemption" }).isEnabled(),
     false,
@@ -174,6 +189,7 @@ try {
     "Connect rejection recovery, wrong chain and exact add-chain fallback",
   );
   const red = page.locator(".pane-redemption");
+  await tab(page, "redemption");
   await red.getByLabel("Redeem COMP", { exact: true }).fill("10");
   await red.getByRole("button", { name: "Quote redemption" }).click();
   await expectText(red, "Served by");
@@ -237,9 +253,11 @@ try {
   await expectText(page.locator(".pane-oracle"), "Pinned · 0x2b2b2b2b");
   await expectText(page.locator(".pane-oracle"), "26,121,526");
   passed("Backing below par caps the quote; pinned questions are shown");
+  await tab(page, "position");
   await expectText(page.locator(".pane-position"), "Liquidation price");
   await expectText(page.locator(".pane-position"), "25% above it");
   passed("Position shows its liquidation price and cushion from spot");
+  await tab(page, "redemption");
   s.backing = undefined;
   s.pinned = false;
   s.stale = true;
@@ -252,6 +270,7 @@ try {
   s.stale = false;
   s.mode = "attested";
   await refresh(page);
+  await tab(page, "work");
   await expectText(page.locator(".pane-work"), "10,000");
   await expectText(page.locator(".pane-work"), "not an on-chain proof");
   await expectText(page.locator(".pane-work"), "980");
@@ -260,6 +279,7 @@ try {
   );
   // Approval remains a separate transaction, and allowance is refetched after confirmation.
   const pos = page.locator(".pane-position");
+  await tab(page, "position");
   await pos.getByLabel("Deposit IMD", { exact: true }).fill("5");
   await review(page, "Approve IMD");
   await page.evaluate(() => (window.__wallet.reject = true));
@@ -285,16 +305,17 @@ try {
     "Exact approval, rejected signing retry, receipt wait and refreshed allowance",
   );
   // Walk all prior panes and prepare primary transactions with mock simulation.
-  await pos.getByText("Borrow, repay & withdraw", { exact: true }).click();
-  for (const [label, input, value] of [
-    ["Review borrow", "Borrow COMP", "1"],
-    ["Review repayment", "Repay COMP", "1"],
-    ["Review withdrawal", "Withdraw IMD", "1"],
+  for (const [choice, label, input, value] of [
+    ["Borrow", "Review borrow", "Borrow COMP", "1"],
+    ["Repay", "Review repayment", "Repay COMP", "1"],
+    ["Withdraw", "Review withdrawal", "Withdraw IMD", "1"],
   ]) {
+    await pos.getByRole("button", { name: choice, exact: true }).click();
     await pos.getByLabel(input, { exact: true }).fill(value);
     await review(page, label);
     await cancel(page);
   }
+  await tab(page, "work");
   await page
     .locator(".pane-work")
     .getByLabel("Mint earned COMP", { exact: true })
@@ -302,6 +323,7 @@ try {
   await review(page, "Review work mint");
   await cancel(page);
   const keeper = page.locator(".pane-keeper");
+  await tab(page, "keeper");
   s.candidateCR = 140n;
   await keeper.getByLabel("Borrower address").fill(candidate);
   await keeper.getByRole("button", { name: "Inspect position" }).click();
@@ -313,20 +335,21 @@ try {
   await cancel(page);
   await review(page, "Review clear mark");
   await cancel(page);
-  const backing = page.locator(".pane-backing");
-  await backing.getByText("Treasury actions", { exact: true }).click();
-  await backing.getByLabel("Token to sync").fill(config.contracts[0].address);
+  // Operator controls live on the Govern desk tab; the monitor holds no actions.
+  const gov = page.locator(".pane-governance");
+  await tab(page, "governance");
+  await gov.getByLabel("Operation").selectOption("sync");
+  await gov.getByLabel("Token to sync").fill(config.contracts[0].address);
   await review(page, "Review reserve sync");
   await cancel(page);
-  const gov = page.locator(".pane-governance");
   await review(page, "Review apply pending");
   await cancel(page);
-  await gov.getByText("Governor / propose a change", { exact: true }).click();
+  await gov.getByLabel("Operation").selectOption("spread");
   await gov.getByLabel("Spread (25–100 ratio points)").fill("55");
   await review(page, "Review spread proposal");
   await cancel(page);
-  const oracle = page.locator(".pane-oracle");
-  await oracle.getByText("Reporter fallback", { exact: true }).click();
+  const oracle = gov;
+  await gov.getByLabel("Operation").selectOption("report");
   await oracle
     .getByRole("button", { name: "Check reporter permission" })
     .click();
@@ -344,6 +367,7 @@ try {
   s.reserve = 100n * 10n ** 18n;
   s.candidateCR = 180n;
   await refresh(page);
+  await tab(page, "redemption");
   await red.getByLabel("Redeem COMP", { exact: true }).fill("10");
   await red.getByLabel("Candidate position", { exact: false }).fill("");
   await red.getByRole("button", { name: "Quote redemption" }).click();
@@ -407,6 +431,20 @@ try {
       .evaluateAll((nodes) => nodes.forEach((n) => (n.scrollTop = 0)));
     await page.screenshot({ path: `${evidence}/terminal-${width}.png` });
     viewports.push(dimensions);
+    if (width > 1100) {
+      // The desk never scrolls: every tab, the redemption quote included, fits its panel.
+      for (const id of Object.keys(deskLabels)) {
+        await tab(page, id);
+        const fit = await page
+          .locator(`.pane-${id} .desk-body`)
+          .evaluate((n) => ({ content: n.scrollHeight, box: n.clientHeight }));
+        assert.ok(
+          fit.content <= fit.box + 1,
+          `${id} desk tab overflows at ${width}x${height}: ${fit.content} > ${fit.box}`,
+        );
+      }
+      await tab(page, "redemption");
+    }
     if (width <= 760) {
       for (const pane of [
         "loans",
@@ -424,7 +462,7 @@ try {
     }
   }
   passed(
-    "One viewport, only panes scroll; all mobile panes reachable",
+    "One viewport; every desk tab fits without scrolling; all mobile panes reachable",
     viewports,
   );
   const axeMobile = await new AxeBuilder({ page })
@@ -435,6 +473,7 @@ try {
       id: v.id,
       help: v.help,
       nodes: v.nodes.length,
+      target: v.nodes.map((n) => n.target.join(" ")).join(" | "),
     })),
     [],
   );
@@ -447,6 +486,7 @@ try {
       id: v.id,
       help: v.help,
       nodes: v.nodes.length,
+      target: v.nodes.map((n) => n.target.join(" ")).join(" | "),
     })),
     [],
   );
