@@ -8,10 +8,12 @@ oracle/relayer.config.js
 # in here for convenience, it must not be committed back.
 keeper/
 
-# The interface is built under site/ by a swarm job whose writable scope is that directory only.
-# Its dependency tree and build output must not be committed: node_modules is ignored for oracle/
-# above but was not for anything else, so a site job would have tried to commit tens of thousands
-# of files or failed trying.
-site/node_modules/
-site/dist/
-site/.vite/
+# The wallet-connected interface lives under web/ (pulled in from launch-706, 2026-10-04). Its own
+# web/.gitignore covers node_modules and dist, but belt-and-braces here too so a `git add web`
+# from the repo root can never stage the dependency tree or the build output.
+web/node_modules/
+web/.vite/
+# web/vite.config.ts sets outDir "../dist", so the built bundle lands at the REPO ROOT, not web/.
+# We do not deploy the site from this repo (the plane does, from a launch repo), so the export is
+# build output here and is not tracked. Rebuild with `cd web && npm ci && npm run build`.
+/dist/

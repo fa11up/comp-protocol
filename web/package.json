@@ -1,0 +1,31 @@
+{
+  "name": "comp-terminal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build && node scripts/manifest.mjs",
+    "check:export": "node scripts/manifest.mjs --check",
+    "test": "node --test tests/math.test.mjs",
+    "test:browser": "node tests/browser.mjs",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "viem": "2.57.2"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@types/node": "26.6.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "playwright": "1.63.0",
+    "prettier": "3.9.9",
+    "typescript": "7.0.2",
+    "vite": "8.3.2"
+  }
+}
