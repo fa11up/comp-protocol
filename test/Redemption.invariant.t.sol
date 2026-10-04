@@ -196,6 +196,12 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
                 failure = CDPVault.RedemptionWorsensRatio.selector;
             }
         }
+        // IMD is $1 and the registered reserve retains 100% in this fixture. Compare
+        // exact fractions independently: payout / burn must not exceed backing / supply.
+        // Debt exits can break that bound even when the candidate's own ratio improves.
+        if (failure == bytes4(0) && amounts.payout * beforeState.supply > beforeState.backing * amount) {
+            failure = CDPVault.RedemptionWorsensBacking.selector;
+        }
         if (failure != bytes4(0)) {
             vm.expectRevert(failure);
             vm.prank(redeemer);
@@ -235,16 +241,11 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         );
         assertLe(backedVault.workCeiling(), beforeState.ceiling, "redemption cannot loosen new work minting");
         uint256 backingAfter = collateral.balanceOf(address(backedVault)) + collateral.balanceOf(address(reserve));
-        // The unconditional backing requirement has a separately reported counterexample after
-        // debt/work unwinds leave backing below supply. Keep that state reachable here without
-        // blessing its ratio decline; all burn, position and custody checks still apply there.
-        if (beforeState.backing >= beforeState.supply) {
-            assertGe(
-                backingAfter * beforeState.supply,
-                beforeState.backing * stable.totalSupply(),
-                "solvent backing ratio cannot fall"
-            );
-        }
+        assertGe(
+            backingAfter * beforeState.supply,
+            beforeState.backing * stable.totalSupply(),
+            "backing ratio cannot fall, including after debt unwinds"
+        );
         for (uint256 i; i < actors.length; ++i) {
             (uint256 afterCollateral, uint256 afterDebt) = backedVault.positions(actors[i]);
             if (i == candidateIndex && amounts.cancelled != 0) {
@@ -411,5 +412,24 @@ contract RedemptionInvariantTest is StdInvariant, Test {
         assertGe(handler.rejectedCalls(), 1);
         assertEq(handler.debtMintCalls(), 1);
         assertEq(handler.workMintCalls(), 1);
+    }
+
+    function test_handlerChecksBackingAfterBorrowersRepayAndWithdraw() public {
+        // Work remains outstanding after borrowers use their COMP to close debt and exit.
+        // None of these actions require a price change or a governance intervention.
+        handler.mintWork(3, 80 ether);
+        handler.repay(0, 74 ether);
+        handler.repay(1, 95 ether);
+        handler.repay(2, 99 ether);
+        handler.repay(3, 100 ether);
+        handler.withdraw(0, 141 ether);
+        handler.withdraw(1, 174 ether);
+        handler.withdraw(2, 179 ether);
+        handler.withdraw(3, 180 ether);
+        handler.fundReserve(10 ether);
+        uint256 rejected = handler.rejectedCalls();
+        handler.redeem(3, 0, 1 ether);
+        assertEq(handler.rejectedCalls(), rejected + 1, "unsafe payout must be rejected");
+        handler.assertAccounting();
     }
 }

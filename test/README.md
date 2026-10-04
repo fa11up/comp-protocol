@@ -248,16 +248,22 @@ no additional profile, RPC, downloaded dependency or scratch source is needed.
   all three redemption routes are seeded and exercised in a deterministic
   handler sequence as well.
 
-**Reported requirement conflict:** `.imd-findings.json` contains a medium finding
-and an executed, self-contained failing proof. Permitted repayment and collateral
-withdrawal can leave 100 IMD backing 250 work-issued COMP. A 10-COMP reserve
-redemption then pays 9.85 IMD, reducing backing from 40% to 37.5625%. Thus the
-unconditional requirement that every redemption preserves backing does not hold.
-The design's improvement argument assumes solvent starting backing. The invariant
-keeps debt unwinds reachable, checks aggregate backing improvement when pre-state
-assets cover supply, and retains unconditional burn, custody and position-ratio
-checks. It does not assert that the reported decline is correct. The failing proof
-is embedded in the report instead of being added to the passing suite.
+**Resolved backing finding:** the accepted source now rejects redemptions that
+would worsen aggregate backing, including after repayment and collateral
+withdrawal leave work-issued COMP outstanding. The original 100-IMD/250-COMP
+counterexample now expects `RedemptionWorsensBacking` and verifies full rollback.
+Additional regressions cover a safe underbacked redemption at exact equality,
+one wei below that boundary, borrower and mixed payouts whose position ratio
+would improve while aggregate backing would fall, fractional-value dust, and
+discounted reserve valuation before and after recapitalization.
+
+The invariant now checks aggregate backing after **every** successful redemption,
+without the former solvent-state exception. Its failure model independently
+compares exact payout/burn and backing/supply fractions at the fixture's $1 price
+and 100% reserve factor. A deterministic handler sequence mints work, repays
+borrower debt, withdraws collateral and attempts an unsafe reserve redemption.
+It reproduced an unexpected `RedemptionWorsensBacking` revert before the model
+repair and passes afterward; unexpected reverts still fail the campaign.
 
 Disposable mutation checks confirmed that these tests fail if reserve priority
 is disabled, ceiling equality becomes eligible, or the fee divisor becomes two.
@@ -269,10 +275,17 @@ seizure history omitted it. `Protocol.invariant.t.sol` now records the already
 validated sweep and has a deterministic regression for the one-wei remainder.
 The contract's liquidation behavior is unchanged.
 
-Verification for this contribution: `forge build` passed; the full `forge test`
+Previous-round verification: `forge build` passed; the full `forge test`
 run passed **405 tests, 0 failed, 2 skipped** across 44 suites. The existing skips
 are `InHouseTest` without live Sepolia state and the gated `PermissionlessRelayTest`.
 All new redemption tests run offline and none are skipped. The liquidation
 invariant also passed replay of the original failing fuzz seed after the model
 repair. The reported backing counterexample was separately executed and failed
-at its intended assertion.
+at its intended assertion. That source defect is resolved as described above.
+
+Revision verification: `forge build` passed, and the full default `forge test`
+passed **412 tests, 0 failed, 2 existing optional skips** across 44 suites, using
+only the scratch artifact/cache paths documented above. The 49 redemption tests
+all pass without skips; their invariant executes 256 sequences of 96 calls with
+zero unexpected reverts. No new contract defect was reproduced. This revision
+changes only the redemption tests, their handler and this coverage note.

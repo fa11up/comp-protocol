@@ -407,6 +407,117 @@ contract RedemptionTest is WorkBackingFixture {
         assertEq(collateral.balanceOf(REDEEMER), 0);
     }
 
+    function test_debtUnwindCannotLeaveReserveRedemptionWorseningBacking() public {
+        _register(collateral, backedVault.usdPriceFeed(), 10_000);
+        _reserveIMD(100 ether);
+        _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        assertEq(backedVault.reserveValue(), 100 ether);
+        assertEq(_quote(10 ether), 9.85 ether);
+        assertLt(uint256(90.15 ether) * 250 ether, uint256(100 ether) * 240 ether);
+        _expectUnchanged(
+            10 ether, 0, BORROWER, WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector)
+        );
+    }
+
+    function test_underbackedReserveBoundaryRejectsOneWeiBelowAndAcceptsEquality() public {
+        _register(collateral, backedVault.usdPriceFeed(), 10_000);
+        _reserveIMD(246.25 ether - 1);
+        _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        uint256 out = _quote(10 ether);
+        assertEq(out, 9.85 ether);
+        assertLt(
+            (backedVault.reserveValue() - out) * 250 ether,
+            backedVault.reserveValue() * 240 ether,
+            "one wei below the boundary loses backing"
+        );
+        _expectUnchanged(
+            10 ether, out, address(0), WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector)
+        );
+
+        _reserveIMD(1);
+        uint256 beforeBacking = backedVault.reserveValue();
+        assertLt(beforeBacking, stable.totalSupply(), "safe redemptions can start below 100% backing");
+        vm.prank(WORKER);
+        assertEq(backedVault.redeem(10 ether, out, address(0)), out);
+        assertEq(backedVault.reserveValue() * 250 ether, beforeBacking * stable.totalSupply());
+        assertEq(stable.totalSupply(), 240 ether);
+        assertEq(collateral.balanceOf(WORKER), out);
+        assertEq(backedVault.totalNonPrincipalRedeemed(), 10 ether);
+    }
+
+    function test_improvingPositionRatioDoesNotPermitWorseningAggregateBacking() public {
+        _assertUnderbackedPositionRejected(0);
+    }
+
+    function test_mixedPayoutBackingFailureRollsBackCandidateDebtAndReserve() public {
+        _assertUnderbackedPositionRejected(1 ether);
+    }
+
+    function test_fractionalValueDustCannotHideBackingLoss() public {
+        _setVaultPrice(0.2 ether);
+        _register(collateral, backedVault.usdPriceFeed(), 10_000);
+        _reserveIMD(9);
+        _mintWorkAndUnwind(120, 16, 4);
+        assertEq(_quote(1), 4);
+        assertEq(backedVault.reserveValue(), 1);
+        // Flooring both balances would show 1 USD wei before and after paying 4 IMD wei.
+        // The exact asset/supply fraction instead falls from 9/4 to 5/3.
+        assertEq(uint256(5) * 0.2 ether / 1 ether, 1);
+        assertLt(uint256(5) * 4, uint256(9) * 3);
+        _expectUnchanged(1, 0, address(0), WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector));
+    }
+
+    function test_discountedReserveRejectsUnsafePayoutAndAcceptsRecapitalization() public {
+        _register(collateral, backedVault.usdPriceFeed(), 5000);
+        _reserveIMD(100 ether);
+        _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        assertEq(backedVault.reserveValue(), 50 ether);
+        _expectUnchanged(
+            10 ether, 0, address(0), WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector)
+        );
+        _reserveIMD(400 ether);
+        uint256 beforeBacking = backedVault.reserveValue();
+        uint256 out = _quote(10 ether);
+        vm.prank(WORKER);
+        assertEq(backedVault.redeem(10 ether, out, address(0)), out);
+        assertEq(backedVault.reserveValue(), (500 ether - out) / 2);
+        assertGt(backedVault.reserveValue() * 250 ether, beforeBacking * stable.totalSupply());
+        assertEq(stable.totalSupply(), 240 ether);
+        assertEq(collateral.balanceOf(WORKER), out);
+    }
+
+    function _mintWorkAndUnwind(uint256 c, uint256 debt, uint256 work) private {
+        _open(BORROWER, c, debt);
+        _mintWork(WORKER, work);
+        vm.startPrank(BORROWER);
+        backedVault.repayCOMP(debt);
+        backedVault.withdrawCollateral(c);
+        vm.stopPrank();
+        assertEq(backedVault.totalDebt(), 0);
+        assertEq(collateral.balanceOf(address(backedVault)), 0);
+        assertEq(stable.totalSupply(), work, "work issuance survives the debt unwind");
+    }
+
+    function _assertUnderbackedPositionRejected(uint256 reserveAmount) private {
+        _register(collateral, backedVault.usdPriceFeed(), 10_000);
+        _reserveIMD(reserveAmount);
+        _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        _open(SECOND_BORROWER, 180 ether, 100 ether);
+        uint256 out = _quote(10 ether);
+        uint256 cancelled =
+            10 ether - Math.mulDiv(reserveAmount, 10_000, 10_000 - backedVault.redemptionFeeBps(10 ether));
+        assertGt(
+            (180 ether - (out - reserveAmount)) * 100 ether,
+            uint256(180 ether) * (100 ether - cancelled),
+            "candidate ratio would improve"
+        );
+        uint256 backing = 180 ether + reserveAmount;
+        assertLt((backing - out) * 350 ether, backing * 340 ether, "aggregate backing would deteriorate");
+        _expectUnchanged(
+            10 ether, out, SECOND_BORROWER, WORKER, abi.encodeWithSelector(CDPVault.RedemptionWorsensBacking.selector)
+        );
+    }
+
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_priceRoundingReserveSplitAndExactRatioConservation(
         uint256 debtSeed,
