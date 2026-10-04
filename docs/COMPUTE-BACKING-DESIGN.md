@@ -232,8 +232,11 @@ source**, because the two pools hold different things:
 
 | asset wanted | source | capacity |
 |---|---|---|
-| USDC / USDG / ETH | reserve only | whatever the Treasury holds of it |
-| IMD | reserve first, then eligible CDPs | Treasury IMD, then the debt of eligible positions |
+| sIMD | reserve first, then eligible CDPs | Treasury sIMD, then the debt of eligible positions |
+
+**REVISED 2026-10-04:** there is one row because the reserve holds one asset. The table below kept a
+multi-asset shape from when the reserve was imagined as a basket; see the decision at the end of this
+section. `USDC / USDG / ETH` rows return only if the reserve ever diversifies.
 
 **Why reserve-first for IMD, rather than CDPs-first.** Both routes improve the backing ratio by the
 same arithmetic — burn `x` COMP, release `x` of assets, and since `B > 1` both numerator and
@@ -477,11 +480,31 @@ The composition is therefore decimal-agnostic and needs to know neither token's 
 `totalSupply x value / 1e18`. **No vault change is required** — the collateral token is already an
 immutable constructor argument, so mainnet is a deployment choice plus this adapter.
 
-Open, and not decided: whether the Treasury's reserve holds IMD or sIMD. sIMD earns, but redemption
-channel A pays "the collateral asset" from the reserve first, so a sIMD reserve pays sIMD — acceptable,
-since it redeems for IMD a block later, but it changes what a redeemer receives.
+**DECIDED: the reserve holds sIMD, and only sIMD.** It falls out of the collateral choice rather than
+needing a policy of its own — if collateral is sIMD then the protocol's share of every liquidation
+bonus arrives as sIMD, and stability fees arrive as COMP, which the register refuses as a reserve asset
+because backing a liability with the same liability is not backing. So the reserve is sIMD by
+construction, with one registered entry priced by `SharePriceFeed`.
 
-**FRONTEND REQUIREMENT that follows from it.** If a redeemer receives sIMD, the redemption page must
+Three things simplify at once, which is why this is the right call rather than merely the easy one:
+
+* **Redemption asset ordering is obsolete.** There is no IMD-before-sIMD question with one asset, and
+  the `Treasury._remove` swap-and-pop hazard — a delisting silently reordering the register, so a
+  priority based on array position cannot be trusted — stops mattering.
+* **The route is invisible to the redeemer.** They receive sIMD from the reserve and sIMD from a
+  position, so reserve-first remains the right policy for the reasons in §5 without changing what
+  anyone receives.
+* **Channel B becomes unnecessary, not deferred.** Its purpose is to price a redeemer's CHOICE among
+  heterogeneous reserve assets by distance from a target basket weight. With one asset there is no
+  choice to price, so the mechanism and the undecided weights both go away. It returns only if the
+  reserve ever diversifies — which is a decision about what the protocol wants to hold, not a gap.
+
+The cost is concentration: the reserve is now 100% exposed to IMD, the same asset as the collateral,
+so a fall in IMD reduces both terms of the backing at once. That is already true of the ratio term and
+§3's bound is derived under it, but it was not true of the reserve term before this decision, and it
+is the honest price of the simplification.
+
+**FRONTEND REQUIREMENT, now unconditional.** A redeemer ALWAYS receives sIMD, so the redemption page must
 offer to **unwrap it in place** — `redeem(shares, receiver, owner)` on the staking vault, one call, a
 block after the redemption. Handing someone a share token and leaving them to find the staking UI is
 the kind of gap that makes a correct protocol feel broken. The same page should show the live exchange

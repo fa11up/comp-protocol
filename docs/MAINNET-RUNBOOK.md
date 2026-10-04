@@ -99,7 +99,6 @@ is immutable and silent** — this is exactly how launch 519 shipped two dead fe
 | `FEE_RECIPIENT` | miyagod.eth EOA | **the deployed Treasury** |
 | `ATTESTATION_RELAYER` | the Sepolia SwarmRelay | the mainnet SwarmRelay (CREATE2, §6) |
 | `WORK_ORACLE_FACTORY` | `0x…0f05` placeholder, no code | the mainnet factory (CREATE2, §6) |
-| `WORK_CLAIMANT` | miyagod.eth | whoever controls the agent — must satisfy `isController` |
 
 ### Must be deleted
 
@@ -114,13 +113,25 @@ is immutable and silent** — this is exactly how launch 519 shipped two dead fe
 | `ORACLE_ATTESTER` | the live service's signer. Confirm against a real attestation before deploying; `test/InHouse.t.sol` pins the typehash and domain against the live service and must pass on a **mainnet** fork. |
 | `ATTESTATION_CHAIN_ID` | already `1`. The data chain was always mainnet, even while the consumer was Sepolia — do not "fix" it. |
 | `ATTESTATION_ANSWER_TYPE` | `3` = uint256. Launch 519 shipped `1` (address) and the feeds were permanently unusable. |
-| `WORK_AGENT_ID` | `51450`. The attested question names it in text; a wrong value refuses every attestation. |
 
 ### Economic, carry over unchanged unless deliberately revised
 
 `MAX_DIVERGENCE_BPS` 500 · `MARKER_SHARE_BPS` 1000 · `PROTOCOL_BONUS_SHARE_BPS` 3333 ·
-`STABILITY_FEE_BPS` 200 · `WORK_RATIO_BPS` 2500 · `COMP_PER_TASK_WAD` 0.01e18 ·
-`ETH_USD_MAX_AGE` 1 day · `WORK_ORACLE_MAX_AGE` 1 day.
+`STABILITY_FEE_BPS` 200 · `ETH_USD_MAX_AGE` 1 day.
+
+### The compute channel does not ship in this deployment
+
+`WORK_RATIO_BPS`, `COMP_PER_TASK_WAD`, `WORK_ORACLE_MAX_AGE` and the work oracle's own constants are
+**out of scope for a mainnet launch**, and the reason is not readiness. `SwarmWorkOracle` as built
+credits **one** agent named in source, which is a private faucet wearing a protocol's clothes, not a
+compute-backed currency. A protocol that mints for its author's own seat cannot be launched as one
+that mints for work.
+
+Launch with the work ceiling in place and the channel unused — a vault whose `workCeiling()` binds and
+whose work oracle grants nothing is sound and honest. The channel opens when it can serve agents in
+general, which needs the per-day tally root rather than a pinned claimant (§5b of
+`docs/COMPUTE-BACKING-DESIGN.md`). Until then nothing about anyone's agent identity belongs in this
+deployment's configuration.
 
 All but the last two are governable through `Parameters` under a 48-hour delay, so a wrong value here
 is a correctable mistake rather than a permanent one. That asymmetry is the design: economics are
@@ -259,13 +270,21 @@ deploy.** Deploy, verify, and only then announce.
 
 ## 8. Open decisions this runbook does not make
 
-* **Whether the Treasury's reserve holds IMD or sIMD.** sIMD earns, but redemption pays the reserve
-  asset first, so a sIMD reserve pays sIMD. Both are defensible; it changes what a redeemer receives.
-* **Redemption asset ordering** — IMD before sIMD is the intent. It cannot rely on the register's
-  array order: `Treasury._remove` does swap-and-pop, so a delisting silently reorders the rest.
-  Priority has to be explicit.
+* ~~Whether the Treasury's reserve holds IMD or sIMD.~~ **DECIDED: sIMD only.** It falls out of the
+  collateral choice rather than needing a policy — if collateral is sIMD then the protocol's bonus
+  share arrives as sIMD, and stability fees arrive as COMP which the register refuses as a reserve
+  asset on principle. So the reserve is sIMD by construction. One registered asset, priced by
+  `SharePriceFeed`, and `reserveValueUsd()` sums over a single entry.
+* ~~Redemption asset ordering.~~ **Obsolete.** With one reserve asset there is no order to establish,
+  and the `Treasury._remove` swap-and-pop hazard — a delisting silently reordering the register — stops
+  mattering. A redeemer receives sIMD from the reserve and sIMD from positions: the same asset either
+  way, so the route is invisible to them.
 * **Chains after mainnet.** `docs/DEPLOYMENT-PLAN.md` covers Base and Robinhood Chain. CREATE2 with
   fixed salts gives identical addresses, which is worth preserving deliberately rather than by luck.
-* **Multi-collateral beyond IMD and sIMD.** Adding an uncorrelated asset (ETH, USDC) needs per-asset
-  risk parameters and a restated solvency bound. sIMD does not, because it is the same risk asset in
-  a wrapper. Do not let the second be used as precedent for the first.
+* **Multi-collateral beyond sIMD.** Adding an uncorrelated asset (ETH, USDC) needs per-asset risk
+  parameters and a restated solvency bound. sIMD does not, because it is the same risk asset in a
+  wrapper. Do not let the second be used as precedent for the first.
+* **Redemption channel B is now unnecessary, not merely deferred.** Its whole purpose is to price a
+  redeemer's CHOICE among heterogeneous reserve assets by how far each sits below a target basket
+  weight. With a single-asset reserve there is no choice to price, so the mechanism and the undecided
+  basket weights both go away. It returns only if the reserve ever diversifies.
