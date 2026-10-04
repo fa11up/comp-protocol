@@ -444,7 +444,13 @@ contract CDPVault is ReentrancyGuard {
         // THE PAYOUT IS CAPPED AT WHAT BACKS A COMP, and that is what keeps this channel open.
         //
         // It used to pay (1 - fee) of PAR unconditionally and then refuse the redemption if that
-        // removed more than its share of backing (`RedemptionWorsensBacking`). The refusal engaged
+        // removed more than its share of backing (`RedemptionWorsensBacking`, the source revision
+        // for finding `b92320ae`: after a permitted borrow/work-mint/repay/withdraw sequence a
+        // reserve redemption took backing from 100/250 to 90.15/240). That finding is real and this
+        // still answers it -- `test_debtUnwindCannotLeaveReserveRedemptionWorseningBacking` replays
+        // exactly its sequence -- by paying 3.94 where par paid 9.85, rather than by refusing.
+        // Round 5's review then raised the refusal itself three separate times (`3c1f49fc`,
+        // `6a96e6da`, `d9c96fb5`), each time leaving the policy to the requester. The refusal engaged
         // exactly when backing per COMP fell below 1 - fee, which is a price fall with work-issued
         // COMP outstanding -- so redemption, the mechanism that defends the peg, halted precisely
         // when the peg was under stress, and it refused even burns against positions whose own ratio

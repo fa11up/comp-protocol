@@ -444,6 +444,10 @@ contract RedemptionTest is WorkBackingFixture {
         assertEq(collateral.balanceOf(REDEEMER), 0);
     }
 
+    /// @dev Finding `b92320ae`'s exact sequence, which is why the backing guard was added in the
+    /// first place: borrow, mint from work, repay, withdraw, then redeem against the reserve. The
+    /// deterioration it reported (100/250 to 90.15/240) is still refused -- by paying 3.94 instead
+    /// of 9.85, rather than by refusing the burn.
     function test_debtUnwindCannotLeaveReserveRedemptionWorseningBacking() public {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _reserveIMD(100 ether);

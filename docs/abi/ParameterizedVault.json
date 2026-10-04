@@ -89,6 +89,19 @@
   },
   {
     "type": "function",
+    "name": "backingPerComp",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "badDebtOf",
     "inputs": [
       {
@@ -1268,11 +1281,6 @@
   {
     "type": "error",
     "name": "PriceDivergence",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RedemptionWorsensBacking",
     "inputs": []
   },
   {
