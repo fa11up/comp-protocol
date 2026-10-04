@@ -177,6 +177,26 @@ contract Treasury {
     /// answering counts for nothing, which is the promise reserveValueUsd makes, rather than
     /// reverting the vault's ceiling until a delisting matures.
     function reserveValueOf(IERC20 asset) public view returns (uint256) {
+        uint256 price = _reservePrice(asset);
+        if (price == 0) return 0;
+        (uint256 balance, bool held) = _readBalance(asset);
+        if (!held || balance == 0) return 0;
+        ReserveAsset storage entry = _reserve[asset];
+        uint256 marked = Math.mulDiv(balance, price, 10 ** entry.decimals);
+        return Math.mulDiv(marked, entry.haircutBps, BPS);
+    }
+
+    /// @notice Conservative value removed by a reserve withdrawal, using the registered price and haircut.
+    /// @dev Rounds both stages up so a redemption cannot hide a loss smaller than one USD wei.
+    function reserveWithdrawalValue(IERC20 asset, uint256 amount) external view returns (uint256) {
+        uint256 price = _reservePrice(asset);
+        if (price == 0) return 0;
+        ReserveAsset storage entry = _reserve[asset];
+        uint256 marked = Math.mulDiv(amount, price, 10 ** entry.decimals, Math.Rounding.Ceil);
+        return Math.mulDiv(marked, entry.haircutBps, BPS, Math.Rounding.Ceil);
+    }
+
+    function _reservePrice(IERC20 asset) private view returns (uint256) {
         ReserveAsset storage entry = _reserve[asset];
         if (address(entry.priceFeed) == address(0)) return 0;
         // AUDIT FIX (job da7d5b1c, two mediums): every one of these three reads is a raw staticcall
@@ -190,11 +210,7 @@ contract Treasury {
         (bool stale, bool ok) = _readBool(entry.priceFeed, abi.encodeCall(ISwarmFeed.isStale, ()));
         if (!ok || stale) return 0;
         (uint256 price, bool priced) = _readValue(entry.priceFeed);
-        if (!priced || price == 0) return 0;
-        (uint256 balance, bool held) = _readBalance(asset);
-        if (!held || balance == 0) return 0;
-        uint256 marked = Math.mulDiv(balance, price, 10 ** entry.decimals);
-        return Math.mulDiv(marked, entry.haircutBps, BPS);
+        return priced ? price : 0;
     }
 
     /// @dev A word that is a valid ABI bool is exactly 0 or 1. Anything else is not a bool, and the

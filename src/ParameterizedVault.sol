@@ -91,6 +91,10 @@ contract ParameterizedVault is CDPVault {
         treasury.redeemIMD(msg.sender, amount);
     }
 
+    function _redemptionReserveBacking(uint256 amount) internal view override returns (uint256, uint256) {
+        return (reserveValue(), treasury.reserveWithdrawalValue(imdToken, amount));
+    }
+
     /// @notice Both revenue streams land in the Treasury this vault created, never in an account.
     function feeRecipient() public view override returns (address) {
         return address(treasury);

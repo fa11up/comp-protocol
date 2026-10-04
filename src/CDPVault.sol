@@ -70,6 +70,7 @@ contract CDPVault is ReentrancyGuard {
     error WorkCeilingReached();
     error IneligibleRedemptionPosition();
     error RedemptionWorsensRatio();
+    error RedemptionWorsensBacking();
     error MinimumOutNotMet();
 
     event OracleSet(address indexed oracle);
@@ -186,6 +187,11 @@ contract CDPVault is ReentrancyGuard {
 
     function _payRedemptionReserve(uint256) internal virtual {
         revert InsufficientCollateral();
+    }
+
+    /// @dev Reserve backing and the rounded-up value leaving it; the plain vault has no reserve.
+    function _redemptionReserveBacking(uint256) internal view virtual returns (uint256, uint256) {
+        return (0, 0);
     }
 
     /// @notice Outstanding minted principal, as used by the unchanged debt ceiling.
@@ -388,6 +394,7 @@ contract CDPVault is ReentrancyGuard {
             debtCancelled = amount - Math.mulDiv(reserveOut, price, payoutScale);
             principalCancelled = _redeemPosition(candidate, debtCancelled, imdOut - reserveOut, price);
         }
+        _checkRedemptionBacking(amount, imdOut, reserveOut, price);
         totalNonPrincipalRedeemed += amount - principalCancelled;
         redemptionBaseRate = base;
         lastRedemptionAt = block.timestamp;
@@ -395,6 +402,16 @@ contract CDPVault is ReentrancyGuard {
         if (reserveOut != 0) _payRedemptionReserve(reserveOut);
         if (reserveOut < imdOut) imdToken.safeTransfer(msg.sender, imdOut - reserveOut);
         emit Redeemed(msg.sender, candidate, amount, imdOut, reserveOut, debtCancelled, feeBps);
+    }
+
+    function _checkRedemptionBacking(uint256 amount, uint256 imdOut, uint256 reserveOut, uint256 price) private view {
+        (uint256 backing, uint256 backingOut) = _redemptionReserveBacking(reserveOut);
+        // Balances and supply are still pre-payout. A permitted debt unwind can leave work-issued
+        // COMP underbacked, so even a fee-discounted payout must not remove more than its share.
+        backing += Math.mulDiv(imdToken.balanceOf(address(this)), price, 1e18);
+        backingOut += Math.mulDiv(imdOut - reserveOut, price, 1e18, Math.Rounding.Ceil);
+        // Round backing down and the loss up: fractional-value dust cannot hide deterioration.
+        if (backingOut > Math.mulDiv(backing, amount, compToken.totalSupply())) revert RedemptionWorsensBacking();
     }
 
     function _redeemPosition(address candidate, uint256 amount, uint256 imdOut, uint256 price)

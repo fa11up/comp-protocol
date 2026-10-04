@@ -27,3 +27,20 @@ Running **all** older checks with `FOUNDRY_TEST=script/checks forge test --offli
 | `ComputeBackingTest` | 11 | Earlier ETH denomination, debt coverage and freshness expectations |
 
 Those checks and their old assumptions were left unchanged because this assignment does not change the bonus split, stability fee, denomination or oracle rules. Several older sections of `ABI.md` also describe earlier increments; the new redemption section explicitly uses the current USD-denominated ParameterizedVault behavior.
+
+## Revision: aggregate backing after debt unwind
+
+Finding `b92320ae9dfde462a6d4854ce70a8e922f317c3cedbc7533016c3ad96067994c` reproduced with the supplied proof unchanged: after a permitted borrow/work-mint/repay/withdraw sequence, a reserve redemption reduced backing from 100/250 to 90.15/240. The prior solvent-case arithmetic assumed backing above one; the existing mint-time work ceiling does not maintain that precondition after a later debt unwind.
+
+`redeem` now requires outgoing backing value to be at most `floor(pre-payout backing * burned / supply)`. It measures actual vault IMD at the cached redemption price plus the existing registered Treasury reserve value. Backing rounds down; the outgoing collateral and reserve values round up, including the Treasury's retained-factor conversion. This bounds both exact weighted value loss and the decrease in the existing integer-valued backing metric. An unsafe call reverts with `RedemptionWorsensBacking`, including any candidate debt changes. The payout, reserve-first ordering, fee, work ceiling, authority and deployment shape are unchanged. Conservative rounding may reject a marginal dust-sized payout.
+
+Revision checks:
+
+- `forge build`: passed, with existing compiler/lint warnings.
+- `forge test`: 363 passed, zero failed, two existing optional skips; includes the supplied proof copied unchanged into `test/scratch/BackingRedemptionProof.t.sol`.
+- `FOUNDRY_TEST=script/checks forge test --match-path script/checks/Redemption.t.sol`: 35 passed, including the existing 256-case fuzz test. Seven added regressions cover the debt unwind, atomic rollback, exact equality, one-wei deterioration, borrower and mixed routes, fractional-value rounding and haircuts.
+- Offline dry-runs of `DeployComp`, `DeployGoverned` and `DeployPrereqs`: passed every `verify()` assertion, using the public reporter address as `OPERATOR` and sender, with zero `MOCK_IMD`. No transactions were broadcast.
+- The three affected ABI exports match their compiled artifacts. ParameterizedVault runtime is 15,724 bytes; initcode including its six constructor words is 40,772 bytes.
+- The supplied protected deployment harness passed unchanged against the current four-entry manifest on chain ID 11155111, including CREATE2 addresses, runtime limits and forbidden-opcode checks.
+
+The reviewer response is in the explicitly requested repository-root `.imd-responses.json`. Implementation, regression tests and ABI documentation remain within `src`, `script` and `docs`; no manifest, configuration or dependencies were changed.

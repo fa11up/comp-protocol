@@ -469,6 +469,111 @@ contract RedemptionTest is Test {
         assertEq(vault.workCeiling(), ceiling - 2.5 ether);
     }
 
+    function test_reserveRedemptionCannotWorsenBackingAfterPermittedDebtUnwind() public {
+        _registerImdReserve(10_000);
+        _fundReserve(100 ether);
+        _mintWorkAndUnwind();
+        assertEq(vault.reserveValue(), 100 ether);
+        assertEq(comp.totalSupply(), 250 ether);
+        assertEq(vault.redemptionFeeBps(10 ether), 150);
+        assertEq(_quote(10 ether, 1 ether), 9.85 ether);
+        bytes32 before = _state(ALICE);
+
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, address(0));
+
+        assertEq(_state(ALICE), before, "rejection restores balances, debt, fee and Treasury accounting");
+    }
+
+    function test_reserveRedemptionAllowsExactlyUnchangedBacking() public {
+        _registerImdReserve(10_000);
+        _fundReserve(246.25 ether);
+        _mintWorkAndUnwind();
+        uint256 assetsBefore = vault.reserveValue();
+        uint256 supplyBefore = comp.totalSupply();
+
+        vm.prank(REDEEMER);
+        assertEq(vault.redeem(10 ether, 9.85 ether, address(0)), 9.85 ether);
+
+        assertEq(vault.reserveValue() * supplyBefore, assetsBefore * comp.totalSupply());
+        assertEq(comp.totalSupply(), 240 ether);
+        assertEq(imd.balanceOf(REDEEMER), 9.85 ether);
+    }
+
+    function test_reserveRedemptionRefusesBackingOneWeiBelowBoundary() public {
+        _registerImdReserve(10_000);
+        _fundReserve(246.25 ether - 1);
+        _mintWorkAndUnwind();
+        uint256 assetsBefore = vault.reserveValue();
+        uint256 supplyBefore = comp.totalSupply();
+        assertLt(
+            (assetsBefore - _quote(10 ether, 1 ether)) * supplyBefore,
+            assetsBefore * (supplyBefore - 10 ether),
+            "one wei of backing crosses the exact ratio boundary"
+        );
+        bytes32 before = _state(ALICE);
+
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, address(0));
+
+        assertEq(_state(ALICE), before);
+    }
+
+    function test_borrowerRedemptionCannotWorsenAggregateBackingDespiteImprovingPosition() public {
+        _assertUnderbackedBorrowerRedemptionRejected(0);
+    }
+
+    function test_mixedRedemptionCannotWorsenAggregateBackingDespiteImprovingPosition() public {
+        _assertUnderbackedBorrowerRedemptionRejected(1 ether);
+    }
+
+    function test_tinyReserveRedemptionCannotHideBackingLossInValuationRounding() public {
+        _price(0.2 ether);
+        _registerImdReserve(10_000);
+        _fundReserve(9);
+        _open(ALICE, 120, 16);
+        vm.prank(REDEEMER);
+        vault.mintFromWork(4);
+        vm.startPrank(ALICE);
+        vault.repayCOMP(16);
+        vault.withdrawCollateral(120);
+        vm.stopPrank();
+        assertEq(comp.totalSupply(), 4);
+        assertEq(_quote(1, 0.2 ether), 4);
+        assertEq(vault.reserveValue(), 1);
+        assertEq(Math.mulDiv(9 - 4, 0.2 ether, 1 ether), 1, "rounded remaining backing would hide the loss");
+        assertLt(uint256((9 - 4) * 4), uint256(9 * (4 - 1)), "exact underlying backing would fall");
+        bytes32 before = _state(ALICE);
+
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(1, 0, address(0));
+
+        assertEq(_state(ALICE), before);
+    }
+
+    function test_haircutReserveRejectsUnsafeBurnAndAllowsFundedBurn() public {
+        _registerImdReserve(5000);
+        _fundReserve(100 ether);
+        _mintWorkAndUnwind();
+        assertEq(vault.reserveValue(), 50 ether);
+        bytes32 before = _state(ALICE);
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, address(0));
+        assertEq(_state(ALICE), before);
+
+        _fundReserve(500 ether);
+        uint256 assetsBefore = vault.reserveValue();
+        uint256 supplyBefore = comp.totalSupply();
+        assertEq(assetsBefore, 300 ether);
+        vm.prank(REDEEMER);
+        assertEq(vault.redeem(10 ether, 9.85 ether, address(0)), 9.85 ether);
+        assertGt(vault.reserveValue() * supplyBefore, assetsBefore * comp.totalSupply());
+    }
+
     function test_mixedRedemptionShrinksBothTermsOfWorkCeiling() public {
         ISwarmFeed reserveFeed = vault.usdPriceFeed();
         vm.prank(APPROVED_OPERATOR);
@@ -575,6 +680,50 @@ contract RedemptionTest is Test {
         imd.mint(address(treasury), amount);
     }
 
+    function _registerImdReserve(uint256 retainedFactor) private {
+        ISwarmFeed reserveFeed = vault.usdPriceFeed();
+        vm.prank(APPROVED_OPERATOR);
+        parameters.proposeReserveAsset(imd, reserveFeed, retainedFactor);
+        vm.warp(parameters.pendingEta());
+        parameters.applyPending();
+    }
+
+    function _mintWorkAndUnwind() private {
+        _open(ALICE, 1500 ether, 1000 ether);
+        // isolate=true makes the work mint a later transaction, when the debt counts toward its ceiling.
+        vm.prank(REDEEMER);
+        vault.mintFromWork(250 ether);
+        vm.startPrank(ALICE);
+        vault.repayCOMP(1000 ether);
+        vault.withdrawCollateral(1500 ether);
+        vm.stopPrank();
+        _assertPosition(ALICE, 0, 0);
+    }
+
+    function _assertUnderbackedBorrowerRedemptionRejected(uint256 reserveOut) private {
+        _registerImdReserve(10_000);
+        if (reserveOut != 0) _fundReserve(reserveOut);
+        _mintWorkAndUnwind();
+        _open(BOB, 180 ether, 100 ether);
+        uint256 payout = _quote(10 ether, 1 ether);
+        uint256 canceled = 10 ether - Math.mulDiv(reserveOut, 1 ether, _payoutScale(10 ether));
+        uint256 assetsBefore = 180 ether + reserveOut;
+        assertEq(comp.totalSupply(), 350 ether);
+        assertGt(
+            (180 ether - (payout - reserveOut)) * 100 ether,
+            180 ether * (100 ether - canceled),
+            "the candidate's own ratio would improve"
+        );
+        assertLt((assetsBefore - payout) * 350 ether, assetsBefore * 340 ether, "aggregate backing would worsen");
+        bytes32 before = _state(BOB);
+
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, BOB);
+
+        assertEq(_state(BOB), before);
+    }
+
     function _price(uint256 price) private {
         primary.setValue(price);
         spot.setValue(price);
@@ -604,7 +753,10 @@ contract RedemptionTest is Test {
                 comp.totalSupply(),
                 comp.balanceOf(REDEEMER),
                 imd.balanceOf(REDEEMER),
+                imd.balanceOf(address(vault)),
                 imd.balanceOf(address(treasury)),
+                treasury.totalReceived(imd),
+                treasury.lastSynced(imd),
                 vault.redemptionBaseRate(),
                 vault.lastRedemptionAt(),
                 vault.totalFeesMinted(),
