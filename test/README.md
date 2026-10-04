@@ -207,3 +207,72 @@ Verification: offline `forge build` passed; default `forge test` reported **360 
 2 skipped** across 41 suites, and `test/InHouse.t.sol` reported **14 passed** against live Sepolia
 state. All three deploy scripts dry-ran green. The two skips remain the live Sepolia suite off-fork
 and the gated auditor proofs whose API no longer exists.
+
+## IMD redemption
+
+Run the entire offline suite with plain `forge test` (and `forge build` to include
+scripts). The existing `isolate = true` profile is required: the work ceiling
+reads transaction boundaries. The artifact/cache environment variables at the
+top of this document only keep generated files inside the permitted scratch area;
+no additional profile, RPC, downloaded dependency or scratch source is needed.
+
+- `Redemption.t.sol` covers reserve-only execution without touching a position,
+  exact reserve exhaustion, same-call continuation into a borrower, a one-wei
+  reserve shortfall, and refusal to spend other Treasury assets. Ceiling equality
+  is refused and one wei below is accepted at both 150% and 200% minimum ratios.
+  Tests compare exact collateral/debt fractions, including full repayment,
+  accrued fees, recovery below minCR, and candidate-independent payouts.
+- Failure cases cover zero/dust burns, excessive amounts, insufficient caller
+  balance or candidate debt, ineligible candidates, minimum output, stale/zero
+  prices, spot divergence, deeply underwater positions, direct Treasury calls,
+  repeated spending and a failed final transfer after the reserve transfer.
+  Atomic snapshots include balances, debt, fee state and Treasury receipts.
+- `RedemptionEconomics.t.sol` checks the pre-burn supply fraction divided by four,
+  the 50-bps floor and 500-bps cap, repeated pressure, twelve-hour half-life and
+  eventual decay to the floor. A run passes through reserve, mixed and position
+  funding until the candidate's improved ratio takes it outside the band.
+  Separate reserve, mixed and position redemptions contract the work ceiling and
+  reject further work minting without governance or restored work rights. Spread
+  tests pin authority, the 48-hour delay, 25–100 bounds and live NHI derivation.
+- Each deterministic suite includes a 1,000-case fuzz property: price/payout and
+  reserve-split rounding in one, elapsed time and the next fee increase in the
+  other. Exact cross-products avoid hiding ratio changes through rounding.
+- `Redemption.invariant.t.sol` runs 256 sequences of 96 calls through four actors
+  and eleven operations: reserve funding, deposits, borrowing, work minting,
+  repayment, withdrawals, COMP transfers, time, NHI, redemption and slippage
+  rejection. Independent histories reconcile supply, minted principal, paid
+  stability fees, burned COMP, reserve spending and every unit of IMD custody.
+  Every successful redemption checks one burn/one payout, reserve priority,
+  collateral released only against retired debt, each affected position's ratio,
+  fee bounds and work-ceiling contraction. Unexpected reverts fail the campaign;
+  all three redemption routes are seeded and exercised in a deterministic
+  handler sequence as well.
+
+**Reported requirement conflict:** `.imd-findings.json` contains a medium finding
+and an executed, self-contained failing proof. Permitted repayment and collateral
+withdrawal can leave 100 IMD backing 250 work-issued COMP. A 10-COMP reserve
+redemption then pays 9.85 IMD, reducing backing from 40% to 37.5625%. Thus the
+unconditional requirement that every redemption preserves backing does not hold.
+The design's improvement argument assumes solvent starting backing. The invariant
+keeps debt unwinds reachable, checks aggregate backing improvement when pre-state
+assets cover supply, and retains unconditional burn, custody and position-ratio
+checks. It does not assert that the reported decline is correct. The failing proof
+is embedded in the report instead of being added to the passing suite.
+
+Disposable mutation checks confirmed that these tests fail if reserve priority
+is disabled, ceiling equality becomes eligible, or the fee divisor becomes two.
+Those source variants are not submitted.
+
+The full-suite run also exposed a pre-existing liquidation-handler accounting
+error: its receipt assertions included swept collateral dust, but its cumulative
+seizure history omitted it. `Protocol.invariant.t.sol` now records the already
+validated sweep and has a deterministic regression for the one-wei remainder.
+The contract's liquidation behavior is unchanged.
+
+Verification for this contribution: `forge build` passed; the full `forge test`
+run passed **405 tests, 0 failed, 2 skipped** across 44 suites. The existing skips
+are `InHouseTest` without live Sepolia state and the gated `PermissionlessRelayTest`.
+All new redemption tests run offline and none are skipped. The liquidation
+invariant also passed replay of the original failing fuzz seed after the model
+repair. The reported backing counterexample was separately executed and failed
+at its intended assertion.

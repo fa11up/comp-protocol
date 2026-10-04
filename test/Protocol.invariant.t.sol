@@ -246,7 +246,10 @@ contract ProtocolHandler is Test {
         // liquidate() folds a remainder no liquidation could ever take into the seizure, as extra
         // incentive for whoever closes the position. It sits outside the bonus, so the marker's cut
         // is unchanged by it, and it may only appear when the position is left closed.
-        uint256 swept = collateral - remainingCollateral - expectedPayout;
+        // Predict the dust from the pre-call collateral/debt, independently of actual transfers.
+        uint256 swept = collateral - expectedPayout;
+        if (amount == debt || swept >= uint256(1.1 ether) / _price()) swept = 0;
+        assertEq(collateral - remainingCollateral, expectedPayout + swept, "seizure includes only eligible dust");
         assertEq(received, expectedPayout + swept - markerCut, "liquidator receives principal, bonus and swept dust");
         assertTrue(
             swept == 0 || (remainingCollateral == 0 && swept < uint256(1.1 ether) / _price()),
@@ -255,7 +258,7 @@ contract ProtocolHandler is Test {
         markerReceived += markerCut;
         assertEq(imd.balanceOf(address(this)), markerReceived, "marker payments match independent history");
         debtLiquidated[owner] += amount;
-        collateralSeized[owner] += expectedPayout;
+        collateralSeized[owner] += expectedPayout + swept;
         collateralReceived[caller] += received;
         ++successfulLiquidations;
     }
@@ -548,6 +551,25 @@ contract ProtocolInvariantTest is StdInvariant, Test {
             invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
             afterInvariant();
         }
+    }
+
+    function test_handlerAccountsForOneWeiLiquidationDustSweep() public {
+        handler.setMarket(3, 0.85 ether);
+        handler.markOrClear(3);
+        handler.advanceTime(6 hours);
+        handler.liquidate(3, 2, type(uint256).max);
+
+        address owner = handler.actors(3);
+        (uint256 collateral, uint256 debt) = handler.vault().positions(owner);
+        uint256 repaid = uint256(150 ether) * 0.5 ether / 1.1 ether;
+        uint256 ordinaryPayout = repaid * 1.1 ether / 0.5 ether;
+        assertEq(150 ether - ordinaryPayout, 1, "normal liquidation leaves exactly one unreachable wei");
+        assertEq(collateral, 0, "the accepted sweep exhausts the collateral");
+        assertEq(debt, 100 ether - repaid, "sweeping collateral does not forgive residual debt");
+        assertEq(handler.collateralSeized(owner), 150 ether, "seizure history includes the swept wei");
+        assertEq(handler.successfulLiquidations(), 1);
+        invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
+        afterInvariant();
     }
 
     function test_handlerExpiredMarkRefreshesItsTimestampAndGraceGhosts() public {
