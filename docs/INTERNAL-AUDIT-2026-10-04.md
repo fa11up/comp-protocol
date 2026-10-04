@@ -218,10 +218,20 @@ it after each change rather than at the end.
 
 - **A spent payload is sitting in the submit directory.**
   `whitepaper/requests/round5-quote.json` pins baseCommit `5cc5745e` — the commit round 5 was
-  delivered against (merge `aeaa72e`, documented in `docs/REDEMPTION-CHECKS.md`). `submit.js`
-  moves a paid payload to `archive/` precisely to stop a double spend, and this one was never
-  moved, so `node submit.js requests/round5-quote.json` would pay 0.5 IMD to redo finished work.
+  delivered against (merge `aeaa72e`, documented in `docs/REDEMPTION-CHECKS.md`), so
+  `node submit.js requests/round5-quote.json` would pay 0.5 IMD to redo finished work.
   **Moved to `archive/` as part of this audit.**
+
+  **CORRECTION (2026-10-04, after this audit was written):** the sentence here originally said
+  that `submit.js` moves a paid payload to `archive/` "precisely to stop a double spend", and
+  that is false — the script contains no move, rename or unlink of any kind, only a comment
+  naming the directory. Every archive move has been manual. The hazard is therefore WORSE than
+  stated, not better: a payload's directory is no evidence of anything either way. The
+  authoritative check is `GET /requests/<orderId>` with the bearer token, comparing
+  `order.status` / `payment.status` against the top-level `status` and `admission`. `submit.js`
+  now writes an append-only receipt to `requests/sent.jsonl` so an order id always survives the
+  attempt, and latches against re-quoting once a payment has been sent — the actual double-spend
+  path was `/api/challenge` minting a NEW order after the 600-second quote TTL lapsed.
 - **Payloads still name the old repository.** That same payload carries
   `https://github.com/fa11up/comp-protocol`. GitHub redirects, so in-flight work resolves, but
   every *new* payload must use `infer-protocol`.
