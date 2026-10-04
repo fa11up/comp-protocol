@@ -281,6 +281,77 @@ terms of `workCeiling` — the reserve directly, and `totalDebt` through channel
 below peg automatically tightens new work-minting. Supply contracts exactly when it should, with no
 governance action and no oracle.
 
+## 5bis. What round 5's review found, and the fee decision it forces
+
+Round 5 (workflow `fbeef3d8`) built channel A and its four audit nodes plus the judge found the fee
+design does not survive an adversary. **Most of it was a defect in the brief, not in their code**, and
+the headline is that the fee could be pinned at EITHER end for gas:
+
+* **At the cap.** "Redeeming against a position the redeemer controls is free, so anyone can pin the
+  redemption fee at the 500 bps cap and move the peg floor from 0.995 to 0.95 for gas."
+* **At the floor.** The increase is measured against *instantaneous* `totalSupply`, so a
+  same-transaction mint dilutes the fraction and a run pays the floor instead of the rising curve.
+
+The brief said "the base rate rises by the redeemed fraction of total supply divided by four" and said
+nothing about self-redemption, supply manipulability, or whether freshly minted principal should
+count. All three became attack surface.
+
+The contracts node mitigated the second with a **fresh-principal exclusion** — principal minted within
+twelve hours does not move the base rate — and then its own reviewers found that bypassable twice:
+
+1. `_recentlyMinted` re-dates the WHOLE record on any mint inside the window, so **one wei every
+   11h59m keeps arbitrarily large principal fresh forever**. The documented cost, "twelve hours of
+   principal-time per pinning", is one wei per twelve hours.
+2. `_reduceDebt` retires principal at the record's MEAN age rather than at the age of the principal
+   actually repaid, so **mint-then-repay round trips age the record down geometrically** — twenty
+   pairs every six hours keeps a 1000-COMP position fresh indefinitely, for gas.
+
+### The decision: delete the exclusion, fix the root
+
+The reviewers offered "age each mint separately, or drop the exclusion and follow the curve
+unconditionally". Neither is right. The exclusion exists ONLY as a mitigation for the instantaneous-
+supply problem, and patching a mitigation leaves the root cause standing while keeping a record whose
+whole purpose is to be gamed.
+
+**Measure the increase against a supply that cannot be inflated inside the transaction**, using the
+idiom already in this tree and already reviewed: `ParameterizedVault.backedDebt()` snapshots
+`totalDebt` at transaction start in transient storage so debt opened inside a transaction cannot raise
+that transaction's own ceiling. Apply the same to supply —
+
+```
+increase = redeemed / min(totalSupply, supplyAtTransactionStart) / BETA
+```
+
+— and the same-transaction mint stops working at its source. **No freshness record is then needed**, so
+both bypasses cease to exist rather than being patched, and `_reduceDebt` needs no age arithmetic.
+
+The limit is the one already accepted for the ceiling: an attacker can inflate supply in transaction
+N−1 and redeem in N. That costs **real capital held across a transaction boundary** — COMP minted
+against collateral at `minCR` and held — where today's bypass costs gas. Section 3 takes that trade
+for `backedDebt`; taking it again here is consistency, not an excuse.
+
+### Self-redemption
+
+Separate decision, and the cheaper of the two: **a redemption against a position the redeemer
+controls must not move the base rate.** Charging the fee is not enough, because the fee returns to the
+protocol and the attacker's purpose is the *rate*, not the payment — pinning it at the cap drops the
+peg floor to 0.95 for everyone. Control cannot be detected in general, but the case the finding
+exploits is `msg.sender == owner`, which is exactly the free one; anything requiring a second address
+and a real position is no longer free.
+
+### The guard that fights the brief
+
+An INFO finding, and the deepest of them: `RedemptionWorsensBacking`, added to satisfy another
+reviewer, **halts channel A during a price fall** whenever secured backing per COMP drops below one
+minus the fee — "a non-governable [halt] that engages exactly during the stress the peg is meant to
+survive", quoting the brief's own objection to a governable cap back at it.
+
+The root is that §3's derivation proves `B > 1` is PRESERVED by a redemption and never establishes
+that it HOLDS. Work-minting bounded only at mint time can break it, and then redemption must either
+worsen backing or refuse. The fix therefore belongs at the mint, not at the redemption: enforce the
+backing precondition where COMP is created rather than blocking the mechanism that repairs it. Not yet
+specified; it is the largest open item in this document.
+
 ## 5a. Stability fees: burn and convert
 
 Fees arrive in COMP, which cannot back COMP. They are split by a governed share:
