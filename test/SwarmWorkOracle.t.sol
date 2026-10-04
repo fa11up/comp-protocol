@@ -264,6 +264,88 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         governed.mintFromWork(1);
     }
 
+    // --- the governed rate cannot reach backwards ---
+
+    /// @dev THE REGRESSION. Round 5's audit_judge: "a compPerTask change reprices work that was
+    /// already credited and consumed, in both directions." Entitlement was
+    /// `attestedTasks() * compPerTaskWad()` — recomputed from a fixed origin at the current rate — so
+    /// doubling the rate re-granted rights for work already minted against. Free COMP for a governance
+    /// action that was only supposed to price FUTURE work.
+    function test_regression_aRateRiseDoesNotRepriceWorkAlreadyConsumed() public {
+        ParameterizedVault governed = _governedVault();
+        SwarmWorkOracle w = SwarmWorkOracle(address(governed.oracle()));
+        Parameters params = governed.parameters();
+
+        vm.prank(FEED_REPORTER_0);
+        w.report(1000);
+        uint256 all = w.mintingRights(WORK_CLAIMANT);
+        assertEq(all, 1000 * COMP_PER_TASK_WAD, "1000 tasks at the shipped rate");
+
+        // Spend every right the attested work earns.
+        vm.prank(address(governed));
+        w.consumeRights(WORK_CLAIMANT, all);
+        assertEq(w.mintingRights(WORK_CLAIMANT), 0, "nothing left");
+
+        // Now double the rate. The old behaviour handed out another `all` for the SAME 1000 tasks.
+        _setRate(params, COMP_PER_TASK_WAD * 2);
+        assertEq(w.mintingRights(WORK_CLAIMANT), 0, "a rate rise must not re-grant consumed work");
+        assertEq(w.creditedRights(), all, "the price of credited work is locked");
+    }
+
+    /// @dev The other direction. A cut used to make the recomputed total fall below what had been
+    /// consumed, so rights the claimant had already earned simply vanished.
+    function test_regression_aRateCutDoesNotTakeBackRightsAlreadyEarned() public {
+        ParameterizedVault governed = _governedVault();
+        SwarmWorkOracle w = SwarmWorkOracle(address(governed.oracle()));
+        Parameters params = governed.parameters();
+
+        vm.prank(FEED_REPORTER_0);
+        w.report(1000);
+        uint256 half = (1000 * COMP_PER_TASK_WAD) / 2;
+        vm.prank(address(governed));
+        w.consumeRights(WORK_CLAIMANT, half);
+        assertEq(w.mintingRights(WORK_CLAIMANT), half, "half spent, half left");
+
+        _setRate(params, COMP_PER_TASK_WAD / 4);
+        assertEq(w.mintingRights(WORK_CLAIMANT), half, "a cut cannot reach work already credited");
+        assertGe(w.creditedRights(), w.consumedRights(), "credited never falls below consumed");
+    }
+
+    /// @dev And the change does apply where it should: to work that arrives after it.
+    function test_newWorkIsPricedAtTheRateInForceWhenItIsCredited() public {
+        ParameterizedVault governed = _governedVault();
+        SwarmWorkOracle w = SwarmWorkOracle(address(governed.oracle()));
+        Parameters params = governed.parameters();
+
+        vm.prank(FEED_REPORTER_0);
+        w.report(1000);
+        uint256 earned = w.mintingRights(WORK_CLAIMANT);
+        vm.prank(address(governed));
+        w.consumeRights(WORK_CLAIMANT, earned); // credits 1000 tasks at the old rate
+
+        _setRate(params, COMP_PER_TASK_WAD * 2);
+        // The deviation bound permits at most a doubling while fresh, so 1000 -> 1500 is acceptable.
+        vm.prank(FEED_REPORTER_0);
+        w.report(1500);
+        assertEq(w.mintingRights(WORK_CLAIMANT), 500 * COMP_PER_TASK_WAD * 2, "500 new tasks at the new rate");
+    }
+
+    function _governedVault() private returns (ParameterizedVault) {
+        return new ParameterizedVault(
+            address(collateral), address(0), WORK_ORACLE_SENTINEL, address(primary), address(health), spot
+        );
+    }
+
+    /// @dev vm.prank applies to the NEXT call, so the view is hoisted out of the pranked one.
+    function _setRate(Parameters params, uint256 wad) private {
+        vm.prank(APPROVED_OPERATOR);
+        params.proposeCompPerTask(wad);
+        vm.warp(params.pendingEta());
+        vm.prank(address(0xA990));
+        params.applyPending();
+        _refreshEthUsd();
+    }
+
     // --- question binding ------------------------------------------------------------------------
 
     /// @dev THE PROOF THAT THE CONTRACT COMPUTES WHAT THE SERVICE SIGNS. These two hashes were

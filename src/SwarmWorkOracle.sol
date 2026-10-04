@@ -73,6 +73,21 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
     /// @notice COMP already minted against work, in wei.
     uint256 public consumedRights;
 
+    /// @notice COMP credited for the tasks up to `creditedTasks`, priced at the rate in force when
+    /// each of them was credited.
+    /// @dev AUDIT FIX (round 5, `audit_judge` LOW: "a compPerTask change reprices work that was
+    /// already credited and consumed, in both directions"). Entitlement used to be recomputed as
+    /// `attestedTasks() * compPerTaskWad()` — a total derived from a FIXED ORIGIN at the CURRENT
+    /// rate — so raising the rate re-granted rights for work already minted against, and cutting it
+    /// made the total fall below what had been consumed.
+    ///
+    /// This is the same defect, in a new place, that `CDPVault.debtIndex()` had: an integral
+    /// recomputed from its origin rather than accumulated. The rule written down after fixing that
+    /// one — before making a rate governable, check whether the integral is recomputed from a fixed
+    /// origin — was the rule this file broke. So the shape of the fix is the same: accumulate, and
+    /// only ever price the SEGMENT that is new.
+    uint256 public creditedRights;
+
     /// @param vault_ The only consumer. Three ways to be a legitimate one, and nothing else is:
     /// a vault that already has code; the vault creating this directly from its own constructor,
     /// which has no code yet and is recognised as the creator; or a vault mid-construction that
@@ -121,19 +136,32 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
         return live > creditedTasks ? live : creditedTasks;
     }
 
-    /// @notice COMP earned by all attested work so far, in wei.
-    function earnedRights() public view returns (uint256) {
-        return attestedTasks() * compPerTaskWad();
+    /// @notice COMP earned by all attested work so far, in wei: what was credited at the rates it was
+    /// credited at, plus the tasks since then at today's rate.
+    /// @dev Two properties follow, and they are the whole point of accumulating rather than
+    /// recomputing. A rate RISE cannot re-grant rights for work already consumed, because tasks at or
+    /// below `creditedTasks` keep the price they were credited at. A rate CUT cannot take back
+    /// anything, because `creditedRights` is only ever raised and is never below `consumedRights`.
+    ///
+    /// A change does reprice work that is attested but NOT YET consumed, and that is deliberate
+    /// rather than overlooked: nobody but the governor can cause it, it travels under the 48-hour
+    /// delay, and the claimant's remedy is to consume before it matures — the same exit the borrower
+    /// has against a fee rise. Freezing it earlier would need a poke, and a permissionless poke would
+    /// let a stranger deny the claimant a rate rise on work already attested.
+    function accruedRights() public view returns (uint256) {
+        uint256 tasks = attestedTasks();
+        // attestedTasks() is the high-water mark, so this subtraction cannot underflow.
+        return creditedRights + (tasks - creditedTasks) * compPerTaskWad();
     }
 
-    /// @notice Earned minus consumed, and zero for anyone but the claimant.
-    /// @dev Cumulative minus consumed, never a stored balance that is topped up. A balance would have
-    /// to be adjusted when the count moved, and the count can move either way.
+    /// @notice Accrued minus consumed, and zero for anyone but the claimant.
+    /// @dev Never a stored balance that is topped up: a balance would have to be adjusted whenever
+    /// the count moved, and the count can move either way.
     function mintingRights(address account) external view override returns (uint256) {
         if (account != CLAIMANT) return 0;
-        uint256 earned = earnedRights();
+        uint256 accrued = accruedRights();
         uint256 spent = consumedRights;
-        return earned > spent ? earned - spent : 0;
+        return accrued > spent ? accrued - spent : 0;
     }
 
     /// @notice COMP per accepted task, 1e18-scaled, from the vault's governed parameters if it has
@@ -152,17 +180,22 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
     }
 
     /// @notice Spend rights. Vault only.
-    /// @dev Pins the high-water count in the same call, so a later lower figure can neither claw back
-    /// what was spent nor re-credit work already minted against.
+    /// @dev Pins the high-water count AND the price of the work counted so far in the same call, so
+    /// neither a later lower figure nor a later rate change can claw back what was spent or re-credit
+    /// work already minted against.
     function consumeRights(address account, uint256 amount) external override {
         if (msg.sender != vault) revert Unauthorized();
         if (account != CLAIMANT) revert InvalidAccount();
         if (amount == 0) revert ZeroAmount();
         uint256 tasks = attestedTasks();
-        uint256 earned = tasks * compPerTaskWad();
+        uint256 accrued = creditedRights + (tasks - creditedTasks) * compPerTaskWad();
         uint256 spent = consumedRights;
-        if (earned < spent + amount) revert InsufficientRights();
+        if (accrued < spent + amount) revert InsufficientRights();
+        // Lock the price of everything counted so far, in the same call that spends against it. After
+        // this, `creditedRights >= consumedRights` always, which is what makes a rate cut unable to
+        // reach backwards.
         creditedTasks = tasks;
+        creditedRights = accrued;
         consumedRights = spent + amount;
         emit RightsConsumed(account, amount, tasks);
     }
