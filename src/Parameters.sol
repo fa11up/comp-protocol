@@ -10,7 +10,8 @@ import {
     MAX_DIVERGENCE_BPS,
     PROTOCOL_BONUS_SHARE_BPS,
     STABILITY_FEE_BPS,
-    WORK_RATIO_BPS
+    WORK_RATIO_BPS,
+    COMP_PER_TASK_WAD
 } from "./DeploymentConfig.sol";
 
 /// @notice The vault's economic knobs, moved out of source constants into a governed contract.
@@ -51,7 +52,8 @@ contract Parameters is Governed {
     enum Change {
         Economics,
         WorkRatio,
-        ReserveAsset
+        ReserveAsset,
+        CompPerTask
     }
 
     uint256 private constant BPS = 10_000;
@@ -60,6 +62,15 @@ contract Parameters is Governed {
     /// touches one at the loosest NHI (minCR 150); this is half of it, 120% with an empty reserve.
     /// A constant, so governance can lower the ratio and can never raise it past here.
     uint256 public constant MAX_WORK_RATIO_BPS = 2_500;
+
+    /// @notice Hard cap on the COMP one accepted task earns. One task can never be worth more than
+    /// one COMP, whatever a governor proposes.
+    /// @dev The binding constraint on work minting is the work ceiling, not this: the ceiling asks
+    /// whether backing exists, and this only converts a count into an amount. The cap is here anyway
+    /// because the two multiply — an unbounded rate would let a governor turn a modest task count
+    /// into a claim the ceiling then has to absorb — and because a rate above one COMP per task makes
+    /// no sense against a token meant to be worth a dollar.
+    uint256 public constant MAX_COMP_PER_TASK_WAD = 1 ether;
 
     /// @notice Hard cap on the annual stability fee. 10% is high for a fee this protocol charges on
     /// its own stablecoin; above it the fee stops being a cost of borrowing and becomes a way to
@@ -80,6 +91,9 @@ contract Parameters is Governed {
     /// @notice The live ratio term of the vault's work ceiling, in basis points of totalDebt.
     uint256 private _workRatioBps;
 
+    /// @notice The live COMP-per-accepted-task rate, 1e18-scaled.
+    uint256 private _compPerTaskWad;
+
     /// @notice The vault these parameters govern: its creator, fixed at construction.
     /// @dev Needed for two things that cannot be done without it: checking a proposed ceiling
     /// against debt that is actually outstanding, and checkpointing the fee index before the rate
@@ -93,6 +107,7 @@ contract Parameters is Governed {
     error SharesExceedBonus(uint256 markerBps, uint256 protocolBps);
     error ZeroCeiling();
     error WorkRatioTooHigh(uint256 bps);
+    error CompPerTaskTooHigh(uint256 wad);
 
     /// @dev Seeded from the shipped constants, so a fresh Parameters is exactly the configuration
     /// the vault would have had with them compiled in — including the unlimited default ceiling,
@@ -124,6 +139,10 @@ contract Parameters is Governed {
         // is a misconfiguration this contract refuses to be deployed with.
         if (WORK_RATIO_BPS > MAX_WORK_RATIO_BPS) revert WorkRatioTooHigh(WORK_RATIO_BPS);
         _workRatioBps = WORK_RATIO_BPS;
+        // Same treatment as the ratio: a shipped constant above its own cap is a misconfiguration
+        // this contract refuses to exist with, rather than one discovered at the first proposal.
+        if (COMP_PER_TASK_WAD > MAX_COMP_PER_TASK_WAD) revert CompPerTaskTooHigh(COMP_PER_TASK_WAD);
+        _compPerTaskWad = COMP_PER_TASK_WAD;
     }
 
     /// @notice Queue a complete replacement set. Always all five, so the pending payload is the whole
@@ -135,6 +154,11 @@ contract Parameters is Governed {
     /// @notice Queue a change to the work ceiling's ratio term. Refused above MAX_WORK_RATIO_BPS.
     function proposeWorkRatio(uint256 bps) external {
         _propose(abi.encode(Change.WorkRatio, bps));
+    }
+
+    /// @notice Queue a change to the COMP an accepted task earns. Refused above one COMP per task.
+    function proposeCompPerTask(uint256 wad) external {
+        _propose(abi.encode(Change.CompPerTask, wad));
     }
 
     /// @notice Queue a listing, repricing or (with a zero price source) delisting of one of the
@@ -151,6 +175,11 @@ contract Parameters is Governed {
 
     function workRatioBps() external view returns (uint256) {
         return _workRatioBps;
+    }
+
+    /// @notice What SwarmWorkOracle multiplies an attested task count by, 1e18-scaled.
+    function compPerTaskWad() external view returns (uint256) {
+        return _compPerTaskWad;
     }
 
     function debtCeiling() external view returns (uint256) {
@@ -221,6 +250,11 @@ contract Parameters is Governed {
             if (bps > MAX_WORK_RATIO_BPS) revert WorkRatioTooHigh(bps);
             return;
         }
+        if (kind == Change.CompPerTask) {
+            (, uint256 wad) = abi.decode(payload, (Change, uint256));
+            if (wad > MAX_COMP_PER_TASK_WAD) revert CompPerTaskTooHigh(wad);
+            return;
+        }
         if (kind == Change.ReserveAsset) {
             (, IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps) =
                 abi.decode(payload, (Change, IERC20, ISwarmFeed, uint256));
@@ -264,6 +298,10 @@ contract Parameters is Governed {
         Change kind = _kind(payload);
         if (kind == Change.WorkRatio) {
             (, _workRatioBps) = abi.decode(payload, (Change, uint256));
+            return;
+        }
+        if (kind == Change.CompPerTask) {
+            (, _compPerTaskWad) = abi.decode(payload, (Change, uint256));
             return;
         }
         if (kind == Change.ReserveAsset) {

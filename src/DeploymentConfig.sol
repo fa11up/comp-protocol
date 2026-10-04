@@ -128,3 +128,40 @@ uint256 constant STABILITY_FEE_BPS = 200;
 /// cliff, 120% worst-case backing with an empty reserve. Parameters refuses any proposal above
 /// MAX_WORK_RATIO_BPS, which is also 2500, so governance can lower it and never raise it past here.
 uint256 constant WORK_RATIO_BPS = 2_500;
+
+// The IdentityMD seat whose attested work backs the compute channel, and the only address that may
+// mint against it.
+// Both appear in the question document `SwarmWorkOracle` pins, so they are not merely asserted
+// here: an attestation about another agent, or naming another claimant, fails the feed's question
+// check. The constant says WHO may claim; the attested question is what proves that who controls the
+// agent, by requiring the panel to read `isController(agentId, claimant)` on the ERC-8004 adapter on
+// mainnet. If the identity NFT moves, the next attestation refuses and the channel stops.
+uint256 constant WORK_AGENT_ID = 51450;
+address constant WORK_CLAIMANT = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+
+// COMP earned per accepted task, 1e18-scaled. Governed through `Parameters`, hard-bounded there at
+// one COMP per task.
+// Shipped at a hundredth of a COMP. The work ceiling binds on top of this, so a claim is
+// bounded twice — by what was earned and by what backs the protocol.
+uint256 constant COMP_PER_TASK_WAD = 0.01 ether;
+
+// The pre-deployed WorkOracleFactory, and the sentinel a vault passes as its oracle to ask for a real
+// attested work oracle from it.
+// ORDER MATTERS, as it does for ATTESTATION_RELAYER: the factory must exist before a vault that asks
+// for one. The sentinel is EXPLICIT rather than zero for the reason the collateral sentinel is: zero
+// is what an unset manifest field looks like, and a vault that quietly fell back to the grantRights
+// faucet because a constant was mistyped would be the $owner bug that bricked launch 519 all over
+// again. Zero still means the faucet, which every test and the testnet manifest want; the sentinel
+// means the real oracle, and reverts rather than downgrading if the factory is not there.
+// NOT YET DEPLOYED. This is a placeholder, and the sentinel path reverts while it has no code, so a
+// vault asking for a real work oracle cannot be deployed until DeployPrereqs puts the factory on
+// chain and this line names it. Deliberately not the zero address: zero is indistinguishable from an
+// unset field, and a nonzero placeholder with no code fails exactly as loudly while being something
+// a test can etch over.
+address constant WORK_ORACLE_FACTORY = 0x0000000000000000000000000000000000000f05;
+address constant WORK_ORACLE_SENTINEL = 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
+
+// How long an attested work tally stays usable. A day, matching the daily cadence of the receipts the
+// tally is read from: a feed asked for a figure that is published once a day should not demand one
+// more often than it exists. A stale tally grants nothing NEW and retracts nothing already consumed.
+uint256 constant WORK_ORACLE_MAX_AGE = 1 days;

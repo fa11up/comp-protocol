@@ -4,7 +4,13 @@ pragma solidity 0.8.26;
 import {Script, console2} from "forge-std/Script.sol";
 import {SwarmRelay} from "../src/SwarmRelay.sol";
 import {Treasury} from "../src/Treasury.sol";
-import {APPROVED_OPERATOR, ATTESTATION_RELAYER, FEE_RECIPIENT} from "../src/DeploymentConfig.sol";
+import {WorkOracleFactory} from "../src/WorkOracleFactory.sol";
+import {
+    APPROVED_OPERATOR,
+    ATTESTATION_RELAYER,
+    FEE_RECIPIENT,
+    WORK_ORACLE_FACTORY
+} from "../src/DeploymentConfig.sol";
 
 /// @notice The two contracts that MUST exist before anything else is compiled.
 /// @dev Both are read as source constants by contracts that are immutable once deployed, so neither
@@ -24,10 +30,16 @@ contract DeployPrereqs is Script {
         vm.startBroadcast();
         SwarmRelay relay = new SwarmRelay();
         Treasury treasury = new Treasury();
+        // Third of the same kind: a contract whose address another contract reads as a source
+        // constant, so it cannot be deployed by whatever consumes it. SwarmWorkOracle's creation
+        // code is 16,464 bytes and would put ParameterizedVault's initcode over the EIP-3860 limit,
+        // so the vault asks this factory for one instead of embedding it.
+        WorkOracleFactory workOracleFactory = new WorkOracleFactory();
         vm.stopBroadcast();
 
         console2.log("SwarmRelay (bundling)", address(relay));
         console2.log("Treasury             ", address(treasury));
+        console2.log("WorkOracleFactory    ", address(workOracleFactory));
         console2.log("broadcast from       ", operator);
 
         // Deliberately NOT asserting a zero ETH balance: anyone can send ether to an address before
@@ -41,8 +53,10 @@ contract DeployPrereqs is Script {
         console2.log("\nNow edit src/DeploymentConfig.sol:");
         console2.log("  ATTESTATION_RELAYER =", address(relay));
         console2.log("  FEE_RECIPIENT       =", address(treasury));
+        console2.log("  WORK_ORACLE_FACTORY =", address(workOracleFactory));
         console2.log("currently:");
         console2.log("  ATTESTATION_RELAYER =", ATTESTATION_RELAYER);
         console2.log("  FEE_RECIPIENT       =", FEE_RECIPIENT);
+        console2.log("  WORK_ORACLE_FACTORY =", WORK_ORACLE_FACTORY);
     }
 }

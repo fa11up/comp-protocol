@@ -3,28 +3,30 @@
   "action": "oracle.request",
   "input": {
     "v": 1,
-    "question": "Reading the IdentityMD control plane at https://api.imd.fun/swarm, what is the cumulative count of accepted tasks for the seat whose agentId is 51450, as a whole number, given that address 0x5167D014a056E43883e1BBEa5530c3c0dC993281 controls that agent on Ethereum mainnet?",
+    "question": "What is the greatest cumulative count of accepted oracle jobs recorded for the IdentityMD seat whose agentId is 51450, taken from the daily oracle receipts published by the IdentityMD control plane and verified against their IPFS archives, given that address 0x5167D014a056E43883e1BBEa5530c3c0dC993281 controls that agent on Ethereum mainnet?",
     "chainId": 1,
     "window": {
-      "hours": 1
+      "hours": 24
     },
     "answerType": "uint256",
     "evidence": "panel",
-    "toleranceBps": 300,
+    "toleranceBps": 0,
     "definitions": {
-      "source": "Read GET https://api.imd.fun/swarm once, at answer time. It is public and needs no key. The answer is seats[\"1616\"].accepted, the entry whose agentId field is the string \"51450\". Match on agentId, not on the key: the key is a tokenId and the two are different numbers.",
-      "field": "accepted is the count of this seat's task attempts that were accepted. Do NOT use attempts, rejected, failed or pending, and do not add them together.",
-      "drift": "This is a live counter that only ever grows, so two readers seconds apart may differ by a few. Report what you read; do not round to a neater figure and do not adjust toward another member.",
-      "scale": "The answer is a plain whole number of tasks, NOT scaled by 1e18.",
-      "refusal": "If api.imd.fun/swarm cannot be reached, or no seat has agentId \"51450\", or the entry has no accepted field, or isController returns false, report inability rather than substituting another source or guessing.",
-      "controller": "Before answering, verify on Ethereum mainnet that isController(51450, 0x5167D014a056E43883e1BBEa5530c3c0dC993281) returns true on the Adapter8004 proxy at 0xde152afb7db5373f34876e1499fbd893a82dd336. That adapter is what IdentityRegistry.ownerOf(51450) resolves to, and it answers control by the ownership of the identity NFT. If it returns false, report inability: the premise of the question is false and no count should be given."
+      "source": "Read GET https://api.imd.fun/agents/51450/oracle-records once, at answer time. It is public and needs no key. It returns an oracleBatches array; each entry is one UTC day's oracle receipt and carries day, accepted, cumulative, identity and a proof object. Follow nextBefore until the list is exhausted so no day is missed.",
+      "figure": "The answer is the GREATEST value of the cumulative field across every entry that passes the verification below. cumulative is that agent's count of DISTINCT oracle jobs ever accepted in recorded snapshots; accepted is only that one day's count and must NOT be summed across days, because a revised job re-hashes into a later day and would be counted twice.",
+      "verification": "For each entry, rebuild its agent tree and refuse the entry if it does not reconstruct. The proof object carries agentRoot and proof. The leaf encoding is the OpenZeppelin StandardMerkleTree over the types uint256, uint32, uint64 in that order, holding agentId, accepted and cumulative, so a leaf hash is keccak256(keccak256(abi.encode(uint256 agentId, uint32 accepted, uint64 cumulative))) and internal pairs are concatenated in ascending byte order. Verify the proof against agentRoot. An entry whose proof does not verify is not evidence and is discarded.",
+      "archive": "Each receipt is pinned to IPFS and its own document carries agentRoot, agentLeafEncoding and agentLeaves. Where an entry names a CID, fetch the receipt through https://ipfs.imd.fun or any public gateway, confirm its schema is identitymd-oracle-batch-v2, and confirm the agentRoot in the archived document equals the agentRoot in the proof. State which gateway answered.",
+      "scale": "The answer is a plain whole number of jobs, NOT scaled by 1e18 and NOT a sum of daily counts.",
+      "exactness": "Every entry is a frozen snapshot, so every member of this panel reads identical bytes and must report the identical integer. Do not round, do not average, and do not adjust toward another member. If your verification disagrees with another reading, report inability rather than splitting the difference.",
+      "controller": "Before answering, verify on Ethereum mainnet that isController(51450, 0x5167D014a056E43883e1BBEa5530c3c0dC993281) returns true on the Adapter8004 proxy at 0xde152afb7db5373f34876e1499fbd893a82dd336. That adapter is what IdentityRegistry.ownerOf(51450) resolves to, and it answers control by ownership of the identity NFT. If it returns false, report inability: the premise of the question is false and no count should be given.",
+      "refusal": "Report inability rather than substituting another source if the route cannot be reached, if oracleBatches is empty, if no entry survives verification, or if isController returns false. In particular an empty list means the control plane has recorded no oracle receipt carrying an agent tally for this seat yet, and the correct answer is then inability, NOT zero. Do not fall back to the accepted field of GET https://api.imd.fun/swarm: that is a live mutable counter over all skills, it is not the figure this question asks for, and it is not verifiable against any archive."
     },
     "guards": {
-      "min": "1000",
-      "max": "1000000"
+      "min": 1,
+      "max": 100000000
     },
     "panelSize": 60,
     "quorum": 20,
-    "validForSeconds": 86400
+    "validForSeconds": 3600
   }
 }

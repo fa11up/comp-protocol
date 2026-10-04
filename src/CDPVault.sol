@@ -8,6 +8,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {CompToken} from "./CompToken.sol";
 import {MockIMD} from "./MockIMD.sol";
 import {MockWorkOracle} from "./MockWorkOracle.sol";
+import {WorkOracleFactory} from "./WorkOracleFactory.sol";
 import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 import {
@@ -15,7 +16,10 @@ import {
     MAX_DIVERGENCE_BPS,
     MARKER_SHARE_BPS,
     STABILITY_FEE_BPS,
-    PROTOCOL_BONUS_SHARE_BPS
+    PROTOCOL_BONUS_SHARE_BPS,
+    WORK_ORACLE_FACTORY,
+    WORK_ORACLE_SENTINEL,
+    WORK_ORACLE_MAX_AGE
 } from "./DeploymentConfig.sol";
 
 /// @notice Price-aware COMP borrowing and independent work-credit minting on Sepolia.
@@ -169,7 +173,9 @@ contract CDPVault is ReentrancyGuard {
     /// @param imdToken_ Deployed, nonrebasing, fee-free MockIMD collateral (18 decimals).
     /// @param compToken_ Zero creates a fresh CompToken bound to this vault; otherwise an existing token
     /// to be authorized separately through its reciprocal setVault check.
-    /// @param oracle_ Zero creates a fresh MockWorkOracle bound to this vault during construction.
+    /// @param oracle_ Zero creates a fresh MockWorkOracle (the testnet faucet) bound to this vault
+    /// during construction; WORK_ORACLE_SENTINEL asks WorkOracleFactory for a real attested
+    /// SwarmWorkOracle; anything else is used as given and must already name this vault.
     /// A supplied oracle must already be deployed and, if it exposes vault(), bound to this vault.
     /// @param priceFeed_ Immutable collateral price feed, scaled by 1e18.
     /// @param nhiFeed_ Immutable network health feed, scaled by 1e18.
@@ -214,6 +220,16 @@ contract CDPVault is ReentrancyGuard {
         spotFeed = ISwarmFeed(spotFeed_);
         if (oracle_ == address(0)) {
             oracle_ = address(new MockWorkOracle(address(this)));
+        } else if (oracle_ == WORK_ORACLE_SENTINEL) {
+            // Ask the pre-deployed factory for a real attested work oracle. It is a factory and not
+            // a `new` here only because of a size limit: SwarmWorkOracle's creation code is 16,464
+            // bytes and this vault's subclass is already at 36,416 of the 49,152 EIP-3860 permits.
+            // See WorkOracleFactory for why a binding transaction and CREATE2 are both worse.
+            // No silent downgrade: an absent factory reverts rather than quietly leaving the vault on
+            // the grantRights faucet, which is the shape of the $owner substitution that bricked
+            // launch 519. `_validateOracle` below then confirms the oracle names THIS vault.
+            if (WORK_ORACLE_FACTORY.code.length == 0) revert InvalidOracle();
+            oracle_ = address(WorkOracleFactory(WORK_ORACLE_FACTORY).create(WORK_ORACLE_MAX_AGE));
         }
         _validateOracle(oracle_);
         oracle = IWorkOracle(oracle_);

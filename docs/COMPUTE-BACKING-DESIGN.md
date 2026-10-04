@@ -357,8 +357,33 @@ built — bundling the update with the action, and splitting the recaptured valu
    else here.
 2. Reserve valuation on the Treasury: per-asset price source and haircut, `reserveValueUsd()`.
    Requires the USD price wrapper (IMD/ETH feed × Chainlink ETH/USD).
-3. `SwarmWorkOracle` — attestation-verified per-agent tally replacing the `grantRights` faucet,
-   with `isController` binding a tally entry to a claimant.
+3. ~~`SwarmWorkOracle` — attestation-verified per-agent tally replacing the `grantRights` faucet,
+   with `isController` binding a tally entry to a claimant.~~ **BUILT 2026-10-04.** `src/SwarmWorkOracle.sol`
+   extends `SwarmFeed`, so verification, replay, panel floors, freshness and question binding are the
+   audited code rather than a second implementation. The agentId and the claimant live in the question
+   TEXT, so both are inside the document the feed pins — an attestation about another agent fails the
+   question check with no field for either.
+
+   **The figure now comes from the daily oracle receipts, not the live `/swarm` counter.** That is
+   upstream PR #332's second Merkle root, merged, and #334's IPFS archiving of the receipts: the
+   panel reads frozen bytes with an `agentRoot` to verify a proof against, so the question carries
+   `toleranceBps: 0` where a live counter needed 300. `oracle/work-tally-quote.json` is that question.
+   What the contract cannot do is verify the commitment itself — the on-chain `documentHash` is keccak
+   over a multi-megabyte document and `WorkRecorded` carries no root — so the attestation is still the
+   bridge, and the docstring says so.
+
+   Two consequences to hold onto. **Credit accrues forward only:** migration 0090 states that older
+   rows are not reconstructed, so this seat's 1,200-odd historical tasks score zero and
+   `/agents/51450/oracle-records` is empty today. The question is therefore not yet answerable and a
+   panel must report inability; the contract is ready for the first receipt that carries a tally. And
+   **it costs nothing to wait**, because `workCeiling()` is zero on a fresh stack regardless of what
+   the oracle says.
+
+   A **factory** deploys it, which is a size result and not a preference: `SwarmWorkOracle` is 16,478
+   bytes of creation code and `ParameterizedVault` had 12,222 of EIP-3860 headroom, so a vault that
+   created its own would be undeployable. `WorkOracleFactory` holds that creation code instead, the
+   vault asks for one by passing `WORK_ORACLE_SENTINEL`, and an absent factory reverts rather than
+   silently leaving the vault on the faucet.
 4. Redemption channel A (IMD against CDPs). The hard floor, and the largest new surface.
 5. Redemption channel B (reserve assets, weight-priced fee).
 6. Upstream: the oracle-batch second-root PR.
@@ -374,6 +399,7 @@ All under the existing 48-hour delay, all hard-bounded in the parameters contrac
 | parameter | purpose | proposed | hard bound |
 |---|---|---|---|
 | `workRatioBps` | ratio term of `workCeiling` | 2500 | ≤ 2500 (cliff is `minCR − 1` = 5000) |
+| `compPerTaskWad` | COMP an accepted task earns | 0.01 | ≤ 1e18 — one task is never worth more than one COMP |
 | `redemptionCeilingCR` | above this a position cannot be redeemed against | 200 | ≥ `minCR`, ≤ 400 |
 | `feeBurnShareBps` | share of COMP fees burned on arrival | 10000 at first | no bound needed |
 | `haircutBps[asset]` | per-asset retained-value factor | near 10000 stables, lower for IMD | 0–10000 |
@@ -387,9 +413,13 @@ peg, and a governable cap is a redemption halt with extra steps.
 
 - **Target basket weights**, which set channel B's fee curve and therefore what the reserve drifts
   toward. Needs a view on what the protocol wants to hold.
-- **Who may call the oracle tally update**, and what happens to rights already issued if a later
-  tally revises an agent's count downward. Issued rights should almost certainly be final, with
-  revisions applying only to future issuance, but that needs stating.
+- ~~**Who may call the oracle tally update**, and what happens to rights already issued if a later
+  tally revises an agent's count downward.~~ **SETTLED in the build.** Anyone may relay; only the
+  vault may consume. Rights are earned-minus-consumed against a HIGH-WATER count pinned at the moment
+  of consumption, so a lower later figure can neither claw back what was spent nor re-credit work
+  already minted against. That shape is forced rather than chosen: the figure moves down for ordinary
+  reasons — the feed can go stale and re-anchor, and a daily receipt only lists agents who worked
+  that day.
 - **When the held fee COMP converts to reserve assets**, and through what route. Blocked on COMP
   liquidity existing at all.
 - **Whether `redemptionCeilingCR` should move with NHI** the way `minCR` does, so redemption
