@@ -75,6 +75,7 @@ export const fixture = () => ({
   // Undefined models the live deployment, whose vault and feeds predate these views.
   backing: undefined,
   pinned: false,
+  governor: account,
   candidateCR: 180n,
   rpcFail: false,
   codeMissing: false,
@@ -248,7 +249,7 @@ function call(s, params) {
     };
     value = {
       vault: addresses.ParameterizedVault,
-      governor: account,
+      governor: s.governor,
       TIMELOCK: 172800n,
       pendingChange: [s.pendingKind, s.pendingEta],
       current,

@@ -1,4 +1,11 @@
-import { useState, Children, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  Children,
+  type ReactNode,
+} from "react";
 import { type Address } from "viem";
 import type { Target } from "./config";
 import { Ticker } from "./motion";
@@ -268,9 +275,12 @@ export function Col({
 }
 export function Row({
   label,
+  info,
   children,
 }: {
   label: string;
+  /** Explanation shown on hover or focus, so the pane itself lists only figures. */
+  info?: string;
   children: ReactNode;
 }) {
   const parts = Children.toArray(children);
@@ -281,9 +291,94 @@ export function Row({
     : undefined;
   return (
     <div className="row">
-      <span>{label}</span>
+      <span>
+        {label}
+        {info && <Info label={label} text={info} />}
+      </span>
       <strong>{text === undefined ? children : <Ticker text={text} />}</strong>
     </div>
+  );
+}
+/**
+ * An "i" that opens a small window on hover, focus or tap. The window is fixed to the viewport
+ * rather than the pane, so a scrolling pane can never clip it.
+ */
+export function Info({ label, text }: { label: string; text: string }) {
+  const id = useId();
+  const button = useRef<HTMLButtonElement>(null);
+  const [at, setAt] = useState<{ x: number; y: number; above: boolean }>();
+  const show = () => {
+    const r = button.current?.getBoundingClientRect();
+    if (!r) return;
+    const above = r.top > innerHeight / 2;
+    setAt({
+      x: Math.min(Math.max(r.left + r.width / 2, 150), innerWidth - 150),
+      y: above ? r.top - 6 : r.bottom + 6,
+      above,
+    });
+  };
+  const hide = () => setAt(undefined);
+  useEffect(() => {
+    if (!at) return;
+    // A fixed window would drift from its icon once the pane scrolls, so close it instead.
+    addEventListener("scroll", hide, true);
+    addEventListener("resize", hide);
+    return () => {
+      removeEventListener("scroll", hide, true);
+      removeEventListener("resize", hide);
+    };
+  }, [at]);
+  return (
+    <span className="info">
+      <button
+        ref={button}
+        type="button"
+        className="info-button"
+        aria-label={`About ${label}`}
+        aria-describedby={id}
+        aria-expanded={!!at}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        onClick={() => (at ? hide() : show())}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") hide();
+        }}
+      >
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+          <path
+            d="M8 1.25a6.75 6.75 0 1 0 0 13.5a6.75 6.75 0 1 0 0-13.5z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.25"
+          />
+          <path
+            d="M8 7v4.25M8 4.75v.01"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      </button>
+      <span
+        role="tooltip"
+        id={id}
+        className="tooltip"
+        hidden={!at}
+        style={
+          at
+            ? {
+                left: at.x,
+                top: at.y,
+                transform: `translate(-50%, ${at.above ? "-100%" : "0"})`,
+              }
+            : undefined
+        }
+      >
+        {text}
+      </span>
+    </span>
   );
 }
 export function AddressLink({

@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type Address, type Hash, type EIP1193Provider } from "viem";
+import {
+  formatUnits,
+  type Address,
+  type Hash,
+  type EIP1193Provider,
+} from "viem";
 import { loadConfig, switchChain, wallet, type Runtime } from "./config";
 import { snapshot, type Snapshot, feedsReady } from "./state";
 import { Pane, type Actions, type Request, AddressLink } from "./actions";
@@ -10,7 +15,7 @@ import { explained } from "./explain";
 import { ThemeToggle } from "./theme";
 import { LoanBook, useCharts } from "./Charts";
 import { Ticker } from "./motion";
-import { MarketCap } from "./MarketCap";
+import { MarketCap, compact } from "./MarketCap";
 export default function App() {
   const [r, setRuntime] = useState<Runtime>();
   const [error, setError] = useState("");
@@ -497,20 +502,42 @@ function Terminal({ r }: { r: Runtime }) {
                 : "Verifying deployment"}
           </span>
           <MarketCap supply={s?.v.supply} />
-          <span>
-            Supply{" "}
+          <span title="Treasury reserve assets, valued in USD">
+            Reserves{" "}
             <b>
-              <Ticker text={`${fmt(s?.v.supply, 18, 2)} COMP`} />
+              <Ticker
+                text={
+                  s?.v.reserveValue === undefined
+                    ? "—"
+                    : `$${compact.format(Number(formatUnits(s.v.reserveValue, 18)))}`
+                }
+              />
             </b>
           </span>
           <span>
             Block <b>{s?.block.toString() ?? "—"}</b>
           </span>
           <button
+            className={`refresh${refreshing ? " is-refreshing" : ""}`}
+            aria-label={refreshing ? "Refreshing state" : "Refresh state"}
+            title="Refresh"
             disabled={refreshing || !!busy}
             onClick={() => void refresh()}
           >
-            {refreshing ? "Refreshing…" : "Refresh state"}
+            <svg
+              viewBox="0 0 20 20"
+              width="18"
+              height="18"
+              aria-hidden="true"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M16 10a6 6 0 1 1-1.76-4.24" />
+              <path d="M16 3.5v3.25h-3.25" />
+            </svg>
           </button>
         </div>
         <div className="footer-line">

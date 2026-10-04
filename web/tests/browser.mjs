@@ -12,6 +12,7 @@ import {
   installWallet,
   config,
   candidate,
+  account,
   blockscout,
 } from "./fixture.mjs";
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -237,7 +238,7 @@ try {
   s.rejectSimulation = false;
   await refresh(page);
   await expectText(red, "Par (backing unavailable)");
-  await expectText(page.locator(".pane-backing"), "Not reported by this vault");
+  await expectText(page.locator(".pane-backing"), "Not reported");
   await expectText(page.locator(".pane-oracle"), "Not reported");
   passed("A vault and feeds without the newer views degrade per field");
   s.backing = (8n * 10n ** 18n) / 10n;
@@ -246,13 +247,43 @@ try {
   await expectText(red, "the cap binds");
   await red.getByRole("button", { name: "Quote redemption" }).click();
   await expectText(red.locator(".quote"), "(backing cap)");
-  await expectText(
-    page.locator(".pane-backing"),
-    "Redemption floor · cap binds",
+  await expectText(page.locator(".pane-backing"), "Cap binds");
+  // Oracle and Backing list figures only; every explanation lives behind an info icon.
+  assert.equal(
+    await page
+      .locator(
+        ".pane-oracle .micro:not(.chart-unavailable), .pane-oracle .notice, .pane-backing .micro:not(.chart-unavailable), .pane-backing .notice",
+      )
+      .count(),
+    0,
+  );
+  const tip = page.getByRole("button", { name: "About Backing ratio" });
+  await tip.hover();
+  const tooltip = page
+    .getByRole("tooltip")
+    .filter({ hasText: "point-in-time" });
+  await tooltip.waitFor();
+  await tip.focus();
+  await page.keyboard.press("Escape");
+  await tooltip.waitFor({ state: "hidden" });
+  passed(
+    "Oracle and Backing carry no prose; info windows open on hover and focus, close on Escape",
   );
   await expectText(page.locator(".pane-oracle"), "Pinned · 0x2b2b2b2b");
   await expectText(page.locator(".pane-oracle"), "26,121,526");
   passed("Backing below par caps the quote; pinned questions are shown");
+  s.governor = "0x0000000000000000000000000000000000000c33";
+  await refresh(page);
+  await tab(page, "governance");
+  assert.equal(
+    await page.locator(".pane-governance").getByLabel("Operation").count(),
+    0,
+  );
+  await expectText(page.locator(".pane-governance"), "Review apply pending");
+  s.governor = account;
+  await refresh(page);
+  await page.locator(".pane-governance").getByLabel("Operation").waitFor();
+  passed("Operator controls appear only for the connected governor");
   await tab(page, "position");
   await expectText(page.locator(".pane-position"), "Liquidation price");
   await expectText(page.locator(".pane-position"), "25% above it");

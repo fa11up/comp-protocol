@@ -4,7 +4,7 @@ import { formatUnits } from "viem";
 // Drawn as a monospace progress line, the way imd.fun tracks $IMD against its goal.
 export const GOAL = 1_000_000_000;
 const CELLS = 24;
-const compact = new Intl.NumberFormat("en-US", {
+export const compact = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 2,
 });

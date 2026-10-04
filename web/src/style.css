@@ -1283,3 +1283,68 @@ td span {
   min-height: 24px;
   line-height: 24px;
 }
+/* Info: a 24px target around a 13px mark, and a window fixed to the viewport. */
+.info {
+  display: inline-flex;
+  vertical-align: middle;
+}
+.info-button {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  margin-block: -6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: help;
+}
+.info-button:hover,
+.info-button[aria-expanded="true"] {
+  color: var(--text);
+}
+.tooltip {
+  position: fixed;
+  z-index: 20;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 10px;
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--control);
+  font-size: 11px;
+  line-height: 1.55;
+  pointer-events: none;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: normal;
+  white-space: normal;
+}
+.tooltip[hidden] {
+  display: none;
+}
+.figure-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.statusbar .refresh {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .refresh.is-refreshing svg {
+    animation: spin 0.9s linear infinite;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

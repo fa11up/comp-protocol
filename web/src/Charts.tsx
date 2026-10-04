@@ -12,6 +12,7 @@ import {
 } from "./history";
 import { fmt, ratio, WAD, message, liquidationPrice, cushion } from "./math";
 import { Ticker } from "./motion";
+import { Info } from "./actions";
 
 type Loaded<T> = Result<T> & { snapshot?: Snapshot; loading?: boolean };
 export function useCharts(r: Runtime, s?: Snapshot) {
@@ -407,11 +408,14 @@ export function Sparkline({
           {new Date(end * 1000).toISOString().slice(5, 16).replace("T", " ")}
         </text>
       </svg>
-      <figcaption>
-        {points.length} accepted · UTC, signed time · limit{" "}
-        {live.maxAge.toString()}s · expiry{" "}
+      <figcaption className="figure-head">
+        {points.length} accepted · expiry{" "}
         {new Date(expiry * 1000).toISOString().slice(5, 16).replace("T", " ")}
         {feed.loading && " · Updating…"}
+        <Info
+          label={`${label} history`}
+          text={`Every accepted attestation, plotted at its signed time (UTC). Gaps are real: updates are bought on demand, not pushed on a clock. Stale after ${live.maxAge}s.`}
+        />
       </figcaption>
       <details>
         <summary>Accepted update values</summary>
@@ -440,7 +444,13 @@ export function DivergenceChart({ s }: { s?: Snapshot }) {
   const breached = Math.abs(divergence) > limit;
   return (
     <figure className="mini-chart divergence-chart">
-      <figcaption>Price / divergence band · ±{limit}%</figcaption>
+      <figcaption className="figure-head">
+        Primary / spot · ±{limit}%
+        <Info
+          label="Divergence band"
+          text="◆ primary at the centre, ● spot. The band is the allowed divergence; outside it, price actions pause."
+        />
+      </figcaption>
       <svg
         viewBox="0 0 300 72"
         role="img"
@@ -487,13 +497,18 @@ export function DivergenceChart({ s }: { s?: Snapshot }) {
           {divergence.toFixed(2)}%
         </text>
       </svg>
-      <p className="micro">
-        {primary.stale || spot.stale
-          ? "Stale price · actions paused"
-          : breached
-            ? "Outside band · actions paused"
-            : `${Math.max(0, limit - Math.abs(divergence)).toFixed(2)} percentage points to the limit`}
-      </p>
+      <div className="row">
+        <span>Headroom</span>
+        <strong>
+          {primary.stale || spot.stale ? (
+            <span className="danger-text">Stale</span>
+          ) : breached ? (
+            <span className="danger-text">Breached</span>
+          ) : (
+            `${Math.max(0, limit - Math.abs(divergence)).toFixed(2)} pts`
+          )}
+        </strong>
+      </div>
     </figure>
   );
 }
@@ -577,8 +592,12 @@ export function SupplyChart({ s }: { s?: Snapshot }) {
   const domain = Math.max(1.25, ratio * 1.1);
   return (
     <figure className="mini-chart supply-chart">
-      <figcaption>
-        Supply composition · <Ticker text={`${fmt(supply)} COMP`} />
+      <figcaption className="figure-head">
+        Supply · <Ticker text={`${fmt(supply)} COMP`} />
+        <Info
+          label="Supply composition"
+          text="■ collateral-backed principal (capped at supply) and ▨ net work-issued COMP. Solid marker = backing ratio, dashed = par."
+        />
       </figcaption>
       <div
         className="bar composition"
@@ -614,30 +633,19 @@ export function SupplyChart({ s }: { s?: Snapshot }) {
         <span>■ Collateral {fmt(principal)}</span>
         <span>▨ Net work {fmt(work)}</span>
       </p>
-      <p className="micro">
-        Backing{" "}
-        <Ticker
-          text={supply ? `${(ratio * 100).toFixed(1)}%` : "— (zero supply)"}
-        />{" "}
-        · solid marker; dashed = par.
-        <br />
-        Backing scale 0–{(domain * 100).toFixed(0)}% across the bar.
-        {usd.stale && " USD stale; ratio indicative."}
-      </p>
-      <details>
-        <summary>Supply accounting</summary>
-        <p className="micro">
-          Collateral-backed principal is capped at circulating supply. Net work
-          = supply less that principal, after non-principal burns. Cumulative
-          work minted: {fmt(v.totalWorkMinted)} COMP; non-principal burns:{" "}
-          {fmt(v.totalNonPrincipalRedeemed)} COMP.{" "}
-          {v.totalBadDebt > 0n &&
-            `${fmt(v.totalBadDebt)} COMP recorded bad debt is included in principal; this portion is not collateral-backed. `}
-          Backing = reserve value + secured collateral valued at the live USD
-          price, capped at (principal − bad debt) × minCR. This is a
-          point-in-time ratio, not a guarantee of redeemability.
-        </p>
-      </details>
+      <div className="row">
+        <span>
+          Backing ratio
+          <Info
+            label="Backing ratio"
+            text={`Reserve value + secured collateral at the live USD price, capped at (principal − bad debt) × minCR, over supply. Bar scale 0–${(domain * 100).toFixed(0)}%. A point-in-time ratio, not a promise of redeemability.`}
+          />
+        </span>
+        <strong>
+          <Ticker text={supply ? `${(ratio * 100).toFixed(1)}%` : "—"} />
+          {usd.stale && <span className="danger-text"> · USD stale</span>}
+        </strong>
+      </div>
     </figure>
   );
 }
