@@ -3,3 +3,7 @@ cache/
 broadcast/
 oracle/node_modules/
 oracle/relayer.config.js
+
+# keeper: local config and the key it reads from the environment
+keeper/config.js
+keeper/node_modules/
