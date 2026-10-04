@@ -264,6 +264,8 @@ the written reproductions. Archive the record immediately.
 | `docs/AUDIT-2026-10-03.md` | the first independent review and every finding |
 | `docs/AUDIT-2026-10-04.md` | the second, on the USD denomination and work backing |
 | `oracle/work-tally-quote.json` | the question `SwarmWorkOracle` pins, read from the daily oracle receipts |
+| `docs/MAINNET-RUNBOOK.md` | keys, constants, the one-broadcast CREATE2 deploy and what to read back |
+| `docs/UPSTREAM-ASKS.md` | what we have asked the operator for, what landed, and what is settled |
 | `docs/archive/` | superseded per-increment notes, kept for history |
 | `docs/UPSTREAM-STABLE-QUESTION-ID.md` | why `questionHash` is unstable, and why that is not a PR yet |
 | `docs/ABI.md` | the deployed interfaces |
