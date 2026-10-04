@@ -841,13 +841,87 @@ contract RedemptionTest is Test {
         // ALICE's principal ages out one half-life after it was minted, and then counts in full.
         _giveComp(20 ether);
         vm.warp(start + 12 hours - 1);
+        uint256 fees = vault.stabilityFeeOf(ALICE);
         vm.prank(REDEEMER);
         vault.redeem(10 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), 0);
+        // While the principal is fresh, only the cancelled stability fees move the rate.
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, 200 ether) / 4);
         vm.warp(start + 12 hours);
+        uint256 decayed = vault.decayedRedemptionBaseRate();
         vm.prank(REDEEMER);
         vault.redeem(10 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(10 ether, 1 ether, 190 ether) / 4);
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, 190 ether) / 4);
+    }
+
+    function test_oneWeiTopUpsCannotKeepPrincipalFresh() public {
+        _open(ALICE, 1800 ether, 1000 ether);
+        // Three days of one-wei top-ups, each a minute inside the window: none re-dates the record.
+        for (uint256 i; i < 6; ++i) {
+            vm.warp(block.timestamp + 12 hours - 60);
+            vm.prank(ALICE);
+            vault.mintCOMP(1);
+        }
+        _giveComp(100 ether);
+        uint256 supply = comp.totalSupply();
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+        // At most the few wei minted inside the window are excluded; the tenth of supply counts.
+        assertApproxEqAbs(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4, 10);
+        assertEq(vault.redemptionFeeBps(0), 300);
+    }
+
+    function test_aTopUpMovesTheRecordByItsShareOfThePrincipal() public {
+        _open(ALICE, 1800 ether, 1000 ether);
+        uint256 start = block.timestamp;
+        vm.warp(start + 12 hours - 60);
+        vm.prank(ALICE);
+        vault.mintCOMP(1);
+        _giveComp(100 ether);
+        // One wei moves the record by a second at most, so eleven hours later the 1000 has aged out.
+        vm.warp(start + 23 hours);
+        uint256 supply = comp.totalSupply();
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4);
+    }
+
+    function test_equalTranchesAgeOutAtTheirAverageAge() public {
+        _open(ALICE, 3800 ether, 1000 ether);
+        uint256 start = block.timestamp;
+        vm.warp(start + 6 hours);
+        vm.prank(ALICE);
+        vault.mintCOMP(1000 ether);
+        _giveComp(20 ether);
+        // Two equal tranches six hours apart are dated three hours after the first: fresh until
+        // fifteen hours, the same principal-time as the whole amount held for twelve.
+        vm.warp(start + 15 hours - 1);
+        uint256 fees = vault.stabilityFeeOf(ALICE);
+        uint256 supply = comp.totalSupply();
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4);
+        vm.warp(start + 15 hours);
+        uint256 decayed = vault.decayedRedemptionBaseRate();
+        supply = comp.totalSupply();
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / 4);
+    }
+
+    function test_cancelledFeesAreNeverFresh() public {
+        _open(ALICE, 1800 ether, 1000 ether);
+        vm.warp(block.timestamp + 12 hours);
+        vm.prank(ALICE);
+        vault.mintCOMP(100 ether);
+        vm.warp(block.timestamp + 6 hours);
+        _giveComp(50 ether);
+        uint256 fees = vault.stabilityFeeOf(ALICE);
+        assertGt(fees, 0);
+        uint256 supply = comp.totalSupply();
+        // The burn cancels fees first, then fresh principal: only the fees move the rate.
+        vm.prank(REDEEMER);
+        vault.redeem(50 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4);
     }
 
     function test_onlyTheFreshPartOfACancelledBurnIsExcluded() public {

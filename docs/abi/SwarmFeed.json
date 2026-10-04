@@ -92,6 +92,30 @@
   },
   {
     "type": "function",
+    "name": "expectedQuestionHash",
+    "inputs": [
+      {
+        "name": "fromBlock",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "toBlock",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "isReporter",
     "inputs": [
       {
@@ -137,6 +161,19 @@
         "name": "roundNumber",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lastToBlock",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"
@@ -508,6 +545,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidWindow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "MathOverflowedMulDiv",
     "inputs": []
   },
@@ -519,6 +561,11 @@
   {
     "type": "error",
     "name": "PanelTooSmall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "QuestionNeedsWindowBounds",
     "inputs": []
   },
   {
@@ -540,6 +587,54 @@
     "type": "error",
     "name": "UnauthorizedReporter",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnboundQuestionNeedsRelayer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WindowNotAdvancing",
+    "inputs": [
+      {
+        "name": "toBlock",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "lastAccepted",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "WindowSpanOutOfRange",
+    "inputs": [
+      {
+        "name": "span",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "WrongQuestion",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "given",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",

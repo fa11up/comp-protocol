@@ -34,7 +34,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 collateral;
         uint256 debt;
         /// @dev Principal minted within FRESH_DEBT_WINDOW of `mintedAt` and still outstanding, and
-        /// when it was last minted. Only redemption reads them: see `_redeemPosition`.
+        /// its amount-weighted mint time. Only redemption reads them: see `_redeemPosition`.
         uint256 recentlyMinted;
         uint256 mintedAt;
     }
@@ -347,8 +347,17 @@ contract CDPVault is ReentrancyGuard {
         _debtChanged(resultingTotal - amount);
         position.debt += amount;
         _transientAdd(MINTED_THIS_TX_SLOT, amount);
-        position.recentlyMinted = _recentlyMinted(position) + amount;
-        position.mintedAt = block.timestamp;
+        // REVISION (finding 883fa030): a top-up re-dated the whole record, so one wei every twelve
+        // hours kept any amount of principal fresh forever. The record's timestamp now moves toward
+        // the present by the new principal's share of the total: one wei cannot re-date a large
+        // record, a record that has aged out starts over at the present, and principal-time in the
+        // band is conserved whatever the tranches.
+        uint256 fresh = _recentlyMinted(position);
+        position.mintedAt = fresh == 0
+            ? block.timestamp
+            : position.mintedAt
+                + Math.mulDiv(block.timestamp - position.mintedAt, amount, fresh + amount, Math.Rounding.Ceil);
+        position.recentlyMinted = fresh + amount;
         _clearMark(msg.sender);
         compToken.mint(msg.sender, amount);
         emit COMPMinted(msg.sender, amount);
@@ -474,10 +483,11 @@ contract CDPVault is ReentrancyGuard {
     /// who controls the candidate — the same key or a second one — pays nothing to burn against it,
     /// and nothing stopped a mint / self-redeem / withdraw round trip from pinning the rate everyone
     /// else pays at the cap for gas. Principal younger than one half-life of the rate therefore
-    /// counts for nothing in the increase when cancelled: the pump now needs debt held in the
-    /// eligible band, exposed to price and liquidation, for twelve hours per pinning, and a rotating
-    /// supply of it to keep the rate there. It is a cost, not a closure: with the fee retained where
-    /// the brief puts it, no rule can tell a seasoned self-redemption from an honest one.
+    /// counts for nothing in the increase when cancelled: the pump now needs that much principal-time
+    /// held in the eligible band, exposed to price and liquidation — twelve hours of the whole amount,
+    /// or the same product in other tranches, see `mintCOMP` — per pinning, and a rotating supply of
+    /// it to keep the rate there. It is a cost, not a closure: with the fee retained where the brief
+    /// puts it, no rule can tell a seasoned self-redemption from an honest one.
     /// @return principalCancelled Minted principal retired, as opposed to accrued fees.
     /// @return freshCancelled The part of the burn that cancelled principal minted within the window.
     function _redeemPosition(address candidate, uint256 amount, uint256 imdOut, uint256 price)
@@ -494,9 +504,11 @@ contract CDPVault is ReentrancyGuard {
         // Compare the exact collateral/debt fractions, not rounded whole-percent ratios. Deeply
         // underwater positions cannot fund a fixed-price payout that would worsen their ratio.
         if (imdOut > Math.mulDiv(position.collateral, amount, debt)) revert RedemptionWorsensRatio();
-        freshCancelled = Math.min(amount, _recentlyMinted(position));
+        uint256 fresh = _recentlyMinted(position);
         uint256 feesCancelled = _reduceDebt(candidate, amount);
         principalCancelled = amount - feesCancelled;
+        // Only principal can be fresh: cancelled fees move the rate like any other part of the burn.
+        freshCancelled = Math.min(principalCancelled, fresh);
         position.collateral -= imdOut;
         _recordBadDebt(candidate);
         _clearIfRecovered(candidate);
