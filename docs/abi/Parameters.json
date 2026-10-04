@@ -12,7 +12,33 @@
   },
   {
     "type": "function",
+    "name": "MAX_COMP_PER_TASK_WAD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_DIVERGENCE_BPS_LIMIT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_REDEMPTION_SPREAD",
     "inputs": [],
     "outputs": [
       {
@@ -64,6 +90,19 @@
   },
   {
     "type": "function",
+    "name": "MIN_REDEMPTION_SPREAD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "TIMELOCK",
     "inputs": [],
     "outputs": [
@@ -88,6 +127,19 @@
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "compPerTaskWad",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -227,6 +279,24 @@
   },
   {
     "type": "function",
+    "name": "pendingRedemptionSpread",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "spread",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "eta",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pendingReserveAsset",
     "inputs": [],
     "outputs": [
@@ -358,6 +428,32 @@
   },
   {
     "type": "function",
+    "name": "proposeCompPerTask",
+    "inputs": [
+      {
+        "name": "wad",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeRedemptionSpread",
+    "inputs": [
+      {
+        "name": "spread",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "proposeReserveAsset",
     "inputs": [
       {
@@ -395,6 +491,19 @@
   {
     "type": "function",
     "name": "protocolBonusShareBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "redemptionSpread",
     "inputs": [],
     "outputs": [
       {
@@ -491,6 +600,17 @@
   },
   {
     "type": "error",
+    "name": "CompPerTaskTooHigh",
+    "inputs": [
+      {
+        "name": "wad",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DivergenceOutOfRange",
     "inputs": [
       {
@@ -525,6 +645,17 @@
     "type": "error",
     "name": "ProposalPending",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RedemptionSpreadOutOfRange",
+    "inputs": [
+      {
+        "name": "spread",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

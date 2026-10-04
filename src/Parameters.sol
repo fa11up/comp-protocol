@@ -43,7 +43,7 @@ contract Parameters is Governed {
         uint256 markerShareBps;
     }
 
-    /// @notice What a pending payload changes. One Governed slot, three shapes of change: the
+    /// @notice What a pending payload changes. One Governed slot, several shapes of change: the
     /// payload's first word says which, so the 48-hour delay, the public pending window and the
     /// permissionless application are the same code for all of them.
     /// @dev The work ratio and the register travel separately from the five-value set rather than
@@ -53,7 +53,8 @@ contract Parameters is Governed {
         Economics,
         WorkRatio,
         ReserveAsset,
-        CompPerTask
+        CompPerTask,
+        RedemptionSpread
     }
 
     uint256 private constant BPS = 10_000;
@@ -71,6 +72,11 @@ contract Parameters is Governed {
     /// into a claim the ceiling then has to absorb — and because a rate above one COMP per task makes
     /// no sense against a token meant to be worth a dollar.
     uint256 public constant MAX_COMP_PER_TASK_WAD = 1 ether;
+
+    uint256 public constant MIN_REDEMPTION_SPREAD = 25;
+    uint256 public constant MAX_REDEMPTION_SPREAD = 100;
+    /// @notice Ratio points above the NHI-derived minCR, never an absolute ceiling.
+    uint256 public redemptionSpread = 50;
 
     /// @notice Hard cap on the annual stability fee. 10% is high for a fee this protocol charges on
     /// its own stablecoin; above it the fee stops being a cost of borrowing and becomes a way to
@@ -108,6 +114,7 @@ contract Parameters is Governed {
     error ZeroCeiling();
     error WorkRatioTooHigh(uint256 bps);
     error CompPerTaskTooHigh(uint256 wad);
+    error RedemptionSpreadOutOfRange(uint256 spread);
 
     /// @dev Seeded from the shipped constants, so a fresh Parameters is exactly the configuration
     /// the vault would have had with them compiled in — including the unlimited default ceiling,
@@ -159,6 +166,10 @@ contract Parameters is Governed {
     /// @notice Queue a change to the COMP an accepted task earns. Refused above one COMP per task.
     function proposeCompPerTask(uint256 wad) external {
         _propose(abi.encode(Change.CompPerTask, wad));
+    }
+
+    function proposeRedemptionSpread(uint256 spread) external {
+        _propose(abi.encode(Change.RedemptionSpread, spread));
     }
 
     /// @notice Queue a listing, repricing or (with a zero price source) delisting of one of the
@@ -224,6 +235,13 @@ contract Parameters is Governed {
         return (bps, at);
     }
 
+    function pendingRedemptionSpread() external view returns (uint256 spread, uint256 eta) {
+        (Change kind, uint256 at) = pendingChange();
+        if (at == 0 || kind != Change.RedemptionSpread) return (0, 0);
+        (, spread) = abi.decode(pending, (Change, uint256));
+        return (spread, at);
+    }
+
     function pendingReserveAsset()
         external
         view
@@ -245,6 +263,13 @@ contract Parameters is Governed {
 
     function _validate(bytes memory payload) internal view override {
         Change kind = _kind(payload);
+        if (kind == Change.RedemptionSpread) {
+            (, uint256 spread) = abi.decode(payload, (Change, uint256));
+            if (spread < MIN_REDEMPTION_SPREAD || spread > MAX_REDEMPTION_SPREAD) {
+                revert RedemptionSpreadOutOfRange(spread);
+            }
+            return;
+        }
         if (kind == Change.WorkRatio) {
             (, uint256 bps) = abi.decode(payload, (Change, uint256));
             if (bps > MAX_WORK_RATIO_BPS) revert WorkRatioTooHigh(bps);
@@ -296,6 +321,10 @@ contract Parameters is Governed {
 
     function _apply(bytes memory payload) internal override {
         Change kind = _kind(payload);
+        if (kind == Change.RedemptionSpread) {
+            (, redemptionSpread) = abi.decode(payload, (Change, uint256));
+            return;
+        }
         if (kind == Change.WorkRatio) {
             (, _workRatioBps) = abi.decode(payload, (Change, uint256));
             return;

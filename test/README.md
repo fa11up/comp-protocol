@@ -207,3 +207,194 @@ Verification: offline `forge build` passed; default `forge test` reported **360 
 2 skipped** across 41 suites, and `test/InHouse.t.sol` reported **14 passed** against live Sepolia
 state. All three deploy scripts dry-ran green. The two skips remain the live Sepolia suite off-fork
 and the gated auditor proofs whose API no longer exists.
+
+## IMD redemption
+
+Run the entire offline suite with plain `forge test` (and `forge build` to include
+scripts). The existing `isolate = true` profile is required: the work ceiling
+reads transaction boundaries. The artifact/cache environment variables at the
+top of this document only keep generated files inside the permitted scratch area;
+no additional profile, RPC, downloaded dependency or scratch source is needed.
+
+- `Redemption.t.sol` covers reserve-only execution without touching a position,
+  exact reserve exhaustion, same-call continuation into a borrower, a one-wei
+  reserve shortfall, and refusal to spend other Treasury assets. Ceiling equality
+  is refused and one wei below is accepted at both 150% and 200% minimum ratios.
+  Tests compare exact collateral/debt fractions, including full repayment,
+  accrued fees, recovery below minCR, and candidate-independent payouts.
+- Failure cases cover zero/dust burns, excessive amounts, insufficient caller
+  balance or candidate debt, ineligible candidates, minimum output, stale/zero
+  prices, spot divergence, deeply underwater positions, direct Treasury calls,
+  repeated spending and a failed final transfer after the reserve transfer.
+  Atomic snapshots include balances, debt, fee state and Treasury receipts.
+- `RedemptionEconomics.t.sol` checks the pre-burn supply fraction divided by four,
+  the 50-bps floor and 500-bps cap, repeated pressure, twelve-hour half-life and
+  eventual decay to the floor. A run passes through reserve, mixed and position
+  funding until the candidate's improved ratio takes it outside the band.
+  Separate reserve, mixed and position redemptions contract the work ceiling and
+  reject further work minting without governance or restored work rights. Spread
+  tests pin authority, the 48-hour delay, 25–100 bounds and live NHI derivation.
+- Each deterministic suite includes a 1,000-case fuzz property: price/payout and
+  reserve-split rounding in one, elapsed time and the next fee increase in the
+  other. Exact cross-products avoid hiding ratio changes through rounding.
+- `Redemption.invariant.t.sol` runs 256 sequences of 96 calls through four actors
+  and eleven operations: reserve funding, deposits, borrowing, work minting,
+  repayment, withdrawals, COMP transfers, time, NHI, redemption and slippage
+  rejection. Independent histories reconcile supply, minted principal, paid
+  stability fees, burned COMP, reserve spending and every unit of IMD custody.
+  Every successful redemption checks one burn/one payout, reserve priority,
+  collateral released only against retired debt, each affected position's ratio,
+  fee bounds and work-ceiling contraction. Unexpected reverts fail the campaign;
+  all three redemption routes are seeded and exercised in a deterministic
+  handler sequence as well.
+
+**Resolved backing finding:** the accepted source now rejects redemptions that
+would worsen aggregate backing, including after repayment and collateral
+withdrawal leave work-issued COMP outstanding. The original 100-IMD/250-COMP
+counterexample now expects `RedemptionWorsensBacking` and verifies full rollback.
+Additional regressions cover a safe underbacked redemption at exact equality,
+one wei below that boundary, borrower and mixed payouts whose position ratio
+would improve while aggregate backing would fall, fractional-value dust, and
+discounted reserve valuation before and after recapitalization.
+
+The invariant now checks aggregate backing after **every** successful redemption,
+without the former solvent-state exception. Its failure model independently
+compares exact payout/burn and backing/supply fractions at the fixture's $1 price
+and 100% reserve factor. A deterministic handler sequence mints work, repays
+borrower debt, withdraws collateral and attempts an unsafe reserve redemption.
+It reproduced an unexpected `RedemptionWorsensBacking` revert before the model
+repair and passes afterward; unexpected reverts still fail the campaign.
+
+Disposable mutation checks confirmed that these tests fail if reserve priority
+is disabled, ceiling equality becomes eligible, or the fee divisor becomes two.
+Those source variants are not submitted.
+
+The full-suite run also exposed a pre-existing liquidation-handler accounting
+error: its receipt assertions included swept collateral dust, but its cumulative
+seizure history omitted it. `Protocol.invariant.t.sol` now records the already
+validated sweep and has a deterministic regression for the one-wei remainder.
+The contract's liquidation behavior is unchanged.
+
+Previous-round verification: `forge build` passed; the full `forge test`
+run passed **405 tests, 0 failed, 2 skipped** across 44 suites. The existing skips
+are `InHouseTest` without live Sepolia state and the gated `PermissionlessRelayTest`.
+All new redemption tests run offline and none are skipped. The liquidation
+invariant also passed replay of the original failing fuzz seed after the model
+repair. The reported backing counterexample was separately executed and failed
+at its intended assertion. That source defect is resolved as described above.
+
+Revision verification: `forge build` passed, and the full default `forge test`
+passed **412 tests, 0 failed, 2 existing optional skips** across 44 suites, using
+only the scratch artifact/cache paths documented above. The 49 redemption tests
+all pass without skips; their invariant executes 256 sequences of 96 calls with
+zero unexpected reverts. No new contract defect was reproduced. This revision
+changes only the redemption tests, their handler and this coverage note.
+
+### Revised guards (fee rounding, secured backing, fresh principal)
+
+The source revision after the previous round changed four things these tests
+pin, and the suite was brought up to the accepted source rather than rewritten:
+
+- The charged fee is the floor plus the base rounded **up** to a whole basis
+  point. The two fuzz properties and the run test now expect `ceilDiv`.
+- Principal the candidate minted within twelve hours is charged the full quoted
+  fee but excluded from the stored base. The run test seasons its principal first
+  so it exercises the documented curve; a new economics test pins the exclusion at
+  the window boundary (one second either side) and a burn partly against fresh
+  principal. The invariant handler mirrors the per-position fresh record and
+  asserts the stored base after **every** successful redemption, with time steps
+  of up to twelve hours so both regimes occur.
+- The backing guard counts Treasury IMD plus vault IMD only up to `minCR()`
+  percent of pre-transaction principal less realized bad debt. The invariant's
+  backing model uses that figure; its seeded redemptions moved out of the handler
+  constructor into a separate top-level call, because a constructor shares one
+  transaction with everything it creates and the vault excludes same-transaction
+  deposits and mints, which is exactly what made the previous attempt's `setUp`
+  revert `RedemptionWorsensBacking`.
+- `RedemptionGuards.t.sol` covers the rest: the sub-basis-point remainder
+  (0.39 of a 1000 supply quotes, charges and emits 51 while the stored base keeps
+  the exact fraction, fuzzed over 1,000 amounts); the cap refusing a burn the
+  whole balance would allow and accepting it once principal stands behind the
+  collateral again; stressed NHI raising what counts; realized bad debt deciding
+  a refusal by itself; and, through a contract that makes several vault calls in
+  one transaction (the only way to do that under `isolate = true`), a debt-free
+  same-call deposit counting for nothing, a same-call mint neither diluting the
+  fee nor passing the guard, a first-ever burn saturating at the cap, and the
+  accepted slow path across a transaction boundary succeeding.
+
+The whole-record re-dating reported in the previous round (one wei of new
+principal per half-day kept any amount of principal permanently excluded from
+the base) was accepted as finding `883fa030` and fixed in the source revision the
+next subsection covers. The guard closing channel A entirely when secured backing
+per COMP falls below one minus the fee remains a design consequence for the
+requester, answered by the source authors rather than changed.
+
+Previous-round verification: `forge build` passed; the full default `forge test`
+passed **422 tests, 0 failed, 2 existing optional skips** across 45 suites.
+
+### Amount-weighted freshness (source revision for finding 883fa030)
+
+The accepted source changed two things about the fresh-principal record, and the
+suite was brought up to them rather than rewritten:
+
+- A mint while the record is fresh no longer re-dates it whole. The timestamp
+  moves toward the present by the new principal's share of the enlarged record,
+  rounded toward the present; a record that has aged out, or was fully retired,
+  starts over at the present. The invariant handler's mirror now applies the same
+  `ceilDiv`-weighted update, and a 1,000-case fuzz in `RedemptionEconomics.t.sol`
+  pins the exact resulting timestamp by probing one second inside, exactly at and
+  one second past the window the weighted time implies. Deterministic regressions
+  cover six one-wei top-ups over three days (the seasoned tenth of supply counts
+  and the next quote is 300 bps), a single wei a minute inside the window followed
+  by eleven hours, and two equal tranches six hours apart ageing out together at
+  their average age.
+- Cancelled stability fees are never fresh: the excluded part of a position burn
+  is measured against the principal it cancelled, so a burn against a fresh
+  position that has accrued fees moves the base by exactly the fees' share. The
+  handler and the fresh-principal economics test now expect that, computing the
+  share from `stabilityFeeOf` immediately before each burn under the shipped 2%
+  annual rate, and a dedicated test checks the fee-first order of cancellation.
+
+The round-trip bypass reported in that round (repayment retired principal from
+the record without moving its timestamp, so mint-then-repay pairs kept a
+position's whole principal "fresh" for gas) was accepted as finding `5ee3f2bc`
+and fixed in the source revision the next subsection covers.
+
+Previous-round verification: `forge build` passed; the full default `forge test`
+passed **427 tests, 0 failed, 2 existing optional skips** across 45 suites.
+
+### Per-position secured collateral and youngest-first retirement (source revision for findings 7cd5035c and 5ee3f2bc)
+
+The accepted source changed two things these tests pin, and the suite was brought
+up to them rather than rewritten:
+
+- The backing guard no longer reads the vault's IMD balance. It reads
+  `securedCollateral`, the sum over positions of collateral bounded by twice the
+  position's principal, so a debt-free deposit counts for nothing whether or not a
+  transaction boundary separates it from the burn. The guards test that used to
+  show the slow debt-free deposit succeeding now shows it refused, checks the
+  secured sum stays at the indebted position's 150, and shows the accepted slow
+  path instead: debt minted against that collateral in a later transaction (100
+  IMD at 0.8 securing 50 of principal) lets the same burn through at the quote.
+- Repayment, liquidation and redemption retire the youngest debt first, fees
+  included. The invariant handler's mirror now applies the same rule after every
+  repayment and position burn: the remaining record keeps its principal-time with
+  the conserved age rounded up, and ages out whole when that date would fall
+  outside the window. The base-rate exclusion is unchanged, so the handler still
+  excludes only the principal part of a burn that was fresh before the burn.
+
+Also fixed on the way, from an advisory finding against the shipped tree: the
+`WorkBacking.invariant.t.sol` handler's priced collateral top-up floored to zero
+when a 1-wei borrow met a cleared debt and an ETH/USD answer above two dollars
+per unit, and `depositCollateral(0)` reverted `ZeroAmount`, which
+`fail_on_revert` turned into a failed campaign (replayed deterministically as
+`repay(max); setEthUsd(13856, false); borrow(0)`). The top-up now rounds up, so it
+is never zero and still leaves the position at twice its debt.
+
+Current verification: `forge build` passed; the full default `forge test` passed
+**429 tests, 0 failed, 2 existing optional skips** across 46 suites. The 64
+redemption tests pass without skips; the redemption invariant runs 256 sequences
+of 96 calls and the work-backing invariant 256 sequences of 128 calls, both with
+zero unexpected reverts, under the default seed and seeds 1, 2 and 3. No new
+contract defect was reproduced. This revision changes only one guards test, the
+two invariant handlers and this coverage note.

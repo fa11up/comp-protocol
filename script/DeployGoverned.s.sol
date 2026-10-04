@@ -15,7 +15,10 @@ import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {
     APPROVED_OPERATOR,
     ATTESTATION_RELAYER,
+    ATTESTATION_CHAIN_ID,
+    ATTESTATION_ANSWER_TYPE,
     CHAINLINK_ETH_USD,
+    ORACLE_ATTESTER,
     MARKER_SHARE_BPS,
     MAX_DIVERGENCE_BPS,
     PROTOCOL_BONUS_SHARE_BPS,
@@ -88,7 +91,6 @@ contract DeployGoverned is Script {
         console2.log("MockWorkOracle(in) ", address(vault.oracle()));
 
         verify(vault, parameters, registry, treasury, priceFeed, nhiFeed, spotFeed);
-        verifyBacking(vault, parameters, treasury, priceFeed);
         console2.log("\nAll authority and governance checks passed.");
     }
 
@@ -141,6 +143,15 @@ contract DeployGoverned is Script {
         require(vault.protocolBonusShareBps() == PROTOCOL_BONUS_SHARE_BPS, "params: protocol share drifted");
         require(vault.maxDivergenceBps() == MAX_DIVERGENCE_BPS, "params: divergence drifted");
         require(vault.markerShareBps() == MARKER_SHARE_BPS, "params: marker share drifted");
+        require(parameters.redemptionSpread() == 50, "params: redemption spread is not the shipped default");
+        require(vault.redemptionSpread() == parameters.redemptionSpread(), "vault: wrong redemption spread");
+        require(parameters.MIN_REDEMPTION_SPREAD() == 25, "params: redemption spread floor changed");
+        require(parameters.MAX_REDEMPTION_SPREAD() == 100, "params: redemption spread cap changed");
+        require(vault.redemptionCeilingCR() == vault.minCR() + 50, "vault: redemption ceiling is not derived");
+        require(vault.REDEMPTION_FEE_FLOOR_BPS() == 50, "vault: redemption fee floor changed");
+        require(vault.REDEMPTION_FEE_CAP_BPS() == 500, "vault: redemption fee cap changed");
+        require(vault.redemptionBaseRate() == 0, "vault: redemption base rate opens nonzero");
+        require(vault.lastRedemptionAt() == block.timestamp, "vault: redemption checkpoint is not now");
 
         // Nothing is pending and the delay is what the source says.
         require(parameters.pendingEta() == 0, "params: opens with a pending change");
@@ -148,6 +159,7 @@ contract DeployGoverned is Script {
         require(parameters.governor() == APPROVED_OPERATOR, "params: wrong governor");
         require(registry.governor() == APPROVED_OPERATOR, "registry: wrong governor");
         require(registry.pendingEta() == 0, "registry: opens with a pending change");
+        require(registry.TIMELOCK() == 48 hours, "registry: timelock is not 48h");
 
         // The index opens unaccrued, so the first fee is charged from this block and not earlier.
         require(vault.indexCheckpoint() == 1e18, "vault: index does not open at scale");
@@ -164,8 +176,37 @@ contract DeployGoverned is Script {
         require(address(vault.nhiFeed()) == address(nhiFeed), "vault: wrong nhi feed");
         require(address(vault.spotFeed()) == address(spotFeed), "vault: wrong spot feed");
         require(priceFeed.isStale() && nhiFeed.isStale() && spotFeed.isStale(), "feeds: must open unseeded");
+        require(
+            MockIMD(address(vault.imdToken())).deployer() == APPROVED_OPERATOR,
+            "imd: faucet authority is not the pinned operator"
+        );
+        require(
+            MockWorkOracle(address(vault.oracle())).deployer() == APPROVED_OPERATOR,
+            "oracle: faucet authority is not the pinned operator"
+        );
         require(MockWorkOracle(address(vault.oracle())).vault() == address(vault), "oracle: not bound to vault");
         require(vault.compToken().vault() == address(vault), "comp: not bound to vault");
+        require(vault.compToken().totalSupply() == 0, "comp: nonzero opening supply");
         require(treasury.totalReceived(vault.compToken()) == 0, "treasury: opens with a recorded receipt");
+
+        PriceFeed[3] memory feeds = [priceFeed, PriceFeed(address(nhiFeed)), PriceFeed(address(spotFeed))];
+        for (uint256 i = 0; i < feeds.length; ++i) {
+            require(feeds[i].attester() == ORACLE_ATTESTER, "feed: wrong attester");
+            require(feeds[i].relayer() == ATTESTATION_RELAYER, "feed: relayer is not the pinned one");
+            require(feeds[i].relayer() != address(0), "feed: permissionless relay while questionHash is unbound");
+            // Five reporter assertions used to stand here. The authority is gone, so the check that
+            // replaces them is that nothing answers the fallback's selector on a deployed feed.
+            // staticcall, because verify() is a view: a feed with no such function fails either way.
+            (bool reported,) = address(feeds[i])
+                .staticcall(abi.encodeWithSelector(bytes4(keccak256("report(uint256)")), uint256(1)));
+            require(!reported, "feed: a reporter fallback is reachable");
+            require(feeds[i].attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "feed: wrong answerType");
+            require(feeds[i].attestationChainId() == ATTESTATION_CHAIN_ID, "feed: wrong payload chainId");
+            require(feeds[i].maxAge() == (i == 2 ? SPOT_MAX_AGE : MAX_AGE), "feed: wrong maxAge");
+            require(feeds[i].maxDeviationBps() == MAX_DEVIATION_BPS, "feed: wrong maxDeviationBps");
+            require(feeds[i].MIN_PANEL_SIZE() == MIN_PANEL_SIZE, "feed: panel floor changed");
+            require(feeds[i].MIN_AGREED() == MIN_AGREED, "feed: agreement floor changed");
+        }
+        verifyBacking(vault, parameters, treasury, priceFeed);
     }
 }

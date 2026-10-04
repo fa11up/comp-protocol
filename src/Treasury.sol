@@ -177,6 +177,16 @@ contract Treasury {
     /// answering counts for nothing, which is the promise reserveValueUsd makes, rather than
     /// reverting the vault's ceiling until a delisting matures.
     function reserveValueOf(IERC20 asset) public view returns (uint256) {
+        uint256 price = _reservePrice(asset);
+        if (price == 0) return 0;
+        (uint256 balance, bool held) = _readBalance(asset);
+        if (!held || balance == 0) return 0;
+        ReserveAsset storage entry = _reserve[asset];
+        uint256 marked = Math.mulDiv(balance, price, 10 ** entry.decimals);
+        return Math.mulDiv(marked, entry.haircutBps, BPS);
+    }
+
+    function _reservePrice(IERC20 asset) private view returns (uint256) {
         ReserveAsset storage entry = _reserve[asset];
         if (address(entry.priceFeed) == address(0)) return 0;
         // AUDIT FIX (job da7d5b1c, two mediums): every one of these three reads is a raw staticcall
@@ -190,11 +200,7 @@ contract Treasury {
         (bool stale, bool ok) = _readBool(entry.priceFeed, abi.encodeCall(ISwarmFeed.isStale, ()));
         if (!ok || stale) return 0;
         (uint256 price, bool priced) = _readValue(entry.priceFeed);
-        if (!priced || price == 0) return 0;
-        (uint256 balance, bool held) = _readBalance(asset);
-        if (!held || balance == 0) return 0;
-        uint256 marked = Math.mulDiv(balance, price, 10 ** entry.decimals);
-        return Math.mulDiv(marked, entry.haircutBps, BPS);
+        return priced ? price : 0;
     }
 
     /// @dev A word that is a valid ABI bool is exactly 0 or 1. Anything else is not a bool, and the
@@ -219,8 +225,7 @@ contract Treasury {
     }
 
     function _readBalance(IERC20 asset) private view returns (uint256 balance, bool ok) {
-        (bool success, bytes memory data) =
-            address(asset).staticcall(abi.encodeCall(IERC20.balanceOf, (address(this))));
+        (bool success, bytes memory data) = address(asset).staticcall(abi.encodeCall(IERC20.balanceOf, (address(this))));
         if (!success || data.length < 32) return (0, false);
         return (abi.decode(data, (uint256)), true);
     }
@@ -275,6 +280,19 @@ contract Treasury {
 
     function withdraw(IERC20 token, address to, uint256 amount) external {
         if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
+        _withdraw(token, to, amount);
+    }
+
+    /// @notice Release reserve IMD for a redemption priced and burned by this Treasury's vault.
+    /// @dev Neither the caller nor governance can select another reserve asset through this path.
+    function redeemIMD(address to, uint256 amount) external {
+        if (msg.sender != vault) revert Unauthorized();
+        address token = _linked(abi.encodeWithSignature("imdToken()"));
+        if (token == address(0)) revert InvalidReserveAsset();
+        _withdraw(IERC20(token), to, amount);
+    }
+
+    function _withdraw(IERC20 token, address to, uint256 amount) private {
         if (to == address(0) || to == address(this)) revert InvalidRecipient();
         if (amount == 0) revert ZeroAmount();
         // AUDIT FIX (job c71449d1, low): credit anything that arrived since the last sync BEFORE

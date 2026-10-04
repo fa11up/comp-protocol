@@ -102,9 +102,12 @@ contract WorkBackingHandler is WorkBackingFixture {
         // collateral is worth — it used to touch only the reserve term. A fixed multiple of the debt
         // was enough while one unit of collateral was one unit of account; now the top-up has to be
         // divided by the live price or a cheap ETH leaves the position under minCR.
+        // Rounded UP, so the top-up is never zero: with the debt repaid, a 1-wei borrow and a price
+        // above two dollars per unit, the floored quotient was 0 and depositCollateral(0) reverted
+        // ZeroAmount, which fail_on_revert turned into a failed campaign (reviewer finding, 2026-10-04).
         (uint256 price,) = backedVault.usdPriceFeed().latestValue();
         if (price == 0) return;
-        uint256 topUp = Math.mulDiv((backedVault.debtOf(BORROWER) + amount) * 2, 1e18, price);
+        uint256 topUp = Math.mulDiv((backedVault.debtOf(BORROWER) + amount) * 2, 1e18, price, Math.Rounding.Ceil);
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(BORROWER, topUp);
         vm.startPrank(BORROWER);
