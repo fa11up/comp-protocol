@@ -309,7 +309,32 @@ twelve hours does not move the base rate — and then its own reviewers found th
    actually repaid, so **mint-then-repay round trips age the record down geometrically** — twenty
    pairs every six hours keeps a 1000-COMP position fresh indefinitely, for gas.
 
-### The decision: delete the exclusion, fix the root
+### MEASURED 2026-10-04: both floor bypasses are already closed, and the decision below is WRONG
+
+Before acting on any of it, the two reported reproductions were replayed against the delivered code in
+`test/RedemptionFeePinning.t.sol`. Both pass:
+
+* **one wei every 11h59m** no longer keeps a record fresh, because `mintCOMP` now amount-weights
+  `mintedAt` — a dust mint against a large balance moves the date by about nothing, so the record ages
+  out on schedule;
+* **mint-then-repay round trips** no longer wash the age down, because `_reduceDebt` conserves the
+  remaining principal's principal-time and rounds OLDER.
+
+Those are the auditor's own suggested fixes, applied by the contracts node in its third revision. The
+finding records still read `citation: None` because the reporting node was never re-run, which is not
+evidence either way — and taking it as evidence would have cost real work.
+
+**And the exclusion turns out to be the CAP defence, not a redundant second mitigation.** Measured: a
+redemption against a freshly minted position of one's own leaves the base rate at zero and the fee at
+the 50 bps floor. That is what stops anyone walking the fee to its 500 bps cap for gas and dropping
+the peg floor to 0.95 for every holder. Deleting it, as planned below, would have **opened** the
+cap-pinning attack in order to fix a floor-pinning attack that no longer exists.
+
+So the plan in this section is not executed. It is kept because the reasoning about where a mitigation
+belongs is still right in general, and because it records how close a correct-sounding design decision
+came to removing a working guard on the strength of a stale finding record.
+
+### The decision (NOT EXECUTED — see above): delete the exclusion, fix the root
 
 The reviewers offered "age each mint separately, or drop the exclusion and follow the curve
 unconditionally". Neither is right. The exclusion exists ONLY as a mitigation for the instantaneous-
