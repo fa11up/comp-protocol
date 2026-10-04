@@ -8,7 +8,7 @@ Forked from `identity-md-launches/launch-519-mockimd-pricefeed-nhifeed-cdpvault`
 the fork point is the swarm's own build across launches 458 → 493 → 517 → 519 → 586. Everything above
 it is ours.
 
-**360 tests pass** on a plain `forge test`, plus 14 fork tests against live Sepolia state.
+**362 tests pass** on a plain `forge test`, plus 14 fork tests against live Sepolia state.
 
 ## Contracts
 
@@ -32,9 +32,16 @@ deployment by contract name and has no alias field, so it cannot name one artifa
 
 The manifest is the **`evm_contracts`** kind: application contracts only, with **no token, no liquidity
 pool and no reward distributor**, and `$token` does not resolve in it. Earlier rounds had to launch a
-throwaway ERC-20 alongside the protocol because `evm_project` requires one; that is no longer true, and
-the manifest names four contracts and nothing else. The cap is **eight**, not the four an earlier
-revision of this file claimed. `CompToken`, `Parameters`, `Treasury` and `UsdPriceFeed` are still
+throwaway ERC-20 alongside the protocol because `evm_project` requires one; that is no longer true. The
+cap is **eight**, not the four an earlier revision of this file claimed.
+
+It names five: `MockIMD`, the three feeds, then `ParameterizedVault` referencing them. The collateral is
+a **named artifact** rather than a literal address, and that is the fix for the failure that parked
+round 4. A launch constructs the project on a **bare chain** before it deploys anywhere, so a literal
+Sepolia address has no code there and the vault's constructor refuses it — no instruction to the swarm
+could have changed that. A `$contract:` reference is resolved by the launch *per chain*, so the
+collateral always has code wherever it builds. The vault's faucet sentinel still exists for callers
+with no manifest to deploy a token for them, but the manifest no longer needs it. `CompToken`, `Parameters`, `Treasury` and `UsdPriceFeed` are still
 created inside the vault's constructor, now because that is what makes the deployment come up fully
 linked with no transaction sent afterwards — a manifest makes none — rather than because slots are
 scarce.
@@ -179,7 +186,7 @@ Other things learned the expensive way:
 ## Testing
 
 ```bash
-forge test                                                              # 360, InHouse self-skips
+forge test                                                              # 362, InHouse self-skips
 forge test --match-path test/InHouse.t.sol --fork-url $SEPOLIA_RPC_URL   # 14, live state
 AUDIT_PROOFS=true forge test --match-path 'test/audit/*'                 # auditor proofs
 ```
