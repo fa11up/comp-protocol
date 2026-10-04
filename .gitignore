@@ -7,3 +7,11 @@ oracle/relayer.config.js
 # The keeper moved to its own private repository (fa11up/imd-keeper). If a copy is ever cloned
 # in here for convenience, it must not be committed back.
 keeper/
+
+# The interface is built under site/ by a swarm job whose writable scope is that directory only.
+# Its dependency tree and build output must not be committed: node_modules is ignored for oracle/
+# above but was not for anything else, so a site job would have tried to commit tens of thousands
+# of files or failed trying.
+site/node_modules/
+site/dist/
+site/.vite/
