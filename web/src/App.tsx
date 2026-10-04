@@ -7,7 +7,7 @@ import {
 } from "viem";
 import { loadConfig, switchChain, wallet, type Runtime } from "./config";
 import { snapshot, type Snapshot, feedsReady } from "./state";
-import { Pane, type Actions, type Request, AddressLink } from "./actions";
+import { Pane, Tabs, type Actions, type Request, AddressLink } from "./actions";
 import { Redemption } from "./Redemption";
 import { Position, Work, Oracle, Keeper, Backing, Governance } from "./Panes";
 import { message, fmt } from "./math";
@@ -71,6 +71,7 @@ function Terminal({ r }: { r: Runtime }) {
   const [now, setNow] = useState(BigInt(Math.floor(Date.now() / 1000)));
   const [mobilePane, setMobilePane] = useState("loans");
   const [desk, setDesk] = useState("position");
+  const [view, setView] = useState("loans");
   const charts = useCharts(r, s);
   const dialog = useRef<HTMLDialogElement>(null);
   const locked = useRef(false);
@@ -316,14 +317,14 @@ function Terminal({ r }: { r: Runtime }) {
     ["loans", "Loan book"],
     ["oracle", "Oracle"],
     ["backing", "Backing"],
-  ];
+  ] as const;
   const deskTabs = [
     ["position", "Position"],
     ["redemption", "Redeem"],
     ["work", "Work"],
     ["keeper", "Keeper"],
     ["governance", "Govern"],
-  ];
+  ] as const;
   return (
     <div className="terminal">
       <a href="#terminal-main" className="skip">
@@ -379,6 +380,7 @@ function Terminal({ r }: { r: Runtime }) {
               setMobilePane(e.target.value);
               if (deskTabs.some(([id]) => id === e.target.value))
                 setDesk(e.target.value);
+              else setView(e.target.value);
             }}
           >
             {[...monitor.slice(0, 1), ...deskTabs, ...monitor.slice(1)].map(
@@ -396,52 +398,52 @@ function Terminal({ r }: { r: Runtime }) {
         className="workspace"
         data-mobile-pane={mobilePane}
         data-desk={desk}
+        data-monitor={view}
         tabIndex={-1}
       >
         <div className="monitor">
-          <Pane id="loans" index="00" title="Loan book" tag="Live risk bands">
+          <Tabs
+            label="Monitor"
+            tabs={monitor}
+            value={view}
+            onChange={(id) => {
+              setView(id);
+              setMobilePane(id);
+            }}
+          />
+          <Pane
+            monitor
+            id="loans"
+            index="00"
+            title="Loan book"
+            tag="Live risk bands"
+          >
             <LoanBook charts={charts} available={!!s} />
           </Pane>
-          <div className="monitor-row">
-            <Pane id="oracle" index="01" title="Oracle" tag="Feeds">
-              <Oracle r={r} s={s} now={now} charts={charts} />
-            </Pane>
-            <Pane id="backing" index="02" title="Backing" tag="Treasury">
-              <Backing r={r} s={s} />
-            </Pane>
-          </div>
+          <Pane monitor id="oracle" index="01" title="Oracle" tag="Feeds">
+            <Oracle r={r} s={s} now={now} charts={charts} />
+          </Pane>
+          <Pane
+            monitor
+            columns
+            id="backing"
+            index="02"
+            title="Backing"
+            tag="Treasury"
+          >
+            <Backing r={r} s={s} />
+          </Pane>
         </div>
         <div className="desk">
-          <div className="desk-tabs" role="tablist" aria-label="Desk">
-            {deskTabs.map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                id={`tab-${id}`}
-                aria-selected={desk === id}
-                aria-controls={`${id}-panel`}
-                tabIndex={desk === id ? 0 : -1}
-                onClick={() => {
-                  setDesk(id);
-                  setMobilePane(id);
-                }}
-                onKeyDown={(e) => {
-                  const i = deskTabs.findIndex(([x]) => x === id);
-                  const step =
-                    e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-                  if (!step) return;
-                  const next =
-                    deskTabs[(i + step + deskTabs.length) % deskTabs.length][0];
-                  setDesk(next);
-                  setMobilePane(next);
-                  document.getElementById(`tab-${next}`)?.focus();
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <Tabs
+            label="Desk"
+            tabs={deskTabs}
+            value={desk}
+            onChange={(id) => {
+              setDesk(id);
+              setMobilePane(id);
+            }}
+          />
           <Pane
             desk
             id="position"

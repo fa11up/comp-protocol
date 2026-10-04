@@ -127,6 +127,7 @@ export function LoanBook({
   const maxDebt = positions.reduce((m, p) => (p.debt > m ? p.debt : m), 1n);
   // Pack labels in separate lanes without changing the ratio coordinate.
   const lanes: number[] = [];
+  let marksDrawn = 0;
   const marks = [...positions]
     .sort((a, b) =>
       a.cr < b.cr ? -1 : a.cr > b.cr ? 1 : a.owner.localeCompare(b.owner),
@@ -135,12 +136,15 @@ export function LoanBook({
       const x = at(p.cr),
         px = (x / 100) * width;
       let lane = lanes.findIndex((end) => end + 12 < px - 64);
-      if (lane < 0) lane = lanes.length;
-      lanes[lane] = px + 64;
+      // Three label lanes at most, so the strip keeps a fixed height; the list names the rest.
+      const labelled = lane >= 0 || lanes.length < 3;
+      if (lane < 0) lane = labelled ? lanes.length : marksDrawn++ % 3;
+      if (labelled) lanes[lane] = px + 64;
       return {
         ...p,
         x,
         lane,
+        labelled,
         radius: 12 * Math.sqrt(Number(p.debt) / Number(maxDebt)),
       };
     });
@@ -148,9 +152,12 @@ export function LoanBook({
   return (
     <>
       <div className="book-heading">
-        <p>
-          Collateral ratio{" "}
-          <span className="muted">/ circle area = accrued COMP debt</span>
+        <p className="figure-head">
+          Collateral ratio
+          <Info
+            label="Loan book"
+            text="Every open position on a collateral-ratio axis. Circle area is accrued COMP debt. The bands move with the live minCR and redemption ceiling."
+          />
         </p>
         <span className="muted">
           {valid
@@ -242,94 +249,183 @@ export function LoanBook({
                     className="loan-dot"
                     style={{ width: p.radius * 2, height: p.radius * 2 }}
                   />
-                  <span className="loan-label">
-                    {p.cr === maxUint256 && "→ "}
-                    {positionName(p.owner)}
-                  </span>
+                  {p.labelled && (
+                    <span className="loan-label">
+                      {p.cr === maxUint256 && "→ "}
+                      {positionName(p.owner)}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
           </div>
-          {positions.length === 0 && (
-            <p className="micro">
-              All discovered owners have zero debt at block{" "}
-              {s!.block.toString()}. Deposit history was read successfully.
-            </p>
-          )}
-          {positions
-            .filter((p) => p.owner === selected)
-            .map((p) => (
-              <p className="selected-loan" key={p.owner}>
-                {positionName(p.owner)} · <span>{p.owner}</span> · {ratio(p.cr)}{" "}
-                · {fmt(p.debt)} COMP · {stateOf(p.cr, min!, ceiling!)} ·{" "}
-                {liquidation(p, s)}
-              </p>
-            ))}
-          <details className="loan-ledger">
-            <summary>
-              Position ledger & read coverage ({positions.length})
-            </summary>
-            <p className="micro">
-              {book.data!.history.source} deposit history from deployment block{" "}
-              {book.data!.history.from.toString()} through{" "}
-              {book.data!.history.through.toString()}. Every discovered owner
-              was read at the displayed block. Names are deterministic address
-              labels and may repeat; addresses remain public. Select a mark to
-              read its address on touch.
-            </p>
-            <div className="table-scroll">
-              <table>
-                <caption>Open positions · accrued debt</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Position / public address</th>
-                    <th scope="col">Ratio</th>
-                    <th scope="col">COMP</th>
-                    <th scope="col">Zone</th>
-                    <th scope="col">Liquidates at</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.map((p) => (
-                    <tr key={p.owner}>
-                      <td>
-                        {positionName(p.owner)}
-                        <br />
-                        <span>{p.owner}</span>
-                      </td>
-                      <td>{ratio(p.cr)}</td>
-                      <td>{fmt(p.debt)}</td>
-                      <td>{stateOf(p.cr, min!, ceiling!)}</td>
-                      <td>
-                        {(() => {
-                          const at = liquidationPrice(
-                            p.collateral,
-                            p.debt,
-                            min!,
-                          );
-                          return at ? (
-                            <>
-                              ${fmt(at, 18, 2)}
-                              <br />
-                              <span>{cushion(s!.feeds.USD?.value, at)}</span>
-                            </>
-                          ) : (
-                            "—"
-                          );
-                        })()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
+          <LoanFeed
+            positions={positions}
+            s={s!}
+            min={min!}
+            ceiling={ceiling!}
+            selected={selected}
+            onSelect={setSelected}
+            coverage={book.data!.history}
+          />
         </>
       )}
     </>
   );
 }
 
+type Zone = "Liquidatable" | "Redeemable" | "Safe";
+function LoanFeed({
+  positions,
+  s,
+  min,
+  ceiling,
+  selected,
+  onSelect,
+  coverage,
+}: {
+  positions: Book["positions"];
+  s: Snapshot;
+  min: bigint;
+  ceiling: bigint;
+  selected?: string;
+  onSelect: (owner?: string) => void;
+  coverage: Book["history"];
+}) {
+  const [query, setQuery] = useState("");
+  const [zone, setZone] = useState<"all" | Zone>("all");
+  const [order, setOrder] = useState<"ratio" | "debt">("ratio");
+  const list = useRef<HTMLUListElement>(null);
+  const q = query.trim().toLowerCase();
+  const shown = positions
+    .filter(
+      (p) =>
+        (zone === "all" || stateOf(p.cr, min, ceiling) === zone) &&
+        (!q ||
+          p.owner.toLowerCase().includes(q) ||
+          positionName(p.owner).toLowerCase().includes(q)),
+    )
+    .sort((a, b) =>
+      order === "debt"
+        ? a.debt > b.debt
+          ? -1
+          : a.debt < b.debt
+            ? 1
+            : 0
+        : a.cr < b.cr
+          ? -1
+          : a.cr > b.cr
+            ? 1
+            : 0,
+    );
+  useEffect(() => {
+    if (!selected) return;
+    list.current
+      ?.querySelector(`[data-owner="${selected}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+  return (
+    <div className="loan-feed-wrap">
+      <div className="loan-tools">
+        <input
+          type="search"
+          id="loan-search"
+          aria-label="Search positions by name or address"
+          placeholder="Search name or 0x…"
+          autoComplete="off"
+          spellCheck={false}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <select
+          id="loan-zone"
+          aria-label="Filter by zone"
+          value={zone}
+          onChange={(e) => setZone(e.target.value as "all" | Zone)}
+        >
+          <option value="all">All zones</option>
+          <option value="Liquidatable">Liquidatable</option>
+          <option value="Redeemable">Redeemable</option>
+          <option value="Safe">Safe</option>
+        </select>
+        <select
+          id="loan-order"
+          aria-label="Sort positions"
+          value={order}
+          onChange={(e) => setOrder(e.target.value as "ratio" | "debt")}
+        >
+          <option value="ratio">Ratio ↑</option>
+          <option value="debt">Debt ↓</option>
+        </select>
+      </div>
+      <div className="loan-columns" aria-hidden="true">
+        <span>Position</span>
+        <span>Ratio</span>
+        <span>Debt</span>
+        <span>Liquidates at</span>
+      </div>
+      <ul className="loan-feed" ref={list} aria-label="Open positions">
+        {shown.map((p) => {
+          const at = liquidationPrice(p.collateral, p.debt, min);
+          const zoneOf = stateOf(p.cr, min, ceiling);
+          return (
+            <li
+              key={p.owner}
+              data-owner={p.owner}
+              className={selected === p.owner ? "selected-loan" : undefined}
+            >
+              <button
+                type="button"
+                aria-pressed={selected === p.owner}
+                onClick={() =>
+                  onSelect(selected === p.owner ? undefined : p.owner)
+                }
+              >
+                <span className="loan-who">
+                  <b>{positionName(p.owner)}</b>
+                  <span className="loan-address" title={p.owner}>
+                    {p.owner}
+                  </span>
+                </span>
+                <span
+                  className={
+                    zoneOf === "Liquidatable"
+                      ? "danger-text"
+                      : zoneOf === "Safe"
+                        ? "healthy-text"
+                        : undefined
+                  }
+                >
+                  {ratio(p.cr)}
+                </span>
+                <span>{fmt(p.debt, 18, 2)}</span>
+                <span>
+                  {at ? `$${fmt(at, 18, 2)}` : "—"}
+                  <small>{at ? cushion(s.feeds.USD?.value, at) : ""}</small>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+        {shown.length === 0 && (
+          <li className="loan-empty">
+            {positions.length ? "No positions match" : "No open positions"}
+          </li>
+        )}
+      </ul>
+      <div className="loan-coverage">
+        <span>
+          {coverage.source} · blocks {coverage.from.toString()}–
+          {coverage.through.toString()} · {shown.length}/{positions.length}
+        </span>
+        <Info
+          label="Read coverage"
+          text="Owners are discovered from the vault's deposit logs over this block range, then each position is read at the displayed block. Names are deterministic labels for public addresses and can repeat."
+        />
+      </div>
+    </div>
+  );
+}
 function Unavailable({ children }: { children: string }) {
   return <p className="micro chart-unavailable">{children}</p>;
 }
@@ -427,88 +523,6 @@ export function Sparkline({
           ))}
         </ul>
       </details>
-    </figure>
-  );
-}
-
-export function DivergenceChart({ s }: { s?: Snapshot }) {
-  const primary = s?.feeds.PriceFeed,
-    spot = s?.feeds.SpotFeed;
-  const bps = s?.v.maxDivergenceBps as bigint | undefined;
-  if (!primary?.value || !spot || bps === undefined)
-    return <Unavailable>Could not read the divergence band.</Unavailable>;
-  const divergence = (number(spot.value) / number(primary.value) - 1) * 100;
-  const limit = Number(bps) / 100;
-  const span = Math.max(limit * 1.4, Math.abs(divergence) * 1.15, 1);
-  const at = (v: number) => 150 + (v / span) * 140;
-  const breached = Math.abs(divergence) > limit;
-  return (
-    <figure className="mini-chart divergence-chart">
-      <figcaption className="figure-head">
-        Primary / spot · ±{limit}%
-        <Info
-          label="Divergence band"
-          text="◆ primary at the centre, ● spot. The band is the allowed divergence; outside it, price actions pause."
-        />
-      </figcaption>
-      <svg
-        viewBox="0 0 300 72"
-        role="img"
-        aria-label={`Primary ${fmt(primary.value, 18, 8)} ETH per IMD; spot ${fmt(spot.value, 18, 8)}; divergence ${divergence.toFixed(2)} percent; limit ${limit} percent${breached ? ", outside band" : ", inside band"}`}
-      >
-        <rect
-          className="chart-band"
-          x={at(-limit)}
-          y="18"
-          width={at(limit) - at(-limit)}
-          height="28"
-        />
-        <line
-          className="limit-line"
-          x1={at(-limit)}
-          x2={at(-limit)}
-          y1="14"
-          y2="50"
-        />
-        <line
-          className="limit-line"
-          x1={at(limit)}
-          x2={at(limit)}
-          y1="14"
-          y2="50"
-        />
-        <path className="primary-price" d="M150 20 L156 26 L150 32 L144 26 Z" />
-        <circle
-          className={breached ? "spot-price breached" : "spot-price"}
-          cx={at(divergence)}
-          cy="39"
-          r="4"
-        />
-        <text className="chart-text" x="150" y="11" textAnchor="middle">
-          ◆ primary
-        </text>
-        <text
-          className="chart-text"
-          x={Math.max(40, Math.min(260, at(divergence)))}
-          y="65"
-          textAnchor="middle"
-        >
-          ● spot {divergence > 0 ? "+" : ""}
-          {divergence.toFixed(2)}%
-        </text>
-      </svg>
-      <div className="row">
-        <span>Headroom</span>
-        <strong>
-          {primary.stale || spot.stale ? (
-            <span className="danger-text">Stale</span>
-          ) : breached ? (
-            <span className="danger-text">Breached</span>
-          ) : (
-            `${Math.max(0, limit - Math.abs(divergence)).toFixed(2)} pts`
-          )}
-        </strong>
-      </div>
     </figure>
   );
 }

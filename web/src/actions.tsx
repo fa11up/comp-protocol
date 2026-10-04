@@ -188,48 +188,81 @@ export function Pane({
   title,
   tag,
   desk = false,
+  monitor = false,
+  columns = desk,
   children,
 }: {
   id: string;
   index: string;
   title: string;
   tag?: string;
-  /** A desk pane is a tab panel laid out to fit without scrolling. */
+  /** A desk pane is a tab panel of actions, laid out to fit without scrolling. */
   desk?: boolean;
+  /** A monitor pane is a tab panel of reads, also laid out to fit. */
+  monitor?: boolean;
+  /** Lay the body out as two columns. */
+  columns?: boolean;
   children: ReactNode;
 }) {
+  const tabbed = desk || monitor;
   return (
     <section
-      className={`pane pane-${id}${desk ? " desk-pane" : ""}`}
+      className={`pane pane-${id}${desk ? " desk-pane" : ""}${monitor ? " monitor-pane" : ""}`}
       aria-labelledby={`${id}-heading`}
-      id={desk ? `${id}-panel` : undefined}
-      role={desk ? "tabpanel" : undefined}
+      id={tabbed ? `${id}-panel` : undefined}
+      role={tabbed ? "tabpanel" : undefined}
     >
       <header className="pane-head">
         <h2 id={`${id}-heading`}>
           <span>{index}</span> {title}
         </h2>
-        <span className="tag">
-          {tag}
-          {!desk && (
-            <span
-              className="scroll-cue"
-              aria-label="Scroll inside pane for more"
-            >
-              {" "}
-              ↕
-            </span>
-          )}
-        </span>
+        <span className="tag">{tag}</span>
       </header>
       <div
-        className={desk ? "pane-body desk-body" : "pane-body"}
-        tabIndex={desk ? undefined : 0}
-        aria-label={desk ? undefined : `${title} pane`}
+        className={`pane-body${columns ? " desk-body" : ""}${monitor ? " monitor-body" : ""}`}
       >
         {children}
       </div>
     </section>
+  );
+}
+/** A row of tabs; arrow keys move between them. */
+export function Tabs({
+  label,
+  tabs,
+  value,
+  onChange,
+}: {
+  label: string;
+  tabs: readonly (readonly [string, string])[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="desk-tabs" role="tablist" aria-label={label}>
+      {tabs.map(([id, text], i) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          id={`tab-${id}`}
+          aria-selected={value === id}
+          aria-controls={`${id}-panel`}
+          tabIndex={value === id ? 0 : -1}
+          onClick={() => onChange(id)}
+          onKeyDown={(e) => {
+            const step =
+              e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+            if (!step) return;
+            const next = tabs[(i + step + tabs.length) % tabs.length][0];
+            onChange(next);
+            document.getElementById(`tab-${next}`)?.focus();
+          }}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
   );
 }
 /** One of several alternative actions; only the chosen one is drawn, so the column never grows. */

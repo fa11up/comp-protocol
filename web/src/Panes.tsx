@@ -1,11 +1,5 @@
 import { useState } from "react";
-import {
-  WorkChart,
-  SupplyChart,
-  DivergenceChart,
-  Sparkline,
-  type ChartData,
-} from "./Charts";
+import { WorkChart, SupplyChart, Sparkline, type ChartData } from "./Charts";
 import { Ticker } from "./motion";
 import { type Runtime } from "./config";
 import { type Snapshot, type Question, read, feedsReady } from "./state";
@@ -399,6 +393,7 @@ export function Oracle({
   now: bigint;
   charts: ChartData;
 }) {
+  const [open, setOpen] = useState<string>();
   const f = s?.feeds || {};
   const primary = f.PriceFeed?.value,
     spot = f.SpotFeed?.value;
@@ -406,14 +401,29 @@ export function Oracle({
     primary && spot !== undefined
       ? ((primary > spot ? primary - spot : spot - primary) * 10000n) / primary
       : undefined;
+  const allowed = s?.v.maxDivergenceBps as bigint | undefined;
+  const stale = !!(f.PriceFeed?.stale || f.SpotFeed?.stale);
+  const contract = (n: string) =>
+    r.config.contracts.find((c) => c.name === n)?.address ??
+    (n === "USD" ? s?.targets.usdPriceFeed.address : undefined);
   return (
     <>
-      <DivergenceChart s={s} />
       <Row
         label="Divergence / allowed"
-        info="Distance between primary and spot, against the vault's maxDivergenceBps. Beyond it, borrowing, marking, liquidation and redemption pause."
+        info="Distance between the primary and spot IMD / ETH feeds, against the vault's maxDivergenceBps. Beyond it, borrowing, marking, liquidation and redemption pause."
       >
-        {percent(divergence)} / {percent(s?.v.maxDivergenceBps)}
+        {percent(divergence)} / {percent(allowed)}
+      </Row>
+      <Row label="Headroom">
+        {divergence === undefined || allowed === undefined ? (
+          "—"
+        ) : stale ? (
+          <span className="danger-text">Stale</span>
+        ) : divergence > allowed ? (
+          <span className="danger-text">Breached</span>
+        ) : (
+          percent(allowed - divergence)
+        )}
       </Row>
       <Row
         label="Price actions"
@@ -427,41 +437,71 @@ export function Oracle({
           <span className="danger-text">Paused</span>
         )}
       </Row>
-      {["PriceFeed", "NhiFeed", "SpotFeed", "USD"].map((n) => (
-        <div className="feed" key={n}>
-          <Row label={feedNames[n][0]} info={feedNames[n][1]}>
-            {fmt(f[n]?.value, 18, 8)}
-          </Row>
-          <Row label="Updated">
-            {!f[n] ? (
-              "—"
-            ) : (
-              <span className={f[n].stale ? "danger-text" : undefined}>
-                {f[n].stale ? "Stale · " : ""}
-                {age(f[n].updated, now)}
-              </span>
-            )}
-          </Row>
-          <Row label="Max age">{f[n] ? `${f[n].maxAge}s` : "—"}</Row>
-          {n !== "USD" && <QuestionState q={s?.questions[n]} />}
-          {n !== "USD" && (
-            <Sparkline feed={charts.feeds[n]} live={f[n]} now={now} label={n} />
-          )}
-        </div>
-      ))}
-      <details>
-        <summary>Feed contracts</summary>
-        {r.config.contracts
-          .filter((c) => c.name.includes("Feed"))
-          .map((c) => (
-            <AddressLink
-              key={c.name}
-              value={c.address}
-              explorer={r.config.network.explorer}
-              label={c.name}
-            />
-          ))}
-      </details>
+      <div className="section-label">Feeds</div>
+      <ul className="feed-list">
+        {["PriceFeed", "NhiFeed", "SpotFeed", "USD"].map((n) => {
+          const expanded = open === n;
+          return (
+            <li key={n} className={expanded ? "is-open" : undefined}>
+              <button
+                type="button"
+                className="feed-toggle"
+                aria-expanded={expanded}
+                aria-controls={`feed-${n}`}
+                onClick={() => setOpen(expanded ? undefined : n)}
+              >
+                <span className="feed-name">
+                  <span
+                    className={`feed-state ${!f[n] ? "" : f[n].stale ? "is-stale" : "is-fresh"}`}
+                    aria-hidden="true"
+                  />
+                  {feedNames[n][0]}
+                </span>
+                <b>{fmt(f[n]?.value, 18, 8)}</b>
+                <span className="feed-caret" aria-hidden="true">
+                  {expanded ? "−" : "+"}
+                </span>
+              </button>
+              {expanded && (
+                <div className="feed-detail" id={`feed-${n}`}>
+                  <div>
+                    <Row label="About" info={feedNames[n][1]}>
+                      {n === "USD" ? "Derived" : "Attested"}
+                    </Row>
+                    <Row label="Updated">
+                      {!f[n] ? (
+                        "—"
+                      ) : (
+                        <span
+                          className={f[n].stale ? "danger-text" : undefined}
+                        >
+                          {f[n].stale ? "Stale · " : ""}
+                          {age(f[n].updated, now)}
+                        </span>
+                      )}
+                    </Row>
+                    <Row label="Max age">{f[n] ? `${f[n].maxAge}s` : "—"}</Row>
+                    {n !== "USD" && <QuestionState q={s?.questions[n]} />}
+                    <AddressLink
+                      value={contract(n)}
+                      explorer={r.config.network.explorer}
+                      label={n === "USD" ? "UsdPriceFeed" : n}
+                    />
+                  </div>
+                  {n !== "USD" && (
+                    <Sparkline
+                      feed={charts.feeds[n]}
+                      live={f[n]}
+                      now={now}
+                      label={n}
+                    />
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </>
   );
 }
@@ -480,6 +520,7 @@ export function Keeper({
   const [position, setPosition] = useState<any>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState("inspect");
   const borrower = (f: Failure) => {
     if (!position || !s) return undefined;
     const graceEnds = position.mark[0] + position.mark[1];
@@ -499,251 +540,302 @@ export function Keeper({
       : undefined;
   return (
     <>
-      <Col label="Inspect">
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setLoading(true);
-            setError("");
-            setPosition(undefined);
-            try {
-              if (!s) throw Error("Wait for state to load.");
-              const a = address(owner);
-              const [cr, debt, mark, badDebt, held] = await Promise.all(
-                [
-                  "collateralRatio",
-                  "debtOf",
-                  "liquidationMarks",
-                  "badDebtOf",
-                  "positions",
-                ].map((fn) => read(r, s.targets.ParameterizedVault, fn, [a])),
-              );
-              setPosition({
-                cr,
-                debt,
-                mark,
-                badDebt,
-                owner: a,
-                collateral: held[0],
-              });
-            } catch (e) {
-              setError(message(e));
-            } finally {
-              setLoading(false);
-            }
-          }}
-        >
-          <label>
-            Borrower address
-            <input
-              required
-              value={owner}
-              onChange={(e) => {
-                setOwner(e.target.value);
+      <div className="desk-span">
+        <Choice
+          label="Keeper mode"
+          value={mode}
+          onChange={setMode}
+          options={[
+            ["inspect", "Inspect"],
+            ["act", "Act"],
+          ]}
+        />
+      </div>
+      {mode === "inspect" ? (
+        <>
+          <Col label="Borrower">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                setError("");
                 setPosition(undefined);
+                try {
+                  if (!s) throw Error("Wait for state to load.");
+                  const a = address(owner);
+                  const [cr, debt, mark, badDebt, held] = await Promise.all(
+                    [
+                      "collateralRatio",
+                      "debtOf",
+                      "liquidationMarks",
+                      "badDebtOf",
+                      "positions",
+                    ].map((fn) =>
+                      read(r, s.targets.ParameterizedVault, fn, [a]),
+                    ),
+                  );
+                  setPosition({
+                    cr,
+                    debt,
+                    mark,
+                    badDebt,
+                    owner: a,
+                    collateral: held[0],
+                  });
+                } catch (e) {
+                  setError(message(e));
+                } finally {
+                  setLoading(false);
+                }
               }}
-              spellCheck={false}
-              placeholder="0x…"
-            />
-          </label>
-          <button type="submit" disabled={!s || loading}>
-            {loading ? "Inspecting…" : "Inspect position"}
-          </button>
-        </form>
-        <p role="status" className="micro">
-          {error}
-        </p>
-        {position ? (
-          <>
-            <Row label="Collateral ratio">{ratio(position.cr)}</Row>
-            <Row label="Collateral">{fmt(position.collateral)} IMD</Row>
-            <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
-            {liq ? (
+            >
+              <label>
+                Borrower address
+                <input
+                  required
+                  value={owner}
+                  onChange={(e) => {
+                    setOwner(e.target.value);
+                    setPosition(undefined);
+                  }}
+                  spellCheck={false}
+                  placeholder="0x…"
+                />
+              </label>
+              <button type="submit" disabled={!s || loading}>
+                {loading ? "Inspecting…" : "Inspect position"}
+              </button>
+            </form>
+            <p role="status" className="micro">
+              {error}
+            </p>
+          </Col>
+          <Col label="Position">
+            {position ? (
               <>
-                <Row label="Liquidation price">${fmt(liq)} / IMD</Row>
-                <p className="micro">
-                  IMD is ${fmt(s?.feeds.USD?.value)} now,{" "}
-                  {cushion(s?.feeds.USD?.value, liq)}.
-                </p>
+                <Row label="Collateral ratio">{ratio(position.cr)}</Row>
+                <Row label="Collateral">{fmt(position.collateral)} IMD</Row>
+                <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
+                {liq ? (
+                  <>
+                    <Row label="Liquidation price">${fmt(liq)} / IMD</Row>
+                    <p className="micro">
+                      IMD is ${fmt(s?.feeds.USD?.value)} now,{" "}
+                      {cushion(s?.feeds.USD?.value, liq)}.
+                    </p>
+                  </>
+                ) : null}
+                <Row label="Bad debt estimate">
+                  {fmt(position.badDebt)} COMP
+                </Row>
+                <Row label="Mark">
+                  {position.mark[2]
+                    ? now < position.mark[0] + position.mark[1]
+                      ? `Grace ${(position.mark[0] + position.mark[1] - now).toString()}s`
+                      : "Active · liquidatable"
+                    : "None"}
+                </Row>
               </>
-            ) : null}
-            <Row label="Bad debt estimate">{fmt(position.badDebt)} COMP</Row>
-            <Row label="Mark">
-              {position.mark[2]
-                ? now < position.mark[0] + position.mark[1]
-                  ? `Grace ${(position.mark[0] + position.mark[1] - now).toString()}s`
-                  : "Active · liquidatable"
-                : "None"}
-            </Row>
-          </>
-        ) : (
-          <p className="micro">
-            Inspect a borrower, record an unhealthy position, then liquidate
-            inside its grace and execution window. Owners are listed in the loan
-            book.
-          </p>
-        )}
-      </Col>
-      <Col label="Act">
-        {position && (
-          <p className="micro keeper-owner">
-            Acting on {positionName(position.owner)}: {position.owner}
-          </p>
-        )}
-        <div className="button-row">
-          <Action
-            id="mark"
-            label="Review mark"
-            actions={actions}
-            disabled={!feedsReady(s) || !position || position.cr >= s?.v.minCR}
-            reason="Inspect an unhealthy borrower with fresh feeds."
-            request={() => ({
-              target: s!.targets.ParameterizedVault,
-              fn: "markUnderwater",
-              args: [address(owner)],
-              summary: `Mark ${address(owner)} as underwater. The on-chain grace snapshot governs liquidation.`,
-              explain: borrower,
-            })}
-          />
-          <Action
-            id="clear-mark"
-            label="Review clear mark"
-            actions={actions}
-            disabled={!position?.mark[2]}
-            reason="Inspect a marked position."
-            request={() => ({
-              target: s!.targets.ParameterizedVault,
-              fn: "clearRecoveredMark",
-              args: [address(owner)],
-              summary: `Clear the mark only if ${address(owner)} has recovered.`,
-              explain: (f) =>
-                f.name === "UnderwaterPosition" && position
-                  ? `${position.owner} is still at ${ratio(position.cr)}, below minCR ${ratio(s?.v.minCR)}. A mark clears only once the position recovers.`
-                  : undefined,
-            })}
-          />
-        </div>
-        <ActionForm
-          id="liquidate"
-          label="Review liquidation"
-          actions={actions}
-          target={s?.targets.ParameterizedVault}
-          fn="liquidate"
-          fields={[amt("Repay borrower COMP")]}
-          mapArgs={(a) => [address(owner), ...a]}
-          summary="Burn your COMP to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares."
-          explain={borrower}
-          disabled={
-            !feedsReady(s) ||
-            !position?.mark[2] ||
-            now < position.mark[0] + position.mark[1] ||
-            now >
-              position.mark[0] +
-                position.mark[1] +
-                (s?.v.liquidationWindow ?? 0n)
-          }
-          reason="An active mark, elapsed grace, open execution window and fresh feeds are required."
-        />
-        <ActionForm
-          id="mark-for"
-          label="Review beneficiary mark"
-          actions={actions}
-          target={s?.targets.ParameterizedVault}
-          fn="markUnderwaterFor"
-          fields={[addr("Marker beneficiary")]}
-          mapArgs={(a) => [address(owner), ...a]}
-          summary="Mark for another beneficiary of the marker reward."
-          explain={borrower}
-          disabled={!feedsReady(s) || !position}
-          reason="Inspect a borrower and wait for fresh feeds."
-        />
-      </Col>
+            ) : (
+              <p className="micro">
+                Inspect a borrower, record an unhealthy position, then liquidate
+                inside its grace and execution window. Owners are listed in the
+                loan book.
+              </p>
+            )}
+          </Col>
+        </>
+      ) : (
+        <>
+          <Col label="Target">
+            {position ? (
+              <>
+                {position && (
+                  <p className="micro keeper-owner">
+                    Acting on {positionName(position.owner)}: {position.owner}
+                  </p>
+                )}
+                <Row label="Collateral ratio">{ratio(position.cr)}</Row>
+                <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
+                {liq ? (
+                  <Row label="Liquidation price">${fmt(liq)} / IMD</Row>
+                ) : null}
+                <Row label="Mark">
+                  {position.mark[2]
+                    ? now < position.mark[0] + position.mark[1]
+                      ? `Grace ${(position.mark[0] + position.mark[1] - now).toString()}s`
+                      : "Active · liquidatable"
+                    : "None"}
+                </Row>
+              </>
+            ) : (
+              <p className="micro">Inspect a borrower first.</p>
+            )}
+          </Col>
+          <Col label="Act">
+            <div className="button-row">
+              <Action
+                id="mark"
+                label="Review mark"
+                actions={actions}
+                disabled={
+                  !feedsReady(s) || !position || position.cr >= s?.v.minCR
+                }
+                reason="Inspect an unhealthy borrower with fresh feeds."
+                request={() => ({
+                  target: s!.targets.ParameterizedVault,
+                  fn: "markUnderwater",
+                  args: [address(owner)],
+                  summary: `Mark ${address(owner)} as underwater. The on-chain grace snapshot governs liquidation.`,
+                  explain: borrower,
+                })}
+              />
+              <Action
+                id="clear-mark"
+                label="Review clear mark"
+                actions={actions}
+                disabled={!position?.mark[2]}
+                reason="Inspect a marked position."
+                request={() => ({
+                  target: s!.targets.ParameterizedVault,
+                  fn: "clearRecoveredMark",
+                  args: [address(owner)],
+                  summary: `Clear the mark only if ${address(owner)} has recovered.`,
+                  explain: (f) =>
+                    f.name === "UnderwaterPosition" && position
+                      ? `${position.owner} is still at ${ratio(position.cr)}, below minCR ${ratio(s?.v.minCR)}. A mark clears only once the position recovers.`
+                      : undefined,
+                })}
+              />
+            </div>
+            <ActionForm
+              id="liquidate"
+              label="Review liquidation"
+              actions={actions}
+              target={s?.targets.ParameterizedVault}
+              fn="liquidate"
+              fields={[amt("Repay borrower COMP")]}
+              mapArgs={(a) => [address(owner), ...a]}
+              summary="Burn your COMP to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares."
+              explain={borrower}
+              disabled={
+                !feedsReady(s) ||
+                !position?.mark[2] ||
+                now < position.mark[0] + position.mark[1] ||
+                now >
+                  position.mark[0] +
+                    position.mark[1] +
+                    (s?.v.liquidationWindow ?? 0n)
+              }
+              reason="An active mark, elapsed grace, open execution window and fresh feeds are required."
+            />
+            <ActionForm
+              id="mark-for"
+              label="Review beneficiary mark"
+              actions={actions}
+              target={s?.targets.ParameterizedVault}
+              fn="markUnderwaterFor"
+              fields={[addr("Marker beneficiary")]}
+              mapArgs={(a) => [address(owner), ...a]}
+              summary="Mark for another beneficiary of the marker reward."
+              explain={borrower}
+              disabled={!feedsReady(s) || !position}
+              reason="Inspect a borrower and wait for fresh feeds."
+            />
+          </Col>
+        </>
+      )}
     </>
   );
 }
+
 export function Backing({ r, s }: { r: Runtime; s?: Snapshot }) {
   const v = s?.v || {};
   return (
     <>
-      <div className="hero-stat">
-        <span>
-          Backing per COMP
-          <Info
-            label="Backing per COMP"
-            text="Reserve plus secured collateral, over COMP supply, never above $1. A redemption pays the lesser of $1 and this figure, less the fee."
-          />
-        </span>
-        <strong>
-          <Ticker
-            text={
-              v.backingPerComp === undefined
-                ? "Not reported"
-                : `$${fmt(v.backingPerComp)}`
-            }
-          />
-        </strong>
-        <small>
-          {v.backingPerComp === undefined
-            ? "—"
-            : v.backingPerComp < WAD
-              ? "Cap binds"
-              : "At par"}
-        </small>
-      </div>
-      <SupplyChart s={s} />
-      <Row
-        label="Reserve value"
-        info="Treasury reserve assets valued in USD through their listed price feeds."
-      >
-        ${fmt(v.reserveValue)}
-      </Row>
-      <Row
-        label="Collateral-backed debt"
-        info="Principal debt still standing behind collateral, net of recorded bad debt."
-      >
-        {fmt(v.backedDebt)} COMP
-      </Row>
-      <Row
-        label="Secured collateral"
-        info="Collateral that stood behind debt, counted up to that debt at minCR. Surplus and debt-free deposits are excluded."
-      >
-        {fmt(v.securedCollateral)} IMD
-      </Row>
-      <Row label="Total principal debt">{fmt(v.totalDebt)} COMP</Row>
-      <Row
-        label="Recorded bad debt"
-        info="Debt left after a liquidation exhausted a position's collateral."
-      >
-        {fmt(v.totalBadDebt)} COMP
-      </Row>
-      <Row label="Work minted">{fmt(v.totalWorkMinted)} COMP</Row>
-      <Row
-        label="Non-principal burns"
-        info="Redemptions that retired COMP without cancelling borrower principal."
-      >
-        {fmt(v.totalNonPrincipalRedeemed)} COMP
-      </Row>
-      <Row label="Work ratio">{percent(v.workRatioBps)}</Row>
-      <Row
-        label="Work ceiling"
-        info="Reserve value + backed debt × work ratio. A repayment or redemption can lower it and pause new work issuance."
-      >
-        {fmt(v.workCeiling)} COMP
-      </Row>
-      <Row label="Reserve assets">{v.reserveAssets?.length ?? "—"}</Row>
-      {v.reserveAssets?.map((a: any) => (
+      <div className="desk-col">
+        <div className="hero-stat">
+          <span>
+            Backing per COMP
+            <Info
+              label="Backing per COMP"
+              text="Reserve plus secured collateral, over COMP supply, never above $1. A redemption pays the lesser of $1 and this figure, less the fee."
+            />
+          </span>
+          <strong>
+            <Ticker
+              text={
+                v.backingPerComp === undefined
+                  ? "Not reported"
+                  : `$${fmt(v.backingPerComp)}`
+              }
+            />
+          </strong>
+          <small>
+            {v.backingPerComp === undefined
+              ? "—"
+              : v.backingPerComp < WAD
+                ? "Cap binds"
+                : "At par"}
+          </small>
+        </div>
+        <SupplyChart s={s} />
         <AddressLink
-          key={a}
-          value={a}
+          value={s?.targets.treasury.address}
           explorer={r.config.network.explorer}
-          label="Reserve asset"
+          label="Treasury"
         />
-      ))}
-      <AddressLink
-        value={s?.targets.treasury.address}
-        explorer={r.config.network.explorer}
-        label="Treasury"
-      />
+      </div>
+      <div className="desk-col">
+        <Row
+          label="Reserve value"
+          info="Treasury reserve assets valued in USD through their listed price feeds."
+        >
+          ${fmt(v.reserveValue)}
+        </Row>
+        <Row
+          label="Collateral-backed debt"
+          info="Principal debt still standing behind collateral, net of recorded bad debt."
+        >
+          {fmt(v.backedDebt)} COMP
+        </Row>
+        <Row
+          label="Secured collateral"
+          info="Collateral that stood behind debt, counted up to that debt at minCR. Surplus and debt-free deposits are excluded."
+        >
+          {fmt(v.securedCollateral)} IMD
+        </Row>
+        <Row label="Total principal debt">{fmt(v.totalDebt)} COMP</Row>
+        <Row
+          label="Recorded bad debt"
+          info="Debt left after a liquidation exhausted a position's collateral."
+        >
+          {fmt(v.totalBadDebt)} COMP
+        </Row>
+        <Row label="Work minted">{fmt(v.totalWorkMinted)} COMP</Row>
+        <Row
+          label="Non-principal burns"
+          info="Redemptions that retired COMP without cancelling borrower principal."
+        >
+          {fmt(v.totalNonPrincipalRedeemed)} COMP
+        </Row>
+        <Row label="Work ratio">{percent(v.workRatioBps)}</Row>
+        <Row
+          label="Work ceiling"
+          info="Reserve value + backed debt × work ratio. A repayment or redemption can lower it and pause new work issuance."
+        >
+          {fmt(v.workCeiling)} COMP
+        </Row>
+        <Row label="Reserve assets">{v.reserveAssets?.length ?? "—"}</Row>
+        {v.reserveAssets?.map((a: any) => (
+          <AddressLink
+            key={a}
+            value={a}
+            explorer={r.config.network.explorer}
+            label="Reserve asset"
+          />
+        ))}
+      </div>
     </>
   );
 }

@@ -113,9 +113,17 @@ const deskLabels = {
   keeper: "Keeper",
   governance: "Govern",
 };
+const monitorLabels = {
+  loans: "Loan book",
+  oracle: "Oracle",
+  backing: "Backing",
+};
 // Desktop switches desk tabs; below 1100px the same panes are reached through the pane picker.
 async function tab(page, id) {
-  const t = page.getByRole("tab", { name: deskLabels[id], exact: true });
+  const t = page.getByRole("tab", {
+    name: deskLabels[id] ?? monitorLabels[id],
+    exact: true,
+  });
   if (await t.isVisible()) await t.click();
   else await page.getByLabel("View pane").selectOption(id);
 }
@@ -143,6 +151,12 @@ async function refresh(page) {
   await page
     .getByRole("button", { name: "Refresh state", exact: true })
     .waitFor();
+}
+async function openFeed(page, name) {
+  await tab(page, "oracle");
+  const toggle = page.locator(".pane-oracle .feed-toggle", { hasText: name });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true")
+    await toggle.click();
 }
 async function expectText(locator, text) {
   await locator.getByText(text, { exact: false }).first().waitFor();
@@ -238,7 +252,9 @@ try {
   s.rejectSimulation = false;
   await refresh(page);
   await expectText(red, "Par (backing unavailable)");
+  await tab(page, "backing");
   await expectText(page.locator(".pane-backing"), "Not reported");
+  await openFeed(page, "IMD / ETH primary");
   await expectText(page.locator(".pane-oracle"), "Not reported");
   passed("A vault and feeds without the newer views degrade per field");
   s.backing = (8n * 10n ** 18n) / 10n;
@@ -247,6 +263,7 @@ try {
   await expectText(red, "the cap binds");
   await red.getByRole("button", { name: "Quote redemption" }).click();
   await expectText(red.locator(".quote"), "(backing cap)");
+  await tab(page, "backing");
   await expectText(page.locator(".pane-backing"), "Cap binds");
   // Oracle and Backing list figures only; every explanation lives behind an info icon.
   assert.equal(
@@ -269,6 +286,7 @@ try {
   passed(
     "Oracle and Backing carry no prose; info windows open on hover and focus, close on Escape",
   );
+  await openFeed(page, "IMD / ETH primary");
   await expectText(page.locator(".pane-oracle"), "Pinned · 0x2b2b2b2b");
   await expectText(page.locator(".pane-oracle"), "26,121,526");
   passed("Backing below par caps the quote; pinned questions are shown");
@@ -359,6 +377,10 @@ try {
   await keeper.getByLabel("Borrower address").fill(candidate);
   await keeper.getByRole("button", { name: "Inspect position" }).click();
   await expectText(keeper, "140%");
+  // Inspect and Act are separate views; acting shows the inspected target, not the form.
+  assert.equal(await keeper.getByText("Review mark").count(), 0);
+  await keeper.getByRole("button", { name: "Act", exact: true }).click();
+  assert.equal(await keeper.getByLabel("Borrower address").count(), 0);
   await review(page, "Review mark");
   await cancel(page);
   await keeper.getByLabel("Repay borrower COMP").fill("1");
@@ -474,6 +496,18 @@ try {
           `${id} desk tab overflows at ${width}x${height}: ${fit.content} > ${fit.box}`,
         );
       }
+      await openFeed(page, "IMD / ETH primary");
+      for (const id of Object.keys(monitorLabels)) {
+        await tab(page, id);
+        const fit = await page
+          .locator(`.pane-${id} .monitor-body`)
+          .evaluate((n) => ({ content: n.scrollHeight, box: n.clientHeight }));
+        assert.ok(
+          fit.content <= fit.box + 1,
+          `${id} monitor tab overflows at ${width}x${height}: ${fit.content} > ${fit.box}`,
+        );
+      }
+      await tab(page, "loans");
       await tab(page, "redemption");
     }
     if (width <= 760) {
@@ -493,7 +527,7 @@ try {
     }
   }
   passed(
-    "One viewport; every desk tab fits without scrolling; all mobile panes reachable",
+    "One viewport; every desk and monitor tab fits without scrolling; all mobile panes reachable",
     viewports,
   );
   const axeMobile = await new AxeBuilder({ page })
@@ -633,6 +667,7 @@ try {
   );
   // Charts: exercise the exported bundle against deliberately irregular and failing history.
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  await tab(page, "loans");
   await page.locator(".loan-mark").first().waitFor();
   assert.equal(await page.locator(".loan-mark").count(), 3);
   const names = await page.locator(".loan-label").allTextContents();
@@ -696,6 +731,7 @@ try {
   passed(
     "Live minCR moves the risk band and changes position classification; price updates move existing marks",
   );
+  await openFeed(page, "IMD / ETH primary");
   const cadence = page.locator(".pane-oracle .cadence-chart").first();
   await cadence.locator("circle").first().waitFor({ state: "attached" });
   assert.equal(await cadence.locator("circle").count(), 4);
@@ -733,13 +769,9 @@ try {
   s.spotMultiplier = 1.1;
   await refresh(page);
   await page.locator(".work-chart .over-limit").waitFor({ state: "attached" });
-  await page
-    .locator(".divergence-chart .breached")
-    .waitFor({ state: "attached" });
-  assert.match(
-    await page.locator(".divergence-chart figcaption").textContent(),
-    /±5%/,
-  );
+  await tab(page, "oracle");
+  await expectText(page.locator(".pane-oracle"), "Breached");
+  await expectText(page.locator(".pane-oracle"), "/ 5%");
   assert.match(
     await page.locator(".work-chart").textContent(),
     /10 COMP over ceiling/,
@@ -753,8 +785,8 @@ try {
   );
   s.logMode = "empty";
   await refresh(page);
-  await page.locator(".loan-ledger summary").click();
-  await expectText(page.locator(".loan-ledger"), "Blockscout deposit history");
+  await tab(page, "loans");
+  await expectText(page.locator(".loan-coverage"), "Blockscout");
   assert.equal(await page.locator(".loan-mark").count(), 3);
   s.explorerEmpty = true;
   await refresh(page);

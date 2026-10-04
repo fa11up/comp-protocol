@@ -1099,23 +1099,35 @@ td span {
   overflow: hidden;
 }
 .monitor {
-  display: grid;
-  grid-template-rows: minmax(0, 0.95fr) minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
   border-inline-end: 1px solid var(--rule);
+  background: var(--surface);
 }
-.monitor > .pane-loans {
+.monitor-pane {
+  display: none;
+  flex: 1;
   border-inline-end: 0;
-  border-bottom: 1px solid var(--rule);
 }
-.monitor-row {
+.workspace[data-monitor="loans"] .pane-loans,
+.workspace[data-monitor="oracle"] .pane-oracle,
+.workspace[data-monitor="backing"] .pane-backing {
+  display: flex;
+}
+.monitor-pane > .pane-head {
+  display: none;
+}
+/* Monitor tabs are laid out to fit; only the loan list scrolls, inside its own box. */
+.monitor-body {
+  flex: 1;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+}
+.monitor-body.desk-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  min-height: 0;
-}
-.monitor-row > .pane:last-child {
-  border-inline-end: 0;
 }
 .desk {
   display: flex;
@@ -1225,9 +1237,14 @@ td span {
     margin-block: 0 10px;
   }
   .monitor,
-  .monitor-row,
   .desk {
     display: contents;
+  }
+  .monitor-pane > .pane-head {
+    display: flex;
+  }
+  .monitor-body {
+    overflow: auto;
   }
   .workspace .pane {
     display: none;
@@ -1346,5 +1363,186 @@ td span {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+.desk-span {
+  grid-column: 1 / -1;
+}
+/* Loan book: the strip, then a searchable list that scrolls inside its own box. */
+.pane-loans .monitor-body {
+  gap: 6px;
+}
+.loan-feed-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--rule);
+  padding-top: 10px;
+}
+.loan-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+}
+.loan-tools input,
+.loan-tools select {
+  margin: 0;
+  min-height: 30px;
+  font-size: 11px;
+}
+.loan-columns,
+.loan-feed button {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) 0.6fr 0.8fr 1fr;
+  gap: 10px;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+.loan-columns {
+  padding: 8px 8px 4px;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.loan-columns > :not(:first-child),
+.loan-feed button > :not(:first-child) {
+  text-align: end;
+}
+.loan-feed {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-block: 1px solid var(--rule);
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+.loan-feed li + li {
+  border-top: 1px solid var(--rule);
+}
+.loan-feed button {
+  width: 100%;
+  min-height: 0;
+  padding: 7px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  text-align: start;
+}
+.loan-feed button:hover,
+.loan-feed .selected-loan button {
+  background: var(--raised);
+}
+.loan-feed .selected-loan button {
+  box-shadow: inset 2px 0 0 var(--text);
+}
+.loan-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.loan-address {
+  color: var(--muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loan-feed small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+.loan-empty {
+  padding: 14px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.loan-coverage {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+/* Oracle feeds: one line each, opening to that feed's figures and chart. */
+.feed-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+}
+.feed-list > li {
+  border-bottom: 1px solid var(--rule);
+}
+.feed-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: start;
+}
+.feed-toggle:hover,
+.feed-list > li.is-open .feed-toggle {
+  background: var(--raised);
+}
+.feed-toggle b {
+  font-weight: normal;
+  font-variant-numeric: tabular-nums;
+}
+.feed-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.feed-state {
+  width: 6px;
+  height: 6px;
+  background: var(--muted);
+}
+.feed-state.is-fresh {
+  background: var(--healthy);
+}
+.feed-state.is-stale {
+  background: var(--danger);
+}
+.feed-caret {
+  color: var(--muted);
+  text-align: center;
+}
+.feed-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  padding: 8px 4px 12px;
+}
+.feed-detail .feed {
+  margin: 0;
+}
+@media (max-width: 760px) {
+  .feed-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .loan-columns,
+  .loan-feed button {
+    grid-template-columns: minmax(0, 1.4fr) 0.7fr 0.9fr;
+  }
+  .loan-columns > :nth-child(4),
+  .loan-feed button > :nth-child(4) {
+    display: none;
   }
 }
