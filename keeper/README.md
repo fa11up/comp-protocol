@@ -7,7 +7,7 @@ exist: **a CDP protocol with no keeper is not a protocol, it is a contract that 
 |---|---|---|
 | **watcher** | reads the live v4 pool, decides when a feed needs a new attestation | **built** — `watch.mjs`, read-only |
 | **relayer** | finds our attested oracle requests and relays them through `SwarmRelay` | one-shot exists at `../oracle/relay-attestation.js`; the loop around it is not built |
-| **liquidator** | marks underwater positions and liquidates after grace | **not built** |
+| **liquidator** | marks underwater positions and liquidates after grace | **built** — `positions.mjs`, reports by default |
 
 ## Why it watches movement rather than a clock
 
@@ -47,6 +47,53 @@ and the exact integer arithmetic.
 
 It refuses to report a spot at or above 1e18 and exits non-zero, because that means the direction is
 inverted — the inverted reading is ~1e20 and looks like a market move rather than a misreading.
+
+## Being the marker is the edge
+
+`liquidate` pays the caller `seized - protocolCut` when the caller is **also the marker**, and
+`seized - protocolCut - markerCut` otherwise. So marking a position ourselves and liquidating it
+ourselves earns the marker share on top, and letting someone else mark it hands them that share even
+if we do the liquidating. `markUnderwaterFor(owner, beneficiary)` exists for exactly this.
+
+At the live price, on 1 COMP of debt, that share is **4.50 IMD of a 45.05 IMD bonus** — a tenth of
+the only profit in the transaction. `positions.mjs` prints it as `marking it ourselves would add N`
+whenever we are not already the marker.
+
+The arithmetic in `lib/vault.mjs` is a transcription of `liquidate`, not an estimate, floors included.
+It reproduces the live Sepolia stress-test figures to the wei — seized `495543597367679961133`,
+bonus `45049417942516360103`, marker cut `4504941794251636010` — which is how we know a quote the
+keeper computes is a quote the chain will honour. It also models the **dust sweep**, which is not a
+pure function of the inputs and would otherwise make every payout estimate slightly wrong.
+
+```bash
+node positions.mjs              # report: who is underwater, what a liquidation pays, where the window is
+node positions.mjs --execute    # mark and liquidate; needs KEEPER_MNEMONIC
+```
+
+Every transaction is simulated with `callStatic` before it is sent, so a doomed one costs nothing and
+a revert is information rather than a loss.
+
+**A stale feed blocks everything.** `liquidate` calls `_requireFreshFeeds` and
+`_requirePriceAgreement` before anything else, so no position can be marked or liquidated however
+underwater it is. `positions.mjs` says so as its first line rather than reporting an empty list — a
+keeper that is blind must not look idle.
+
+## Positions have no on-chain index, and the RPC is not a sound substitute
+
+They live in a `mapping(address => Position)`, so events are the only index. Discovery therefore goes
+through an **indexer, not `eth_getLogs`**, and the reason is measured rather than theoretical.
+Against this vault on 2026-10-04, through a public RPC:
+
+* a 50,000-block span returned the one real depositor;
+* a **40,669-block span inside that same range returned nothing**, neither call erroring;
+* ranges above 50,000 are refused outright (`-32701`);
+* and `eth_getCode` at a historical block fails, because the node keeps no archive state.
+
+For a liquidator, an empty array that means "the node declined to look" is indistinguishable from
+"there are no positions" — and the second one makes it sit still while a position rots.
+`discoverOwners` reads Blockscout, paginated, matching on **topic0 and topic1** rather than on decoded
+parameter names, and **throws** if the source returns no logs at all, because a deployed vault has at
+minimum emitted `OracleSet` in its constructor.
 
 ## Funding: three balances, not interchangeable
 

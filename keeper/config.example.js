@@ -25,6 +25,15 @@ export default {
     { role: "spot",  address: "0x0535C1A564B2594676239428A113d542cd6c2Ed9", payload: "whitepaper/requests/spot-univ4-quote.json" },
   ],
 
+  // --- the vault the liquidator watches ---
+  VAULT: "0xD8CbC70B9C2dfC75762686dd4795e2aC033452c5",
+  // Positions live in a mapping with no on-chain enumeration, so events are the only index there is —
+  // and a public RPC is an unsound source for them. Measured on 2026-10-04 against this vault: a
+  // 50,000-block span found the one real depositor while a 40,669-block span INSIDE the same range
+  // found nothing, neither erroring. The node also caps ranges at 50,000 and is not an archive node.
+  // Blockscout returns the whole decoded history, paginated and deterministic.
+  INDEXER: "https://eth-sepolia.blockscout.com",
+
   // --- the trigger band, which is the whole point ---
   //
   // Fire on MOVEMENT, not on a clock. A feed absorbs at most `maxDeviationBps` per update, so the
