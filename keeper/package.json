@@ -1,7 +1,0 @@
-{
-  "name": "comp-keeper",
-  "private": true,
-  "type": "module",
-  "description": "Off-chain watcher, relayer and liquidation keeper. Read-only by default.",
-  "dependencies": { "ethers": "^5.7.2" }
-}

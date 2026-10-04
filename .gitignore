@@ -4,6 +4,6 @@ broadcast/
 oracle/node_modules/
 oracle/relayer.config.js
 
-# keeper: local config and the key it reads from the environment
-keeper/config.js
-keeper/node_modules/
+# The keeper moved to its own private repository (fa11up/imd-keeper). If a copy is ever cloned
+# in here for convenience, it must not be committed back.
+keeper/

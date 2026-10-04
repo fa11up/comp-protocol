@@ -410,6 +410,16 @@ Open, and not decided: whether the Treasury's reserve holds IMD or sIMD. sIMD ea
 channel A pays "the collateral asset" from the reserve first, so a sIMD reserve pays sIMD — acceptable,
 since it redeems for IMD a block later, but it changes what a redeemer receives.
 
+**FRONTEND REQUIREMENT that follows from it.** If a redeemer receives sIMD, the redemption page must
+offer to **unwrap it in place** — `redeem(shares, receiver, owner)` on the staking vault, one call, a
+block after the redemption. Handing someone a share token and leaving them to find the staking UI is
+the kind of gap that makes a correct protocol feel broken. The same page should show the live exchange
+rate, so the sIMD they receive is legible as an amount of IMD rather than as an unfamiliar unit.
+
+Note the one-block hold applies to the redeemer too: their sIMD inherits the hold of whoever last
+transferred it, so an unwrap offered in the same block as the redemption can revert `SameBlockRedeem`.
+The page should expect that and retry rather than present it as a failure.
+
 ## 6. What to build, in order
 
 1. `workCeiling()` + `workRatioBps` as governed parameters, and the ceiling check in `mintFromWork`.

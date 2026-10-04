@@ -236,6 +236,10 @@ the written reproductions. Archive the record immediately.
 
 ## Known limits
 
+- **Nothing here operates the protocol.** A CDP protocol with no keeper is a contract that
+  accumulates bad debt: somebody has to relay attestations before feeds go stale, mark positions, and
+  liquidate them with their own stablecoin. That lives in **`fa11up/imd-keeper`**, which is private on
+  purpose — it publishes bidding thresholds a searcher would use to be one block earlier.
 - The live deployment's reporter and relayer are a single testnet key. **Mainnet must be a fresh
   deployment with a key held outside this repository.**
 - `Registry` is written and governed but **nothing reads it**, so a rotation recorded there changes
@@ -265,6 +269,7 @@ the written reproductions. Archive the record immediately.
 | `docs/AUDIT-2026-10-04.md` | the second, on the USD denomination and work backing |
 | `oracle/work-tally-quote.json` | the question `SwarmWorkOracle` pins, read from the daily oracle receipts |
 | `docs/MAINNET-RUNBOOK.md` | keys, constants, the one-broadcast CREATE2 deploy and what to read back |
+| `fa11up/imd-keeper` *(private)* | the off-chain operator: price watcher, attestation relayer, CDP liquidator |
 | `docs/UPSTREAM-ASKS.md` | what we have asked the operator for, what landed, and what is settled |
 | `docs/archive/` | superseded per-increment notes, kept for history |
 | `docs/UPSTREAM-STABLE-QUESTION-ID.md` | why `questionHash` is unstable, and why that is not a PR yet |
