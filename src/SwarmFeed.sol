@@ -4,10 +4,19 @@ pragma solidity 0.8.26;
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
-/// @notice Immutable attested numeric feed with an allowlisted testnet reporter fallback.
-/// @dev Each live oracle request costs IMD, making a per-block attested feed uneconomic on testnet.
-/// Production replaces the reporter fallback with scheduled attestations. The testnet configuration
-/// uses the deployer as sole reporter with quorum one; the reporter set should widen in production.
+/// @notice Immutable attested numeric feed. Attestations are the only way a value is ever set.
+/// @dev THERE IS NO REPORTER FALLBACK, and removing it was the point. `report()` let an allowlisted
+/// key set the value directly, bounded by `maxDeviationBps` only while the current value was still
+/// fresh — past `maxAge` the bound lifted and the next accepted value re-anchored the band to
+/// anything. On a testnet that was a convenience. On mainnet it is one key holding custody of every
+/// position that consumes this feed, which is not a fallback but a second, weaker price oracle nobody
+/// asked for.
+///
+/// The cost is accepted deliberately: a freshly deployed feed is INERT until its first attestation,
+/// and a feed that goes stale cannot be walked back to market without buying one. That is the
+/// behaviour mainnet has, so it is the behaviour a testnet should have too — a reporter fallback let
+/// us test a protocol we were never going to deploy.
+///
 /// There is no admin or setter. Values are scaled by 1e18; consumers enforce any application bounds.
 /// Zero is rejected on both paths: it is never a valid scaled figure and would pin the relative bound at
 /// zero. The deviation bound applies while the last accepted value is fresh; once that value has aged
@@ -33,8 +42,6 @@ abstract contract SwarmFeed is ISwarmFeed {
     }
 
     error InvalidConfiguration();
-    error UnauthorizedReporter();
-    error AlreadyReported();
     error ZeroValue();
     error ExcessDeviation();
     error InvalidSignature();
@@ -55,7 +62,6 @@ abstract contract SwarmFeed is ISwarmFeed {
     error NotEnoughAgreement();
 
     event ValueUpdated(uint256 value, uint64 updatedAt);
-    event Reported(uint256 indexed round, address indexed reporter, uint256 value);
     event AttestationAccepted(bytes32 indexed requestId, bytes32 questionHash);
 
     /// @notice Smallest panel this feed accepts, read from the signed attestation.
@@ -79,19 +85,10 @@ abstract contract SwarmFeed is ISwarmFeed {
     uint64 public lastToBlock;
     uint256 public immutable attestationChainId;
     uint8 public immutable attestationAnswerType;
-    address public immutable reporter0;
-    address public immutable reporter1;
-    address public immutable reporter2;
-    uint8 public immutable quorum;
     uint256 public immutable maxAge;
     uint256 public immutable maxDeviationBps;
 
-    uint256 public round = 1;
-    uint8 public reportCount;
-    mapping(address reporter => uint256 roundNumber) public lastReportedRound;
     mapping(bytes32 requestId => bool consumed) public usedRequests;
-    uint256[3] private _reports;
-    uint64 private _roundStartedAt;
     uint256 private _value;
     uint64 private _updatedAt;
     bool private _hasValue;
@@ -99,10 +96,6 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// @param relayer_ Sole attestation submitter, or zero for permissionless relay.
     /// @param attestationChainId_ Required data chain in the signed payload, independent of the consumer chain.
     /// @param attestationAnswerType_ Required answer type in the signed payload.
-    /// @param reporter0_ First immutable reporter; unused reporter slots may be zero.
-    /// @param reporter1_ Second immutable reporter, or zero.
-    /// @param reporter2_ Third immutable reporter, or zero.
-    /// @param quorum_ Between one and the number of distinct nonzero reporters (at most three).
     /// @param maxAge_ Maximum accepted age in seconds, strictly positive.
     /// @param maxDeviationBps_ Maximum change from the last accepted value, from 0 to 10,000 bps.
     constructor(
@@ -110,20 +103,10 @@ abstract contract SwarmFeed is ISwarmFeed {
         address relayer_,
         uint256 attestationChainId_,
         uint8 attestationAnswerType_,
-        address reporter0_,
-        address reporter1_,
-        address reporter2_,
-        uint8 quorum_,
         uint256 maxAge_,
         uint256 maxDeviationBps_
     ) {
-        uint256 count = (reporter0_ == address(0) ? 0 : 1) + (reporter1_ == address(0) ? 0 : 1)
-            + (reporter2_ == address(0) ? 0 : 1);
-        if (
-            attester_ == address(0) || quorum_ == 0 || quorum_ > count || maxAge_ == 0 || maxDeviationBps_ > 10_000
-                || (reporter0_ != address(0) && (reporter0_ == reporter1_ || reporter0_ == reporter2_))
-                || (reporter1_ != address(0) && reporter1_ == reporter2_)
-        ) revert InvalidConfiguration();
+        if (attester_ == address(0) || maxAge_ == 0 || maxDeviationBps_ > 10_000) revert InvalidConfiguration();
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -148,10 +131,6 @@ abstract contract SwarmFeed is ISwarmFeed {
         relayer = relayer_;
         attestationChainId = attestationChainId_;
         attestationAnswerType = attestationAnswerType_;
-        reporter0 = reporter0_;
-        reporter1 = reporter1_;
-        reporter2 = reporter2_;
-        quorum = quorum_;
         maxAge = maxAge_;
         maxDeviationBps = maxDeviationBps_;
     }
@@ -162,10 +141,6 @@ abstract contract SwarmFeed is ISwarmFeed {
 
     function isStale() external view override returns (bool) {
         return !_hasValue || _tooOld(_updatedAt);
-    }
-
-    function isReporter(address account) public view returns (bool) {
-        return account != address(0) && (account == reporter0 || account == reporter1 || account == reporter2);
     }
 
     /// @notice Accept an IdentityMD EIP-712 attestation through the configured relayer, or anyone if zero.
@@ -192,8 +167,6 @@ abstract contract SwarmFeed is ISwarmFeed {
         usedRequests[a.requestId] = true;
         _requireQuestion(a);
         _accept(a.figure, a.issuedAt);
-        // A primary update discards any unfinished fallback round based on the preceding value.
-        _nextRound();
         emit AttestationAccepted(a.requestId, a.questionHash);
     }
 
@@ -256,28 +229,6 @@ abstract contract SwarmFeed is ISwarmFeed {
         lastToBlock = a.toBlock;
     }
 
-    /// @notice Submit one value per reporter per round; reaching quorum publishes the median.
-    /// @dev Even-sized quorums use the floor of the two central values' mean. Unfinished rounds
-    /// expire after maxAge; the next report then starts a fresh round instead of using old votes.
-    /// The accepted timestamp is the oldest contributing report's time, so quorum cannot renew it.
-    /// Deviation is bounded per accepted update, not per block or unit of time. A quorum-one reporter
-    /// can complete multiple rounds in one block; the fallback therefore trusts that reporter's values.
-    function report(uint256 value) external {
-        if (!isReporter(msg.sender)) revert UnauthorizedReporter();
-        if (block.timestamp > type(uint64).max) revert InvalidTimestamp();
-        if (reportCount != 0 && _tooOld(_roundStartedAt)) _nextRound();
-        if (lastReportedRound[msg.sender] == round) revert AlreadyReported();
-        _checkValue(value);
-        if (reportCount == 0) _roundStartedAt = uint64(block.timestamp);
-        lastReportedRound[msg.sender] = round;
-        _reports[reportCount++] = value;
-        emit Reported(round, msg.sender, value);
-        if (reportCount == quorum) {
-            _accept(_median(), _roundStartedAt);
-            _nextRound();
-        }
-    }
-
     /// @dev Split across two `abi.encode` calls and concatenated: every field is a static
     /// single-word type, so this is byte-identical to encoding all sixteen at once, and it keeps the
     /// function off a stack-too-deep without turning on viaIR.
@@ -315,7 +266,21 @@ abstract contract SwarmFeed is ISwarmFeed {
         signer = ecrecover(digest, v, r, s);
     }
 
-    function _checkValue(uint256 value) private view {
+    /// @notice Refuse a value this feed should not accept. Zero always; a move larger than
+    /// `maxDeviationBps` while the current value is still fresh.
+    /// @dev VIRTUAL, and the reason is that the bound assumes the value is a PRICE. It is the right
+    /// guard for one: a price moves continuously, so a large jump is evidence of a bad figure rather
+    /// than of a fast market. It is the wrong guard for a value with no magnitude — a Merkle root is a
+    /// uniformly random 256-bit number, so two consecutive honest roots differ wildly and this would
+    /// reject almost all of them.
+    ///
+    /// A subclass that carries such a value overrides this and keeps the zero check. What it gives up
+    /// is real and must be stated where it is given up: the deviation bound is one of the things
+    /// standing between a wrong figure and the consumers of this feed. What remains is question
+    /// binding, the attester signature and the panel floors — which, per the HIGH finding of audit
+    /// c71449d1, are what actually guard a feed, the deviation bound having been the fallback for a
+    /// feed that pinned no question.
+    function _checkValue(uint256 value) internal view virtual {
         if (value == 0) revert ZeroValue();
         if (_hasValue && !_tooOld(_updatedAt)) {
             uint256 change = value > _value ? value - _value : _value - value;
@@ -323,27 +288,25 @@ abstract contract SwarmFeed is ISwarmFeed {
         }
     }
 
-    function _accept(uint256 value, uint64 updatedAt) private {
+    /// @dev INTERNAL rather than private, so a subclass can accept a value without an attestation.
+    /// That is a deliberate, narrow door and it is worth being exact about what it does and does not
+    /// guarantee. The docstring above says attestations are the only way a value is ever set; with
+    /// this visibility that is a property of THE CONTRACTS THIS REPOSITORY SHIPS — `PriceFeed`,
+    /// `NhiFeed`, `SpotFeed` and `SwarmWorkOracle` expose no path to it — rather than a property the
+    /// base enforces on every conceivable subclass.
+    ///
+    /// It exists because the test suite has to set values, and with the reporter fallback gone the
+    /// alternative is signing as the pinned attester, whose key is the oracle service's and not ours.
+    /// The difference from the fallback it replaces is the one that matters: a reporter was an
+    /// authority held by a KEY on a DEPLOYED contract, reachable by whoever held it. This is reachable
+    /// only by writing a new subclass and deploying it, which is a code review rather than a
+    /// transaction. Any new subclass under src/ must be read with that in mind.
+    function _accept(uint256 value, uint64 updatedAt) internal {
         _checkValue(value);
         _value = value;
         _updatedAt = updatedAt;
         _hasValue = true;
         emit ValueUpdated(value, updatedAt);
-    }
-
-    function _median() private view returns (uint256) {
-        uint256 a = _reports[0];
-        if (quorum == 1) return a;
-        uint256 b = _reports[1];
-        if (a > b) (a, b) = (b, a);
-        if (quorum == 2) return a + (b - a) / 2;
-        uint256 c = _reports[2];
-        return c < a ? a : (c > b ? b : c);
-    }
-
-    function _nextRound() private {
-        ++round;
-        reportCount = 0;
     }
 
     function _tooOld(uint64 timestamp) private view returns (bool) {

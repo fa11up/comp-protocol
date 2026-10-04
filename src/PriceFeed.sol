@@ -6,11 +6,7 @@ import {
     ORACLE_ATTESTER,
     ATTESTATION_RELAYER,
     ATTESTATION_CHAIN_ID,
-    ATTESTATION_ANSWER_TYPE,
-    FEED_REPORTER_0,
-    FEED_REPORTER_1,
-    FEED_REPORTER_2,
-    FEED_QUORUM
+    ATTESTATION_ANSWER_TYPE
 } from "./DeploymentConfig.sol";
 
 /// @notice Concrete SwarmFeed artifact for the collateral price.
@@ -25,10 +21,6 @@ contract PriceFeed is SwarmFeed {
             ATTESTATION_RELAYER,
             ATTESTATION_CHAIN_ID,
             ATTESTATION_ANSWER_TYPE,
-            FEED_REPORTER_0,
-            FEED_REPORTER_1,
-            FEED_REPORTER_2,
-            FEED_QUORUM,
             maxAge_,
             maxDeviationBps_
         )

@@ -64,21 +64,11 @@ address constant ORACLE_ATTESTER = 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982;
 /// straight to those feeds, and must go through the relay once they are replaced.
 address constant ATTESTATION_RELAYER = 0xe36FFc2688Bf5974f2187AC9086492e372926D40;
 
-/// @dev Fallback reporters. Unused slots are zero; FEED_QUORUM must not exceed the nonzero count.
-/// A single reporter is a single point of failure for the manual path and is deliberate on testnet;
-/// mainnet is a fresh deployment with three distinct keys, none of them FEE_RECIPIENT.
-///
-/// TESTNET VALUE, and the same shared simulation wallet as ATTESTATION_RELAYER — see the warning
-/// there. DeployComp also requires the broadcasting key to be this address, because a deployer who
-/// cannot report cannot seed the feed it just deployed.
-///
-/// One thing this arrangement gets RIGHT that the previous one did not: FEE_RECIPIENT below is
-/// miyagod.eth and is now a different party from the reporter and relayer, which is the separation
-/// FEE_RECIPIENT's own comment requires and which was violated while all three were one address.
-address constant FEED_REPORTER_0 = 0x1d0074aB2ba9dA4cCbc67cFC0026E570D0E93951;
-address constant FEED_REPORTER_1 = address(0);
-address constant FEED_REPORTER_2 = address(0);
-uint8 constant FEED_QUORUM = 1;
+// THE REPORTER FALLBACK IS GONE. `SwarmFeed.report()` let an allowlisted key set a feed's value
+// directly, bounded by maxDeviationBps only while the current value was fresh; past maxAge the bound
+// lifted and the next value re-anchored the band to anything. On mainnet that is one key holding
+// custody of every position. Attestations are now the only way a value is ever set, and the constants
+// FEED_REPORTER_0/1/2 and FEED_QUORUM no longer exist.
 
 /// @dev Answer-type enum of the signed payload, recovered empirically against live signatures:
 /// bool=0, address=1, bytes32=2, uint256=3. This is the field 519 was handed as 1.

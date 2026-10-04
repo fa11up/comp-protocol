@@ -9,10 +9,6 @@ import {
     ATTESTATION_RELAYER,
     ATTESTATION_CHAIN_ID,
     ATTESTATION_ANSWER_TYPE,
-    FEED_REPORTER_0,
-    FEED_REPORTER_1,
-    FEED_REPORTER_2,
-    FEED_QUORUM,
     WORK_AGENT_ID,
     WORK_CLAIMANT,
     COMP_PER_TASK_WAD,
@@ -100,10 +96,6 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
             ATTESTATION_RELAYER,
             ATTESTATION_CHAIN_ID,
             ATTESTATION_ANSWER_TYPE,
-            FEED_REPORTER_0,
-            FEED_REPORTER_1,
-            FEED_REPORTER_2,
-            FEED_QUORUM,
             maxAge_,
             // The loosest the base feed allows, and it is NOT unbounded: SwarmFeed caps this
             // argument at 10,000 bps, which permits at most a DOUBLING of the accepted figure per

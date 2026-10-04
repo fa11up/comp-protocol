@@ -14,7 +14,7 @@ import {ConfigurableSwarmFeed} from "./helpers/ConfigurableSwarmFeed.sol";
 contract SwarmRelayTest is Test {
     uint256 private constant ATTESTER_KEY = 0xA11CE;
     address private constant STRANGER = address(0x5174);
-    address private constant REPORTER = address(0xBEEF);
+    address private constant BORROWER_X = address(0xBEEF);
 
     SwarmRelay private relay;
     ConfigurableSwarmFeed private priceFeed;
@@ -31,7 +31,7 @@ contract SwarmRelayTest is Test {
     function _feed() private returns (ConfigurableSwarmFeed) {
         // The feeds pin the relay contract, not an EOA.
         return new ConfigurableSwarmFeed(
-            vm.addr(ATTESTER_KEY), address(relay), 1, 3, REPORTER, address(0), address(0), 1, 1 days, 2000
+            vm.addr(ATTESTER_KEY), address(relay), 1, 3, 1 days, 2000
         );
     }
 
@@ -137,12 +137,17 @@ contract SwarmRelayTest is Test {
         relay.relayMany(feeds, list, sigs);
     }
 
-    /// @dev The relay holds no authority of its own: it is not a reporter and owns nothing.
-    function test_theRelayHoldsNoAuthority() public {
-        assertFalse(priceFeed.isReporter(address(relay)), "the relay must not be able to report");
+    /// @dev The relay holds no authority of its own, and the strongest form of that is now available:
+    /// there is no `report()` to be refused from. The old test asserted the relay was not an
+    /// allowlisted reporter; this asserts the function does not exist on the feed at all, for anyone.
+    function test_theFeedHasNoReporterFallbackForTheRelayOrAnyoneElse() public {
+        // keccak("report(uint256)") — the selector the deleted fallback answered on.
+        bytes memory call = abi.encodeWithSelector(bytes4(keccak256("report(uint256)")), uint256(1 ether));
         vm.prank(address(relay));
-        vm.expectRevert(SwarmFeed.UnauthorizedReporter.selector);
-        priceFeed.report(1 ether);
+        (bool asRelay,) = address(priceFeed).call(call);
+        assertFalse(asRelay, "the relay cannot report");
+        (bool asAnyone,) = address(priceFeed).call(call);
+        assertFalse(asAnyone, "and neither can anyone else: the selector is gone");
     }
 
     function _attestation(bytes32 id, uint256 figure) private view returns (SwarmFeed.OracleAttestation memory a) {

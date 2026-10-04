@@ -16,15 +16,12 @@ import {
     ORACLE_ATTESTER,
     ATTESTATION_RELAYER,
     ATTESTATION_CHAIN_ID,
-    ATTESTATION_ANSWER_TYPE,
-    FEED_REPORTER_0,
-    FEED_REPORTER_1,
-    FEED_REPORTER_2,
-    FEED_QUORUM
+    ATTESTATION_ANSWER_TYPE
 } from "../src/DeploymentConfig.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {SwarmFeed} from "../src/SwarmFeed.sol";
 import {FEE_RECIPIENT, MARKER_SHARE_BPS} from "../src/DeploymentConfig.sol";
+import {SeedablePriceFeed, SeedableNhiFeed, SeedableSpotFeed} from "./helpers/SeedableFeeds.sol";
 
 /// A vault with both knobs switched on, so the ceiling and the fee split are actually exercised.
 /// Production turns them on by changing the base defaults; this proves the mechanism either way.
@@ -69,9 +66,8 @@ contract InHouseTest is LegacyWorkBacking {
     address constant ATTESTER = ORACLE_ATTESTER;
     address constant OPERATOR = APPROVED_OPERATOR;
     // Three different parties since the feed authority moved off miyagod.eth. OPERATOR owns the mock
-    // faucets and plays the borrower; REPORTER is the only address the feeds accept a report() from;
+    // faucets and plays the borrower; BORROWER_X is the only address the feeds accept a report() from;
     // RELAYER is the only address they accept an attestation from, and is now a contract.
-    address constant REPORTER = FEED_REPORTER_0;
     address constant RELAYER = ATTESTATION_RELAYER;
     address constant LIVE_MOCK_IMD = 0xE44AB81Ce23d34E29383dD158a1DfFEB1c10d439;
     uint8 constant ANSWER_TYPE_UINT256 = ATTESTATION_ANSWER_TYPE;
@@ -84,8 +80,8 @@ contract InHouseTest is LegacyWorkBacking {
     uint16 constant MIN_PANEL_SIZE = 25; // mirrors SwarmFeed.MIN_PANEL_SIZE
     uint16 constant MIN_AGREED = 15; // mirrors SwarmFeed.MIN_AGREED
 
-    PriceFeed priceFeed;
-    NhiFeed nhiFeed;
+    SeedablePriceFeed priceFeed;
+    SeedableNhiFeed nhiFeed;
     MirroredSwarmFeed spotFeed;
     CDPVault vault;
     CompToken comp;
@@ -101,8 +97,8 @@ contract InHouseTest is LegacyWorkBacking {
         }
         imd = MockIMD(LIVE_MOCK_IMD);
         // Authority and attestation policy are pinned in DeploymentConfig and are not arguments.
-        priceFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
-        nhiFeed = new NhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
+        priceFeed = new SeedablePriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
+        nhiFeed = new SeedableNhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
         vault =
             new CDPVault(address(imd), address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
@@ -117,15 +113,9 @@ contract InHouseTest is LegacyWorkBacking {
     /// Every authority that launch 519 got wrong — read back against the source that pins them, so
     /// this fails if DeploymentConfig and the deployed artifact ever disagree.
     function test_authoritiesLandOnUs() public view {
-        assertTrue(priceFeed.isReporter(REPORTER), "the pinned reporter cannot report");
         assertEq(priceFeed.relayer(), RELAYER, "relayer is not the pinned relay");
-        assertTrue(REPORTER != OPERATOR, "the faucet operator must not also set the price");
         assertEq(priceFeed.attester(), ORACLE_ATTESTER, "attester is not the live oracle signer");
         assertEq(priceFeed.relayer(), ATTESTATION_RELAYER, "relayer is not the pinned relayer");
-        assertEq(priceFeed.reporter0(), FEED_REPORTER_0, "reporter0 is not the pinned reporter");
-        assertEq(priceFeed.reporter1(), FEED_REPORTER_1, "reporter1 drifted from source");
-        assertEq(priceFeed.reporter2(), FEED_REPORTER_2, "reporter2 drifted from source");
-        assertEq(priceFeed.quorum(), FEED_QUORUM, "quorum drifted from source");
         assertEq(priceFeed.attestationChainId(), ATTESTATION_CHAIN_ID, "payload chainId drifted");
         assertEq(priceFeed.attestationAnswerType(), ANSWER_TYPE_UINT256, "answerType must be 3 = uint256");
         assertEq(priceFeed.MIN_PANEL_SIZE(), MIN_PANEL_SIZE, "panel floor changed");
@@ -209,8 +199,7 @@ contract InHouseTest is LegacyWorkBacking {
         vm.stopPrank();
 
         uint256 fallen = _maxDownStep(PRICE); // the largest single step the band allows
-        vm.prank(REPORTER);
-        priceFeed.report(fallen);
+        priceFeed.seed(fallen);
         assertLt(vault.collateralRatio(OPERATOR), vault.minCR(), "position should be underwater");
 
         vault.markUnderwater(OPERATOR);
@@ -236,19 +225,14 @@ contract InHouseTest is LegacyWorkBacking {
     function test_deviationCeilingIsExactAndFloorBased() public {
         _seed(PRICE, 0.9e18);
         uint256 floorStep = _maxDownStep(PRICE);
-
-        vm.prank(REPORTER);
         vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
-        priceFeed.report(floorStep - 1); // one wei past the bound
-
-        vm.prank(REPORTER);
-        priceFeed.report(floorStep); // exactly at the bound is accepted
+        priceFeed.seed(floorStep - 1); // one wei past the bound
+        priceFeed.seed(floorStep); // exactly at the bound is accepted
         (uint256 v,) = priceFeed.latestValue();
         assertEq(v, floorStep);
 
         // Two steps clear far more than one; quorum 1 lets both land in the same block.
-        vm.prank(REPORTER);
-        priceFeed.report(_maxDownStep(floorStep));
+        priceFeed.seed(_maxDownStep(floorStep));
         (uint256 v2,) = priceFeed.latestValue();
         assertLt(v2, floorStep, "second step must move further down");
         assertLt(v2, PRICE * 30 / 100, "two steps should clear a 70% fall at this cap");
@@ -300,7 +284,7 @@ contract InHouseTest is LegacyWorkBacking {
         // PriceFeed pins the live attester, whose key nobody here holds, so this one test leaf is
         // configurable. What it proves is SwarmFeed's digest, which PriceFeed inherits unchanged.
         ConfigurableSwarmFeed f = new ConfigurableSwarmFeed(
-            signer, OPERATOR, 1, ANSWER_TYPE_UINT256, OPERATOR, address(0), address(0), 1, MAX_AGE, MAX_DEVIATION_BPS
+            signer, OPERATOR, 1, ANSWER_TYPE_UINT256, MAX_AGE, MAX_DEVIATION_BPS
         );
 
         SwarmFeed.OracleAttestation memory a = SwarmFeed.OracleAttestation({
@@ -340,7 +324,7 @@ contract InHouseTest is LegacyWorkBacking {
         (address signer,) = makeAddrAndKey("test-attester");
         (, uint256 wrongPk) = makeAddrAndKey("impostor");
         ConfigurableSwarmFeed f = new ConfigurableSwarmFeed(
-            signer, OPERATOR, 1, ANSWER_TYPE_UINT256, OPERATOR, address(0), address(0), 1, MAX_AGE, MAX_DEVIATION_BPS
+            signer, OPERATOR, 1, ANSWER_TYPE_UINT256, MAX_AGE, MAX_DEVIATION_BPS
         );
         SwarmFeed.OracleAttestation memory a;
         a.chainId = 1;
@@ -450,8 +434,7 @@ contract InHouseTest is LegacyWorkBacking {
         vm.stopPrank();
 
         uint256 fallen = PRICE - (PRICE * 2_000) / 10_000;
-        vm.prank(REPORTER);
-        priceFeed.report(fallen);
+        priceFeed.seed(fallen);
         v.markUnderwater(OPERATOR);
         skip(6 hours);
 
@@ -487,9 +470,8 @@ contract InHouseTest is LegacyWorkBacking {
     }
 
     function _seed(uint256 price, uint256 nhi) private {
-        vm.startPrank(REPORTER);
-        priceFeed.report(price);
-        nhiFeed.report(nhi);
+        priceFeed.seed(price);
+        nhiFeed.seed(nhi);
         vm.stopPrank();
         assertFalse(priceFeed.isStale());
         assertFalse(nhiFeed.isStale());

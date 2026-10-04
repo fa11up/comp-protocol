@@ -27,18 +27,24 @@ contract SeedAndSmoke is Script {
         SpotFeed spotFeed = SpotFeed(address(vault.spotFeed()));
         // Spot defaults to the primary: zero divergence, which is the only state that lets the
         // vault price at all. SPOT exists so a run can deliberately put the two out of band.
-        uint256 spot = vm.envOr("SPOT", price);
+        uint256 spot = vm.envOr("SPOT", price); // read for the divergence smoke check below
         MockIMD imd = MockIMD(address(vault.imdToken()));
         CompToken comp = vault.compToken();
 
         vm.startBroadcast();
 
-        if (priceFeed.isStale()) priceFeed.report(price);
-        if (nhiFeed.isStale()) nhiFeed.report(nhi);
-        if (spotFeed.isStale()) spotFeed.report(spot);
-
+        // THIS SCRIPT NO LONGER SEEDS, and that is the operational cost of deleting the reporter
+        // fallback. It used to call report() on each stale feed, which is exactly the authority that
+        // must not exist on mainnet: a key able to set the price directly, unbounded once the feed
+        // aged past maxAge. With it gone a value reaches a feed only through a signed attestation, so
+        // seeding is a purchase and not a transaction we can make.
+        //
+        // The practical consequence is that walking a feed back to market after a large move now
+        // costs IMD per step instead of gas, on testnet exactly as on mainnet. That is the point:
+        // the fallback let us rehearse a protocol we were never going to deploy.
         require(
-            !priceFeed.isStale() && !nhiFeed.isStale() && !spotFeed.isStale(), "feeds still stale after reporting"
+            !priceFeed.isStale() && !nhiFeed.isStale() && !spotFeed.isStale(),
+            "feeds are stale and this script cannot seed them: buy an attestation per stale feed and relay it (keeper/watch.mjs reports which, oracle/relay-attestation.js sends it)"
         );
         console2.log("minCR now         ", vault.minCR());
         console2.log("gracePeriod now   ", vault.gracePeriod());

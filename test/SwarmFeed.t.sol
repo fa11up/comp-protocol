@@ -18,175 +18,52 @@ import {
     ORACLE_ATTESTER,
     ATTESTATION_RELAYER,
     ATTESTATION_CHAIN_ID,
-    ATTESTATION_ANSWER_TYPE,
-    FEED_REPORTER_0,
-    FEED_REPORTER_1,
-    FEED_REPORTER_2,
-    FEED_QUORUM
+    ATTESTATION_ANSWER_TYPE
 } from "src/DeploymentConfig.sol";
+import {SeedablePriceFeed, SeedableNhiFeed, SeedableSpotFeed} from "./helpers/SeedableFeeds.sol";
 
 abstract contract SwarmFeedTest is Test {
+    address private constant BORROWER = address(0xA);
+    address private constant LIQUIDATOR = address(0xB);
     uint256 private constant SIGNER_KEY = 0x12345;
     bytes32 private constant QUESTION = keccak256("collateral price");
-    address private constant REPORTER_A = address(0xA);
-    address private constant REPORTER_B = address(0xB);
-    address private constant REPORTER_C = address(0xC);
     SwarmFeed private feed;
 
     function setUp() public {
         vm.chainId(11155111);
         vm.warp(10 days);
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
-    }
-
-    function test_quorumMedianRoundAndFreshnessBoundary() public {
-        assertTrue(feed.isStale());
-        _report(REPORTER_A, 1.1 ether);
-        vm.expectRevert(SwarmFeed.AlreadyReported.selector);
-        _report(REPORTER_A, 1 ether);
-        vm.expectRevert(SwarmFeed.UnauthorizedReporter.selector);
-        feed.report(1 ether);
-        _report(REPORTER_B, 0.9 ether);
-        (uint256 unpublished,) = feed.latestValue();
-        assertEq(unpublished, 0);
-        uint256 startedAt = block.timestamp;
-        vm.warp(startedAt + 15 minutes);
-        _report(REPORTER_C, 1 ether);
-        (uint256 value, uint64 updatedAt) = feed.latestValue();
-        assertEq(value, 1 ether);
-        assertEq(updatedAt, startedAt, "later quorum votes cannot renew the oldest vote");
-        assertEq(feed.round(), 2);
-        assertFalse(feed.isStale());
-        vm.warp(startedAt + 1 hours);
-        assertFalse(feed.isStale());
-        vm.warp(startedAt + 1 hours + 1);
-        assertTrue(feed.isStale());
-    }
-
-    function test_expiredIncompleteRoundDiscardsOldVotes() public {
-        _report(REPORTER_A, 100 ether);
-        vm.warp(block.timestamp + 1 hours + 1);
-        _report(REPORTER_B, 3 ether);
-        _report(REPORTER_C, 2 ether);
-        assertTrue(feed.isStale());
-        _report(REPORTER_A, 1 ether);
-        (uint256 value,) = feed.latestValue();
-        assertEq(value, 2 ether);
-    }
-
-    function test_pendingQuorumCompletesAtExactMaxAgeWithoutRenewingFreshness() public {
-        uint256 startedAt = block.timestamp;
-        _report(REPORTER_A, 1.1 ether);
-        _report(REPORTER_B, 0.9 ether);
-        vm.warp(startedAt + 1 hours);
-        _report(REPORTER_C, 1 ether);
-        (uint256 value, uint64 updatedAt) = feed.latestValue();
-        assertEq(value, 1 ether);
-        assertEq(updatedAt, startedAt);
-        assertFalse(feed.isStale());
-        assertEq(feed.reportCount(), 0);
-        vm.warp(block.timestamp + 1);
-        assertTrue(feed.isStale());
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, 1 hours, 1000);
     }
 
     function test_deviationAtLimitAcceptedAndBeyondRejectedAtomically() public {
-        _report(REPORTER_A, 1 ether);
-        _report(REPORTER_B, 1 ether);
-        _report(REPORTER_C, 1 ether);
+        _seed(1 ether);
+        _seed(1 ether);
+        _seed(1 ether);
         vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
-        _report(REPORTER_A, 1.1 ether + 1);
+        _seed(1.1 ether + 1);
         vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
-        _report(REPORTER_A, 0.9 ether - 1);
-        assertEq(feed.reportCount(), 0);
-        _report(REPORTER_A, 1.1 ether);
-        _report(REPORTER_B, 1.1 ether);
-        _report(REPORTER_C, 1.1 ether);
+        _seed(0.9 ether - 1);
+        _seed(1.1 ether);
+        _seed(1.1 ether);
+        _seed(1.1 ether);
         (uint256 value,) = feed.latestValue();
         assertEq(value, 1.1 ether);
     }
 
-    /// forge-config: default.fuzz.runs = 1000
-    function testFuzz_threeReporterMedian(uint128 a, uint128 b, uint128 c) public {
-        a = uint128(bound(a, 1, type(uint128).max));
-        b = uint128(bound(b, 1, type(uint128).max));
-        c = uint128(bound(c, 1, type(uint128).max));
-        _report(REPORTER_A, a);
-        _report(REPORTER_B, b);
-        _report(REPORTER_C, c);
-        (uint256 actual,) = feed.latestValue();
-        uint256 lo = a < b ? a : b;
-        if (c < lo) lo = c;
-        uint256 hi = a > b ? a : b;
-        if (c > hi) hi = c;
-        assertEq(actual, uint256(a) + b + c - lo - hi);
-    }
-
-    function test_zeroReportAndAttestationRevertWithoutConsumingRoundOrRequest() public {
-        vm.expectRevert(SwarmFeed.ZeroValue.selector);
-        _report(REPORTER_A, 0);
-        assertEq(feed.reportCount(), 0);
-        assertTrue(feed.isStale());
-        // The failed vote must not prevent the same reporter from submitting a valid value.
-        _report(REPORTER_A, 1 ether);
-        assertEq(feed.reportCount(), 1);
-
+    /// @dev Renamed: it used to put a pending reporter round in the way and assert the attestation
+    /// discarded it. There are no rounds to discard, so what is left is the half that still means
+    /// something — the signed figure is published verbatim, and the same request cannot be used twice.
+    function test_attestationPublishesSignedFigureAndRejectsReplay() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
-        a.figure = 0;
-        bytes memory sig = _sign(a, SIGNER_KEY);
-        vm.expectRevert(SwarmFeed.ZeroValue.selector);
-        feed.submitAttestation(a, sig);
-        assertFalse(feed.usedRequests(a.requestId));
-        assertEq(feed.reportCount(), 1, "failed attestation preserves pending votes");
-        assertTrue(feed.isStale());
-        a.figure = 1 ether;
-        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
-        assertTrue(feed.usedRequests(a.requestId));
-        assertFalse(feed.isStale());
-    }
-
-    function test_evenQuorumMeanDoesNotOverflow() public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
-        _report(REPORTER_A, type(uint256).max);
-        _report(REPORTER_B, type(uint256).max - 1);
-        (uint256 value,) = feed.latestValue();
-        assertEq(value, type(uint256).max - 1);
-    }
-
-    function test_attestationPublishesSignedFigureDiscardsPendingRoundAndRejectsReplay() public {
-        SwarmFeed.OracleAttestation memory a = _attestation();
-        _report(REPORTER_A, 99 ether);
         bytes memory sig = _sign(a, SIGNER_KEY);
         // Submitted by the relayer this fixture pins, which is the test contract.
         feed.submitAttestation(a, sig);
         (uint256 value, uint64 updatedAt) = feed.latestValue();
         assertEq(value, a.figure);
         assertEq(updatedAt, a.issuedAt);
-        assertEq(feed.reportCount(), 0, "primary update discards unfinished fallback round");
         assertTrue(feed.usedRequests(a.requestId));
         vm.expectRevert(SwarmFeed.ReplayedAttestation.selector);
         feed.submitAttestation(a, sig);
-    }
-
-    function test_attestationDiscardedVotesCannotCompleteNextRound() public {
-        _report(REPORTER_A, 99 ether);
-        _report(REPORTER_B, 99 ether);
-        SwarmFeed.OracleAttestation memory a = _attestation();
-        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
-        vm.warp(block.timestamp + 1);
-        uint256 newRoundStartedAt = block.timestamp;
-        _report(REPORTER_C, 1.1 ether);
-        (uint256 value, uint64 updatedAt) = feed.latestValue();
-        assertEq(value, a.figure, "discarded votes cannot publish another value");
-        assertEq(updatedAt, a.issuedAt);
-        assertEq(feed.reportCount(), 1);
-        _report(REPORTER_A, 1.1 ether);
-        vm.expectRevert(SwarmFeed.AlreadyReported.selector);
-        _report(REPORTER_A, 1.1 ether);
-        _report(REPORTER_B, 1.1 ether);
-        (value, updatedAt) = feed.latestValue();
-        assertEq(value, 1.1 ether);
-        assertEq(updatedAt, newRoundStartedAt);
-        assertEq(feed.reportCount(), 0);
     }
 
     function test_attestationRejectsWrongDomainSignerAndTamperedFigure() public {
@@ -226,27 +103,25 @@ abstract contract SwarmFeedTest is Test {
         assertEq(updatedAt, a.issuedAt);
         assertTrue(feed.usedRequests(keccak256("request-1")));
         assertTrue(feed.usedRequests(a.requestId));
-        assertEq(feed.round(), 3);
     }
 
     function test_attestationRelayerGateProtectsFirstValueAndStaleReanchor() public {
         address relayer = address(0xCAFE);
-        feed = _deployFeed(vm.addr(SIGNER_KEY), relayer, 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
-        _report(REPORTER_A, 1 ether);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), relayer, 1, 1, 1 hours, 1000);
+        // Deliberately unseeded: the point is that the gate protects the FIRST value, so the feed has
+        // to start without one. The old version reported a vote that never reached quorum, which left
+        // the feed valueless by a route that no longer exists.
         SwarmFeed.OracleAttestation memory a = _attestation();
         bytes memory sig = _sign(a, SIGNER_KEY);
         vm.prank(vm.addr(SIGNER_KEY));
         vm.expectRevert(SwarmFeed.UnauthorizedRelayer.selector);
         feed.submitAttestation(a, sig);
         assertFalse(feed.usedRequests(a.requestId));
-        assertEq(feed.reportCount(), 1);
-        assertEq(feed.round(), 1);
         assertTrue(feed.isStale());
 
         vm.prank(relayer);
         feed.submitAttestation(a, sig);
         assertTrue(feed.usedRequests(a.requestId));
-        assertEq(feed.reportCount(), 0);
         assertFalse(feed.isStale());
 
         vm.warp(block.timestamp + 1 hours + 1);
@@ -254,7 +129,7 @@ abstract contract SwarmFeedTest is Test {
         a.requestId = keccak256("request-2");
         a.figure = 10 ether;
         sig = _sign(a, SIGNER_KEY);
-        vm.prank(REPORTER_A);
+        vm.prank(address(0xD00D)); // any caller that is not the pinned relayer
         vm.expectRevert(SwarmFeed.UnauthorizedRelayer.selector);
         feed.submitAttestation(a, sig);
         assertFalse(feed.usedRequests(a.requestId));
@@ -274,11 +149,11 @@ abstract contract SwarmFeedTest is Test {
     /// test/QuestionBinding.t.sol covers the configuration that replaces it.
     function test_aZeroRelayerIsRefusedWithoutAPinnedQuestion() public {
         vm.expectRevert(SwarmFeed.UnboundQuestionNeedsRelayer.selector);
-        _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        _deployFeed(vm.addr(SIGNER_KEY), address(0), 1, 1, 1 hours, 1000);
     }
 
     function test_attestationRejectsSignedWrongChainOrTypeThenAcceptsConfiguredPolicy() public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 10, 2, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 10, 2, 1 hours, 1000);
         SwarmFeed.OracleAttestation memory a = _attestation();
         a.chainId = block.chainid;
         a.answerType = 2;
@@ -287,7 +162,6 @@ abstract contract SwarmFeedTest is Test {
         feed.submitAttestation(a, sig);
         assertFalse(feed.usedRequests(a.requestId));
         assertTrue(feed.isStale());
-        assertEq(feed.round(), 1);
 
         a.chainId = 10;
         a.answerType = 1;
@@ -296,7 +170,6 @@ abstract contract SwarmFeedTest is Test {
         feed.submitAttestation(a, sig);
         assertFalse(feed.usedRequests(a.requestId));
         assertTrue(feed.isStale());
-        assertEq(feed.round(), 1);
 
         a.answerType = 2;
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
@@ -313,7 +186,7 @@ abstract contract SwarmFeedTest is Test {
 
         bytes memory sig = _sign(a, SIGNER_KEY);
         SwarmFeed originalFeed = feed;
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, 1 hours, 1000);
         assertNotEq(feed.DOMAIN_SEPARATOR(), originalFeed.DOMAIN_SEPARATOR());
         _assertInvalidSignature(a, sig);
         originalFeed.submitAttestation(a, sig);
@@ -371,11 +244,10 @@ abstract contract SwarmFeedTest is Test {
     /// reporter, so every report() below speaks as that reporter instead of as the test contract.
     function test_realFeedsExpireDuringGraceAndMustRefreshBeforeLiquidation() public {
         address operator = APPROVED_OPERATOR;
-        PriceFeed price = new PriceFeed(1 hours, 10000);
-        NhiFeed nhi = new NhiFeed(1 hours, 10000);
-        vm.startPrank(FEED_REPORTER_0);
-        price.report(1.5 ether);
-        nhi.report(0.85 ether);
+        SeedablePriceFeed price = new SeedablePriceFeed(1 hours, 10000);
+        SeedableNhiFeed nhi = new SeedableNhiFeed(1 hours, 10000);
+        price.seed(1.5 ether);
+        nhi.seed(0.85 ether);
         vm.stopPrank();
         MockIMD imd = new MockIMD();
         CompToken comp = new CompToken(address(0));
@@ -384,35 +256,32 @@ abstract contract SwarmFeedTest is Test {
             new BaselineVault(address(imd), address(comp), address(0), address(price), address(nhi), address(spot));
         vm.startPrank(operator);
         comp.setVault(address(vault));
-        imd.mint(REPORTER_A, 140 ether);
+        imd.mint(BORROWER, 140 ether);
         vm.stopPrank();
-        vm.startPrank(REPORTER_A);
+        vm.startPrank(BORROWER);
         imd.approve(address(vault), 140 ether);
         vault.depositCollateral(140 ether);
         vault.mintCOMP(100 ether);
-        comp.transfer(REPORTER_B, 100 ether);
+        comp.transfer(LIQUIDATOR, 100 ether);
         vm.stopPrank();
-        vm.prank(FEED_REPORTER_0);
-        price.report(1 ether);
-        vault.markUnderwater(REPORTER_A);
+        price.seed(1 ether);
+        vault.markUnderwater(BORROWER);
         vm.warp(block.timestamp + 6 hours);
-        vm.prank(REPORTER_B);
+        vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vault.liquidate(REPORTER_A, 100 ether);
-        vm.prank(FEED_REPORTER_0);
-        price.report(1 ether);
-        vm.prank(REPORTER_B);
+        vault.liquidate(BORROWER, 100 ether);
+        price.seed(1 ether);
+        vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vault.liquidate(REPORTER_A, 100 ether);
-        vm.prank(FEED_REPORTER_0);
-        nhi.report(0.85 ether);
-        vm.prank(REPORTER_B);
-        vault.liquidate(REPORTER_A, 100 ether);
-        assertEq(imd.balanceOf(REPORTER_B), 109 ether, "liquidator receives principal plus 90% of bonus");
+        vault.liquidate(BORROWER, 100 ether);
+        nhi.seed(0.85 ether);
+        vm.prank(LIQUIDATOR);
+        vault.liquidate(BORROWER, 100 ether);
+        assertEq(imd.balanceOf(LIQUIDATOR), 109 ether, "liquidator receives principal plus 90% of bonus");
         assertEq(imd.balanceOf(address(this)), 1 ether, "distinct marker receives 10% of bonus");
-        assertEq(imd.balanceOf(REPORTER_B) + imd.balanceOf(address(this)), 110 ether);
+        assertEq(imd.balanceOf(LIQUIDATOR) + imd.balanceOf(address(this)), 110 ether);
         assertEq(comp.totalSupply(), 0);
-        (uint256 remaining, uint256 debt) = vault.positions(REPORTER_A);
+        (uint256 remaining, uint256 debt) = vault.positions(BORROWER);
         assertEq(remaining, 30 ether);
         assertEq(debt, 0);
     }
@@ -420,86 +289,22 @@ abstract contract SwarmFeedTest is Test {
     function test_constructorRejectsInvalidConfiguration() public {
         address attester = vm.addr(SIGNER_KEY);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(address(0), address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 1000);
+        _deployFeed(address(0), address(0), 1, 1, 1 hours, 1000);
+        // Was InvalidConfiguration when the constructor also validated reporters and quorum. With
+        // those gone, a zero relayer on a feed that pins no question is the error that remains — and
+        // it is the pairing the HIGH audit finding established, so it is the right one to assert.
+        vm.expectRevert(SwarmFeed.UnboundQuestionNeedsRelayer.selector);
+        _deployFeed(attester, address(0), 1, 1, 1 hours, 1000);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 0, 1 hours, 1000);
+        _deployFeed(attester, address(0), 1, 1, 0, 1000);
         vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, address(0), 1, 1, REPORTER_A, address(0), address(0), 2, 1 hours, 1000);
-        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, address(0), 1, 1, address(0), address(0), address(0), 1, 1 hours, 1000);
-        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 0, 1000);
-        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_C, 3, 1 hours, 10001);
-        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_A, REPORTER_C, 2, 1 hours, 1000);
-        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_A, 2, 1 hours, 1000);
-        vm.expectRevert(SwarmFeed.InvalidConfiguration.selector);
-        _deployFeed(attester, address(0), 1, 1, REPORTER_A, REPORTER_B, REPORTER_B, 2, 1 hours, 1000);
-    }
-
-    function test_singleReporterQuorumAllowsNewRoundAndRejectsUnlistedReporter() public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, address(0), address(0), 1, 1 hours, 1000);
-        vm.expectRevert(SwarmFeed.UnauthorizedReporter.selector);
-        _report(REPORTER_B, 1 ether);
-        _report(REPORTER_A, 1 ether);
-        (uint256 value,) = feed.latestValue();
-        assertEq(value, 1 ether);
-        assertEq(feed.round(), 2);
-        _report(REPORTER_A, 1.1 ether);
-        (value,) = feed.latestValue();
-        assertEq(value, 1.1 ether);
-        assertEq(feed.round(), 3);
-        assertEq(feed.reportCount(), 0);
-    }
-
-    /// forge-config: default.fuzz.runs = 1000
-    function testFuzz_evenQuorumFloorsMean(uint256 a, uint256 b) public {
-        feed = _deployFeed(vm.addr(SIGNER_KEY), address(this), 1, 1, REPORTER_A, REPORTER_B, address(0), 2, 1 hours, 1000);
-        a = bound(a, 1, type(uint256).max);
-        b = bound(b, 1, type(uint256).max);
-        _report(REPORTER_B, b);
-        (uint256 unpublished,) = feed.latestValue();
-        assertEq(unpublished, 0);
-        _report(REPORTER_A, a);
-        (uint256 actual,) = feed.latestValue();
-        assertEq(actual, a / 2 + b / 2 + (a % 2 + b % 2) / 2);
-    }
-
-    function test_reportRejectsUnrepresentableTimestampWithoutConsumingVote() public {
-        vm.warp(uint256(type(uint64).max) + 1);
-        vm.expectRevert(SwarmFeed.InvalidTimestamp.selector);
-        _report(REPORTER_A, 1 ether);
-        assertEq(feed.reportCount(), 0);
-        assertEq(feed.lastReportedRound(REPORTER_A), 0);
-        assertTrue(feed.isStale());
-    }
-
-    function test_staleValueCanReanchorThroughReporterQuorum() public {
-        _report(REPORTER_A, 1 ether);
-        _report(REPORTER_B, 1 ether);
-        _report(REPORTER_C, 1 ether);
-        vm.warp(block.timestamp + 1 hours);
-        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
-        _report(REPORTER_A, 3 ether);
-        vm.warp(block.timestamp + 1);
-        assertTrue(feed.isStale());
-        _report(REPORTER_A, 3 ether);
-        _report(REPORTER_B, 3 ether);
-        assertTrue(feed.isStale());
-        _report(REPORTER_C, 3 ether);
-        (uint256 value, uint64 updatedAt) = feed.latestValue();
-        assertEq(value, 3 ether);
-        assertEq(updatedAt, block.timestamp);
-        assertFalse(feed.isStale());
+        _deployFeed(attester, address(0), 1, 1, 1 hours, 10001);
     }
 
     function test_attestationDeviationRejectedAtomicallyAndBoundaryAccepted() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
-        _report(REPORTER_A, 1 ether);
-        uint256 pendingRound = feed.round();
+        _seed(1 ether);
         uint64 initialTime = a.issuedAt;
         vm.warp(block.timestamp + 1);
         a = _attestation();
@@ -516,16 +321,12 @@ abstract contract SwarmFeedTest is Test {
         assertEq(value, 1 ether);
         assertEq(updatedAt, initialTime);
         assertFalse(feed.usedRequests(a.requestId));
-        assertEq(feed.reportCount(), 1);
-        assertEq(feed.round(), pendingRound);
         a.figure = 0.9 ether;
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         (value, updatedAt) = feed.latestValue();
         assertEq(value, a.figure);
         assertEq(updatedAt, a.issuedAt);
         assertTrue(feed.usedRequests(a.requestId));
-        assertEq(feed.reportCount(), 0);
-        assertEq(feed.round(), pendingRound + 1);
     }
 
     function test_staleValueCanReanchorThroughFreshAttestation() public {
@@ -604,7 +405,6 @@ abstract contract SwarmFeedTest is Test {
             feed.submitAttestation(a, sig);
             assertFalse(feed.usedRequests(a.requestId));
             assertTrue(feed.isStale());
-            assertEq(feed.round(), 1);
         } else {
             _assertInvalidSignature(a, sig);
         }
@@ -615,7 +415,6 @@ abstract contract SwarmFeedTest is Test {
         feed.submitAttestation(a, sig);
         assertFalse(feed.usedRequests(a.requestId));
         assertTrue(feed.isStale());
-        assertEq(feed.round(), 1);
     }
 
     function _deployFeed(
@@ -623,17 +422,15 @@ abstract contract SwarmFeedTest is Test {
         address relayer,
         uint256 attestationChainId,
         uint8 attestationAnswerType,
-        address reporter0,
-        address reporter1,
-        address reporter2,
-        uint8 quorum,
         uint256 maxAge,
         uint256 maxDeviationBps
     ) internal virtual returns (SwarmFeed);
 
-    function _report(address reporter, uint256 value) private {
-        vm.prank(reporter);
-        feed.report(value);
+    /// @dev What `_report` became. There is no account to prank: the reporter fallback is gone, so a
+    /// test puts a value in through the seeding door the Configurable/Seedable helpers expose. The
+    /// distinction the old helper encoded — WHO may set a value — no longer exists, because nobody may.
+    function _seed(uint256 value) private {
+        ConfigurableSwarmFeed(address(feed)).seed(value);
     }
 
     function _attestation() private view returns (SwarmFeed.OracleAttestation memory a) {
@@ -708,7 +505,7 @@ abstract contract SwarmFeedTest is Test {
     }
 }
 
-/// @dev The mechanics above are SwarmFeed's, not a leaf's: quorum, median, rounds, deviation,
+/// @dev The mechanics above are SwarmFeed's, not a leaf's: deviation,
 /// replay and signature recovery all live in the base. They used to run twice, once through
 /// PriceFeed and once through NhiFeed, because the base is abstract and those were the only
 /// concrete leaves. Both leaves now pin their authority in source (DeploymentConfig), so neither can
@@ -723,10 +520,6 @@ contract SwarmFeedMechanicsTest is SwarmFeedTest {
         address relayer,
         uint256 attestationChainId,
         uint8 attestationAnswerType,
-        address reporter0,
-        address reporter1,
-        address reporter2,
-        uint8 quorum,
         uint256 maxAge,
         uint256 maxDeviationBps
     ) internal override returns (SwarmFeed) {
@@ -735,10 +528,6 @@ contract SwarmFeedMechanicsTest is SwarmFeedTest {
             relayer,
             attestationChainId,
             attestationAnswerType,
-            reporter0,
-            reporter1,
-            reporter2,
-            quorum,
             maxAge,
             maxDeviationBps
         );
@@ -761,30 +550,31 @@ contract PinnedAuthorityTest is Test {
         spotFeed = new SpotFeed(30 minutes, 1000);
     }
 
-    function test_bothArtifactsReportTheSourcePinnedAuthority() public view {
+    function test_bothArtifactsReportTheSourcePinnedAuthority() public {
         SwarmFeed[3] memory feeds = [SwarmFeed(priceFeed), SwarmFeed(nhiFeed), SwarmFeed(spotFeed)];
         for (uint256 i; i < feeds.length; ++i) {
             assertEq(feeds[i].attester(), ORACLE_ATTESTER, "attester");
             assertEq(feeds[i].relayer(), ATTESTATION_RELAYER, "relayer");
-            assertEq(feeds[i].reporter0(), FEED_REPORTER_0, "reporter0");
-            assertEq(feeds[i].reporter1(), FEED_REPORTER_1, "reporter1");
-            assertEq(feeds[i].reporter2(), FEED_REPORTER_2, "reporter2");
-            assertEq(feeds[i].quorum(), FEED_QUORUM, "quorum");
+            // Four assertions used to pin WHO could report. The authority itself is gone, so what
+            // is pinned now is its absence: no deployed feed answers the fallback's selector.
+            (bool reported,) =
+                address(feeds[i]).call(abi.encodeWithSelector(bytes4(keccak256("report(uint256)")), uint256(1)));
+            assertFalse(reported, "a shipped feed has no reporter fallback");
             assertEq(feeds[i].attestationAnswerType(), ATTESTATION_ANSWER_TYPE, "answerType");
             assertEq(feeds[i].attestationChainId(), ATTESTATION_CHAIN_ID, "payload chainId");
         }
     }
 
     /// @dev 519's two fatal values, named. answerType 1 is `address`, and a uint256 figure carries 3;
-    /// a relayer nobody holds a key for cannot seed or re-anchor the feed.
+    /// and with the reporter fallback deleted there is no key that can seed or re-anchor a feed at all.
     function test_theTwoValuesThatBrokeLaunch519CannotRecur() public view {
         assertTrue(priceFeed.attestationAnswerType() != 1, "answerType must not be the address enum");
         assertTrue(priceFeed.relayer() == ATTESTATION_RELAYER, "relayer must be an address we operate");
-        assertTrue(priceFeed.isReporter(FEED_REPORTER_0), "the reporter must be able to seed manually");
-        // The faucet authority is deliberately NOT the reporter or the relayer: whoever sets the
-        // price would otherwise profit from liquidations they can trigger. All three were one
-        // address until the feed authority moved to the simulation wallet.
-        assertTrue(FEED_REPORTER_0 != FEE_RECIPIENT, "the price setter must not collect the fee");
+        // The separation this used to assert — that whoever sets the price is not whoever collects
+        // the fee — is now structural rather than configured. There is no price setter: the reporter
+        // fallback is deleted, so no key can seed or re-anchor a feed and there is nobody for the fee
+        // recipient to be distinct FROM. What remains to assert is that the relayer, the only address
+        // still named on the attestation path, does not collect the fee either.
         assertTrue(ATTESTATION_RELAYER != FEE_RECIPIENT, "the relayer must not collect the fee");
     }
 

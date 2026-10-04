@@ -8,9 +8,14 @@ import {SwarmRelay} from "src/SwarmRelay.sol";
 /// @dev Test leaf for the abstract feed: the production artifacts pin their authorities, so the only
 /// way to point a feed at a relay deployed inside the test is a leaf that takes them as arguments.
 contract TestFeed is SwarmFeed {
-    constructor(address attester_, address relayer_, address reporter_)
-        SwarmFeed(attester_, relayer_, 1, 3, reporter_, address(0), address(0), 1, 1 days, 2000)
+    constructor(address attester_, address relayer_)
+        SwarmFeed(attester_, relayer_, 1, 3, 1 days, 2000)
     {}
+
+    /// @dev Test-only seeding door; the reporter fallback it replaces no longer exists.
+    function seed(uint256 value) external {
+        _accept(value, uint64(block.timestamp));
+    }
 }
 
 /// @notice Finding: SwarmRelay is the pinned relayer of every feed and has no caller restriction, so
@@ -23,7 +28,7 @@ contract TestFeed is SwarmFeed {
 /// relay, which the feed would refuse from them directly.
 contract PermissionlessRelayTest is Test {
     uint256 private constant ATTESTER_KEY = 0xA11CE;
-    address private constant REPORTER = address(0xBEEF);
+    address private constant BORROWER_X = address(0xBEEF);
     address private constant STRANGER = address(0x5747);
 
     SwarmRelay private relay;
@@ -39,9 +44,8 @@ contract PermissionlessRelayTest is Test {
         vm.chainId(11155111);
         vm.warp(10 days);
         relay = new SwarmRelay();
-        priceFeed = new TestFeed(vm.addr(ATTESTER_KEY), address(relay), REPORTER);
-        vm.prank(REPORTER);
-        priceFeed.report(1 ether);
+        priceFeed = new TestFeed(vm.addr(ATTESTER_KEY), address(relay));
+        priceFeed.seed(1 ether);
     }
 
     /// @dev The feed is stale (no update for > maxAge), so the deviation bound does not apply and the

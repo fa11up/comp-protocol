@@ -12,7 +12,7 @@ import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
 import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
-import {FEED_REPORTER_0} from "../src/DeploymentConfig.sol";
+import {SeedablePriceFeed, SeedableNhiFeed, SeedableSpotFeed} from "./helpers/SeedableFeeds.sol";
 
 /// @dev Models constructor-only deployment, with no application-call capability.
 /// @dev Deploys the zero-fee subclass. These suites are about constructor-only deployment,
@@ -177,14 +177,13 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
     address private constant BORROWER = address(0x2003);
     // Not a free choice any more: the deployment artifacts pin their reporter in source, so this
     // names the pinned one. Picking any other address here would make _seedFeeds revert.
-    address private constant REPORTER = FEED_REPORTER_0;
     ApplicationConstructionFactory private factory;
     MockIMD private imd;
     CompToken private comp;
     CDPVault private vault;
     MockWorkOracle private oracle;
-    PriceFeed private priceFeed;
-    NhiFeed private nhiFeed;
+    SeedablePriceFeed private priceFeed;
+    SeedableNhiFeed private nhiFeed;
     MirroredSwarmFeed private spotFeed;
 
     function setUp() public {
@@ -192,8 +191,8 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         vm.warp(1_000_000);
         factory = new ApplicationConstructionFactory();
         imd = new MockIMD();
-        priceFeed = new PriceFeed(86400, 2000);
-        nhiFeed = new NhiFeed(86400, 2000);
+        priceFeed = new SeedablePriceFeed(86400, 2000);
+        nhiFeed = new SeedableNhiFeed(86400, 2000);
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
     }
 
@@ -230,9 +229,8 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
     }
 
     function _seedFeeds() private {
-        vm.startPrank(REPORTER);
-        priceFeed.report(1 ether);
-        nhiFeed.report(0.85 ether);
+        priceFeed.seed(1 ether);
+        nhiFeed.seed(0.85 ether);
         vm.stopPrank();
         assertFalse(priceFeed.isStale());
         assertFalse(nhiFeed.isStale());
@@ -405,9 +403,8 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         // Refresh each feed independently so both stale branches are exercised after valid seeding.
         for (uint256 staleFeed; staleFeed < 2; ++staleFeed) {
             vm.warp(block.timestamp + 86401);
-            vm.prank(REPORTER);
-            if (staleFeed == 0) nhiFeed.report(0.85 ether);
-            else priceFeed.report(1 ether);
+            if (staleFeed == 0) nhiFeed.seed(0.85 ether);
+            else priceFeed.seed(1 ether);
             vm.startPrank(BORROWER);
             vm.expectRevert(CDPVault.StaleFeed.selector);
             vault.mintCOMP(1);

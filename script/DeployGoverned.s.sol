@@ -16,7 +16,6 @@ import {
     APPROVED_OPERATOR,
     ATTESTATION_RELAYER,
     CHAINLINK_ETH_USD,
-    FEED_REPORTER_0,
     MARKER_SHARE_BPS,
     MAX_DIVERGENCE_BPS,
     PROTOCOL_BONUS_SHARE_BPS,
@@ -41,7 +40,10 @@ contract DeployGoverned is Script {
 
     function run() external {
         address operator = vm.envAddress("OPERATOR");
-        require(operator == FEED_REPORTER_0, "OPERATOR cannot report: not the reporter pinned in DeploymentConfig");
+        // The broadcaster no longer has to be anything in particular. It used to be required to BE
+        // the pinned reporter so the script could seed the feeds; with the fallback gone there is
+        // nothing to seed with, and on mainnet the broadcaster is a throwaway deployer that is
+        // neither the operator nor a reporter.
         address imd = vm.envOr("MOCK_IMD", address(0));
 
         vm.startBroadcast();

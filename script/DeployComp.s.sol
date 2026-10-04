@@ -15,11 +15,7 @@ import {
     ORACLE_ATTESTER,
     ATTESTATION_RELAYER,
     ATTESTATION_CHAIN_ID,
-    ATTESTATION_ANSWER_TYPE,
-    FEED_REPORTER_0,
-    FEED_REPORTER_1,
-    FEED_REPORTER_2,
-    FEED_QUORUM
+    ATTESTATION_ANSWER_TYPE
 } from "../src/DeploymentConfig.sol";
 
 /// @notice In-house deployment of the COMP feed + vault stack, with every authority held by us.
@@ -61,7 +57,7 @@ contract DeployComp is Script {
         // Deliberately NOT required to equal ATTESTATION_RELAYER: relaying is a hot, automated role
         // and is expected to move to its own key, while deploying stays a cold, manual one.
         address operator = vm.envAddress("OPERATOR");
-        require(operator == FEED_REPORTER_0, "OPERATOR cannot report: not the reporter pinned in DeploymentConfig");
+        // No reporter to be: the fallback is gone and feeds are seeded only by attestation.
         // Reused from launch 519: its faucet authority is the hardcoded APPROVED_OPERATOR in
         // DeploymentConfig.sol, so MockIMD.deployer() is already us. Set MOCK_IMD=0x0 to deploy fresh.
         address imd = vm.envOr("MOCK_IMD", address(0));
@@ -135,11 +131,8 @@ contract DeployComp is Script {
             require(feeds[i].attester() == ORACLE_ATTESTER, "feed: wrong attester");
             require(feeds[i].relayer() == ATTESTATION_RELAYER, "feed: relayer is not the pinned one");
             require(feeds[i].relayer() != address(0), "feed: permissionless relay while questionHash is unbound");
-            require(feeds[i].reporter0() == FEED_REPORTER_0, "feed: reporter0 is not the pinned one");
-            require(feeds[i].reporter1() == FEED_REPORTER_1, "feed: reporter1 drifted from source");
-            require(feeds[i].reporter2() == FEED_REPORTER_2, "feed: reporter2 drifted from source");
-            require(feeds[i].quorum() == FEED_QUORUM, "feed: quorum drifted from source");
-            require(feeds[i].isReporter(operator), "feed: operator cannot report");
+            // Nothing to assert about reporters: a feed has none. What used to be four authority
+            // checks is now the absence of the authority itself.
             require(
                 feeds[i].attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "feed: answerType must be 3 (uint256)"
             );

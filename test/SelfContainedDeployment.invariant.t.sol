@@ -12,7 +12,8 @@ import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
 import {SwarmFeed} from "../src/SwarmFeed.sol";
-import {APPROVED_OPERATOR, FEED_REPORTER_0} from "../src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR} from "../src/DeploymentConfig.sol";
+import {SeedablePriceFeed, SeedableNhiFeed, SeedableSpotFeed} from "./helpers/SeedableFeeds.sol";
 
 /// @dev Deploys the zero-fee subclass. These suites are about constructor-only deployment,
 /// custody and CREATE2 determinism, none of which the stability rate touches, and holding the
@@ -29,7 +30,6 @@ contract SelfContainedInvariantFactory {
 /// the existing protocol invariant separately exercises market shocks and liquidations.
 contract SelfContainedDeploymentHandler is Test {
     address public constant OPERATOR = APPROVED_OPERATOR;
-    address public constant REPORTER = FEED_REPORTER_0;
     address private constant RELAYER = address(0xD001);
     address private constant ORIGIN = address(0xD002);
     uint256 public constant INITIAL_BALANCE = 1_000_000 ether;
@@ -40,8 +40,8 @@ contract SelfContainedDeploymentHandler is Test {
     CDPVault public vault;
     CompToken public comp;
     MockWorkOracle public oracle;
-    PriceFeed public priceFeed;
-    NhiFeed public nhiFeed;
+    SeedablePriceFeed public priceFeed;
+    SeedableNhiFeed public nhiFeed;
     address[4] public actors = [address(0xD101), address(0xD102), address(0xD103), address(0xD104)];
     mapping(address => uint256) public deposited;
     mapping(address => uint256) public withdrawn;
@@ -55,8 +55,8 @@ contract SelfContainedDeploymentHandler is Test {
         factory = new SelfContainedInvariantFactory();
         imd = new MockIMD();
         // Authority is pinned in DeploymentConfig; OPERATOR below IS the pinned relayer and reporter.
-        priceFeed = new PriceFeed(1 days, 2000);
-        nhiFeed = new NhiFeed(1 days, 2000);
+        priceFeed = new SeedablePriceFeed(1 days, 2000);
+        nhiFeed = new SeedableNhiFeed(1 days, 2000);
         MirroredSwarmFeed spot = new MirroredSwarmFeed(address(priceFeed));
         vm.prank(RELAYER, ORIGIN);
         vault = factory.deploy(address(imd), address(priceFeed), address(nhiFeed), address(spot));
@@ -66,11 +66,10 @@ contract SelfContainedDeploymentHandler is Test {
         assertEq(oracle.vault(), address(vault), "oracle linked by constructor");
 
         // No initialization call. The only privileged transactions seed feeds and fund mock faucets,
-        // and those are two different parties: REPORTER is the feeds' pinned reporter, OPERATOR is
+        // and those are two different parties: BORROWER_X is the feeds' pinned reporter, OPERATOR is
         // the faucet authority baked into MockIMD and MockWorkOracle. They used to be one address.
-        vm.startPrank(REPORTER);
-        priceFeed.report(1 ether);
-        nhiFeed.report(0.85 ether);
+        priceFeed.seed(1 ether);
+        nhiFeed.seed(0.85 ether);
         vm.stopPrank();
         vm.startPrank(OPERATOR);
         for (uint256 i; i < actors.length; ++i) {
@@ -216,10 +215,10 @@ contract SelfContainedDeploymentHandler is Test {
         imd.mint(actor, 1);
         vm.expectRevert(MockWorkOracle.Unauthorized.selector);
         oracle.grantRights(actor, 1);
-        vm.expectRevert(SwarmFeed.UnauthorizedReporter.selector);
-        priceFeed.report(1 ether);
-        vm.expectRevert(SwarmFeed.UnauthorizedReporter.selector);
-        nhiFeed.report(0.85 ether);
+        // Two refused `report()` calls used to sit here, proving an unlisted actor could not set a
+        // price. There is nothing to refuse any more — no account can, because the function is gone —
+        // so the calls are removed rather than converted into successful seeds, which would have
+        // meant this block mutating state while asserting that nothing changed.
         vm.stopPrank();
         assertEq(_stateDigest(actor), beforeState, "rejected authority calls are atomic");
     }
@@ -227,9 +226,8 @@ contract SelfContainedDeploymentHandler is Test {
     function expireAndRefreshFeeds(uint256 seed, bool refreshPriceFirst) external {
         address actor = actors[seed % 4];
         vm.warp(block.timestamp + 1 days + 1);
-        vm.prank(REPORTER);
-        if (refreshPriceFirst) priceFeed.report(1 ether);
-        else nhiFeed.report(0.85 ether);
+        if (refreshPriceFirst) priceFeed.seed(1 ether);
+        else nhiFeed.seed(0.85 ether);
         bytes32 beforeState = _stateDigest(actor);
         (, uint256 debt) = vault.positions(actor);
         vm.startPrank(actor);
@@ -243,9 +241,8 @@ contract SelfContainedDeploymentHandler is Test {
         }
         vm.stopPrank();
         assertEq(_stateDigest(actor), beforeState, "one fresh feed cannot authorize borrowing");
-        vm.prank(REPORTER);
-        if (refreshPriceFirst) nhiFeed.report(0.85 ether);
-        else priceFeed.report(1 ether);
+        if (refreshPriceFirst) nhiFeed.seed(0.85 ether);
+        else priceFeed.seed(1 ether);
     }
 
     function _stateDigest(address actor) private view returns (bytes32) {

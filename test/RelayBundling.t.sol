@@ -19,7 +19,7 @@ import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
 /// the relay is the liquidator, and it must end the call holding nothing.
 contract RelayBundlingTest is Test {
     uint256 private constant ATTESTER_KEY = 0xA11CE;
-    address private constant REPORTER = address(0xBEEF);
+    address private constant BORROWER_X = address(0xBEEF);
     address private constant BORROWER = address(0xB0B);
     address private constant KEEPER = address(0x4EEBE4);
     address private constant MARKER = address(0x3A4CE4);
@@ -246,13 +246,12 @@ contract RelayBundlingTest is Test {
 
     function _feed() private returns (ConfigurableSwarmFeed) {
         return new ConfigurableSwarmFeed(
-            vm.addr(ATTESTER_KEY), address(relay), 1, 3, REPORTER, address(0), address(0), 1, 1 days, 2000
+            vm.addr(ATTESTER_KEY), address(relay), 1, 3, 1 days, 2000
         );
     }
 
     function _report(ConfigurableSwarmFeed feed, uint256 value) private {
-        vm.prank(REPORTER);
-        feed.report(value);
+        feed.seed(value);
     }
 
     function _attestation(bytes32 id, uint256 figure) private view returns (SwarmFeed.OracleAttestation memory a) {

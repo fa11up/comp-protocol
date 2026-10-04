@@ -13,9 +13,14 @@ import {SpotFeed} from "src/SpotFeed.sol";
 /// end. Keys are sorted (RFC 8785 subset), which is why `window` is last and the varying part is a
 /// suffix: {"answerType":"uint256","chainId":1,"question":"q","v":1,"window":{"fromBlock":N,"toBlock":M}}
 contract BoundFeed is SwarmFeed {
-    constructor(address attester_, address relayer_, address reporter_)
-        SwarmFeed(attester_, relayer_, 1, 3, reporter_, address(0), address(0), 1, 1 days, 2000)
+    constructor(address attester_, address relayer_)
+        SwarmFeed(attester_, relayer_, 1, 3, 1 days, 2000)
     {}
+
+    /// @dev Test-only seeding door; the reporter fallback it replaces no longer exists.
+    function seed(uint256 value) external {
+        _accept(value, uint64(block.timestamp));
+    }
 
     function questionPolicy() internal pure override returns (bytes memory, uint64, uint64) {
         return ('{"answerType":"uint256","chainId":1,"question":"q","v":1,"window":{"fromBlock":', 300, 1200);
@@ -24,7 +29,7 @@ contract BoundFeed is SwarmFeed {
 
 contract QuestionBindingTest is Test {
     uint256 private constant ATTESTER_KEY = 0xA11CE;
-    address private constant REPORTER = address(0xBEEF);
+    address private constant BORROWER_X = address(0xBEEF);
     address private constant STRANGER = address(0x5747);
 
     BoundFeed private feed;
@@ -36,7 +41,7 @@ contract QuestionBindingTest is Test {
         relay = new SwarmRelay();
         // relayer ZERO: permissionless, which is only safe because the question is pinned. This is
         // the configuration the audit's high finding says the feed must earn.
-        feed = new BoundFeed(vm.addr(ATTESTER_KEY), address(0), REPORTER);
+        feed = new BoundFeed(vm.addr(ATTESTER_KEY), address(0));
     }
 
     /// @dev The attack from the audit: a validly signed attestation for this feed's own EIP-712

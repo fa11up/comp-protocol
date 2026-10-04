@@ -6,12 +6,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SwarmFeed} from "src/SwarmFeed.sol";
 import {SwarmWorkOracle} from "src/SwarmWorkOracle.sol";
 import {WorkOracleFactory} from "src/WorkOracleFactory.sol";
+import {SeedableWorkOracle, SeedableWorkOracleFactory} from "./helpers/SeedableFeeds.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {Parameters} from "src/Parameters.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
 import {
     APPROVED_OPERATOR,
-    FEED_REPORTER_0,
     WORK_AGENT_ID,
     WORK_CLAIMANT,
     WORK_ORACLE_FACTORY,
@@ -28,7 +28,7 @@ import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
 /// for: they drive the reporter fallback rather than buying an attestation, because the figure is not
 /// answerable yet (no receipt carries an agent tally for this seat so far).
 contract SwarmWorkOracleTest is WorkBackingFixture {
-    SwarmWorkOracle internal work;
+    SeedableWorkOracle internal work;
     CDPVault internal attestedVault;
     /// @dev Hoisted, and that is not tidiness. `vm.expectRevert` applies to the NEXT call, and
     /// `backedVault.spotFeed()` inside an argument list IS a call, so reading it there silently eats
@@ -38,7 +38,7 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
     function setUp() public override {
         super.setUp();
         spot = address(backedVault.spotFeed());
-        WorkOracleFactory factory = new WorkOracleFactory();
+        SeedableWorkOracleFactory factory = new SeedableWorkOracleFactory();
         vm.etch(WORK_ORACLE_FACTORY, address(factory).code);
         attestedVault = new CDPVault(
             address(collateral),
@@ -48,7 +48,7 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
             address(health),
             spot
         );
-        work = SwarmWorkOracle(address(attestedVault.oracle()));
+        work = SeedableWorkOracle(address(attestedVault.oracle()));
     }
 
     // --- wiring ---------------------------------------------------------------------------------
@@ -80,12 +80,12 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
     /// depend on. The two paths must stay distinguishable.
     function test_zeroStillMeansTheFaucetAndTheSentinelDoesNot() public view {
         assertTrue(address(backedVault.oracle()) != address(work), "different vaults, different oracles");
-        assertEq(SwarmWorkOracle(address(work)).vault(), address(attestedVault));
+        assertEq(SeedableWorkOracle(address(work)).vault(), address(attestedVault));
     }
 
     /// @dev An oracle the factory made for somebody else is useless to a vault, and refused by it.
     function test_anOracleBoundToAnotherVaultIsRefused() public {
-        SwarmWorkOracle other = WorkOracleFactory(WORK_ORACLE_FACTORY).create(WORK_ORACLE_MAX_AGE);
+        SeedableWorkOracle other = SeedableWorkOracleFactory(WORK_ORACLE_FACTORY).create(WORK_ORACLE_MAX_AGE);
         assertEq(other.vault(), address(this), "created for its caller");
         vm.expectRevert(CDPVault.InvalidOracle.selector);
         new CDPVault(
@@ -191,7 +191,7 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
             address(health),
             spot
         );
-        SwarmWorkOracle governedWork = SwarmWorkOracle(address(governed.oracle()));
+        SeedableWorkOracle governedWork = SeedableWorkOracle(address(governed.oracle()));
         assertEq(governedWork.compPerTaskWad(), COMP_PER_TASK_WAD, "seeded from the shipped constant");
 
         // vm.prank applies to the NEXT call, and `governed.parameters()` IS a call, so the view has
@@ -253,9 +253,8 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
             address(health),
             spot
         );
-        SwarmWorkOracle governedWork = SwarmWorkOracle(address(governed.oracle()));
-        vm.prank(FEED_REPORTER_0);
-        governedWork.report(1000);
+        SeedableWorkOracle governedWork = SeedableWorkOracle(address(governed.oracle()));
+        governedWork.seed(1000);
         assertGt(governedWork.mintingRights(WORK_CLAIMANT), 0, "rights exist");
         assertEq(governed.workCeiling(), 0, "but nothing backs them");
 
@@ -273,11 +272,9 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
     /// action that was only supposed to price FUTURE work.
     function test_regression_aRateRiseDoesNotRepriceWorkAlreadyConsumed() public {
         ParameterizedVault governed = _governedVault();
-        SwarmWorkOracle w = SwarmWorkOracle(address(governed.oracle()));
+        SeedableWorkOracle w = SeedableWorkOracle(address(governed.oracle()));
         Parameters params = governed.parameters();
-
-        vm.prank(FEED_REPORTER_0);
-        w.report(1000);
+        w.seed(1000);
         uint256 all = w.mintingRights(WORK_CLAIMANT);
         assertEq(all, 1000 * COMP_PER_TASK_WAD, "1000 tasks at the shipped rate");
 
@@ -296,11 +293,9 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
     /// consumed, so rights the claimant had already earned simply vanished.
     function test_regression_aRateCutDoesNotTakeBackRightsAlreadyEarned() public {
         ParameterizedVault governed = _governedVault();
-        SwarmWorkOracle w = SwarmWorkOracle(address(governed.oracle()));
+        SeedableWorkOracle w = SeedableWorkOracle(address(governed.oracle()));
         Parameters params = governed.parameters();
-
-        vm.prank(FEED_REPORTER_0);
-        w.report(1000);
+        w.seed(1000);
         uint256 half = (1000 * COMP_PER_TASK_WAD) / 2;
         vm.prank(address(governed));
         w.consumeRights(WORK_CLAIMANT, half);
@@ -314,19 +309,16 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
     /// @dev And the change does apply where it should: to work that arrives after it.
     function test_newWorkIsPricedAtTheRateInForceWhenItIsCredited() public {
         ParameterizedVault governed = _governedVault();
-        SwarmWorkOracle w = SwarmWorkOracle(address(governed.oracle()));
+        SeedableWorkOracle w = SeedableWorkOracle(address(governed.oracle()));
         Parameters params = governed.parameters();
-
-        vm.prank(FEED_REPORTER_0);
-        w.report(1000);
+        w.seed(1000);
         uint256 earned = w.mintingRights(WORK_CLAIMANT);
         vm.prank(address(governed));
         w.consumeRights(WORK_CLAIMANT, earned); // credits 1000 tasks at the old rate
 
         _setRate(params, COMP_PER_TASK_WAD * 2);
         // The deviation bound permits at most a doubling while fresh, so 1000 -> 1500 is acceptable.
-        vm.prank(FEED_REPORTER_0);
-        w.report(1500);
+        w.seed(1500);
         assertEq(w.mintingRights(WORK_CLAIMANT), 500 * COMP_PER_TASK_WAD * 2, "500 new tasks at the new rate");
     }
 
@@ -383,14 +375,12 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
     /// place of buying an attestation. The real path is submitAttestation under question binding,
     /// covered for this contract's base by test/QuestionBinding.t.sol and test/SwarmFeed.t.sol.
     function _tally(uint256 count) private {
-        vm.prank(FEED_REPORTER_0);
-        work.report(count);
+        work.seed(count);
     }
 
     /// @dev A second reading. The deviation bound permits at most a doubling while the last value is
     /// fresh, so a fall is always acceptable and a rise may need the value to age first.
     function _retally(uint256 count) private {
-        vm.prank(FEED_REPORTER_0);
-        work.report(count);
+        work.seed(count);
     }
 }
