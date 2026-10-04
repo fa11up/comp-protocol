@@ -91,8 +91,25 @@ contract ParameterizedVault is CDPVault {
         treasury.redeemIMD(msg.sender, amount);
     }
 
-    function _redemptionReserveBacking(uint256 amount) internal view override returns (uint256, uint256) {
-        return (reserveValue(), treasury.reserveWithdrawalValue(imdToken, amount));
+    /// @dev The Treasury's IMD is valued at this vault's own price whether or not governance has
+    /// listed it, because `redemptionReserve` pays it out whether or not governance has listed it.
+    /// REVISION (finding 998ff6b2): the register valued unlisted IMD at zero on BOTH sides, so in the
+    /// launch configuration (an empty register) every reserve-funded payout checked as zero against
+    /// zero and the guard was vacuous for the asset the route actually pays; listed IMD whose source
+    /// read stale, or carried a zero factor, did the same. One valuation for the IMD held and the IMD
+    /// leaving is what makes the comparison mean something. Other listed assets still count at their
+    /// registered, discounted value: they back COMP but never leave through this route.
+    function _redemptionReserveBacking(uint256 amount, uint256 price)
+        internal
+        view
+        override
+        returns (uint256, uint256)
+    {
+        uint256 others = reserveValue() - treasury.reserveValueOf(imdToken);
+        return (
+            others + Math.mulDiv(imdToken.balanceOf(address(treasury)), price, 1e18),
+            Math.mulDiv(amount, price, 1e18, Math.Rounding.Ceil)
+        );
     }
 
     /// @notice Both revenue streams land in the Treasury this vault created, never in an account.

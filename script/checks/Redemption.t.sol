@@ -63,6 +63,29 @@ contract RedemptionUsdFeed {
     }
 }
 
+/// @dev Everything in `run` happens inside ONE transaction, which `isolate = true` otherwise splits.
+contract AtomicRedeemer {
+    function run(
+        ParameterizedVault vault,
+        MockIMD imd,
+        uint256 deposit,
+        uint256 mint,
+        uint256 amount,
+        address candidate
+    ) external returns (bool ok, uint256 out) {
+        imd.approve(address(vault), type(uint256).max);
+        vault.depositCollateral(deposit);
+        if (mint != 0) vault.mintCOMP(mint);
+        bytes memory result;
+        (ok, result) = address(vault).call(abi.encodeCall(vault.redeem, (amount, 0, candidate)));
+        if (ok) out = abi.decode(result, (uint256));
+        uint256 debt = vault.debtOf(address(this));
+        uint256 held = vault.compToken().balanceOf(address(this));
+        if (debt != 0 && held != 0) vault.repayCOMP(Math.min(debt, held));
+        if (vault.debtOf(address(this)) == 0) vault.withdrawCollateral(deposit);
+    }
+}
+
 /// @notice Run with FOUNDRY_TEST=script/checks forge test --match-path script/checks/Redemption.t.sol.
 /// This fixture deploys the real governed vault and exercises its constructor-created Treasury.
 contract RedemptionTest is Test {
@@ -661,6 +684,214 @@ contract RedemptionTest is Test {
         assertEq(remainingCollateral, collateral - (payout - reserveOut));
         assertEq(imd.balanceOf(address(vault)), remainingCollateral);
         assertGe(remainingCollateral * debt, collateral * remainingDebt, "exact ratio, before integer CR rounding");
+    }
+
+    // --- revision: findings 8936befa, 998ff6b2, fcd5b261, b952037a and b8aa4a98 ----------------------
+
+    function test_debtFreeDepositIsNotBackingWhetherOrNotItIsInTheSameTransaction() public {
+        _registerImdReserve(10_000);
+        _fundReserve(100 ether);
+        _mintWorkAndUnwind();
+        assertEq(comp.totalSupply(), 250 ether);
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, address(0));
+
+        // Across transactions: a debt-free deposit, then the same burn.
+        vm.prank(BOB);
+        vault.depositCollateral(1000 ether);
+        bytes32 before = _state(BOB);
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, address(0));
+        assertEq(_state(BOB), before);
+
+        // Inside one transaction: deposit, burn, withdraw.
+        AtomicRedeemer atomic = new AtomicRedeemer();
+        vm.prank(REDEEMER);
+        comp.transfer(address(atomic), 100 ether);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(atomic), 1000 ether);
+        (bool ok,) = atomic.run(vault, imd, 1000 ether, 0, 100 ether, address(0));
+        assertFalse(ok, "a same-transaction deposit let the burn through");
+        assertEq(imd.balanceOf(address(treasury)), 100 ether, "nothing left the reserve");
+        assertEq(comp.totalSupply(), 250 ether);
+    }
+
+    function test_oneWeiOfDebtDoesNotTurnADepositIntoBacking() public {
+        _registerImdReserve(10_000);
+        _fundReserve(100 ether);
+        _mintWorkAndUnwind();
+        _open(BOB, 1000 ether, 1);
+        bytes32 before = _state(BOB);
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, address(0));
+        assertEq(_state(BOB), before);
+    }
+
+    function test_collateralCountsAtMostMinCRTimesPriorPrincipal() public {
+        // 1500 against 1000 is fully backed, so the same burn is allowed once real debt stands
+        // behind the collateral; 3000 against the same debt counts for no more than 1500 does.
+        _registerImdReserve(10_000);
+        _fundReserve(100 ether);
+        _mintWorkAndUnwind();
+        _open(BOB, 3000 ether, 1000 ether);
+        uint256 snapshot = vm.snapshotState();
+        vm.prank(REDEEMER);
+        uint256 first = vault.redeem(100 ether, 0, address(0));
+        assertTrue(vm.revertToState(snapshot));
+        vm.prank(BOB);
+        vault.withdrawCollateral(1500 ether);
+        vm.prank(REDEEMER);
+        assertEq(vault.redeem(100 ether, 0, address(0)), first);
+        // Supply 1250 against secured backing 1500 + 100: a burn of 100 may remove at most 128 of
+        // value and removes about 97; a burn of 150 may remove 192 and removes about 145. The
+        // uncounted 1500 of surplus never enters the comparison, which the ineligible 300% candidate
+        // shows: the reserve route needs no candidate, so its backing is what the guard measures.
+        assertEq(vault.collateralRatio(BOB), 150);
+    }
+
+    function test_unregisteredReserveIsValuedAtTheRedemptionPriceOnBothSides() public {
+        _fundReserve(100 ether);
+        _mintWorkAndUnwind();
+        assertEq(vault.reserveValue(), 0, "unlisted, as at launch");
+        assertEq(vault.redemptionReserve(), 100 ether);
+        bytes32 before = _state(ALICE);
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, ALICE);
+        assertEq(_state(ALICE), before);
+
+        // The same boundary the registered case has: 246.25 against 250 holds the ratio exactly.
+        _fundReserve(146.25 ether);
+        vm.prank(REDEEMER);
+        assertEq(vault.redeem(10 ether, 9.85 ether, address(0)), 9.85 ether);
+        assertEq(imd.balanceOf(address(treasury)) * 250 ether, 246.25 ether * 240 ether);
+    }
+
+    function test_registeredFactorDoesNotChangeHowTheGuardValuesIMD() public {
+        // A retained factor is work-ceiling policy. The IMD leaving and the IMD held are the same
+        // asset, and the guard values both at the redemption price: a zero factor used to make the
+        // reserve route invisible to it, exactly as an empty register did.
+        _registerImdReserve(0);
+        _fundReserve(246.25 ether - 1);
+        _mintWorkAndUnwind();
+        assertEq(vault.reserveValue(), 0);
+        vm.expectRevert(CDPVault.RedemptionWorsensBacking.selector);
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, address(0));
+        _fundReserve(1);
+        vm.prank(REDEEMER);
+        assertEq(vault.redeem(10 ether, 9.85 ether, address(0)), 9.85 ether);
+    }
+
+    function test_sameTransactionMintCannotDiluteTheFee() public {
+        _open(ALICE, 3000 ether, 1000 ether);
+        _fundReserve(200 ether);
+        assertEq(vault.redemptionFeeBps(100 ether), 300);
+        AtomicRedeemer atomic = new AtomicRedeemer();
+        _giveComp(100 ether);
+        vm.prank(REDEEMER);
+        comp.transfer(address(atomic), 100 ether);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(atomic), 13_500 ether);
+        // The guard still measures supply as it stands, so the 9000 minted inside the call count
+        // against a backing that excludes their collateral: the burn is refused outright.
+        (bool ok, uint256 out) = atomic.run(vault, imd, 13_500 ether, 9000 ether, 100 ether, address(0));
+        assertFalse(ok);
+        assertEq(comp.totalSupply(), 1000 ether);
+        assertEq(vault.redemptionBaseRate(), 0);
+        // With enough reserve for the guard to pass, the fee is the one a tenth of the supply that
+        // existed before the call pays, and that is the base the next redeemer inherits.
+        _fundReserve(9800 ether);
+        (ok, out) = atomic.run(vault, imd, 13_500 ether, 9000 ether, 100 ether, address(0));
+        assertTrue(ok);
+        assertEq(out, 97 ether, "a same-transaction mint bought a cheaper fee");
+        assertEq(vault.redemptionBaseRate(), 0.025 ether);
+        assertEq(comp.totalSupply(), 900 ether);
+        assertEq(imd.balanceOf(address(atomic)), 13_500 ether + 97 ether);
+    }
+
+    function test_burnBeyondPriorSupplySaturatesInsteadOfDividingByZero() public {
+        // Nothing existed before this call; the increase saturates at the cap rather than reverting.
+        _fundReserve(1000 ether);
+        AtomicRedeemer atomic = new AtomicRedeemer();
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(atomic), 300 ether);
+        (bool ok, uint256 out) = atomic.run(vault, imd, 300 ether, 200 ether, 100 ether, address(0));
+        assertTrue(ok);
+        assertEq(out, 95 ether);
+        assertEq(vault.redemptionBaseRate(), 0.045 ether);
+    }
+
+    function test_freshPrincipalIsChargedButDoesNotMoveTheRateOthersPay() public {
+        _open(ALICE, 380 ether, 200 ether);
+        uint256 start = block.timestamp;
+        _open(BOB, 160 ether, 100 ether);
+        vm.prank(BOB);
+        comp.transfer(REDEEMER, 100 ether);
+        assertEq(vault.redemptionFeeBps(100 ether), 500, "a third of supply quotes the cap");
+        vm.prank(REDEEMER);
+        assertEq(vault.redeem(100 ether, 0, BOB), 95 ether, "and is charged it");
+        assertEq(vault.redemptionBaseRate(), 0, "but fresh principal moves nothing");
+        assertEq(vault.redemptionFeeBps(0), 50);
+        _assertPosition(BOB, 65 ether, 0);
+
+        // ALICE's principal ages out one half-life after it was minted, and then counts in full.
+        _giveComp(20 ether);
+        vm.warp(start + 12 hours - 1);
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), 0);
+        vm.warp(start + 12 hours);
+        vm.prank(REDEEMER);
+        vault.redeem(10 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(10 ether, 1 ether, 190 ether) / 4);
+    }
+
+    function test_onlyTheFreshPartOfACancelledBurnIsExcluded() public {
+        _open(ALICE, 1800 ether, 1000 ether);
+        vm.warp(block.timestamp + 12 hours);
+        vm.prank(ALICE);
+        vault.mintCOMP(50 ether);
+        _giveComp(200 ether);
+        // 100 burned, 50 of it fresh: the rate rises by 50 / 1050 / 4, not 100 / 1050 / 4.
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(50 ether, 1 ether, 1050 ether) / 4);
+        // Retired fresh principal stays retired: a later burn against the same position counts whole.
+        uint256 decayed = vault.decayedRedemptionBaseRate();
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(100 ether, 1 ether, 950 ether) / 4);
+    }
+
+    function test_repaymentRetiresFreshPrincipalBeforeRedemptionDoes() public {
+        _open(ALICE, 1800 ether, 1000 ether);
+        vm.warp(block.timestamp + 12 hours);
+        vm.prank(ALICE);
+        vault.mintCOMP(100 ether);
+        // Repayment pays accrued fees first, so exactly that much of the fresh principal survives it.
+        uint256 fees = vault.stabilityFeeOf(ALICE);
+        vm.prank(ALICE);
+        vault.repayCOMP(100 ether);
+        _giveComp(100 ether);
+        uint256 supply = comp.totalSupply();
+        vm.prank(REDEEMER);
+        vault.redeem(100 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether - fees, 1 ether, supply) / 4);
+    }
+
+    function test_feeRoundsFractionalBasisPointsAgainstTheRedeemer() public {
+        _open(ALICE, 1800 ether, 1000 ether);
+        vm.warp(block.timestamp + 12 hours);
+        _giveComp(1 ether);
+        // 0.39 / 1000 / 4 is 0.975 of a basis point: charged as one, never as zero.
+        assertEq(vault.redemptionFeeBps(0.39 ether), 51);
+        vm.prank(REDEEMER);
+        assertEq(vault.redeem(0.39 ether, 0, ALICE), 0.388011 ether);
+        assertEq(vault.redemptionBaseRate(), 9.75e13, "the exact fraction is still carried");
     }
 
     function _open(address owner, uint256 collateral, uint256 debt) private {

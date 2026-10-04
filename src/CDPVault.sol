@@ -33,6 +33,10 @@ contract CDPVault is ReentrancyGuard {
     struct Position {
         uint256 collateral;
         uint256 debt;
+        /// @dev Principal minted within FRESH_DEBT_WINDOW of `mintedAt` and still outstanding, and
+        /// when it was last minted. Only redemption reads them: see `_redeemPosition`.
+        uint256 recentlyMinted;
+        uint256 mintedAt;
     }
 
     struct LiquidationMark {
@@ -98,6 +102,9 @@ contract CDPVault is ReentrancyGuard {
     uint256 public constant REDEMPTION_FEE_CAP_BPS = 500;
     /// @dev floor(1e18 * 2**(-1/43200)): a twelve-hour half-life, with per-second decay.
     uint256 private constant REDEMPTION_SECOND_DECAY = 999983955055097432;
+    /// @dev One half-life of the base rate. Cancelling principal younger than this does not move the
+    /// rate; see `_redeemPosition`.
+    uint256 private constant FRESH_DEBT_WINDOW = 12 hours;
     /// @notice Last redemption's base fee as a fraction scaled by 1e18, capped at 4.5%.
     uint256 public redemptionBaseRate;
     uint256 public lastRedemptionAt = block.timestamp;
@@ -189,10 +196,23 @@ contract CDPVault is ReentrancyGuard {
         revert InsufficientCollateral();
     }
 
-    /// @dev Reserve backing and the rounded-up value leaving it; the plain vault has no reserve.
-    function _redemptionReserveBacking(uint256) internal view virtual returns (uint256, uint256) {
+    /// @dev Reserve backing and the rounded-up value leaving it, both in the unit `price` quotes; the
+    /// plain vault has no reserve.
+    function _redemptionReserveBacking(uint256, uint256) internal view virtual returns (uint256, uint256) {
         return (0, 0);
     }
+
+    /// @dev What the current transaction has added, in transient storage the EVM clears when it ends:
+    /// collateral deposited and principal minted. Redemption reads them so that capital which exists
+    /// only for the length of the call can neither inflate the backing the guard measures nor dilute
+    /// the supply the fee is measured against. The slow version of either round trip, held across
+    /// transactions, is the accepted design — the same one ParameterizedVault.backedDebt documents —
+    /// and costs real capital in an open position, not gas.
+    /// keccak256("comp.CDPVault.collateralDepositedThisTransaction") and
+    /// keccak256("comp.CDPVault.principalMintedThisTransaction").
+    uint256 private constant DEPOSITED_THIS_TX_SLOT =
+        0x0b3aef4352b583766dc98aca4a3d7791c7c530b475b68a32eecc695c20e93e63;
+    uint256 private constant MINTED_THIS_TX_SLOT = 0x7863d18732bd3fc443c44a39552cffecac393d3fbf3094322f7f794631746012;
 
     /// @notice Outstanding minted principal, as used by the unchanged debt ceiling.
     /// @dev Accrued, unpaid stability fees are additional obligations returned by debtOf/positions.
@@ -286,6 +306,7 @@ contract CDPVault is ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
         uint256 beforeBalance = imdToken.balanceOf(address(this));
         _positions[msg.sender].collateral += amount;
+        _transientAdd(DEPOSITED_THIS_TX_SLOT, amount);
         imdToken.safeTransferFrom(msg.sender, address(this), amount);
         if (imdToken.balanceOf(address(this)) - beforeBalance != amount) revert UnexpectedCollateralReceived();
         _clearIfRecovered(msg.sender);
@@ -325,6 +346,9 @@ contract CDPVault is ReentrancyGuard {
         totalDebt = resultingTotal;
         _debtChanged(resultingTotal - amount);
         position.debt += amount;
+        _transientAdd(MINTED_THIS_TX_SLOT, amount);
+        position.recentlyMinted = _recentlyMinted(position) + amount;
+        position.mintedAt = block.timestamp;
         _clearMark(msg.sender);
         compToken.mint(msg.sender, amount);
         emit COMPMinted(msg.sender, amount);
@@ -379,24 +403,30 @@ contract CDPVault is ReentrancyGuard {
         _requireFreshFeeds();
         _requirePriceAgreement();
         uint256 base = _redemptionRate(amount);
-        uint256 feeBps = REDEMPTION_FEE_FLOOR_BPS + base / 1e14;
+        // REVISION (finding b8aa4a98): whole basis points, rounded against the party paying them.
+        uint256 feeBps = REDEMPTION_FEE_FLOOR_BPS + Math.ceilDiv(base, 1e14);
         uint256 price = _price();
         uint256 payoutScale = (10_000 - feeBps) * 1e14;
         imdOut = Math.mulDiv(amount, payoutScale, price);
         if (imdOut == 0) revert ZeroAmount();
         if (imdOut < minImdOut) revert MinimumOutNotMet();
         uint256 reserveOut = Math.min(imdOut, redemptionReserve());
+        // Measured before the candidate changes, so the guard compares the state the burn found;
+        // enforced after, so an ineligible or worsened candidate still reports its own error.
+        bool worsensBacking = _redemptionWorsensBacking(amount, imdOut, reserveOut, price);
         uint256 debtCancelled;
         uint256 principalCancelled;
+        uint256 freshCancelled;
         if (reserveOut < imdOut) {
             // Round reserve-funded debt down, so every wei released by a borrower is covered by
             // cancelled debt. Compute the payout ONCE: its price never depends on the candidate.
             debtCancelled = amount - Math.mulDiv(reserveOut, price, payoutScale);
-            principalCancelled = _redeemPosition(candidate, debtCancelled, imdOut - reserveOut, price);
+            (principalCancelled, freshCancelled) = _redeemPosition(candidate, debtCancelled, imdOut - reserveOut, price);
         }
-        _checkRedemptionBacking(amount, imdOut, reserveOut, price);
+        if (worsensBacking) revert RedemptionWorsensBacking();
         totalNonPrincipalRedeemed += amount - principalCancelled;
-        redemptionBaseRate = base;
+        // The fresh part of the burn is charged in full but does not move the rate everyone else pays.
+        redemptionBaseRate = freshCancelled == 0 ? base : _redemptionRate(amount - freshCancelled);
         lastRedemptionAt = block.timestamp;
         compToken.burn(msg.sender, amount);
         if (reserveOut != 0) _payRedemptionReserve(reserveOut);
@@ -404,19 +434,55 @@ contract CDPVault is ReentrancyGuard {
         emit Redeemed(msg.sender, candidate, amount, imdOut, reserveOut, debtCancelled, feeBps);
     }
 
-    function _checkRedemptionBacking(uint256 amount, uint256 imdOut, uint256 reserveOut, uint256 price) private view {
-        (uint256 backing, uint256 backingOut) = _redemptionReserveBacking(reserveOut);
+    function _redemptionWorsensBacking(uint256 amount, uint256 imdOut, uint256 reserveOut, uint256 price)
+        private
+        view
+        returns (bool)
+    {
+        (uint256 backing, uint256 backingOut) = _redemptionReserveBacking(reserveOut, price);
         // Balances and supply are still pre-payout. A permitted debt unwind can leave work-issued
         // COMP underbacked, so even a fee-discounted payout must not remove more than its share.
-        backing += Math.mulDiv(imdToken.balanceOf(address(this)), price, 1e18);
+        backing += _securedCollateralValue(price);
         backingOut += Math.mulDiv(imdOut - reserveOut, price, 1e18, Math.Rounding.Ceil);
         // Round backing down and the loss up: fractional-value dust cannot hide deterioration.
-        if (backingOut > Math.mulDiv(backing, amount, compToken.totalSupply())) revert RedemptionWorsensBacking();
+        return backingOut > Math.mulDiv(backing, amount, compToken.totalSupply());
     }
 
+    /// @dev The vault's collateral the guard may count as backing: what was here before this
+    /// transaction, and no more than the debt that existed before it holds at minCR.
+    /// REVISION (finding 8936befa): the whole balance counted, including collateral posted against no
+    /// debt and every borrower's surplus, which is withdrawable with no feed or health check and backs
+    /// no COMP. A redeemer deposited debt-free, redeemed and withdrew in one call, and the deposit
+    /// passed the guard for any amount. Deposits made in this transaction are excluded, as backedDebt
+    /// excludes same-transaction debt; and the remainder counts only up to minCR times the principal
+    /// that existed before this transaction (less bad debt), the surplus every borrower must keep in
+    /// place and the figure section 3 of docs/COMPUTE-BACKING-DESIGN.md backs work minting against.
+    /// One-for-one with debt would be wrong the other way: it would refuse the brief's own flow of
+    /// redeeming work-issued COMP against an eligible position in a fully backed system.
+    function _securedCollateralValue(uint256 price) private view returns (uint256) {
+        uint256 balance = imdToken.balanceOf(address(this));
+        uint256 deposited = _transient(DEPOSITED_THIS_TX_SLOT);
+        uint256 held = balance > deposited ? balance - deposited : 0;
+        uint256 minted = _transient(MINTED_THIS_TX_SLOT);
+        uint256 prior = totalDebt > minted ? totalDebt - minted : 0;
+        uint256 bad = totalBadDebt;
+        prior = prior > bad ? prior - bad : 0;
+        return Math.min(Math.mulDiv(held, price, 1e18), Math.mulDiv(prior, minCR(), 100));
+    }
+
+    /// @dev REVISION (finding b952037a): a position-funded fee stays in the candidate, so a redeemer
+    /// who controls the candidate — the same key or a second one — pays nothing to burn against it,
+    /// and nothing stopped a mint / self-redeem / withdraw round trip from pinning the rate everyone
+    /// else pays at the cap for gas. Principal younger than one half-life of the rate therefore
+    /// counts for nothing in the increase when cancelled: the pump now needs debt held in the
+    /// eligible band, exposed to price and liquidation, for twelve hours per pinning, and a rotating
+    /// supply of it to keep the rate there. It is a cost, not a closure: with the fee retained where
+    /// the brief puts it, no rule can tell a seasoned self-redemption from an honest one.
+    /// @return principalCancelled Minted principal retired, as opposed to accrued fees.
+    /// @return freshCancelled The part of the burn that cancelled principal minted within the window.
     function _redeemPosition(address candidate, uint256 amount, uint256 imdOut, uint256 price)
         private
-        returns (uint256 principalCancelled)
+        returns (uint256 principalCancelled, uint256 freshCancelled)
     {
         _accrue(candidate);
         Position storage position = _positions[candidate];
@@ -428,6 +494,7 @@ contract CDPVault is ReentrancyGuard {
         // Compare the exact collateral/debt fractions, not rounded whole-percent ratios. Deeply
         // underwater positions cannot fund a fixed-price payout that would worsen their ratio.
         if (imdOut > Math.mulDiv(position.collateral, amount, debt)) revert RedemptionWorsensRatio();
+        freshCancelled = Math.min(amount, _recentlyMinted(position));
         uint256 feesCancelled = _reduceDebt(candidate, amount);
         principalCancelled = amount - feesCancelled;
         position.collateral -= imdOut;
@@ -455,15 +522,40 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Fee for a proposed burn, including its increase against supply BEFORE burning.
     /// A zero amount quotes just the current floor plus decayed base.
     function redemptionFeeBps(uint256 amount) external view returns (uint256) {
-        return REDEMPTION_FEE_FLOOR_BPS + _redemptionRate(amount) / 1e14;
+        return REDEMPTION_FEE_FLOOR_BPS + Math.ceilDiv(_redemptionRate(amount), 1e14);
     }
 
+    /// @dev The increase is the burned fraction of the supply that existed before this transaction.
+    /// REVISION (finding fcd5b261): measured against the instantaneous supply, a caller minted
+    /// principal in the same call, redeemed against the diluted figure, repaid and withdrew, paying
+    /// less than the fee-adjusted price for that size and leaving the understated base for everyone
+    /// after. Principal minted this transaction is netted out; a burn at or beyond what remains saturates.
     function _redemptionRate(uint256 amount) private view returns (uint256) {
         uint256 supply = compToken.totalSupply();
         if (amount > supply) revert ExcessRepayment();
-        uint256 increase = amount == 0 ? 0 : Math.mulDiv(amount, 1e18, supply) / 4;
-        return
-            Math.min(decayedRedemptionBaseRate() + increase, (REDEMPTION_FEE_CAP_BPS - REDEMPTION_FEE_FLOOR_BPS) * 1e14);
+        uint256 cap = (REDEMPTION_FEE_CAP_BPS - REDEMPTION_FEE_FLOOR_BPS) * 1e14;
+        uint256 minted = _transient(MINTED_THIS_TX_SLOT);
+        uint256 prior = supply > minted ? supply - minted : 0;
+        uint256 increase = amount == 0 ? 0 : prior == 0 ? cap : Math.mulDiv(amount, 1e18, prior) / 4;
+        return Math.min(decayedRedemptionBaseRate() + increase, cap);
+    }
+
+    /// @dev Principal minted within the window and still outstanding; a record older than the window
+    /// has aged out whole.
+    function _recentlyMinted(Position storage position) private view returns (uint256) {
+        return block.timestamp - position.mintedAt < FRESH_DEBT_WINDOW ? position.recentlyMinted : 0;
+    }
+
+    function _transientAdd(uint256 slot, uint256 amount) private {
+        assembly ("memory-safe") {
+            tstore(slot, add(tload(slot), amount))
+        }
+    }
+
+    function _transient(uint256 slot) private view returns (uint256 value) {
+        assembly ("memory-safe") {
+            value := tload(slot)
+        }
     }
 
     /// @notice Start an underwater position's grace window; repeated marks preserve an active snapshot.
@@ -711,6 +803,8 @@ contract CDPVault is ReentrancyGuard {
         _stabilityFees[owner] = fees - feePaid;
         uint256 principalPaid = amount - feePaid;
         position.debt -= principalPaid;
+        // Retired principal is no longer fresh, whichever path retired it.
+        position.recentlyMinted = position.recentlyMinted > principalPaid ? position.recentlyMinted - principalPaid : 0;
         totalDebt -= principalPaid;
         _debtChanged(totalDebt + principalPaid);
         uint256 previous = _recordedBadDebt[owner];

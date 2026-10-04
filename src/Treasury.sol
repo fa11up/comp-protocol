@@ -186,16 +186,6 @@ contract Treasury {
         return Math.mulDiv(marked, entry.haircutBps, BPS);
     }
 
-    /// @notice Conservative value removed by a reserve withdrawal, using the registered price and haircut.
-    /// @dev Rounds both stages up so a redemption cannot hide a loss smaller than one USD wei.
-    function reserveWithdrawalValue(IERC20 asset, uint256 amount) external view returns (uint256) {
-        uint256 price = _reservePrice(asset);
-        if (price == 0) return 0;
-        ReserveAsset storage entry = _reserve[asset];
-        uint256 marked = Math.mulDiv(amount, price, 10 ** entry.decimals, Math.Rounding.Ceil);
-        return Math.mulDiv(marked, entry.haircutBps, BPS, Math.Rounding.Ceil);
-    }
-
     function _reservePrice(IERC20 asset) private view returns (uint256) {
         ReserveAsset storage entry = _reserve[asset];
         if (address(entry.priceFeed) == address(0)) return 0;
