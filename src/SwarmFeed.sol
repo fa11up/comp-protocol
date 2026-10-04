@@ -121,6 +121,20 @@ abstract contract SwarmFeed is ISwarmFeed {
         // price, so it may not be deployed without one. A feed that pins its question needs no
         // relayer, and must pin a window span too — an unbounded span would let the same question be
         // answered over one block or over a month.
+        //
+        // WHAT THIS CHECK DOES NOT DO, stated because a stronger claim here would be false: it
+        // requires a NONZERO relayer, and `SwarmRelay` is a nonzero relayer that admits EVERYONE.
+        // That pairing — no pinned question, `ATTESTATION_RELAYER` as the relayer — therefore passes
+        // construction and is exactly the configuration the HIGH finding describes;
+        // test/audit/PermissionlessRelay.t.sol still reproduces it against a leaf built that way.
+        // Nothing this repository SHIPS is in that state: PriceFeed, NhiFeed, SpotFeed and
+        // SwarmWorkOracle all override `questionPolicy` with a generated prefix, so all four take the
+        // bound branch and the relayer is not load-bearing for any of them. The hole is a footgun for
+        // a FUTURE leaf that forgets the override, and closing it in the constructor needs a sound
+        // on-chain test for "a relayer that restricts its callers", which `code.length` is not — a
+        // relay contract may perfectly well carry an allowlist. Until that is decided, the rule is
+        // a review rule: a new feed leaf overrides `questionPolicy`, and the absence of an override
+        // is the thing to catch.
         (bytes memory prefix_, uint64 minSpan_, uint64 maxSpan_) = questionPolicy();
         if (prefix_.length == 0) {
             if (relayer_ == address(0)) revert UnboundQuestionNeedsRelayer();

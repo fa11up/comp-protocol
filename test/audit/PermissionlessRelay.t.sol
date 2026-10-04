@@ -35,10 +35,18 @@ contract PermissionlessRelayTest is Test {
     TestFeed private priceFeed;
 
     function setUp() public {
-        // Auditor-supplied proof, preserved verbatim apart from this gate. It is EXPECTED TO
-        // FAIL until the finding is fixed; run with AUDIT_PROOFS=true to reproduce it. Gated so
-        // the default suite stays green, because a permanently red test is one no agent can
-        // make pass and it burns a build node's whole revision budget.
+        // Auditor-supplied proof, preserved verbatim apart from this gate. Run with
+        // AUDIT_PROOFS=true to reproduce it. Gated so the default suite stays green, because a
+        // permanently red test is one no agent can make pass and it burns a build node's whole
+        // revision budget.
+        //
+        // IT STILL REPRODUCES, AND THAT IS ACCURATE rather than a regression: the HIGH was fixed by
+        // binding the question, and `TestFeed` below pins NO question, so it takes SwarmFeed's
+        // unbound branch where the relayer is the only filter — and its relayer is the
+        // permissionless relay. The constructor permits that pairing because it only requires a
+        // nonzero relayer. Every feed this repository ships overrides `questionPolicy`, so none is
+        // in this state; re-read as a standing demonstration that an unbound leaf is unsafe, which
+        // is why a new leaf must override it. See the constructor's note in src/SwarmFeed.sol.
         if (!vm.envOr("AUDIT_PROOFS", false)) vm.skip(true);
 
         vm.chainId(11155111);
