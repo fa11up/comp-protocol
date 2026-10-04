@@ -134,11 +134,14 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
 
     /// @dev The documented exception to the curve: principal the candidate minted within one
     /// half-life is charged the full quoted fee but does not move the base everyone else pays.
-    /// A reserve-funded burn, and principal older than twelve hours, follow the curve as before.
-    function test_freshPrincipalIsChargedTheFullFeeButDoesNotMoveTheBase() public {
+    /// Stability fees are cancelled first and are never fresh, so a burn against a fresh position
+    /// that has accrued fees moves the base by exactly the fees' share. A reserve-funded burn, and
+    /// principal older than twelve hours, follow the curve as before.
+    function test_freshPrincipalIsChargedTheFullFeeAndOnlyCancelledFeesMoveTheBase() public {
         vm.prank(APPROVED_OPERATOR);
         reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
         assertEq(backedVault.redemptionFeeBps(100 ether), 300, "the quote includes the increase");
+        assertEq(backedVault.stabilityFeeOf(BORROWER), 0, "no time has passed since the mint");
         (uint256 collateralBefore,) = backedVault.positions(BORROWER);
         assertEq(_redeem(100 ether), 97 ether, "fresh principal pays the whole quoted fee");
         (uint256 collateralAfter, uint256 debtAfter) = backedVault.positions(BORROWER);
@@ -148,26 +151,164 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         assertEq(backedVault.lastRedemptionAt(), vm.getBlockTimestamp(), "the checkpoint still moves");
         assertEq(backedVault.redemptionFeeBps(0), FLOOR);
 
-        // One wei short of the window is still fresh; the window itself is not.
+        // One wei short of the window is still fresh; the window itself is not. The 2% stability fee
+        // has accrued for almost twelve hours, and that part of the burn is not principal.
         _advance(12 hours - 1);
+        uint256 fees = backedVault.stabilityFeeOf(BORROWER);
+        assertGt(fees, 0);
+        uint256 supply = stable.totalSupply();
         _redeem(90 ether);
-        assertEq(backedVault.redemptionBaseRate(), 0);
+        uint256 feesOnly = (fees * 1e18 / supply) / 4;
+        assertEq(backedVault.redemptionBaseRate(), feesOnly, "only the cancelled fees move the base");
+        assertLt(feesOnly, 1e14, "the fee share is below one basis point here");
         _advance(1);
-        assertEq(backedVault.redemptionFeeBps(81 ether), 300);
+        uint256 decayed = backedVault.decayedRedemptionBaseRate();
+        assertGt(decayed, 0);
+        supply = stable.totalSupply();
+        assertEq(backedVault.redemptionFeeBps(81 ether), 301, "the sub-point remainder rounds up against the redeemer");
         _redeem(81 ether);
-        assertEq(backedVault.redemptionBaseRate(), 0.025 ether, "seasoned principal follows the curve");
+        assertEq(
+            backedVault.redemptionBaseRate(),
+            decayed + (81 ether * 1e18 / supply) / 4,
+            "seasoned principal follows the curve in full"
+        );
 
         // Principal minted after the window is fresh again, and only that part is excluded.
         vm.prank(BORROWER);
         backedVault.mintCOMP(100 ether);
-        uint256 decayed = backedVault.decayedRedemptionBaseRate();
-        uint256 supply = stable.totalSupply();
+        decayed = backedVault.decayedRedemptionBaseRate();
+        supply = stable.totalSupply();
         _redeem(150 ether);
         assertEq(
             backedVault.redemptionBaseRate(),
             decayed + (50 ether * 1e18 / supply) / 4,
             "a burn partly against fresh principal counts only the seasoned part"
         );
+    }
+
+    /// @dev Cancelled fees are never fresh, whichever order the principal was minted in: a burn that
+    /// covers accrued fees and then fresh principal moves the base by exactly the fees' share.
+    function test_cancelledFeesMoveTheBaseEvenWhenTheRestOfTheBurnIsFresh() public {
+        vm.prank(APPROVED_OPERATOR);
+        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        _advance(12 hours); // the original 1000 has aged out
+        vm.prank(BORROWER);
+        backedVault.mintCOMP(100 ether); // fresh, dated now
+        _advance(6 hours);
+        uint256 fees = backedVault.stabilityFeeOf(BORROWER);
+        assertGt(fees, 0);
+        assertLt(fees, 50 ether);
+        uint256 supply = stable.totalSupply();
+        (, uint256 debtBefore) = backedVault.positions(BORROWER);
+        uint256 principalBefore = debtBefore - fees;
+        _redeem(50 ether);
+        (, uint256 debtAfter) = backedVault.positions(BORROWER);
+        assertEq(backedVault.stabilityFeeOf(BORROWER), 0, "the burn cancels every accrued fee");
+        assertEq(debtBefore - debtAfter, 50 ether, "the whole burn retires debt");
+        assertEq(principalBefore - debtAfter, 50 ether - fees, "fees are cancelled before principal");
+        assertEq(backedVault.redemptionBaseRate(), (fees * 1e18 / supply) / 4, "the fee part is never fresh");
+    }
+
+    /// @dev Regression for the previously reported re-dating: one wei of new principal every twelve
+    /// hours kept any amount of principal fresh forever. The record's timestamp is amount-weighted
+    /// now, so a wei moves it by at most a second and the seasoned principal counts in full.
+    function test_oneWeiTopUpsCannotKeepPrincipalFresh() public {
+        vm.prank(APPROVED_OPERATOR);
+        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        for (uint256 i; i < 6; ++i) {
+            _advance(12 hours - 60);
+            vm.prank(BORROWER);
+            backedVault.mintCOMP(1);
+        }
+        uint256 supply = stable.totalSupply();
+        assertEq(backedVault.redemptionFeeBps(100 ether), 300);
+        _redeem(100 ether);
+        // At most the six wei minted inside the window are excluded; the seasoned tenth counts.
+        uint256 expected = (100 ether * 1e18 / supply) / 4;
+        assertApproxEqAbs(backedVault.redemptionBaseRate(), expected, 10);
+        assertEq(backedVault.redemptionFeeBps(0), 300, "the next redeemer pays the raised rate");
+    }
+
+    /// @dev A one-wei top-up a minute inside the window moves the record by one second at most, so
+    /// eleven hours later the original principal has aged out and counts in full.
+    function test_aWeiTopUpMovesTheRecordByItsShareOfThePrincipal() public {
+        vm.prank(APPROVED_OPERATOR);
+        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        uint256 start = vm.getBlockTimestamp();
+        _advance(12 hours - 60);
+        vm.prank(BORROWER);
+        backedVault.mintCOMP(1);
+        vm.warp(start + 23 hours);
+        _refreshEthUsd();
+        uint256 supply = stable.totalSupply();
+        _redeem(100 ether);
+        assertEq(backedVault.redemptionBaseRate(), (100 ether * 1e18 / supply) / 4, "no principal is fresh any more");
+    }
+
+    /// @dev Two equal tranches six hours apart are dated three hours after the first: the whole
+    /// record is fresh until fifteen hours, the same principal-time as one amount held for twelve.
+    function test_equalTranchesAgeOutAtTheirAverageAge() public {
+        vm.prank(APPROVED_OPERATOR);
+        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        // Deposit enough for a second 1000 at a healthy ratio while staying inside the band.
+        vm.prank(APPROVED_OPERATOR);
+        collateral.mint(BORROWER, 1800 ether);
+        vm.startPrank(BORROWER);
+        collateral.approve(address(backedVault), 1800 ether);
+        backedVault.depositCollateral(1800 ether);
+        vm.stopPrank();
+        uint256 start = vm.getBlockTimestamp();
+        _advance(6 hours);
+        vm.prank(BORROWER);
+        backedVault.mintCOMP(1000 ether);
+        assertLt(backedVault.collateralRatio(BORROWER), backedVault.redemptionCeilingCR());
+
+        vm.warp(start + 15 hours - 1);
+        _refreshEthUsd();
+        uint256 fees = backedVault.stabilityFeeOf(BORROWER);
+        uint256 supply = stable.totalSupply();
+        _redeem(10 ether);
+        assertEq(backedVault.redemptionBaseRate(), (fees * 1e18 / supply) / 4, "both tranches are still fresh");
+
+        vm.warp(start + 15 hours);
+        _refreshEthUsd();
+        uint256 decayed = backedVault.decayedRedemptionBaseRate();
+        fees = backedVault.stabilityFeeOf(BORROWER);
+        supply = stable.totalSupply();
+        _redeem(10 ether);
+        assertEq(
+            backedVault.redemptionBaseRate(),
+            decayed + (10 ether * 1e18 / supply) / 4,
+            "the whole record ages out at the weighted time"
+        );
+    }
+
+    /// forge-config: default.fuzz.runs = 1000
+    /// @dev Principal-time is conserved however it is tranched: a top-up after `gap` seconds leaves a
+    /// record whose age is the amount-weighted mean, rounded toward the present, and the vault's
+    /// freshness decision for the whole record flips exactly where that mean says it should.
+    function testFuzz_topUpWeightsTheRecordByAmount(uint256 gapSeed, uint256 topUpSeed, uint256 probeSeed) public {
+        vm.prank(APPROVED_OPERATOR);
+        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        uint256 gap = bound(gapSeed, 1, 12 hours - 1);
+        uint256 topUp = bound(topUpSeed, 1, 150 ether); // 1800/1150 stays healthy and inside the band
+        uint256 start = vm.getBlockTimestamp();
+        vm.warp(start + gap);
+        _refreshEthUsd();
+        vm.prank(BORROWER);
+        backedVault.mintCOMP(topUp);
+        // mintedAt = start + ceil(gap * topUp / (1000 + topUp)).
+        uint256 expectedAt = start + Math.mulDiv(gap, topUp, 1000 ether + topUp, Math.Rounding.Ceil);
+        uint256 probe = bound(probeSeed, 0, 2);
+        uint256 at = expectedAt + 12 hours - 1 + probe; // one second inside, exactly at, one past
+        vm.warp(at);
+        _refreshEthUsd();
+        uint256 fees = backedVault.stabilityFeeOf(BORROWER);
+        uint256 supply = stable.totalSupply();
+        uint256 decayed = backedVault.decayedRedemptionBaseRate();
+        _redeem(10 ether);
+        uint256 counted = probe == 0 ? Math.min(fees, 10 ether) : 10 ether;
+        assertEq(backedVault.redemptionBaseRate(), decayed + (counted * 1e18 / supply) / 4);
     }
 
     function test_baseHalvesEveryTwelveHoursAndEventuallyReturnsToFloor() public {

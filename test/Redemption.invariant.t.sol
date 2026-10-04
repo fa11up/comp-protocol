@@ -16,8 +16,8 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     mapping(address => uint256) public withdrawn;
     mapping(address => uint256) public collateralRedeemed;
     mapping(address => uint256) public principal;
-    /// @dev Mirror of the position's fresh-principal record: what it holds, and when it was last
-    /// minted. Read as zero once the window has passed, exactly as the vault reads it.
+    /// @dev Mirror of the position's fresh-principal record: what it holds, and its amount-weighted
+    /// mint time. Read as zero once the window has passed, exactly as the vault reads it.
     mapping(address => uint256) public freshPrincipal;
     mapping(address => uint256) public lastMintedAt;
     uint256 private constant FRESH_WINDOW = 12 hours;
@@ -230,7 +230,8 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
             amounts.cancelled - Math.min(amounts.cancelled, backedVault.stabilityFeeOf(candidate));
         // The documented curve: the base rises by the burned fraction of pre-burn supply over four,
         // except for the part of a position burn that cancelled principal younger than the window.
-        uint256 freshCancelled = Math.min(amounts.cancelled, _freshNow(candidate));
+        // Fees are cancelled first and are never fresh: only the principal part can be excluded.
+        uint256 freshCancelled = Math.min(amounts.principalCancelled, _freshNow(candidate));
         uint256 expectedBase = _curve(beforeState.decayedBase, amount - freshCancelled, beforeState.supply);
         vm.prank(redeemer);
         uint256 paid = backedVault.redeem(amount, amounts.payout, candidate);
@@ -322,9 +323,16 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         return block.timestamp - lastMintedAt[actor] < FRESH_WINDOW ? freshPrincipal[actor] : 0;
     }
 
+    /// @dev A mint while the record is fresh moves its timestamp toward the present by the new
+    /// principal's share of the enlarged record, rounded toward the present; a record that has aged
+    /// out (or was fully retired) starts over at the present. One wei cannot re-date a large record.
     function _recordMint(address actor, uint256 amount) private {
-        freshPrincipal[actor] = _freshNow(actor) + amount;
-        lastMintedAt[actor] = block.timestamp;
+        uint256 fresh = _freshNow(actor);
+        uint256 at = lastMintedAt[actor];
+        lastMintedAt[actor] = fresh == 0
+            ? block.timestamp
+            : at + Math.mulDiv(block.timestamp - at, amount, fresh + amount, Math.Rounding.Ceil);
+        freshPrincipal[actor] = fresh + amount;
     }
 
     function _retireFresh(address actor, uint256 principalPaid) private {

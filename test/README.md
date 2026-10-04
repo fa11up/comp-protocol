@@ -322,17 +322,52 @@ pin, and the suite was brought up to the accepted source rather than rewritten:
   fee nor passing the guard, a first-ever burn saturating at the cap, and the
   accepted slow path across a transaction boundary succeeding.
 
-**Reported, not asserted:** the twelve-hour freshness window is re-dated whole
-by any mint inside it, so one wei of new principal per half-day keeps any amount
-of principal permanently excluded from the base, and a run against such a
-position pays only the floor however large it is. That contradicts the brief's
-curve and the source's own cost claim, so it is in `.imd-findings.json` with a
-proof rather than pinned here. The guard closing channel A entirely when secured
-backing per COMP falls below one minus the fee is noted there as well, as a
-design consequence for the requester.
+The whole-record re-dating reported in the previous round (one wei of new
+principal per half-day kept any amount of principal permanently excluded from
+the base) was accepted as finding `883fa030` and fixed in the source revision the
+next subsection covers. The guard closing channel A entirely when secured backing
+per COMP falls below one minus the fee remains a design consequence for the
+requester, answered by the source authors rather than changed.
+
+Previous-round verification: `forge build` passed; the full default `forge test`
+passed **422 tests, 0 failed, 2 existing optional skips** across 45 suites.
+
+### Amount-weighted freshness (source revision for finding 883fa030)
+
+The accepted source changed two things about the fresh-principal record, and the
+suite was brought up to them rather than rewritten:
+
+- A mint while the record is fresh no longer re-dates it whole. The timestamp
+  moves toward the present by the new principal's share of the enlarged record,
+  rounded toward the present; a record that has aged out, or was fully retired,
+  starts over at the present. The invariant handler's mirror now applies the same
+  `ceilDiv`-weighted update, and a 1,000-case fuzz in `RedemptionEconomics.t.sol`
+  pins the exact resulting timestamp by probing one second inside, exactly at and
+  one second past the window the weighted time implies. Deterministic regressions
+  cover six one-wei top-ups over three days (the seasoned tenth of supply counts
+  and the next quote is 300 bps), a single wei a minute inside the window followed
+  by eleven hours, and two equal tranches six hours apart ageing out together at
+  their average age.
+- Cancelled stability fees are never fresh: the excluded part of a position burn
+  is measured against the principal it cancelled, so a burn against a fresh
+  position that has accrued fees moves the base by exactly the fees' share. The
+  handler and the fresh-principal economics test now expect that, computing the
+  share from `stabilityFeeOf` immediately before each burn under the shipped 2%
+  annual rate, and a dedicated test checks the fee-first order of cancellation.
+
+**Reported, not asserted:** repayment retires principal from the record without
+moving its timestamp, so a mint-then-repay round trip of any size the health check
+allows multiplies the record's age by `F / (F + X)` at a cost of gas only, and
+twenty such pairs every six hours keep a position's whole principal "fresh"
+indefinitely. A redemption against it then excludes the entire principal part from
+the stored base, which is the pump-cost bypass `883fa030` described. It is in
+`.imd-findings.json` with a self-contained proof (plain `CDPVault`, a control case
+without the round trips) rather than pinned here.
 
 Current verification: `forge build` passed; the full default `forge test` passed
-**422 tests, 0 failed, 2 existing optional skips** across 45 suites. The 60
+**427 tests, 0 failed, 2 existing optional skips** across 45 suites. The 64
 redemption tests pass without skips; the invariant runs 256 sequences of 96
 calls with zero unexpected reverts. The scratch proof fails on the current source
-for the stated reason and is not part of the submitted suite.
+for the stated reason and is not part of the submitted suite. This revision
+changes only the redemption economics tests, the invariant handler's freshness
+mirror and this coverage note.
