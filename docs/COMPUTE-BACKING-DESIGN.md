@@ -355,6 +355,60 @@ worsen backing or refuse. The fix therefore belongs at the mint, not at the rede
 backing precondition where COMP is created rather than blocking the mechanism that repairs it. Not yet
 specified; it is the largest open item in this document.
 
+## 5c-bis. Swarm-wide work credit (spec, 2026-10-04)
+
+The channel as built credits **one agent named in source**, which cannot ship: a protocol that mints
+for its author's own seat is not a compute-backed currency. `WORK_CLAIMANT` and `WORK_AGENT_ID` go,
+and with them the idea that the protocol knows whose work it is.
+
+**The source of truth already exists and is ours.** Upstream PR #332, merged and live, puts a second
+Merkle root in every daily oracle receipt over `["uint256","uint32","uint64"]` =
+(agentId, accepted, cumulative). The 2026-10-03 receipt carries
+`agentRoot 0x3c871486…`, committed on chain through the receipt's `documentHash`, and rebuilding the
+tree from the published leaves reproduces it exactly. One root covers **every** agent that worked that
+day — which is precisely the fan-out problem that killed the first attempt at this.
+
+### Shape
+
+1. **One attestation per day carries the root**, not a count. `answerType` stays `uint256` and the
+   figure carries `uint256(agentRoot)`. One request serves the whole swarm, so the cost stops scaling
+   with the number of agents: ~15 IMD a month total rather than 0.5 IMD per agent per claim.
+2. **The contract stores accepted roots** and verifies a claim with a `MerkleProof` over the leaf
+   `keccak256(keccak256(abi.encode(uint256 agentId, uint32 accepted, uint64 cumulative)))` — the
+   OpenZeppelin `StandardMerkleTree` encoding, which must match the upstream leaf byte for byte.
+3. **Credit accumulates per agent**: `creditedTasks[agentId]`, `creditedRights[agentId]`,
+   `consumedRights[agentId]`, each a high-water mark, with the same accumulate-don't-recompute rule
+   that `accruedRights()` now follows. Proving against an OLDER root is always safe: cumulative is
+   monotone, so an old root can only under-credit, which means an agent who did no work on a given day
+   is simply absent from that day's tree and loses nothing.
+4. **Who may claim is answered by the registry, not by us.** On mainnet
+   `isController(agentId, msg.sender)` is a **same-chain view call** on the ERC-8004 adapter at
+   `0xde152afb7db5373f34876e1499fbd893a82dd336`. So any agent's controller claims their own credit
+   directly, the NFT moving reassigns it automatically, and no address is pinned anywhere. The
+   claimant problem dissolves rather than being solved.
+
+### The one obstacle, and why it pairs with another change
+
+A Merkle root is a uniformly random 256-bit number, so consecutive roots differ wildly — and
+`SwarmFeed._checkValue` enforces `maxDeviationBps`, which at its loosest permits a **doubling**. A
+root-carrying feed therefore cannot extend `SwarmFeed` as it stands: the deviation guard, written for a
+price, rejects almost every honest root.
+
+`_checkValue` is `private`. Making it `internal virtual` is a small, surgical change to the audited
+base — and it belongs in the **same increment as deleting the reporter fallback** (§ mainnet runbook),
+because that deletion already removes `report`, the reporter constants, `quorum`, `_median` and
+`_nextRound`, which are `_checkValue`'s immediate neighbours. One piece of `SwarmFeed` surgery, one
+review, rather than two.
+
+### Scope: build in house, buy the audit
+
+Two reasons, and they are about fit rather than cost. The leaf encoding must match our own upstream PR
+byte for byte, and the `_checkValue` change touches the base the three price feeds depend on — both are
+knowledge we hold and would have to transfer in a payload. And round 5 is the evidence: the swarm's
+adversarial work was excellent (four audit nodes and a judge found a fee design that could be pinned at
+either end for gas), while its contracts node spent all three revisions on a specification we got
+wrong. Where the spec is interlocked, write it and have them attack it.
+
 ## 5a. Stability fees: burn and convert
 
 Fees arrive in COMP, which cannot back COMP. They are split by a governed share:
@@ -364,9 +418,27 @@ feeBurnShareBps      -> burned on arrival: pure deflation, improves B immediatel
 remainder            -> held, then converted to reserve assets when a COMP market exists
 ```
 
-Burning is the safe default and needs nothing to exist. The held remainder is the part that can
-eventually become real backing, but it requires COMP liquidity, a swap route and a sell policy, so
-it accumulates first and converts later. Held COMP is **never** counted in `reserveValueUsd`.
+**BURNING IS NOT AN OPTIMISATION, IT IS WHAT STOPS THE FEE DILUTING THE PROTOCOL.** `_payDebt` does
+`compToken.mint(feeRecipient(), feePaid)` — the fee is newly MINTED COMP, not COMP taken from the
+borrower. Since `B = (C + R) / supply`, a fee raises the denominator and leaves the numerator alone, so
+**every fee payment lowers the backing ratio until that COMP is burned.** `feeBurnShareBps` should ship
+at 10000 for that reason alone, and the held remainder is a deliberate cost rather than free upside.
+
+Held COMP is **never** counted in `reserveValueUsd`: `Treasury.validateReserveAsset` refuses the
+vault's own stablecoin outright (`CompIsNotReserve`), because counting it would let reserve value raise
+`workCeiling`, which permits minting more COMP backed by COMP.
+
+**What the held remainder is actually good for, and it is not a market.** `liquidate` burns the
+CALLER's COMP, so a keeper needs COMP as working capital — real inventory, not an expense. Treasury
+COMP is worthless as backing and ideal for exactly that, with no swap route, no sell policy and no
+price risk. That is the first use to build.
+
+**Paired liquidity is a later decision with a real hazard.** The Treasury's only other asset is sIMD,
+so a COMP/sIMD pool means market-making the stablecoin against its own collateral: below peg the pool
+**sells sIMD and buys COMP**, converting reserve into the protocol's own liability exactly when it is
+weakest. Pairing against something exogenous avoids that and the Treasury holds nothing exogenous —
+which is a genuine tension with the single-asset reserve decided above, and the thing to resolve before
+any liquidity is deployed.
 
 ## 5b. Who captures the value an update creates
 
@@ -504,11 +576,14 @@ so a fall in IMD reduces both terms of the backing at once. That is already true
 §3's bound is derived under it, but it was not true of the reserve term before this decision, and it
 is the honest price of the simplification.
 
-**FRONTEND REQUIREMENT, now unconditional.** A redeemer ALWAYS receives sIMD, so the redemption page must
-offer to **unwrap it in place** — `redeem(shares, receiver, owner)` on the staking vault, one call, a
-block after the redemption. Handing someone a share token and leaving them to find the staking UI is
-the kind of gap that makes a correct protocol feel broken. The same page should show the live exchange
-rate, so the sIMD they receive is legible as an amount of IMD rather than as an unfamiliar unit.
+**FRONTEND: offer the unwrap, do not force it.** A redeemer always receives sIMD, so the page should
+**offer** unwrapping it after the redemption — `redeem(shares, receiver, owner)` on the staking vault,
+one call — alongside simply keeping the sIMD, which is the yield-bearing form and what many will
+prefer. Show the live exchange rate either way, so the amount is legible as IMD rather than as an
+unfamiliar unit. The point is that nobody has to go and find the staking UI, not that they must leave.
+
+The same applies to withdrawing collateral: the position pays sIMD, and the page should offer the same
+option there.
 
 Note the one-block hold applies to the redeemer too: their sIMD inherits the hold of whoever last
 transferred it, so an unwrap offered in the same block as the redemption can revert `SameBlockRedeem`.
