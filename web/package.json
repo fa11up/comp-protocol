@@ -10,6 +10,7 @@
     "check:export": "node scripts/manifest.mjs --check",
     "test": "node --test tests/math.test.mjs tests/explain.test.mjs",
     "test:browser": "node tests/browser.mjs",
+    "demo": "node scripts/demo.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
