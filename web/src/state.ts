@@ -1,4 +1,4 @@
-import { zeroAddress, type Address } from "viem";
+import { parseAbi, zeroAddress, type Address } from "viem";
 import type { Runtime, Target } from "./config";
 // Dynamic implementation-derived ABIs are loaded only after manifest verification.
 export const read = async (
@@ -9,6 +9,18 @@ export const read = async (
   blockNumber?: bigint,
 ): Promise<any> =>
   r.client.readContract({ ...t, functionName: fn, args, blockNumber });
+// Reads newer than the pinned ABIs. They are called through inline fragments rather than by
+// editing public/abi (which the manifest verifies against the deployment's source commit), and a
+// deployment that predates them reads as "unavailable" in its own field, never as a failed snapshot.
+const optionalAbi = parseAbi([
+  "function backingPerComp() view returns (uint256)",
+  "function expectedQuestionHash(uint64 fromBlock, uint64 toBlock) pure returns (bytes32)",
+  "function lastToBlock() view returns (uint64)",
+]);
+export type Question =
+  | { kind: "pinned"; fingerprint: `0x${string}`; lastToBlock?: bigint }
+  | { kind: "unpinned" }
+  | { kind: "unavailable" };
 export type Snapshot = {
   block: bigint;
   timestamp: bigint;
@@ -20,6 +32,7 @@ export type Snapshot = {
     { value: bigint; updated: bigint; stale: boolean; maxAge: bigint }
   >;
   work: Record<string, any>;
+  questions: Record<string, Question>;
   errors: string[];
   verified: boolean;
 };
@@ -186,6 +199,53 @@ export async function snapshot(
         ]
       : []),
   ]);
+  const optional = (
+    address: Address,
+    functionName: string,
+    args: readonly unknown[] = [],
+  ) =>
+    r.client.readContract({
+      address,
+      abi: optionalAbi,
+      functionName: functionName as never,
+      args: args as never,
+      blockNumber: bn,
+    }) as Promise<any>;
+  try {
+    v.backingPerComp = await optional(vault.address, "backingPerComp");
+  } catch {
+    v.backingPerComp = undefined;
+  }
+  const questions: Record<string, Question> = {};
+  await Promise.all(
+    ["PriceFeed", "NhiFeed", "SpotFeed"].map(async (n) => {
+      try {
+        // A feed that pins no question returns zero for every window.
+        const hash = (await optional(
+          targets[n].address,
+          "expectedQuestionHash",
+          [0n, 0n],
+        )) as `0x${string}`;
+        if (/^0x0+$/.test(hash)) questions[n] = { kind: "unpinned" };
+        else {
+          let last: bigint | undefined;
+          try {
+            last = BigInt(await optional(targets[n].address, "lastToBlock"));
+          } catch {
+            last = undefined;
+          }
+          questions[n] = {
+            kind: "pinned",
+            fingerprint: hash,
+            lastToBlock: last,
+          };
+        }
+      } catch {
+        // Feeds built before question binding have no such view: they accept any question.
+        questions[n] = { kind: "unavailable" };
+      }
+    }),
+  );
   const work: Record<string, any> = { mode: "unknown" };
   try {
     const keys = [
@@ -227,6 +287,7 @@ export async function snapshot(
     v,
     feeds,
     work,
+    questions,
     errors,
     verified: true,
   };

@@ -43,15 +43,21 @@ export function uint(text: string) {
   if (n > maxUint256) throw Error("Number is too large.");
   return n;
 }
+// Mirrors the vault: payoutScale = mulDiv(backingPerComp, 10000 - fee, 10000), where
+// backingPerComp never exceeds par. A deployment without backingPerComp() pays par.
 export function payout(
   comp: bigint,
   fee: bigint,
   price: bigint,
   reserve: bigint,
+  backing: bigint = WAD,
 ) {
   if (price <= 0n || fee >= 10000n)
     throw Error("A valid, fresh USD price is required.");
-  const scale = (10000n - fee) * 10n ** 14n;
+  const paidAt = backing < WAD ? backing : WAD;
+  const scale = (paidAt * (10000n - fee)) / 10000n;
+  if (scale === 0n)
+    throw Error("Backing per COMP is zero. A redemption would pay nothing.");
   const out = (comp * scale) / price;
   if (!out) throw Error("This amount rounds to zero IMD. Increase the amount.");
   const reserveOut = out < reserve ? out : reserve;
@@ -61,6 +67,8 @@ export function payout(
     positionOut: out - reserveOut,
     debtCancelled:
       reserveOut === out ? 0n : comp - (reserveOut * price) / scale,
+    paidAt,
+    capped: paidAt < WAD,
     source:
       reserveOut === out
         ? "Reserve"
@@ -95,8 +103,6 @@ export function message(e: unknown): string {
       "Primary and spot prices disagree beyond the allowed limit. Try again after the feeds converge.",
     IneligibleRedemptionPosition:
       "This position is debt-free or at/above the eligibility ceiling. Choose another candidate.",
-    RedemptionWorsensBacking:
-      "This redemption would reduce backing for remaining COMP. Try again when backing improves.",
     RedemptionWorsensRatio:
       "The candidate’s collateral ratio would fall. Choose another candidate.",
     MinimumOutNotMet: "The payout fell below your minimum. Refresh the quote.",
@@ -133,4 +139,43 @@ export function message(e: unknown): string {
     "Request failed. Refresh state and try again.";
   for (const [key, v] of Object.entries(known)) if (s.includes(key)) return v;
   return s.slice(0, 500);
+}
+
+// Position arithmetic, mirroring CDPVault._collateralRatio: CR% = collateral * price / (debt * 1e16),
+// healthy when CR >= minCR. Price is the 1e18-scaled USD price per IMD the vault reads.
+const ceilDiv = (a: bigint, b: bigint) => (a === 0n ? 0n : (a - 1n) / b + 1n);
+export const CR_SCALE = 10n ** 16n;
+/** Smallest collateral (IMD wei) that keeps `debt` at or above `minCR`. */
+export function requiredCollateral(debt: bigint, minCR: bigint, price: bigint) {
+  if (price <= 0n) throw Error("A valid USD price is required.");
+  return ceilDiv(debt * minCR * CR_SCALE, price);
+}
+/** Most COMP a position can owe in total at `minCR`, given its collateral. */
+export function maxDebt(collateral: bigint, minCR: bigint, price: bigint) {
+  if (minCR <= 0n) throw Error("A valid minCR is required.");
+  return (collateral * price) / (minCR * CR_SCALE);
+}
+/** USD price per IMD (1e18-scaled) at which the position reaches minCR. */
+export function liquidationPrice(
+  collateral: bigint,
+  debt: bigint,
+  minCR: bigint,
+): bigint | undefined {
+  if (debt === 0n || collateral === 0n) return undefined;
+  return ceilDiv(debt * minCR * CR_SCALE, collateral);
+}
+/** Signed basis points the price can fall before liquidation; negative means already below. */
+export function cushionBps(price: bigint, liquidation: bigint) {
+  return price > 0n ? ((price - liquidation) * 10000n) / price : undefined;
+}
+export function cushion(
+  price: bigint | undefined,
+  liquidation: bigint | undefined,
+) {
+  if (price === undefined || liquidation === undefined) return "—";
+  const bps = cushionBps(price, liquidation);
+  if (bps === undefined) return "—";
+  return bps >= 0n
+    ? `${formatUnits(bps, 2)}% above it`
+    : `${formatUnits(-bps, 2)}% below it`;
 }

@@ -17,9 +17,12 @@ function apply() {
   current = choice ?? (system.matches ? "dark" : "light");
   document.documentElement.dataset.theme = current;
   const style = getComputedStyle(document.documentElement);
+  // Both media-scoped tags take the active theme's ground, so an explicit choice beats the OS.
   document
-    .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", style.getPropertyValue("--bg").trim());
+    .querySelectorAll('meta[name="theme-color"]')
+    .forEach((m) =>
+      m.setAttribute("content", style.getPropertyValue("--bg").trim()),
+    );
   // The favicon follows an explicit choice too, not just the OS preference.
   const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="${style.getPropertyValue("--bg").trim()}"/><path d="M23 9H9v14h14M18 16h8" fill="none" stroke="${style.getPropertyValue("--text").trim()}" stroke-width="2"/></svg>`;
   document

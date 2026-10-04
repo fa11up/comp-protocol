@@ -216,9 +216,32 @@ try {
   s.rejectSimulation = true;
   await refresh(page);
   await red.getByRole("button", { name: "Quote redemption" }).click();
-  await expectText(red, "would reduce backing");
-  passed("Full redemption simulation translates backing guard revert");
+  await expectText(red, "collateral ratio would fall");
+  passed("Full redemption simulation translates the ratio guard revert");
   s.rejectSimulation = false;
+  await refresh(page);
+  await expectText(red, "Par (backing unavailable)");
+  await expectText(page.locator(".pane-backing"), "Not reported by this vault");
+  await expectText(page.locator(".pane-oracle"), "Not reported");
+  passed("A vault and feeds without the newer views degrade per field");
+  s.backing = (8n * 10n ** 18n) / 10n;
+  s.pinned = true;
+  await refresh(page);
+  await expectText(red, "the cap binds");
+  await red.getByRole("button", { name: "Quote redemption" }).click();
+  await expectText(red.locator(".quote"), "(backing cap)");
+  await expectText(
+    page.locator(".pane-backing"),
+    "Redemption floor · cap binds",
+  );
+  await expectText(page.locator(".pane-oracle"), "Pinned · 0x2b2b2b2b");
+  await expectText(page.locator(".pane-oracle"), "26,121,526");
+  passed("Backing below par caps the quote; pinned questions are shown");
+  await expectText(page.locator(".pane-position"), "Liquidation price");
+  await expectText(page.locator(".pane-position"), "25% above it");
+  passed("Position shows its liquidation price and cushion from spot");
+  s.backing = undefined;
+  s.pinned = false;
   s.stale = true;
   await refresh(page);
   assert.equal(
@@ -719,7 +742,10 @@ try {
     )
       await page.getByRole("button", { name: `Use ${theme} theme` }).click();
     assert.equal(
-      await page.locator('meta[name="theme-color"]').getAttribute("content"),
+      await page
+        .locator('meta[name="theme-color"]')
+        .first()
+        .getAttribute("content"),
       theme === "light" ? "#f7f5ef" : "#111",
     );
     for (const [width, height] of [

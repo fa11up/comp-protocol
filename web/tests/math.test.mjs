@@ -1,6 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { amount, payout, address, message, WAD, ratio } from "../src/math.ts";
+import {
+  amount,
+  payout,
+  address,
+  message,
+  WAD,
+  ratio,
+  liquidationPrice,
+  cushion,
+  requiredCollateral,
+  maxDebt,
+  CR_SCALE,
+} from "../src/math.ts";
 import { maxUint256 } from "viem";
 test("amount input rejects lossy, signed, exponent, zero and out of range values", () => {
   for (const input of [
@@ -55,7 +67,44 @@ test("address normalization, debt-free label and actionable custom errors", () =
   assert.equal(ratio(maxUint256), "Debt-free");
   assert.match(message({ code: 4001 }), /rejected/);
   assert.match(
+    message({ cause: { data: { errorName: "RedemptionWorsensRatio" } } }),
+    /collateral ratio would fall/,
+  );
+  // Retired when the payout cap replaced the halt; it must not be explained as current behaviour.
+  assert.doesNotMatch(
     message({ cause: { data: { errorName: "RedemptionWorsensBacking" } } }),
     /reduce backing/,
   );
+});
+test("redemption pays the lesser of par and backing per COMP, as the vault does", () => {
+  const par = payout(100n * WAD, 50n, 2n * WAD, 0n);
+  const atPar = payout(100n * WAD, 50n, 2n * WAD, 0n, 2n * WAD);
+  assert.equal(atPar.out, par.out); // backing above par never pays a premium
+  assert.equal(atPar.capped, false);
+  const capped = payout(100n * WAD, 50n, 2n * WAD, 0n, 8n * 10n ** 17n);
+  assert.equal(capped.capped, true);
+  // payoutScale = mulDiv(0.8e18, 9950, 10000); out = mulDiv(100e18, scale, 2e18)
+  const scale = (8n * 10n ** 17n * 9950n) / 10000n;
+  assert.equal(capped.out, (100n * WAD * scale) / (2n * WAD));
+  assert.ok(capped.out < par.out);
+  const mixed = payout(100n * WAD, 50n, 2n * WAD, 10n * WAD, 8n * 10n ** 17n);
+  assert.equal(
+    mixed.debtCancelled,
+    100n * WAD - (10n * WAD * 2n * WAD) / scale,
+  );
+});
+test("position arithmetic agrees with the vault's ratio check", () => {
+  const price = 10n * WAD; // $10 per IMD
+  const collateral = 300n * WAD,
+    debt = 1000n * WAD,
+    minCR = 150n;
+  // CR = 300 * 10 / 1000 = 300%
+  assert.equal((collateral * price) / (debt * CR_SCALE), 300n);
+  const liq = liquidationPrice(collateral, debt, minCR);
+  assert.equal(liq, 5n * WAD); // halves to $5 before minCR
+  assert.equal(cushion(price, liq), "50% above it");
+  assert.equal(requiredCollateral(debt, minCR, price), 150n * WAD);
+  assert.equal(maxDebt(collateral, minCR, price), 2000n * WAD);
+  assert.equal(liquidationPrice(collateral, 0n, minCR), undefined);
+  assert.equal(cushion(4n * WAD, liq), "25% below it");
 });

@@ -8,6 +8,7 @@ import {
   parseEther,
   zeroAddress,
   maxUint256,
+  parseAbi,
 } from "viem";
 export const config = JSON.parse(
   readFileSync(new URL("../deployment-source.json", import.meta.url)),
@@ -32,6 +33,14 @@ export const abi = Object.fromEntries(
     ),
   ]),
 );
+// Views newer than the pinned ABIs; the app reads them through inline fragments.
+const optional = parseAbi([
+  "function backingPerComp() view returns (uint256)",
+  "function expectedQuestionHash(uint64 fromBlock, uint64 toBlock) pure returns (bytes32)",
+  "function lastToBlock() view returns (uint64)",
+]);
+for (const n of ["ParameterizedVault", "PriceFeed", "NhiFeed", "SpotFeed"])
+  abi[n] = [...abi[n], ...optional];
 export const account = "0x0000000000000000000000000000000000000a11";
 export const candidate = "0x0000000000000000000000000000000000000b22";
 export const addresses = {
@@ -63,6 +72,9 @@ export const fixture = () => ({
   stale: false,
   mode: "faucet",
   rejectSimulation: false,
+  // Undefined models the live deployment, whose vault and feeds predate these views.
+  backing: undefined,
+  pinned: false,
   candidateCR: 180n,
   rpcFail: false,
   codeMissing: false,
@@ -136,12 +148,27 @@ function call(s, params) {
   )
     throw Error("Unsupported function");
   let value;
+  if (
+    f === "backingPerComp" ||
+    f === "expectedQuestionHash" ||
+    f === "lastToBlock"
+  ) {
+    if (f === "backingPerComp" ? s.backing === undefined : !s.pinned)
+      throw Error("execution reverted");
+    value =
+      f === "backingPerComp"
+        ? s.backing
+        : f === "lastToBlock"
+          ? 26121526n
+          : "0x" + "2b".repeat(32);
+    return encodeFunctionResult({ abi: a, functionName: f, result: value });
+  }
   if (fn.stateMutability === "nonpayable") {
     if (s.rejectSimulation) {
       const error = new Error("execution reverted");
       error.data = encodeErrorResult({
         abi: abi.ParameterizedVault,
-        errorName: "RedemptionWorsensBacking",
+        errorName: "RedemptionWorsensRatio",
       });
       throw error;
     }

@@ -14,7 +14,9 @@ import {
   payout,
   message,
   ratio,
+  WAD,
 } from "./math";
+import { explained } from "./explain";
 type Quote = ReturnType<typeof payout> & {
   amount: bigint;
   fee: bigint;
@@ -91,6 +93,18 @@ export function Redemption({
         <Row label="Floor">{percent(v.REDEMPTION_FEE_FLOOR_BPS)}</Row>
         <Row label="Cap">{percent(v.REDEMPTION_FEE_CAP_BPS)}</Row>
       </div>
+      <Row label="Paid at, per COMP">
+        {v.backingPerComp === undefined
+          ? "Par (backing unavailable)"
+          : `$${fmt(v.backingPerComp < WAD ? v.backingPerComp : WAD)}`}
+      </Row>
+      <p className="micro">
+        {v.backingPerComp === undefined
+          ? "This vault does not report backingPerComp, so it pays par less the fee."
+          : v.backingPerComp < WAD
+            ? `Backing is below par, so the cap binds: each COMP redeems for $${fmt(v.backingPerComp)} of IMD less the fee, not $1.`
+            : "Backing is at or above par, so the cap does not bind: each COMP redeems for $1 of IMD less the fee."}
+      </p>
       <Row label="Reserve on hand">{fmt(v.redemptionReserve)} IMD</Row>
       <Row label="Eligibility ceiling">{ratio(v.redemptionCeilingCR)}</Row>
       <p className="micro">
@@ -169,6 +183,7 @@ export function Redemption({
               fee,
               s.feeds.USD.value,
               s.v.redemptionReserve,
+              s.v.backingPerComp,
             );
             const c = validate("redemption-candidate", () =>
               candidate.trim() ? address(candidate) : zeroAddress,
@@ -204,13 +219,32 @@ export function Redemption({
               throw Error(
                 "Minimum output rounds to zero. Increase the amount.",
               );
-            await r.client.simulateContract({
-              ...s.targets.ParameterizedVault,
-              functionName: "redeem",
-              args: [n, minimum, c],
-              account: actions.account,
-              blockNumber: s.block,
-            });
+            await r.client
+              .simulateContract({
+                ...s.targets.ParameterizedVault,
+                functionName: "redeem",
+                args: [n, minimum, c],
+                account: actions.account,
+                blockNumber: s.block,
+              })
+              .catch((e) =>
+                explained(
+                  e,
+                  {
+                    fn: "redeem",
+                    args: [n, minimum, c],
+                    s,
+                    account: actions.account,
+                  },
+                  (f) =>
+                    f.name === "MinimumOutNotMet"
+                      ? `The payout at block ${s.block} is below your minimum of ${exact(minimum)} IMD. Refresh the quote or widen slippage.`
+                      : f.name === "IneligibleRedemptionPosition" &&
+                          cr !== undefined
+                        ? `The candidate sits at ${ratio(cr)}; only positions with debt below ${ratio(s.v.redemptionCeilingCR)} can be redeemed against.`
+                        : undefined,
+                ),
+              );
             if (generation === version.current)
               setQ({
                 ...result,
@@ -285,7 +319,7 @@ export function Redemption({
             ? actions.reason
             : !ready
               ? "Fresh, agreeing primary, spot, NHI and USD feeds are required."
-              : "Burn COMP for IMD at the USD feed price, less the fee."}
+              : "Burn COMP for IMD at the lesser of par and backing per COMP, less the fee."}
         </p>
       </form>
       <div id="redemption-feedback" role="status" aria-live="polite">
@@ -298,6 +332,11 @@ export function Redemption({
           </div>
           <Row label="You receive">{exact(q.out)} IMD</Row>
           <Row label="Your fee">{percent(q.fee)}</Row>
+          <Row label="Paid at">
+            {q.capped
+              ? `$${fmt(q.paidAt)} per COMP (backing cap)`
+              : "$1 per COMP (par)"}
+          </Row>
           <Row label="Served by">{q.source}</Row>
           <Row label="From reserve">{fmt(q.reserveOut)} IMD</Row>
           <Row label="From position">{fmt(q.positionOut)} IMD</Row>
@@ -318,7 +357,7 @@ export function Redemption({
               target: s!.targets.ParameterizedVault,
               fn: "redeem",
               args: [q.amount, q.minimum, q.candidate],
-              summary: `Burn ${exact(q.amount)} COMP. Receive at least ${exact(q.minimum)} IMD; quoted ${exact(q.out)} IMD from ${q.source.toLowerCase()} at ${percent(q.fee)}. Candidate: ${q.candidate}. The fee is retained as backing.`,
+              summary: `Burn ${exact(q.amount)} COMP. Receive at least ${exact(q.minimum)} IMD; quoted ${exact(q.out)} IMD from ${q.source.toLowerCase()} at ${percent(q.fee)}${q.capped ? `, paid at $${fmt(q.paidAt)} per COMP because backing is below par` : ""}. Candidate: ${q.candidate}. The fee is retained as backing.`,
             })}
           />
         </div>

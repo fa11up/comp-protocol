@@ -6,6 +6,7 @@ import { Pane, type Actions, type Request, AddressLink } from "./actions";
 import { Redemption } from "./Redemption";
 import { Position, Work, Oracle, Keeper, Backing, Governance } from "./Panes";
 import { message, fmt } from "./math";
+import { explained } from "./explain";
 import { ThemeToggle } from "./theme";
 import { LoanBook, useCharts } from "./Charts";
 import { Ticker } from "./motion";
@@ -220,12 +221,20 @@ function Terminal({ r }: { r: Runtime }) {
         const p = window.ethereum;
         if (!p) throw Error("Connect a browser wallet.");
         await guard(p);
-        await r.client.simulateContract({
-          ...request.target,
-          functionName: request.fn,
-          args: request.args,
-          account,
-        });
+        await r.client
+          .simulateContract({
+            ...request.target,
+            functionName: request.fn,
+            args: request.args,
+            account,
+          })
+          .catch((e) =>
+            explained(
+              e,
+              { fn: request.fn, args: request.args, s, account },
+              request.explain,
+            ),
+          );
         setTx({
           status: "Simulation passed. Review the transaction before signing.",
         });
@@ -252,12 +261,20 @@ function Terminal({ r }: { r: Runtime }) {
       if (review.account !== account)
         throw Error("Account changed. Cancel and review again.");
       await guard(p);
-      const simulation = await r.client.simulateContract({
-        ...request.target,
-        functionName: request.fn,
-        args: request.args,
-        account,
-      });
+      const simulation = await r.client
+        .simulateContract({
+          ...request.target,
+          functionName: request.fn,
+          args: request.args,
+          account,
+        })
+        .catch((e) =>
+          explained(
+            e,
+            { fn: request.fn, args: request.args, s, account },
+            request.explain,
+          ),
+        );
       await guard(p);
       setTx({ status: "Confirm this action in your wallet." });
       const hash = await wallet(r, p).writeContract({

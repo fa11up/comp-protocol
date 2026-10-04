@@ -3,11 +3,14 @@ import { type Address } from "viem";
 import type { Target } from "./config";
 import { Ticker } from "./motion";
 import { amount, address, uint, message } from "./math";
+import type { Failure } from "./explain";
 export type Request = {
   target: Target;
   fn: string;
   args: readonly unknown[];
   summary: string;
+  /** Figures only this call site knows, e.g. an inspected borrower's ratio. */
+  explain?: (f: Failure) => string | undefined;
 };
 export type Actions = {
   ready: boolean;
@@ -78,6 +81,7 @@ export function ActionForm({
   disabled = false,
   reason = "",
   mapArgs,
+  explain,
 }: {
   id: string;
   label: string;
@@ -89,6 +93,7 @@ export function ActionForm({
   disabled?: boolean;
   reason?: string;
   mapArgs?: (v: any[]) => readonly unknown[];
+  explain?: Request["explain"];
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
@@ -126,6 +131,7 @@ export function ActionForm({
             target,
             fn,
             args: mapArgs ? mapArgs(args) : args,
+            explain,
             summary: `${summary}${args.length ? " Inputs: " + fields.map((f, i) => `${f.name}: ${values[f.name] ?? f.default ?? ""}`).join("; ") : ""}`,
           });
         } catch (e) {

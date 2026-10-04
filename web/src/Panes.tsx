@@ -8,8 +8,9 @@ import {
 } from "./Charts";
 import { Ticker } from "./motion";
 import { type Runtime } from "./config";
-import { type Snapshot, read, feedsReady } from "./state";
+import { type Snapshot, type Question, read, feedsReady } from "./state";
 import { Action, ActionForm, Row, AddressLink, type Actions } from "./actions";
+import type { Failure } from "./explain";
 import {
   amount,
   address,
@@ -19,6 +20,11 @@ import {
   ratio,
   message,
   exact,
+  WAD,
+  liquidationPrice,
+  cushion,
+  maxDebt,
+  requiredCollateral,
 } from "./math";
 const amt = (name: string) => ({ name, kind: "amount" as const });
 const addr = (name: string) => ({ name, kind: "address" as const });
@@ -57,6 +63,40 @@ export function Position({
       </div>
       <Row label="Collateral">{fmt(v.positions?.[0])} IMD</Row>
       <Row label="Accrued debt">{fmt(v.debtOf)} COMP</Row>
+      {(() => {
+        const price = s?.feeds.USD?.value;
+        const collateral = v.positions?.[0] as bigint | undefined;
+        const debt = v.debtOf as bigint | undefined;
+        if (
+          collateral === undefined ||
+          debt === undefined ||
+          !v.minCR ||
+          !price
+        )
+          return null;
+        const liq = liquidationPrice(collateral, debt, v.minCR);
+        const most = maxDebt(collateral, v.minCR, price);
+        const keep = requiredCollateral(debt, v.minCR, price);
+        return (
+          <>
+            <Row label="Liquidation price">
+              {liq === undefined ? "No debt" : `$${fmt(liq)} / IMD`}
+            </Row>
+            {liq !== undefined && (
+              <p className="micro">
+                IMD is ${fmt(price)} now, {cushion(price, liq)}. At ${fmt(liq)}{" "}
+                this position reaches minCR {v.minCR.toString()}%.
+              </p>
+            )}
+            <Row label="Can still borrow">
+              {fmt(most > debt ? most - debt : 0n)} COMP
+            </Row>
+            <Row label="Can withdraw">
+              {fmt(collateral > keep ? collateral - keep : 0n)} IMD
+            </Row>
+          </>
+        );
+      })()}
       <Row label="Unpaid stability fee">{fmt(v.stabilityFeeOf)} COMP</Row>
       <Row label="Wallet">
         {fmt(v.imdBalance)} IMD / {fmt(v.compBalance)} COMP
@@ -355,6 +395,7 @@ export function Oracle({
               ? "Unavailable"
               : `${f[n].stale ? "Stale" : "Fresh"} · ${age(f[n].updated, now)} · limit ${f[n].maxAge}s`}
           </p>
+          {n !== "USD" && <QuestionState q={s?.questions[n]} />}
           {n !== "USD" && (
             <Sparkline feed={charts.feeds[n]} live={f[n]} now={now} label={n} />
           )}
@@ -456,6 +497,19 @@ export function Keeper({
   const [position, setPosition] = useState<any>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const borrower = (f: Failure) => {
+    if (!position || !s) return undefined;
+    const graceEnds = position.mark[0] + position.mark[1];
+    if (f.name === "HealthyPosition")
+      return `${position.owner} sits at ${ratio(position.cr)}, at or above minCR ${ratio(s.v.minCR)}. It cannot be marked or liquidated until it falls below.`;
+    if (f.name === "GracePeriodNotElapsed")
+      return `The grace period ends in ${graceEnds > now ? graceEnds - now : 0n}s, at ${new Date(Number(graceEnds) * 1000).toISOString()}.`;
+    if (f.name === "MarkExpired")
+      return `The mark's execution window closed at ${new Date(Number(graceEnds + (s.v.liquidationWindow ?? 0n)) * 1000).toISOString()}. Mark the position again.`;
+    if (f.name === "ExcessRepayment")
+      return `${position.owner} owes ${fmt(position.debt)} COMP including fees; repay no more than that.`;
+    return undefined;
+  };
   return (
     <>
       <p className="micro">
@@ -471,15 +525,23 @@ export function Keeper({
           try {
             if (!s) throw Error("Wait for state to load.");
             const a = address(owner);
-            const [cr, debt, mark, badDebt] = await Promise.all(
+            const [cr, debt, mark, badDebt, held] = await Promise.all(
               [
                 "collateralRatio",
                 "debtOf",
                 "liquidationMarks",
                 "badDebtOf",
+                "positions",
               ].map((fn) => read(r, s.targets.ParameterizedVault, fn, [a])),
             );
-            setPosition({ cr, debt, mark, badDebt, owner: a });
+            setPosition({
+              cr,
+              debt,
+              mark,
+              badDebt,
+              owner: a,
+              collateral: held[0],
+            });
           } catch (e) {
             setError(message(e));
           } finally {
@@ -513,7 +575,22 @@ export function Keeper({
             Acting on borrower: {position.owner}
           </p>
           <Row label="Collateral ratio">{ratio(position.cr)}</Row>
+          <Row label="Collateral">{fmt(position.collateral)} IMD</Row>
           <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
+          {(() => {
+            const liq =
+              s?.v.minCR &&
+              liquidationPrice(position.collateral, position.debt, s.v.minCR);
+            return liq ? (
+              <>
+                <Row label="Liquidation price">${fmt(liq)} / IMD</Row>
+                <p className="micro">
+                  IMD is ${fmt(s?.feeds.USD?.value)} now,{" "}
+                  {cushion(s?.feeds.USD?.value, liq)}.
+                </p>
+              </>
+            ) : null;
+          })()}
           <Row label="Bad debt estimate">{fmt(position.badDebt)} COMP</Row>
           <Row label="Mark">{position.mark[2] ? "Active" : "None"}</Row>
           {position.mark[2] && (
@@ -550,6 +627,7 @@ export function Keeper({
             fn: "markUnderwater",
             args: [address(owner)],
             summary: `Mark ${address(owner)} as underwater. The on-chain grace snapshot governs liquidation.`,
+            explain: borrower,
           })}
         />
         <Action
@@ -563,6 +641,10 @@ export function Keeper({
             fn: "clearRecoveredMark",
             args: [address(owner)],
             summary: `Clear the mark only if ${address(owner)} has recovered.`,
+            explain: (f) =>
+              f.name === "UnderwaterPosition" && position
+                ? `${position.owner} is still at ${ratio(position.cr)}, below minCR ${ratio(s?.v.minCR)}. A mark clears only once the position recovers.`
+                : undefined,
           })}
         />
       </div>
@@ -575,6 +657,7 @@ export function Keeper({
         fields={[amt("Repay borrower COMP")]}
         mapArgs={(a) => [address(owner), ...a]}
         summary="Burn your COMP to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares."
+        explain={borrower}
         disabled={
           !feedsReady(s) ||
           !position?.mark[2] ||
@@ -595,6 +678,7 @@ export function Keeper({
           fields={[addr("Marker beneficiary")]}
           mapArgs={(a) => [address(owner), ...a]}
           summary="Record the marker reward beneficiary for this borrower."
+          explain={borrower}
           disabled={!feedsReady(s) || !position}
           reason="Inspect a borrower and wait for fresh feeds."
         />
@@ -615,6 +699,29 @@ export function Backing({
   return (
     <>
       <SupplyChart s={s} />
+      <div className="hero-stat">
+        <span>Backing per COMP</span>
+        <strong>
+          <Ticker
+            text={
+              v.backingPerComp === undefined
+                ? "Unavailable"
+                : `$${fmt(v.backingPerComp)}`
+            }
+          />
+        </strong>
+        <small>
+          {v.backingPerComp === undefined
+            ? "Not reported by this vault"
+            : v.backingPerComp < WAD
+              ? "Redemption floor · cap binds"
+              : "Redemption floor · at par"}
+        </small>
+      </div>
+      <p className="micro">
+        A redemption pays the lesser of $1 and this figure per COMP, less the
+        fee. It is reserve plus secured collateral over supply, never above par.
+      </p>
       <Row label="Reserve value">${fmt(v.reserveValue)}</Row>
       <Row label="Collateral-backed debt">{fmt(v.backedDebt)} COMP</Row>
       <Row label="Secured collateral">{fmt(v.securedCollateral)} IMD</Row>
@@ -842,6 +949,49 @@ export function Governance({
         explorer={r.config.network.explorer}
         label="Parameters"
       />
+    </>
+  );
+}
+
+function QuestionState({ q }: { q?: Question }) {
+  if (!q) return <Row label="Question">—</Row>;
+  if (q.kind === "unavailable")
+    return (
+      <>
+        <Row label="Question">Not reported</Row>
+        <p className="micro">
+          This feed predates question binding, so it cannot say which question
+          it accepts.
+        </p>
+      </>
+    );
+  if (q.kind === "unpinned")
+    return (
+      <>
+        <Row label="Question">
+          <span className="danger-text">Pins none</span>
+        </Row>
+        <p className="micro">
+          Any attestation from the attester is accepted, whatever it answers.
+        </p>
+      </>
+    );
+  return (
+    <>
+      <Row label="Question">
+        <span
+          className="healthy-text"
+          title={`expectedQuestionHash(0, 0) = ${q.fingerprint}`}
+        >
+          Pinned · {q.fingerprint.slice(0, 10)}…
+        </span>
+      </Row>
+      <p className="micro">
+        Only answers to this feed's own question are accepted.{" "}
+        {q.lastToBlock
+          ? `Last accepted window closed at data-chain block ${q.lastToBlock.toLocaleString("en-US")}.`
+          : "No attestation accepted yet."}
+      </p>
     </>
   );
 }

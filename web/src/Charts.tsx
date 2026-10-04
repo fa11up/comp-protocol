@@ -10,7 +10,7 @@ import {
   type Cadence,
   type Result,
 } from "./history";
-import { fmt, ratio, WAD, message } from "./math";
+import { fmt, ratio, WAD, message, liquidationPrice, cushion } from "./math";
 import { Ticker } from "./motion";
 
 type Loaded<T> = Result<T> & { snapshot?: Snapshot; loading?: boolean };
@@ -72,6 +72,12 @@ export function useCharts(r: Runtime, s?: Snapshot) {
 }
 export type ChartData = ReturnType<typeof useCharts>;
 const number = (v: bigint) => Number(formatUnits(v, 18));
+const liquidation = (p: { collateral: bigint; debt: bigint }, s?: Snapshot) => {
+  const at = s?.v.minCR && liquidationPrice(p.collateral, p.debt, s.v.minCR);
+  return at
+    ? `liquidates at $${fmt(at, 18, 2)}, ${cushion(s!.feeds.USD?.value, at)}`
+    : "liquidation price unavailable";
+};
 const stateOf = (cr: bigint, min: bigint, ceiling: bigint) =>
   cr < min ? "Liquidatable" : cr < ceiling ? "Redeemable" : "Safe";
 
@@ -224,8 +230,8 @@ export function LoanBook({
                   type="button"
                   className={`loan-mark ${p.cr < min! ? "is-danger" : "is-healthy"}`}
                   style={{ left: `${p.x}%`, top: p.lane * 48 + 4 }}
-                  title={`${positionName(p.owner)} · ${p.owner}\n${p.cr}% · ${fmt(p.debt)} COMP · ${stateOf(p.cr, min!, ceiling!)}`}
-                  aria-label={`${positionName(p.owner)}, ${p.owner}, ${p.cr}% collateral ratio, ${fmt(p.debt)} COMP, ${stateOf(p.cr, min!, ceiling!)}`}
+                  title={`${positionName(p.owner)} · ${p.owner}\n${p.cr}% · ${fmt(p.debt)} COMP · ${stateOf(p.cr, min!, ceiling!)}\n${liquidation(p, s)}`}
+                  aria-label={`${positionName(p.owner)}, ${p.owner}, ${p.cr}% collateral ratio, ${fmt(p.debt)} COMP, ${stateOf(p.cr, min!, ceiling!)}, ${liquidation(p, s)}`}
                   aria-pressed={selected === p.owner}
                   onClick={() =>
                     setSelected(selected === p.owner ? undefined : p.owner)
@@ -254,7 +260,8 @@ export function LoanBook({
             .map((p) => (
               <p className="selected-loan" key={p.owner}>
                 {positionName(p.owner)} · <span>{p.owner}</span> · {ratio(p.cr)}{" "}
-                · {fmt(p.debt)} COMP · {stateOf(p.cr, min!, ceiling!)}
+                · {fmt(p.debt)} COMP · {stateOf(p.cr, min!, ceiling!)} ·{" "}
+                {liquidation(p, s)}
               </p>
             ))}
           <details className="loan-ledger">
@@ -278,6 +285,7 @@ export function LoanBook({
                     <th scope="col">Ratio</th>
                     <th scope="col">COMP</th>
                     <th scope="col">Zone</th>
+                    <th scope="col">Liquidates at</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -291,6 +299,24 @@ export function LoanBook({
                       <td>{ratio(p.cr)}</td>
                       <td>{fmt(p.debt)}</td>
                       <td>{stateOf(p.cr, min!, ceiling!)}</td>
+                      <td>
+                        {(() => {
+                          const at = liquidationPrice(
+                            p.collateral,
+                            p.debt,
+                            min!,
+                          );
+                          return at ? (
+                            <>
+                              ${fmt(at, 18, 2)}
+                              <br />
+                              <span>{cushion(s!.feeds.USD?.value, at)}</span>
+                            </>
+                          ) : (
+                            "—"
+                          );
+                        })()}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
