@@ -17,7 +17,28 @@ break whose right shape depends on information only the operator has.
 |---|---|
 | `univ4-spot` and `log-count` recipes | **live in production.** Price can be asked as `evidence: chain` with a rerunnable recipe. |
 | Output-type check in `check-answer.mjs` | **live.** "A recipe yielding anything else is refused however many members agree." |
-| Per-agent oracle tally in the daily receipt (PR #332) | **merged**, and built on by the operator's own #334: frozen evidence snapshots, IPFS archiving, `ipfs.imd.fun`. Our leaf survived byte for byte: `["uint256","uint32","uint64"]` = (agentId, accepted, cumulative). |
+| Per-agent oracle tally in the daily receipt (PR #332) | **merged, and LIVE ON CHAIN.** Built on by the operator's own #334: frozen evidence snapshots, IPFS archiving, `ipfs.imd.fun`. Our leaf survived byte for byte: `["uint256","uint32","uint64"]` = (agentId, accepted, cumulative). |
+
+### Verified in production, 2026-10-04
+
+The first `identitymd-oracle-batch-v2` receipt is the **2026-10-03** day, committed on chain at
+`WorkRegistry.latest(0xc94cf42a0679875bbbb7209563d3b1f3)` = `0xd7e48ee4…`, carrying
+`agentRoot 0x3c87148642e24e9ec1c1473c7bad5d6aeb0ca6554c5953cce17810421849d17c`, our
+`agentLeafEncoding`, and 7 agent leaves.
+
+Rebuilding the tree from the published `agentLeaves` with `StandardMerkleTree` reproduces that root
+**exactly**, and an individual agent's proof verifies. So the mechanism works end to end and an
+independent party can check it without the API.
+
+Two facts to remember rather than rediscover:
+
+* **The first day is partial.** `accepted_agents` is a new nullable column from migration 0090, so
+  only jobs hashed after it deployed carry agent data — 25 jobs and 7 agents on a day the network
+  accepted ~59,000 tasks. Every leaf reads `accepted: 1, cumulative: 1`, which is cumulative
+  genuinely starting clean. It fills in going forward.
+* **Agent 51450 is not in it.** Not a fault anywhere: our seat simply did not catch one of those 25
+  jobs. The seat is healthy (1,373 attempts / 1,327 accepted). Credit accrues forward only, so the
+  cost of a worker outage is now permanent missed credit rather than just missed volume.
 
 ---
 
