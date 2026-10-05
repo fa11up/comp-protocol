@@ -44,10 +44,14 @@
   box-sizing: border-box;
 }
 html,
-body,
-#root {
-  height: 100%;
+body {
   margin: 0;
+}
+/* Only the terminal is a fixed single screen; the landing and docs pages scroll normally. */
+html.app-terminal,
+html.app-terminal body,
+html.app-terminal #root {
+  height: 100%;
   overflow: hidden;
 }
 body {
@@ -1730,4 +1734,332 @@ details[open] > summary::after {
 .loan-tools .select-button {
   min-height: 30px;
   font-size: 11px;
+}
+
+/* ---- Shared header: one bar for the landing page, the terminal and the docs ---- */
+.wordmark {
+  font-size: 18px;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+  color: var(--text);
+}
+.wordmark b {
+  font-weight: 700;
+}
+.chip {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  padding: 3px 7px;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+.site-nav {
+  display: flex;
+  gap: 4px;
+  margin-inline-start: 12px;
+}
+.site-nav a {
+  display: inline-block;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.site-nav a:hover,
+.site-nav a[aria-current="page"] {
+  color: var(--text);
+}
+.site-nav a[aria-current="page"] {
+  box-shadow: inset 0 -2px 0 var(--text);
+}
+.brand {
+  align-items: center;
+}
+a.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid var(--control);
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+a.button.primary {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+a.button:hover {
+  border-color: var(--text);
+}
+
+/* ---- Landing and docs: ordinary scrolling pages in the terminal's type and tokens ---- */
+html.app-page body {
+  background: var(--bg);
+  color: var(--text);
+}
+.site {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding-inline: 20px;
+}
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: 72px;
+  padding-block: 56px 72px;
+}
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 48px;
+  align-items: center;
+}
+.hero h1,
+.docs-placeholder h1 {
+  font-size: clamp(34px, 5.4vw, 64px);
+  line-height: 1.04;
+  letter-spacing: -0.045em;
+  font-weight: 600;
+  text-wrap: balance;
+  margin: 0;
+}
+.hero h1 span {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.14em;
+}
+.lede {
+  max-width: 58ch;
+  margin-block: 22px 28px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.live-panel {
+  border: 1px solid var(--text);
+  background: var(--surface);
+  font-variant-numeric: tabular-nums;
+}
+.live-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.live-head h2 {
+  font-size: 11px;
+  font-weight: normal;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 0;
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--muted);
+}
+.live-dot[data-state="live"] {
+  background: var(--healthy);
+}
+.live-dot[data-state="down"] {
+  background: var(--danger);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .live-dot[data-state="live"] {
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.live-lines {
+  margin: 0;
+  padding: 6px 14px;
+}
+.live-lines > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-block: 9px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 12px;
+}
+.live-lines > div:last-child {
+  border-bottom: 0;
+}
+.live-lines dt {
+  color: var(--muted);
+}
+.live-lines dd {
+  margin: 0;
+  text-align: end;
+}
+.live-cap {
+  margin: 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--rule);
+  font-size: 11px;
+  color: var(--muted);
+  overflow-x: auto;
+}
+.live-wait {
+  padding: 22px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+.mechanics h2,
+.contracts h2 {
+  font-size: 11px;
+  font-weight: normal;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0 0 18px;
+}
+.mechanics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--text);
+}
+.mechanics-grid article {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 22px 4px 0;
+}
+.mechanics-grid article + article {
+  padding-inline-start: 22px;
+  border-inline-start: 1px solid var(--rule);
+}
+.mechanics-grid h3 {
+  font-size: 15px;
+  margin: 0 0 10px;
+}
+.mechanics-grid p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 0;
+  flex: 1;
+}
+.mechanics-grid .figure {
+  flex: 0;
+  margin-top: 18px;
+  color: var(--text);
+  font-size: 22px;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.mechanics-grid .figure span {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.note {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 70ch;
+  line-height: 1.6;
+  margin: 0 0 14px;
+}
+.contract-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 28px;
+  border-top: 1px solid var(--rule);
+}
+.contract-list .address {
+  padding-block: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+.site-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-block: 18px 28px;
+  border-top: 1px solid var(--rule);
+  font-size: 11px;
+  color: var(--muted);
+}
+.site-footer nav {
+  display: flex;
+  gap: 18px;
+}
+.site-footer a {
+  color: var(--text);
+}
+.docs-placeholder {
+  padding-block: 72px;
+  max-width: 760px;
+}
+@media (max-width: 1100px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mechanics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mechanics-grid article:nth-child(3) {
+    border-inline-start: 0;
+    padding-inline-start: 0;
+  }
+  .mechanics-grid article:nth-child(n + 3) {
+    border-top: 1px solid var(--rule);
+  }
+}
+@media (max-width: 760px) {
+  .site-nav {
+    order: 3;
+    width: 100%;
+    margin: 0;
+  }
+  .site-nav a {
+    padding-inline: 0 14px;
+  }
+  .brand {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .home {
+    gap: 48px;
+    padding-block: 32px 48px;
+  }
+  .mechanics-grid,
+  .contract-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mechanics-grid article,
+  .mechanics-grid article + article {
+    padding-inline: 0;
+    border-inline-start: 0;
+  }
+  .mechanics-grid article + article {
+    border-top: 1px solid var(--rule);
+  }
+}
+/* The terminal greys the separator in its own title; the landing headline keeps full ink. */
+.hero h1 span {
+  color: inherit;
+}
+/* The footer hides the $1B bar on phones for space; the landing panel has room and scrolls it. */
+.live-cap .cap-bar {
+  display: inline;
 }

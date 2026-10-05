@@ -20,6 +20,7 @@ import { Position, Work, Oracle, Keeper, Backing, Governance } from "./Panes";
 import { message, fmt } from "./math";
 import { explained } from "./explain";
 import { ThemeToggle } from "./theme";
+import { SiteHeader } from "./site";
 import { Who } from "./ens";
 import { LoanBook, useCharts } from "./Charts";
 import { Ticker } from "./motion";
@@ -45,7 +46,7 @@ export default function App() {
   if (!r)
     return (
       <div className="boot">
-        <h1>COMP / Terminal</h1>
+        <h1>imdUSD / Terminal</h1>
         <ThemeToggle />
         <p role="status">
           {error || "Loading deployment and verifying ABI integrity…"}
@@ -347,40 +348,31 @@ function Terminal({ r }: { r: Runtime }) {
       <a href="#terminal-main" className="skip">
         Skip to terminal panes
       </a>
-      <header className="topbar">
-        <div className="brand">
-          <h1>
-            COMP<span> / </span>Terminal
-          </h1>
-          <span className="edition">Compute-backed stablecoin</span>
-        </div>
-        <div className="wallet-bar">
-          <span className="network">{r.config.network.name} / testnet</span>
-          <ThemeToggle />
-          {account ? (
-            <>
-              <span className="account">
-                <Who address={account} />
-              </span>
-              {!correctChain && (
-                <button
-                  className="primary"
-                  disabled={connecting}
-                  onClick={changeChain}
-                >
-                  {connecting
-                    ? "Switching…"
-                    : `Switch to ${r.config.network.name}`}
-                </button>
-              )}
-            </>
-          ) : (
-            <button className="primary" disabled={connecting} onClick={connect}>
-              {connecting ? "Connecting…" : "Connect wallet"}
-            </button>
-          )}
-        </div>
-      </header>
+      <SiteHeader page="terminal" network={r.config.network.name}>
+        {account ? (
+          <>
+            <span className="account">
+              <Who address={account} />
+            </span>
+            {!correctChain && (
+              <button
+                className="primary"
+                disabled={connecting}
+                onClick={changeChain}
+              >
+                {connecting
+                  ? "Switching…"
+                  : `Switch to ${r.config.network.name}`}
+              </button>
+            )}
+          </>
+        ) : (
+          <button className="primary" disabled={connecting} onClick={connect}>
+            {connecting ? "Connecting…" : "Connect wallet"}
+          </button>
+        )}
+      </SiteHeader>
+      <h1 className="sr-only">imdUSD terminal</h1>
       {walletError || readError || s?.errors.length ? (
         <div className="global-notice" role="alert">
           {walletError ||
@@ -573,7 +565,7 @@ function Terminal({ r }: { r: Runtime }) {
             )}
           </div>
           <div className="footer-meta">
-            <span>COMP / v.11</span>
+            <span>imdUSD / v.12</span>
             <span>
               {s
                 ? `Read ${Math.max(0, Math.floor((Date.now() - s.loadedAt) / 1000))}s ago`

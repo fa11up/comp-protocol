@@ -21,7 +21,7 @@ export function MarketCap({ supply }: { supply?: bigint }) {
     <span
       className="market-cap"
       role="meter"
-      aria-label="COMP market cap toward the $1B goal"
+      aria-label="imdUSD market cap toward the $1B goal"
       aria-valuemin={0}
       aria-valuemax={GOAL}
       aria-valuenow={dollars ?? 0}
@@ -30,9 +30,10 @@ export function MarketCap({ supply }: { supply?: bigint }) {
           ? "Unavailable"
           : `$${compact.format(dollars)} of $1B`
       }
-      title="Market cap = COMP supply × $1 par"
+      title="Market cap = supply × $1 par"
     >
-      COMP <b>{dollars === undefined ? "—" : `$${compact.format(dollars)}`}</b>{" "}
+      imdUSD{" "}
+      <b>{dollars === undefined ? "—" : `$${compact.format(dollars)}`}</b>{" "}
       <span className="cap-bar" aria-hidden="true">
         {capBar(dollars ?? 0)}
       </span>{" "}

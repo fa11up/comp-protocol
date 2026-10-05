@@ -1,8 +1,8 @@
 {
-  "name": "COMP / Terminal",
-  "short_name": "COMP",
+  "name": "imdUSD Terminal",
+  "short_name": "imdUSD",
   "description": "Compute-backed stablecoin terminal: positions, redemption, work rights and protocol state.",
-  "start_url": "./",
+  "start_url": "./terminal/",
   "scope": "./",
   "display": "standalone",
   "background_color": "#F7F5EF",

@@ -33,7 +33,9 @@ const server = createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, "http://localhost").pathname;
     const suffix = decodeURIComponent(pathname.slice(1)) || "index.html";
-    const path = resolve(root, "dist", suffix);
+    // A directory serves its index.html, as any static host does for /terminal/ and /docs/.
+    const file = suffix.endsWith("/") ? `${suffix}index.html` : suffix;
+    const path = resolve(root, "dist", file);
     if (!path.startsWith(resolve(root, "dist") + "/")) throw Error("path");
     res.setHeader(
       "Content-Type",

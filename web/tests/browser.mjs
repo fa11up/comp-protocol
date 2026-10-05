@@ -28,7 +28,9 @@ const server = createServer(async (req, res) => {
       return;
     }
     const suffix = decodeURIComponent(pathname.slice(9)) || "index.html";
-    const path = resolve(root, "dist", suffix);
+    // A directory serves its index.html, as any static host does for /terminal/ and /docs/.
+    const file = suffix.endsWith("/") ? `${suffix}index.html` : suffix;
+    const path = resolve(root, "dist", file);
     if (!path.startsWith(resolve(root, "dist") + "/")) throw Error("path");
     const bytes = await readFile(path);
     res.setHeader(
@@ -105,7 +107,7 @@ async function setup({ wallet = true, chain = "0x1" } = {}) {
     await page.exposeFunction("__sendFixture", (tx) => sent(s, tx));
     await installWallet(page, { chain });
   }
-  await page.goto(url);
+  await page.goto(`${url}terminal/`);
   await page
     .getByRole("button", { name: "Refresh state", exact: true })
     .waitFor();
@@ -209,6 +211,78 @@ try {
     false,
   );
   passed("Missing wallet explanation and disconnected transaction gates");
+  // The landing page: live figures from the same contracts, and links into the terminal and docs.
+  await page.goto(url);
+  await page
+    .getByRole("heading", { level: 1, name: /A dollar the swarm/ })
+    .waitFor();
+  const live = page.locator(".live-panel");
+  await expectText(live, "Reserves");
+  await expectText(live, "$1K");
+  await expectText(live, "$10K");
+  await expectText(live, "Price actions");
+  assert.equal(
+    await page.locator('.site-nav a[aria-current="page"]').count(),
+    0,
+  );
+  for (const [width, height] of [
+    [1440, 900],
+    [390, 844],
+    [320, 740],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.waitForTimeout(100);
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+      width,
+      `landing scrolls sideways at ${width}px`,
+    );
+    await page.screenshot({
+      path: `${evidence}/landing-${width}.png`,
+      fullPage: true,
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const axeHome = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+    .analyze();
+  assert.deepEqual(
+    axeHome.violations.map((v) => v.id),
+    [],
+  );
+  await page.locator(".site-nav").getByRole("link", { name: "Docs" }).click();
+  await page
+    .getByRole("heading", { level: 1, name: "Docs are being written" })
+    .waitFor();
+  assert.equal(
+    await page.locator('.site-nav a[aria-current="page"]').textContent(),
+    "Docs",
+  );
+  const axeDocs = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+    .analyze();
+  assert.deepEqual(
+    axeDocs.violations.map((v) => v.id),
+    [],
+  );
+  await page
+    .locator(".site-nav")
+    .getByRole("link", { name: "Terminal" })
+    .click();
+  await page
+    .getByRole("button", { name: "Refresh state", exact: true })
+    .waitFor();
+  assert.equal(
+    await page.locator('.site-nav a[aria-current="page"]').textContent(),
+    "Terminal",
+  );
+  await page.getByRole("link", { name: "imdUSD home" }).click();
+  await page
+    .getByRole("heading", { level: 1, name: /A dollar the swarm/ })
+    .waitFor();
+  passed(
+    "Landing reads live figures and links to the terminal and docs; both pages pass axe and never scroll sideways",
+  );
   ({ page, s } = await setup());
   await page.evaluate(() => (window.__wallet.reject = true));
   await page.getByRole("button", { name: "Connect wallet" }).click();

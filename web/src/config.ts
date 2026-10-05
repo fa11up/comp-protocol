@@ -1,3 +1,4 @@
+import { appRoot } from "./site";
 import {
   createPublicClient,
   createWalletClient,
@@ -47,7 +48,7 @@ function sort(v: unknown): unknown {
 }
 export async function loadConfig() {
   const get = async (path: string) => {
-    const r = await fetch(new URL(path, document.baseURI));
+    const r = await fetch(new URL(path, appRoot()));
     if (!r.ok) throw Error(`Unable to load ${path}. Reload the terminal.`);
     return r;
   };
