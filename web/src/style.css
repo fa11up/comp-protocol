@@ -1115,10 +1115,14 @@ td span {
   flex: 1;
   border-inline-end: 0;
 }
-.workspace[data-monitor="loans"] .pane-loans,
-.workspace[data-monitor="oracle"] .pane-oracle,
-.workspace[data-monitor="backing"] .pane-backing {
-  display: flex;
+/* Desktop tabs only. QA-01 (2026-10-05): unscoped, these outranked the mobile rule that hides
+   every pane, so the last desktop tab stayed on screen beside the pane picked on a phone. */
+@media (min-width: 1101px) {
+  .workspace[data-monitor="loans"] .pane-loans,
+  .workspace[data-monitor="oracle"] .pane-oracle,
+  .workspace[data-monitor="backing"] .pane-backing {
+    display: flex;
+  }
 }
 .monitor-pane > .pane-head {
   display: none;
@@ -1168,12 +1172,16 @@ td span {
   flex: 1;
   border-inline-end: 0;
 }
-.workspace[data-desk="position"] .pane-position,
-.workspace[data-desk="redemption"] .pane-redemption,
-.workspace[data-desk="work"] .pane-work,
-.workspace[data-desk="keeper"] .pane-keeper,
-.workspace[data-desk="governance"] .pane-governance {
-  display: flex;
+/* Desktop tabs only. QA-01 (2026-10-05): unscoped, these outranked the mobile rule that hides
+   every pane, so the last desktop tab stayed on screen beside the pane picked on a phone. */
+@media (min-width: 1101px) {
+  .workspace[data-desk="position"] .pane-position,
+  .workspace[data-desk="redemption"] .pane-redemption,
+  .workspace[data-desk="work"] .pane-work,
+  .workspace[data-desk="keeper"] .pane-keeper,
+  .workspace[data-desk="governance"] .pane-governance {
+    display: flex;
+  }
 }
 .desk-pane > .pane-head {
   display: none;
@@ -1337,7 +1345,7 @@ td span {
   border: 1px solid var(--control);
   font-size: 11px;
   line-height: 1.55;
-  pointer-events: none;
+  pointer-events: auto;
   text-transform: none;
   letter-spacing: normal;
   font-weight: normal;
@@ -2062,4 +2070,10 @@ html.app-page body {
 /* The footer hides the $1B bar on phones for space; the landing panel has room and scrolls it. */
 .live-cap .cap-bar {
   display: inline;
+}
+
+/* QA-06: the keyboard-active option needs more than a 1.07:1 background shift. */
+.select-list li.is-active {
+  outline: 1px solid var(--text);
+  outline-offset: -1px;
 }

@@ -678,7 +678,14 @@ export function Keeper({
             </div>
           </form>
           <p role="status" className="micro">
-            {error}
+            {error || (
+              // QA-05: success is announced, not shown twice; the summary below already shows it.
+              <span className="sr-only">
+                {inspected && position && !loading
+                  ? `Inspected ${displayName(position.owner)}: ${ratio(position.cr)} collateral ratio. ${nextStep(position, s?.v.minCR ?? 0n, now, s?.v.liquidationWindow ?? 0n, displayName(position.owner)).replace(" →", "")} is next.`
+                  : ""}
+              </span>
+            )}
           </p>
           {summary}
         </>

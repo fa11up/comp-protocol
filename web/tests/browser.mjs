@@ -337,6 +337,14 @@ try {
   await red.getByRole("button", { name: "Quote redemption" }).click();
   await expectText(red.locator(".quote"), "Reserve + position");
   await review(page, "Review redemption");
+  // QA-03 regression: the review dialog is named by its heading.
+  await page.getByRole("dialog", { name: "Review transaction" }).waitFor();
+  // QA-04 regression: cancelling returns focus to the control that opened the review.
+  await cancel(page);
+  await page.waitForFunction(() =>
+    /Review redemption/.test(document.activeElement?.textContent ?? ""),
+  );
+  await review(page, "Review redemption");
   await expectText(page.locator("dialog"), "Receive at least");
   await cancel(page);
   passed("Mixed quote requires a candidate and uses a transaction review");
@@ -391,8 +399,20 @@ try {
   await tip.focus();
   await page.keyboard.press("Escape");
   await tooltip.waitFor({ state: "hidden" });
+  // QA-02 regression: the pointer can move from the icon onto the window without it closing.
+  await page.mouse.move(5, 5);
+  await tip.hover();
+  await tooltip.waitFor();
+  const box = await tooltip.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
+    steps: 4,
+  });
+  await page.waitForTimeout(300);
+  assert.equal(await tooltip.isVisible(), true);
+  await page.mouse.move(5, 5);
+  await tooltip.waitFor({ state: "hidden" });
   passed(
-    "Oracle and Backing carry no prose; info windows open on hover and focus, close on Escape",
+    "Oracle and Backing carry no prose; info windows open on hover and focus, close on Escape; the pointer can rest on them",
   );
   await openFeed(page, "IMD / ETH primary");
   await expectText(page.locator(".pane-oracle"), "Pinned · 0x2b2b2b2b");
@@ -664,6 +684,28 @@ try {
   await tab(page, "loans");
   await tab(page, "redemption");
   await page.setViewportSize({ width: 320, height: 740 });
+  // QA-01 regression: on a phone exactly one pane is displayed, whatever desktop tab was last open.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await tab(page, "backing");
+  await page.setViewportSize({ width: 320, height: 740 });
+  await pickPane(page, "redemption");
+  const displayed = await page
+    .locator(".workspace .pane")
+    .evaluateAll((nodes) =>
+      nodes
+        .filter((n) => getComputedStyle(n).display !== "none")
+        .map((n) => n.className),
+    );
+  assert.equal(
+    displayed.length,
+    1,
+    `panes displayed on mobile: ${displayed.join(" | ")}`,
+  );
+  assert.match(displayed[0], /pane-redemption/);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await tab(page, "loans");
+  await tab(page, "redemption");
+  await page.setViewportSize({ width: 320, height: 740 });
   passed(
     "One viewport; every desk and monitor tab fits without scrolling; all mobile panes reachable",
     viewports,
@@ -849,10 +891,26 @@ try {
     "Liquidatable",
   );
   await choose(page, loans, "Filter by zone", "All zones");
+  // QA-06 regression: the keyboard-active option carries an outline, not just a faint fill.
+  await loans.getByRole("button", { name: "Filter by zone" }).focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("End");
+  assert.equal(
+    await page
+      .locator(".select-list li.is-active")
+      .evaluate((n) => getComputedStyle(n).outlineStyle),
+    "solid",
+  );
+  await page.keyboard.press("Escape");
+  // QA-05 regression: a search that changes the list announces its count.
+  await loans.getByLabel("Search positions by name or address").fill("keeper");
+  await expectText(loans.getByRole("status"), "1 of 3 positions shown");
+  await loans.getByLabel("Search positions by name or address").fill("");
   // A loan-book row opens that borrower in Keeper, already inspected.
   await loans.locator(".loan-feed button", { hasText: "keeper.eth" }).click();
   const opened = page.locator(".pane-keeper");
   await expectText(opened, "keeper.eth");
+  await expectText(opened.getByRole("status"), "Inspected keeper.eth");
   assert.equal(
     await opened.getByLabel("Borrower address").inputValue(),
     candidate,

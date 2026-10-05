@@ -371,6 +371,12 @@ function LoanFeed({
           ]}
         />
       </div>
+      {/* QA-05: the result count is announced politely when search or filter changes it. */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {q || zone !== "all"
+          ? `${shown.length} of ${positions.length} positions shown`
+          : ""}
+      </p>
       <div className="loan-columns" aria-hidden="true">
         <span>Position</span>
         <span>Ratio</span>

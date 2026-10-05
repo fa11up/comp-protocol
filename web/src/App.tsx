@@ -92,6 +92,8 @@ function Terminal({ r }: { r: Runtime }) {
   };
   const charts = useCharts(r, s);
   const dialog = useRef<HTMLDialogElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const restore = useRef(false);
   const locked = useRef(false);
   const serial = useRef(0);
   const accountRef = useRef(account);
@@ -161,6 +163,18 @@ function Terminal({ r }: { r: Runtime }) {
       p.removeListener?.("chainChanged", network);
     };
   }, []);
+  // QA-04: when a review closes by any path, return focus to the control that opened it, once that
+  // control is enabled again (it is disabled while the action is busy).
+  useEffect(() => {
+    if (review) restore.current = true;
+    else if (restore.current && !busy) {
+      restore.current = false;
+      const el = opener.current as HTMLButtonElement | null;
+      requestAnimationFrame(() => {
+        if (el?.isConnected && !el.disabled) el.focus();
+      });
+    }
+  }, [review, busy]);
   useEffect(() => {
     if (review && !dialog.current?.open) dialog.current?.showModal();
     if (!review && dialog.current?.open) dialog.current.close();
@@ -240,6 +254,8 @@ function Terminal({ r }: { r: Runtime }) {
     reason,
     account,
     run: async (id, request) => {
+      // QA-04: remember the control that asked for review before simulation disables it.
+      opener.current = document.activeElement as HTMLElement | null;
       if (locked.current) throw Error("Wait for the current action to finish.");
       locked.current = true;
       setBusy(id);
@@ -579,6 +595,7 @@ function Terminal({ r }: { r: Runtime }) {
       </footer>
       <dialog
         ref={dialog}
+        aria-labelledby="review-heading"
         onCancel={(e) => {
           if (busy) e.preventDefault();
           else cancelReview();
@@ -587,7 +604,7 @@ function Terminal({ r }: { r: Runtime }) {
           if (!busy) setReview(undefined);
         }}
       >
-        <h2>Review transaction</h2>
+        <h2 id="review-heading">Review transaction</h2>
         {review && (
           <>
             <p>{review.request.summary}</p>

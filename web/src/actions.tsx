@@ -352,6 +352,14 @@ export function Info({ label, text }: { label: string; text: string }) {
     });
   };
   const hide = () => setAt(undefined);
+  // QA-02: leaving the icon starts a short delay instead of closing at once, so the pointer can
+  // cross onto the window and read it (WCAG 1.4.13, hoverable). Entering the window cancels it.
+  const leaving = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const stay = () => clearTimeout(leaving.current);
+  const leave = () => {
+    clearTimeout(leaving.current);
+    leaving.current = setTimeout(hide, 180);
+  };
   useEffect(() => {
     if (!at) return;
     // A fixed window would drift from its icon once the pane scrolls, so close it instead.
@@ -371,8 +379,11 @@ export function Info({ label, text }: { label: string; text: string }) {
         aria-label={`About ${label}`}
         aria-describedby={id}
         aria-expanded={!!at}
-        onMouseEnter={show}
-        onMouseLeave={hide}
+        onMouseEnter={() => {
+          stay();
+          show();
+        }}
+        onMouseLeave={leave}
         onFocus={show}
         onBlur={hide}
         onClick={() => (at ? hide() : show())}
@@ -400,6 +411,8 @@ export function Info({ label, text }: { label: string; text: string }) {
         id={id}
         className="tooltip"
         hidden={!at}
+        onMouseEnter={stay}
+        onMouseLeave={leave}
         style={
           at
             ? {
