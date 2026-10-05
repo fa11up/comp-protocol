@@ -89,7 +89,7 @@ contract TreasuryTest is Test {
     function setUp() public {
         vm.chainId(11155111);
         vm.warp(10 days);
-        treasury = new Treasury();
+        treasury = new Treasury(address(this));
         imd = new MockIMD();
     }
 

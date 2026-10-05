@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {TreasuryFactoryEtch} from "./helpers/TreasuryFactoryEtch.sol";
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
@@ -24,6 +25,7 @@ contract ShareCollateralForkTest is Test {
     TestSwarmFeed private primary;
 
     function setUp() public {
+        TreasuryFactoryEtch.etch(vm);
         if (block.chainid != 1 || SIMD.code.length == 0) {
             vm.skip(true);
             return;

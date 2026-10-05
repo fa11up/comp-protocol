@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {TreasuryFactoryEtch} from "../../test/helpers/TreasuryFactoryEtch.sol";
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -104,6 +105,7 @@ contract RedemptionTest is Test {
     RedemptionUsdFeed private usd;
 
     function setUp() public {
+        TreasuryFactoryEtch.etch(vm);
         vm.warp(1_000_000);
         imd = new MockIMD();
         primary = new RedemptionFeed(1 ether);

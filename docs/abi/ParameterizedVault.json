@@ -1342,6 +1342,11 @@
   },
   {
     "type": "error",
+    "name": "TreasuryFactoryMissing",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "UnderwaterPosition",
     "inputs": []
   },

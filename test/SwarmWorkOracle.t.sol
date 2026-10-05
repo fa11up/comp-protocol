@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {TreasuryFactoryEtch} from "./helpers/TreasuryFactoryEtch.sol";
 import {SwarmFeed} from "src/SwarmFeed.sol";
 import {SwarmWorkOracle} from "src/SwarmWorkOracle.sol";
 import {WorkOracleFactory} from "src/WorkOracleFactory.sol";
@@ -35,6 +36,7 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
     address private spot;
 
     function setUp() public override {
+        TreasuryFactoryEtch.etch(vm);
         super.setUp();
         spot = address(backedVault.spotFeed());
         SeedableWorkOracleFactory factory = new SeedableWorkOracleFactory();

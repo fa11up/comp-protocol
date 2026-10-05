@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {TreasuryFactoryEtch} from "./TreasuryFactoryEtch.sol";
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -99,6 +100,7 @@ abstract contract WorkBackingFixture is Test {
     ReserveUsdAggregator internal usd;
 
     function setUp() public virtual {
+        TreasuryFactoryEtch.etch(vm);
         vm.warp(1_000_000);
         collateral = new MockIMD();
         // One dollar per IMD, which is 1e18/ETH_USD of an ETH. Pinned in the unit the swarm feed

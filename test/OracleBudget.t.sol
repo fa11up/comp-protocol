@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {TreasuryFactoryEtch} from "./helpers/TreasuryFactoryEtch.sol";
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
@@ -34,6 +35,7 @@ contract OracleBudgetTest is Test {
     Parameters private params;
 
     function setUp() public {
+        TreasuryFactoryEtch.etch(vm);
         vm.chainId(11155111);
         vm.warp(10 days);
         imd = new MockIMD();
@@ -129,7 +131,7 @@ contract OracleBudgetTest is Test {
     }
 
     function test_aTreasuryNotMadeByAVaultRefuses() public {
-        Treasury bare = new Treasury(); // created by this test, not a vault
+        Treasury bare = new Treasury(address(this)); // created by this test, not a vault
         vm.expectRevert(Treasury.InvalidReserveAsset.selector); // no vault behind it, so no collateral to name: InvalidReserveAsset
         bare.fundOracle();
     }

@@ -65,9 +65,15 @@ contract Treasury {
     /// live at the zero address, so it cannot collide with a token's record.
     IERC20 public constant NATIVE = IERC20(address(0));
 
-    /// @notice The contract that created this treasury: for a deployment, the vault whose revenue
-    /// lands here, whose Parameters governs the register, and whose imdUSD may never be reserve.
-    address public immutable vault = msg.sender;
+    /// @notice The vault this treasury serves: whose revenue lands here, whose Parameters governs the
+    /// register, and whose imdUSD may never be reserve. Set by `TreasuryFactory` to the vault calling it
+    /// mid-construction, so it is always the vault that will route its revenue here.
+    address public immutable vault;
+
+    /// @param vault_ The vault this treasury serves. `TreasuryFactory` passes its caller.
+    constructor(address vault_) {
+        vault = vault_;
+    }
 
     /// @notice Everything this contract has ever been credited with, per token, as recorded by sync.
     /// @dev A running total, not a balance: it does not fall when funds are withdrawn, so it answers

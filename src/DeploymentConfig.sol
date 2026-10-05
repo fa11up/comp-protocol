@@ -167,6 +167,12 @@ uint256 constant WAGE_WAD = 0.01 ether;
 // unset field, and a nonzero placeholder with no code fails exactly as loudly while being something
 // a test can etch over.
 address constant WORK_ORACLE_FACTORY = 0x0000000000000000000000000000000000000f05;
+
+/// @dev The contract every ParameterizedVault creates its Treasury through, for the same EIP-3860
+/// reason as WORK_ORACLE_FACTORY. Holds nothing and has no authority: the Treasury it creates serves
+/// its caller. A deployment prerequisite with no dependencies, so its CREATE2 address is computable
+/// up front. NOT YET DEPLOYED: a placeholder; a vault cannot be constructed until it has code.
+address constant TREASURY_FACTORY = 0x0000000000000000000000000000000000000f09;
 address constant WORK_ORACLE_SENTINEL = 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
 
 // How long an attested work tally stays usable. A day, matching the daily cadence of the receipts the

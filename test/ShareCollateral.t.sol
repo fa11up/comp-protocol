@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {TreasuryFactoryEtch} from "./helpers/TreasuryFactoryEtch.sol";
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
@@ -39,6 +40,7 @@ contract ShareCollateralTest is Test {
     ParameterizedVault private vault;
 
     function setUp() public {
+        TreasuryFactoryEtch.etch(vm);
         vm.chainId(11155111);
         vm.warp(1_000_000);
         imd = new MockIMD();

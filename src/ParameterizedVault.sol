@@ -5,10 +5,12 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {CDPVault} from "./CDPVault.sol";
 import {Parameters, ICheckpointedVault} from "./Parameters.sol";
 import {Treasury} from "./Treasury.sol";
+import {TreasuryFactory} from "./TreasuryFactory.sol";
 import {UsdPriceFeed} from "./UsdPriceFeed.sol";
 import {SharePriceFeed} from "./SharePriceFeed.sol";
 import {IShareVault} from "./interfaces/IShareVault.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
+import {TREASURY_FACTORY} from "./DeploymentConfig.sol";
 
 /// @notice CDPVault with its economic knobs read from a governed Parameters contract, its revenue
 /// routed to a Treasury it owns, and its work minting bounded by what that Treasury and the
@@ -25,6 +27,8 @@ import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 /// Governance over this vault is therefore bounded by what Parameters can express and by the hard
 /// limits Parameters enforces on itself.
 contract ParameterizedVault is CDPVault {
+    error TreasuryFactoryMissing();
+
     /// @notice The governed source of this vault's economics. Immutable: a governor who could
     /// replace it would have unbounded authority through the replacement.
     Parameters public immutable parameters;
@@ -58,9 +62,12 @@ contract ParameterizedVault is CDPVault {
         parameters = new Parameters(ICheckpointedVault(address(this)));
         // The same idiom for the other two, and for the same reasons: a Treasury passed in could be
         // anyone's wallet (which is what FEE_RECIPIENT is today), and a manifest has no fifth slot
-        // to deploy one in. Created here, the Treasury's creator is this vault, so its register is
-        // governed by this vault's Parameters and refuses this vault's imdUSD, with nothing bound later.
-        treasury = new Treasury();
+        // to deploy one in. Created for this vault, its register is governed by this vault's
+        // Parameters and refuses this vault's imdUSD, with nothing bound later. It is created through
+        // TREASURY_FACTORY rather than with `new`, for the EIP-3860 limit: the Treasury's ~10 KB of
+        // creation code would otherwise sit inside this contract's initcode and push it over.
+        if (TREASURY_FACTORY.code.length == 0) revert TreasuryFactoryMissing();
+        treasury = TreasuryFactory(TREASURY_FACTORY).create();
         usdPriceFeed = new UsdPriceFeed(ISwarmFeed(priceFeed_));
         // A share collateral is priced as its exchange rate times the underlying's USD price. The
         // adapter works per 1e18 RAW units, so sIMD's 24 decimals against IMD's 18 cannot misvalue it.

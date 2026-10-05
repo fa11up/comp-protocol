@@ -1,0 +1,34 @@
+[
+  {
+    "type": "function",
+    "name": "create",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "treasury",
+        "type": "address",
+        "internalType": "contract Treasury"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "TreasuryCreated",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "treasury",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  }
+]

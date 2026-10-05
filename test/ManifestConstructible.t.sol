@@ -9,13 +9,23 @@ import {ParameterizedVault} from "src/ParameterizedVault.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
+import {TreasuryFactoryEtch} from "./helpers/TreasuryFactoryEtch.sol";
 
 /// @notice The project must be constructible from its manifest arguments on ANY chain.
 /// @dev Round 4's launch parked with "project constructor failed" from the protected-invariant
 /// harness. The cause was not the contracts: launch.json passed a LITERAL MockIMD address, which has
 /// code only on Sepolia, and the vault's constructor requires the collateral token to have code. The
 /// harness builds on a chain where that address is empty, so the project could not be deployed at all.
+///
+/// SINCE TREASURYFACTORY (EIP-3860), "any chain" means any chain where TREASURY_FACTORY exists: the
+/// vault creates its Treasury through it, exactly as a real work oracle needs WORK_ORACLE_FACTORY. A
+/// truly bare chain can no longer construct the vault. Mainnet deploys through our CREATE2 script, where
+/// the factory is a prerequisite; a swarm launch manifest would need the factory on its chain first.
 contract ManifestConstructibleTest is Test {
+    function setUp() public {
+        TreasuryFactoryEtch.etch(vm);
+    }
+
     /// @dev The address the parked manifest passed. Nothing is deployed here, as on any fresh chain.
     address private constant REUSED_ON_SEPOLIA = 0xE44AB81Ce23d34E29383dD158a1DfFEB1c10d439;
     /// @dev The explicit opt-in a caller outside a manifest passes instead of a literal address.
@@ -44,7 +54,7 @@ contract ManifestConstructibleTest is Test {
         new ParameterizedVault(address(0), address(0), address(0), p, n, s);
     }
 
-    function test_theProjectConstructsFromItsManifestArgumentsOnABareChain() public {
+    function test_theProjectConstructsFromItsManifestArgumentsWhereItsPrerequisitesExist() public {
         (address p, address n, address s) = _feeds();
         ParameterizedVault vault = new ParameterizedVault(FAUCET, address(0), address(0), p, n, s);
 

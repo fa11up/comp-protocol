@@ -201,7 +201,7 @@ one-character mismatch after deploying an immutable feed that refuses every atte
 
 ## 6. Deployment: one broadcast, with assertions
 
-The prereq contracts (`SwarmRelay`, `WorkOracleFactory`, and `OracleAsker` — see step 4) are read by other contracts as **source constants**, so their addresses
+The prereq contracts (`SwarmRelay`, `WorkOracleFactory`, `TreasuryFactory`, and `OracleAsker` — see step 4) are read by other contracts as **source constants**, so their addresses
 must be in the bytecode before the feeds compile. That looks like it forces two broadcasts. It does
 not, because CREATE2 makes an address a pure function of initcode and salt:
 
@@ -209,7 +209,7 @@ not, because CREATE2 makes an address a pure function of initcode and salt:
 address = keccak256(0xff ++ deployer ++ salt ++ keccak256(initcode))[12:]
 ```
 
-Neither SwarmRelay nor the factory references a feed, so there is no cycle — their addresses are computable with no
+None of SwarmRelay and the two factories references a feed, so there is no cycle — their addresses are computable with no
 prior transaction. The canonical deterministic deployer
 **`0x4e59b44847b379578588920cA78FbF26c0B4956C`** is live on mainnet and Sepolia with identical
 bytecode (verified 2026-10-04), so the same salts give the same addresses on both, and later on Base
@@ -217,7 +217,7 @@ and Robinhood Chain.
 
 ### The sequence
 
-1. **Compute** the CREATE2 addresses of `SwarmRelay` and `WorkOracleFactory` from their
+1. **Compute** the CREATE2 addresses of `SwarmRelay`, `WorkOracleFactory` and `TreasuryFactory` from their
    initcode and chosen salts. No transaction.
 2. **Write** them into `src/DeploymentConfig.sol`, along with every value in §3. Commit — the commit
    hash is what the configuration audit reviews.

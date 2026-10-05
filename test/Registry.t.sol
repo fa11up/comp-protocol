@@ -18,7 +18,7 @@ contract RegistryTest is Test {
 
     function setUp() public {
         vm.warp(10 days);
-        treasury = new Treasury();
+        treasury = new Treasury(address(this));
         registry = new Registry(address(treasury), WORK_ORACLE);
     }
 

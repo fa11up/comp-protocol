@@ -283,7 +283,7 @@ contract Audit20261004Test is WorkBackingFixture {
     /// recipient callback calling permissionless `sync` credited the remaining balance a second time.
     function test_regression_unsyncedWithdrawalCallbackMustNotDoubleCredit() public {
         CallbackToken token = new CallbackToken();
-        Treasury standalone = new Treasury();
+        Treasury standalone = new Treasury(address(this));
         ReceiptHook hook = new ReceiptHook(standalone, IERC20(address(token)));
         token.setHook(address(hook));
         token.mint(address(standalone), 100 ether);
@@ -298,7 +298,7 @@ contract Audit20261004Test is WorkBackingFixture {
     /// @dev The fix must not lose the receipt it was originally written to keep.
     function test_withdrawStillCreditsRevenueThatArrivedSinceTheLastSync() public {
         CallbackToken token = new CallbackToken();
-        Treasury standalone = new Treasury();
+        Treasury standalone = new Treasury(address(this));
         token.mint(address(standalone), 100 ether);
         vm.prank(APPROVED_OPERATOR);
         standalone.withdraw(IERC20(address(token)), address(0xBEEF), 40 ether);

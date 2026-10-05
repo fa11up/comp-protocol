@@ -19,7 +19,7 @@ contract TreasuryLostReceiptTest is Test {
         // cbd9e609 and PASSES now: the accounting bug it found is fixed, so it is an ungated
         // regression test rather than an outstanding finding.
 
-        treasury = new Treasury();
+        treasury = new Treasury(address(this));
         token = new MockIMD();
     }
 

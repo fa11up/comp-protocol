@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {TreasuryFactoryEtch} from "../../test/helpers/TreasuryFactoryEtch.sol";
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -187,6 +188,7 @@ contract ComputeBackingTest is Test {
     MockAggregator private ethUsd;
 
     function setUp() public {
+        TreasuryFactoryEtch.etch(vm);
         vm.chainId(11155111);
         vm.warp(10 days);
         imd = new MockIMD();
@@ -403,7 +405,7 @@ contract ComputeBackingTest is Test {
 
         // A Treasury created by something with no Parameters has no registrar at all, and refuses
         // even its creator: the register is frozen empty, not open.
-        Treasury solo = new Treasury();
+        Treasury solo = new Treasury(address(this));
         assertEq(solo.vault(), address(this));
         assertEq(solo.registrar(), address(0));
         vm.expectRevert(Treasury.Unauthorized.selector);
