@@ -12,7 +12,8 @@
     "test:browser": "node tests/browser.mjs",
     "demo": "node scripts/demo.mjs",
     "preview": "vite preview --host 127.0.0.1",
-    "build:public": "npm run typecheck && vite build --mode public && node scripts/manifest.mjs --out dist-public && node scripts/public-check.mjs"
+    "build:public": "npm run typecheck && vite build --mode public && node scripts/manifest.mjs --out dist-public && node scripts/public-check.mjs",
+    "deploy:public": "npm run build:public && npx -y wrangler@4 deploy"
   },
   "dependencies": {
     "react": "19.3.0",
