@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { isAddress } from "viem";
 import { WorkChart, SupplyChart, Sparkline, type ChartData } from "./Charts";
 import { Ticker } from "./motion";
 import { type Runtime } from "./config";
@@ -526,7 +527,9 @@ export function Keeper({
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("inspect");
   useEns([position?.owner]);
+  const requested = useRef("");
   const inspect = async (who: string) => {
+    requested.current = who.trim().toLowerCase();
     setLoading(true);
     setError("");
     setPosition(undefined);
@@ -542,6 +545,7 @@ export function Keeper({
           "positions",
         ].map((fn) => read(r, s.targets.ParameterizedVault, fn, [a])),
       );
+      if (requested.current !== a.toLowerCase()) return;
       setPosition({ cr, debt, mark, badDebt, owner: a, collateral: held[0] });
     } catch (e) {
       setError(message(e));
@@ -549,6 +553,16 @@ export function Keeper({
       setLoading(false);
     }
   };
+  // A pasted or typed address is inspected as soon as it is complete, as a loan-book click is.
+  useEffect(() => {
+    const a = owner.trim();
+    if (!isAddress(a) || requested.current === a.toLowerCase()) return;
+    const t = setTimeout(() => void inspect(a), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner]);
+  const inspected =
+    !!position && position.owner.toLowerCase() === owner.trim().toLowerCase();
   useEffect(() => {
     if (!target) return;
     setOwner(target.owner);
@@ -619,7 +633,9 @@ export function Keeper({
             className="keeper-search"
             onSubmit={(e) => {
               e.preventDefault();
-              void inspect(owner);
+              // Once the position is on screen, the same button carries it to Act.
+              if (inspected) setMode("act");
+              else void inspect(owner);
             }}
           >
             <label htmlFor="keeper-borrower">Borrower address</label>
@@ -631,12 +647,21 @@ export function Keeper({
                 onChange={(e) => {
                   setOwner(e.target.value);
                   setPosition(undefined);
+                  requested.current = "";
                 }}
                 spellCheck={false}
                 placeholder="0x… or pick one in the loan book"
               />
-              <button type="submit" disabled={!s || loading}>
-                {loading ? "Inspecting…" : "Inspect position"}
+              <button
+                type="submit"
+                className={inspected ? "primary" : undefined}
+                disabled={!s || loading}
+              >
+                {loading
+                  ? "Inspecting…"
+                  : inspected
+                    ? `Act on ${displayName(position.owner)} →`
+                    : "Inspect position"}
               </button>
             </div>
           </form>

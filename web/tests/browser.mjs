@@ -409,11 +409,10 @@ try {
   await tab(page, "keeper");
   s.candidateCR = 140n;
   await keeper.getByLabel("Borrower address").fill(candidate);
-  await keeper.getByRole("button", { name: "Inspect position" }).click();
+  // A complete address inspects itself; the button then carries the position to Act.
   await expectText(keeper, "140%");
-  // Inspect and Act are separate views; acting shows the inspected target, not the form.
   assert.equal(await keeper.getByText("Review mark").count(), 0);
-  await keeper.getByRole("button", { name: "Act", exact: true }).click();
+  await keeper.getByRole("button", { name: /^Act on keeper\.eth/ }).click();
   assert.equal(await keeper.getByLabel("Borrower address").count(), 0);
   await review(page, "Review mark");
   await cancel(page);
