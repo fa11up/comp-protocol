@@ -16,6 +16,8 @@ import {
   blockscout,
   ensRpc,
   ensRpcUrls,
+  askerBody,
+  askerPrice,
 } from "./fixture.mjs";
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const evidence = resolve(root, "docs/frontend");
@@ -61,7 +63,12 @@ function passed(name, detail) {
   results.push({ name, status: "passed", detail });
   console.log("PASS", name);
 }
-async function setup({ wallet = true, chain = "0x1", state = {} } = {}) {
+async function setup({
+  wallet = true,
+  chain = "0x1",
+  state = {},
+  deployment,
+} = {}) {
   if (context) await context.close();
   context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
@@ -103,6 +110,12 @@ async function setup({ wallet = true, chain = "0x1", state = {} } = {}) {
       headers: { "access-control-allow-origin": "*" },
     });
   });
+  // A deployment variant, served in place of the built one (e.g. one that names an OracleAsker).
+  if (deployment)
+    await context.route("**/imd-deployment.json", async (route) => {
+      const json = await (await route.fetch()).json();
+      await route.fulfill({ json: deployment(json) });
+    });
   if (wallet) {
     await page.exposeFunction("__sendFixture", (tx) => sent(s, tx));
     await installWallet(page, { chain });
@@ -1324,6 +1337,76 @@ try {
     await tab(page, "redemption");
     await expectText(page.locator(".pane-redemption"), "sIMD");
     passed("The redemption desk speaks sIMD for the reserve and the payout");
+  }
+  {
+    // Buying an update: disabled with an explanation until the deployment names an asker.
+    const { page } = await setup();
+    await connect(page);
+    await openFeed(page, "IMD / ETH primary");
+    const pane = page.locator(".pane-oracle");
+    assert.equal(
+      await pane
+        .getByRole("button", { name: "Buy update", exact: true })
+        .isDisabled(),
+      true,
+    );
+    await pane
+      .getByRole("button", { name: "About Buy update" })
+      .first()
+      .hover();
+    await page
+      .getByRole("tooltip")
+      .filter({ hasText: "on-chain request contract is live" })
+      .waitFor();
+    passed(
+      "Buy update is shown disabled, with the reason, before the on-chain Intake exists",
+    );
+  }
+  {
+    // Once configured: approve IMD for exactly one update, then askPaid with the pinned body.
+    const { page, s } = await setup({
+      deployment: (d) => ({
+        ...d,
+        oracleAsker: {
+          address: "0x0000000000000000000000000000000000000019",
+          requests: {
+            PriceFeed: askerBody,
+            NhiFeed: askerBody,
+            SpotFeed: askerBody,
+          },
+        },
+      }),
+    });
+    await connect(page);
+    await openFeed(page, "IMD / ETH primary");
+    await review(page, "Approve IMD for an update");
+    await page
+      .locator("dialog")
+      .getByRole("button", { name: "Confirm in wallet" })
+      .click();
+    await expectText(page.locator("footer"), "Confirmed on chain.");
+    assert.equal(s.sent.at(-1).name, "payToken");
+    assert.deepEqual(s.sent.at(-1).args, [
+      "0x0000000000000000000000000000000000000019",
+      askerPrice,
+    ]);
+    await page
+      .locator(".pane-oracle")
+      .getByRole("button", { name: "Buy update", exact: true })
+      .waitFor();
+    await review(page, "Buy update");
+    await page
+      .locator("dialog")
+      .getByRole("button", { name: "Confirm in wallet" })
+      .click();
+    await expectText(page.locator("footer"), "Confirmed on chain.");
+    assert.equal(s.sent.at(-1).name, "asker");
+    assert.equal(s.sent.at(-1).functionName, "askPaid");
+    assert.equal(s.sent.at(-1).args[1], askerBody);
+    assert.equal(s.sent.at(-1).args[2], askerPrice);
+    passed(
+      "Buy update approves IMD for exactly one update, then pays for it with the pinned request",
+    );
   }
   {
     // sIMD is priced from IMD: with the vault's collateral feed unreadable, the terminal derives the same

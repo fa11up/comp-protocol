@@ -2077,3 +2077,14 @@ html.app-page body {
   outline: 1px solid var(--text);
   outline-offset: -1px;
 }
+
+/* Buy update sits under a feed's figures: one control and its info icon, on one line. */
+.buy-update {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.buy-update .action-note:empty {
+  display: none;
+}

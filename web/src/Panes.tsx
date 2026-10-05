@@ -44,6 +44,7 @@ import {
   nextStep,
 } from "./math";
 import { useEns, ensName, displayName } from "./ens";
+import { BuyUpdate } from "./BuyUpdate";
 const amt = (name: string) => ({ name, kind: "amount" as const });
 const addr = (name: string) => ({ name, kind: "address" as const });
 const num = (name: string) => ({ name, kind: "uint" as const });
@@ -507,11 +508,13 @@ export function Oracle({
   s,
   now,
   charts,
+  actions,
 }: {
   r: Runtime;
   s?: Snapshot;
   now: bigint;
   charts: ChartData;
+  actions: Actions;
 }) {
   const [open, setOpen] = useState<string>();
   const f = s?.feeds || {};
@@ -602,6 +605,9 @@ export function Oracle({
                     </Row>
                     <Row label="Max age">{f[n] ? `${f[n].maxAge}s` : "—"}</Row>
                     {n !== "USD" && <QuestionState q={s?.questions[n]} />}
+                    {n !== "USD" && (
+                      <BuyUpdate r={r} s={s} feed={n} actions={actions} />
+                    )}
                     <AddressLink
                       value={contract(n)}
                       explorer={r.config.network.explorer}

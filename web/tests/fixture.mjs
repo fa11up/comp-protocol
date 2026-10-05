@@ -9,6 +9,7 @@ import {
   zeroAddress,
   maxUint256,
   parseAbi,
+  keccak256,
 } from "viem";
 export const config = JSON.parse(
   readFileSync(new URL("../deployment-source.json", import.meta.url)),
@@ -58,6 +59,16 @@ abi.ParameterizedVault = [
     "function lockIMD(uint256 assets)",
   ]),
 ];
+// The protocol's OracleAsker (asker mode): price, pay token, pinned request hashes, askPaid.
+abi.asker = parseAbi([
+  "function price() view returns (uint256)",
+  "function payToken() view returns (address)",
+  "function feeds(address) view returns (bytes32 bodyHash, bool tracksPool, bool keepAlive, uint64 lastAsk, uint64 armedAt, uint64 inFlightAt, bytes32 inFlight)",
+  "function askPaid(address feed, bytes body, uint256 maxPrice) returns (bytes32)",
+]);
+/** The request body the fixture's asker pins for every feed, and the price of one update. */
+export const askerBody = "0x7b2271223a2270726963652d756e6976342d7633227d";
+export const askerPrice = 5n * 10n ** 17n;
 /** IMD raw units per 1e18 raw sIMD units: one whole sIMD (1e24) is worth 1.25 IMD. */
 export const RATE = 125n * 10n ** 10n;
 export const account = "0x0000000000000000000000000000000000000a11";
@@ -72,6 +83,8 @@ export const addresses = {
   oracle: "0x0000000000000000000000000000000000000016",
   underlying: "0x0000000000000000000000000000000000000017",
   collateralPriceFeed: "0x0000000000000000000000000000000000000018",
+  asker: "0x0000000000000000000000000000000000000019",
+  payToken: "0x0000000000000000000000000000000000000020",
 };
 const W = 10n ** 18n;
 export const txHash = "0x" + "ab".repeat(32);
@@ -112,6 +125,7 @@ export const fixture = () => ({
   pendingEta: 1n,
   share: false,
   underlyingAllowance: 0n,
+  askerAllowance: 0n,
 });
 export const block = (s) => ({
   number: "0x100",
@@ -141,6 +155,7 @@ const byAddr = Object.fromEntries(
 const abiName = {
   imdToken: "ShareToken",
   underlying: "MockIMD",
+  payToken: "MockIMD",
   collateralPriceFeed: "UsdPriceFeed",
   compToken: "CompToken",
   parameters: "Parameters",
@@ -208,6 +223,25 @@ function call(s, params) {
         : f === "lastToBlock"
           ? 26121526n
           : "0x" + "2b".repeat(32);
+    return encodeFunctionResult({ abi: a, functionName: f, result: value });
+  }
+  if (name === "asker") {
+    value =
+      f === "price"
+        ? askerPrice
+        : f === "payToken"
+          ? addresses.payToken
+          : f === "feeds"
+            ? [
+                keccak256(askerBody),
+                true,
+                false,
+                0n,
+                0n,
+                0n,
+                "0x" + "00".repeat(32),
+              ]
+            : "0x" + "11".repeat(32);
     return encodeFunctionResult({ abi: a, functionName: f, result: value });
   }
   if (fn.stateMutability === "nonpayable") {
@@ -284,7 +318,9 @@ function call(s, params) {
     if (s.share && f === "positions") value = [(value[0] * W) / RATE, value[1]];
     if (s.share && ["redemptionReserve", "securedCollateral"].includes(f))
       value = (value * W) / RATE;
-  } else if (["imdToken", "compToken", "underlying"].includes(name)) {
+  } else if (
+    ["imdToken", "compToken", "underlying", "payToken"].includes(name)
+  ) {
     const shareToken = s.share && name === "imdToken";
     value = {
       deployer: account,
@@ -292,7 +328,12 @@ function call(s, params) {
       // The deployed Sepolia token still carries the testnet symbol; the terminal reads it.
       symbol: name === "compToken" ? "COMP" : shareToken ? "sIMD" : "IMD",
       balanceOf: shareToken ? 8000n * 10n ** 24n : 10000n * W,
-      allowance: name === "underlying" ? s.underlyingAllowance : s.allowance,
+      allowance:
+        name === "underlying"
+          ? s.underlyingAllowance
+          : name === "payToken"
+            ? s.askerAllowance
+            : s.allowance,
       totalSupply: s.supply,
       vault: addresses.ParameterizedVault,
       asset: addresses.underlying,
@@ -452,6 +493,7 @@ export function sent(s, tx) {
   s.sent.push({ name, ...d });
   if (d.functionName === "approve") {
     if (name === "underlying") s.underlyingAllowance = d.args[1];
+    else if (name === "payToken") s.askerAllowance = d.args[1];
     else s.allowance = d.args[1];
   }
   return txHash;

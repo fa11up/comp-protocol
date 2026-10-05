@@ -30,6 +30,7 @@ const allowed = [
   "walletAddChain",
   "poolKey",
   "interface",
+  "oracleAsker",
 ];
 if (Object.keys(base).some((k) => !allowed.includes(k)))
   throw Error("Unexpected deployment field");

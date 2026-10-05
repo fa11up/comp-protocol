@@ -36,6 +36,12 @@ export type Deployment = {
   walletAddChain?: object;
   /** Which names the deployed contracts use; see names.ts. Absent means "maker". */
   interface?: "maker" | "legacy";
+  /**
+   * The protocol's OracleAsker and the exact oracle.request body each feed's pinned question needs,
+   * as hex. Absent until IdentityMD's on-chain Intake is live: the terminal then shows "Buy update"
+   * disabled. Each body is checked against the hash the asker itself pins before anything is sent.
+   */
+  oracleAsker?: { address: Address; requests: Record<string, `0x${string}`> };
 };
 export type Target = { address: Address; abi: Abi };
 function sort(v: unknown): unknown {
@@ -68,6 +74,14 @@ export async function loadConfig() {
       "Deployment configuration is incomplete. Transactions are disabled.",
     );
   setInterface(config.interface);
+  if (
+    config.oracleAsker &&
+    (!/^0x[0-9a-fA-F]{40}$/.test(config.oracleAsker.address) ||
+      Object.values(config.oracleAsker.requests ?? {}).some(
+        (b) => !/^0x(?:[0-9a-fA-F]{2})+$/.test(b),
+      ))
+  )
+    throw Error("Deployment oracle settings are malformed.");
   const abis: Record<string, Abi> = {};
   const targets: Record<string, Target> = {};
   const loadAbi = async (path: string) => {

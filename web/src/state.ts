@@ -2,6 +2,7 @@ import { parseAbi, zeroAddress, type Address } from "viem";
 import { activeInterface, onChain } from "./names";
 import { setUnit } from "./unit";
 import { setCollateral, shareAbi, vaultShareAbi } from "./collateral";
+import { readAsker, type AskerState } from "./BuyUpdate";
 import type { Runtime, Target } from "./config";
 // Dynamic implementation-derived ABIs are loaded only after manifest verification.
 export const read = async (
@@ -39,6 +40,8 @@ export type Snapshot = {
   questions: Record<string, Question>;
   errors: string[];
   verified: boolean;
+  /** The protocol's OracleAsker, when the deployment names one; "unreadable" if it would not answer. */
+  asker?: AskerState | "unreadable";
 };
 export async function snapshot(
   r: Runtime,
@@ -411,7 +414,24 @@ export async function snapshot(
     throw Error(
       "Unexpected token decimals for this deployment. Transactions disabled.",
     );
+  // Optional: a deployment without an asker, or one that does not answer, still runs every other pane.
+  let asker: Snapshot["asker"];
+  try {
+    asker = await readAsker(
+      r,
+      {
+        PriceFeed: targets.PriceFeed.address,
+        NhiFeed: targets.NhiFeed.address,
+        SpotFeed: targets.SpotFeed.address,
+      },
+      account,
+      bn,
+    );
+  } catch {
+    asker = "unreadable";
+  }
   return {
+    asker,
     block: bn,
     timestamp: block.timestamp,
     loadedAt: Date.now(),

@@ -271,6 +271,12 @@ contract OracleAskerTest is Test {
         assertEq(value, IMD_ETH * 101 / 100);
     }
 
+    function test_priceIsTheIntakesListedPriceForThePayToken() public {
+        assertEq(asker.price(), PRICE);
+        intake.setPrice(ORACLE_ACTION, address(imd), 0.7 ether);
+        assertEq(asker.price(), 0.7 ether);
+    }
+
     function test_askPaidHonoursTheCallersCeilingAndTheInFlightSlot() public {
         address borrower = address(0xB0B);
         vm.prank(APPROVED_OPERATOR);

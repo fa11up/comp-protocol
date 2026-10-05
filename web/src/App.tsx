@@ -438,7 +438,7 @@ function Terminal({ r }: { r: Runtime }) {
             <LoanBook charts={charts} available={!!s} onOpen={openInKeeper} />
           </Pane>
           <Pane monitor id="oracle" index="01" title="Oracle" tag="Feeds">
-            <Oracle r={r} s={s} now={now} charts={charts} />
+            <Oracle r={r} s={s} now={now} charts={charts} actions={actions} />
           </Pane>
           <Pane
             monitor

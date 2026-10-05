@@ -176,6 +176,12 @@ contract OracleAsker {
         emit AskedPaid(feed, requestId, msg.sender, price);
     }
 
+    /// @notice What one update costs right now, in `payToken`: the Intake's listed price. Zero when the
+    /// Intake does not sell this action for this token. `askPaid` pulls exactly this much.
+    function price() external view returns (uint256) {
+        return IIntake(INTAKE).priceOf(ORACLE_ACTION, address(payToken));
+    }
+
     function _price(uint256 ceiling) private view returns (uint256 price) {
         price = IIntake(INTAKE).priceOf(ORACLE_ACTION, address(payToken));
         if (price == 0) revert NotSold();
