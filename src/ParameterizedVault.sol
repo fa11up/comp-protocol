@@ -6,6 +6,8 @@ import {CDPVault} from "./CDPVault.sol";
 import {Parameters, ICheckpointedVault} from "./Parameters.sol";
 import {Treasury} from "./Treasury.sol";
 import {UsdPriceFeed} from "./UsdPriceFeed.sol";
+import {SharePriceFeed} from "./SharePriceFeed.sol";
+import {IShareVault} from "./interfaces/IShareVault.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 
 /// @notice CDPVault with its economic knobs read from a governed Parameters contract, its revenue
@@ -34,6 +36,10 @@ contract ParameterizedVault is CDPVault {
     /// @notice IMD in USD: this vault's primary IMD/ETH feed times Chainlink ETH/USD. The price
     /// source the Treasury's register is expected to hold for IMD.
     UsdPriceFeed public immutable usdPriceFeed;
+    /// @notice What one unit of collateral is worth in USD, per 1e18 raw units: `usdPriceFeed` itself
+    /// when the collateral is IMD, or a `SharePriceFeed` over it when the collateral is a share of an
+    /// ERC-4626 vault holding IMD (sIMD on mainnet). Every collateral valuation reads this one price.
+    ISwarmFeed public immutable collateralPriceFeed;
 
     constructor(
         address imdToken_,
@@ -56,6 +62,20 @@ contract ParameterizedVault is CDPVault {
         // governed by this vault's Parameters and refuses this vault's imdUSD, with nothing bound later.
         treasury = new Treasury();
         usdPriceFeed = new UsdPriceFeed(ISwarmFeed(priceFeed_));
+        // A share collateral is priced as its exchange rate times the underlying's USD price. The
+        // adapter works per 1e18 RAW units, so sIMD's 24 decimals against IMD's 18 cannot misvalue it.
+        collateralPriceFeed = _isShareVault(imdToken_)
+            ? ISwarmFeed(address(new SharePriceFeed(imdToken_, ISwarmFeed(address(usdPriceFeed)))))
+            : ISwarmFeed(address(usdPriceFeed));
+    }
+
+    /// @dev True when the token answers `asset()` with another nonzero address. A raw staticcall, so a
+    /// plain ERC-20 without the member reads as "not a share vault" instead of reverting.
+    function _isShareVault(address token) private view returns (bool) {
+        (bool ok, bytes memory data) = token.staticcall(abi.encodeCall(IShareVault.asset, ()));
+        if (!ok || data.length < 32) return false;
+        address asset = abi.decode(data, (address));
+        return asset != address(0) && asset != token;
     }
 
     function line() public view override returns (uint256) {
@@ -150,7 +170,7 @@ contract ParameterizedVault is CDPVault {
     /// against spot, both quoting IMD in ETH, so the ETH/USD factor never enters it. Comparing a
     /// denominated price against spot would sit them an ETH price apart and refuse every action.
     function _priceOrZero() internal view override returns (uint256 price) {
-        (price,) = usdPriceFeed.latestValue();
+        (price,) = collateralPriceFeed.latestValue();
     }
 
     /// @notice Stale if either leg of the USD price is, on top of the base vault's own feeds.
@@ -160,7 +180,7 @@ contract ParameterizedVault is CDPVault {
     /// liquidation here, where in `earnLine` it only zeroes the reserve term. `ETH_USD_MAX_AGE`
     /// bounds how long a dead leg takes to read as stale.
     function _pricingStale() internal view override returns (bool) {
-        return super._pricingStale() || usdPriceFeed.isStale();
+        return super._pricingStale() || collateralPriceFeed.isStale();
     }
 
     /// @notice The principal the ratio term may count: `totalDebt`, capped at what it was when this

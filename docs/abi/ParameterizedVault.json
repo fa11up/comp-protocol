@@ -244,6 +244,19 @@
   },
   {
     "type": "function",
+    "name": "collateralPriceFeed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ISwarmFeed"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "collateralRatio",
     "inputs": [
       {
@@ -548,6 +561,19 @@
     "inputs": [
       {
         "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "lockIMD",
+    "inputs": [
+      {
+        "name": "assets",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1182,6 +1208,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "CollateralNotWrappable",
+    "inputs": []
   },
   {
     "type": "error",

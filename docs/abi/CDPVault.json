@@ -531,6 +531,19 @@
   },
   {
     "type": "function",
+    "name": "lockIMD",
+    "inputs": [
+      {
+        "name": "assets",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "lull",
     "inputs": [],
     "outputs": [
@@ -1104,6 +1117,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "CollateralNotWrappable",
+    "inputs": []
   },
   {
     "type": "error",

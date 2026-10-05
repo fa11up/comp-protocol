@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {IShareVault} from "./interfaces/IShareVault.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -67,6 +68,7 @@ contract CDPVault is ReentrancyGuard {
     error HealthyPosition();
     error ExcessRepayment();
     error UnexpectedCollateralReceived();
+    error CollateralNotWrappable();
     error PositionNotMarked();
     error GracePeriodNotElapsed();
     error MarkExpired();
@@ -337,6 +339,38 @@ contract CDPVault is ReentrancyGuard {
         if (imdToken.balanceOf(address(this)) - beforeBalance != amount) revert UnexpectedCollateralReceived();
         _clearIfRecovered(msg.sender);
         emit Lock(msg.sender, amount);
+    }
+
+    /// @notice Lock collateral by handing over the share vault's UNDERLYING: the vault deposits it into
+    /// the share vault on the caller's behalf and credits the shares it receives.
+    /// @dev For a collateral token that is an ERC-4626 share (sIMD over IMD), so a borrower holding the
+    /// plain token does not need a separate wrapping transaction. The credit is the shares actually
+    /// received, measured by balance, not the amount `deposit` reports. Reverts `CollateralNotWrappable`
+    /// when the collateral is not a share vault. The vault never redeems shares; see IShareVault.
+    function lockIMD(uint256 assets) external nonReentrant {
+        if (assets == 0) revert ZeroAmount();
+        IERC20 underlying = IERC20(_shareAsset());
+        uint256 beforeShares = imdToken.balanceOf(address(this));
+        underlying.safeTransferFrom(msg.sender, address(this), assets);
+        underlying.forceApprove(address(imdToken), assets);
+        IShareVault(address(imdToken)).deposit(assets, address(this));
+        underlying.forceApprove(address(imdToken), 0);
+        uint256 shares = imdToken.balanceOf(address(this)) - beforeShares;
+        if (shares == 0) revert ZeroAmount();
+        Position storage position = _positions[msg.sender];
+        position.collateral += shares;
+        _resecure(position, _priceOrZero());
+        _clearIfRecovered(msg.sender);
+        emit Lock(msg.sender, shares);
+    }
+
+    /// @dev The share vault's underlying asset, or `CollateralNotWrappable` if the collateral is not a
+    /// share vault. A raw staticcall, so a token without `asset()` reverts with our error, not its own.
+    function _shareAsset() private view returns (address asset) {
+        (bool ok, bytes memory data) = address(imdToken).staticcall(abi.encodeCall(IShareVault.asset, ()));
+        if (!ok || data.length < 32) revert CollateralNotWrappable();
+        asset = abi.decode(data, (address));
+        if (asset == address(0) || asset == address(imdToken)) revert CollateralNotWrappable();
     }
 
     function free(uint256 amount) external nonReentrant {

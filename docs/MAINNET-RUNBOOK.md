@@ -36,7 +36,7 @@ Each step assumes the previous one is merged and green. Steps 2 and 3 are indepe
 | # | step | why it blocks mainnet |
 |---|---|---|
 | 1 | Rename COMP → imdUSD | the token's identity is immutable once deployed |
-| 2 | sIMD as the collateral token (wrap on deposit) | decides what collateral *is*; changes a deployment argument, not the logic |
+| 2 | sIMD as the collateral token (wrap on deposit) — **built** | decides what collateral *is*. Deploy the vault with `StakedIMD` `0x9Efa934D9fAd4AE28c998a40195646b965a97247` as its collateral token: it then prices collateral through a `SharePriceFeed` it creates, and `lockIMD` wraps plain IMD on deposit. Fork-tested against the live vault (`test/ShareCollateralFork.t.sol`). |
 | 3 | **Delete the reporter fallback** | a single key can otherwise re-anchor the price — see §4 |
 | 4 | CREATE2 deployment script with address assertions | removes the silent-misconfiguration failure mode — see §6 |
 | 5 | Independent audit of this configuration | the layer that bricked launch 519, never reviewed |
