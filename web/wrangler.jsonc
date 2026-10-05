@@ -11,5 +11,10 @@
     // An unknown path is a plain 404, never the homepage pretending to be some other page.
     "not_found_handling": "none"
   },
-  "workers_dev": true
+  "workers_dev": true,
+  // Cloudflare creates the DNS records and certificates for custom domains itself.
+  "routes": [
+    { "pattern": "imdusd.com", "custom_domain": true },
+    { "pattern": "www.imdusd.com", "custom_domain": true }
+  ]
 }
