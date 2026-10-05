@@ -31,6 +31,29 @@
   },
   {
     "type": "function",
+    "name": "handOffLaunchFees",
+    "inputs": [
+      {
+        "name": "factory",
+        "type": "address",
+        "internalType": "contract ILaunchFeeShare"
+      },
+      {
+        "name": "launchNumber",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "next",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "isReserveAsset",
     "inputs": [
       {
@@ -381,6 +404,31 @@
       }
     ],
     "stateMutability": "pure"
+  },
+  {
+    "type": "event",
+    "name": "LaunchFeesHandedOff",
+    "inputs": [
+      {
+        "name": "factory",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "launchNumber",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "next",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",

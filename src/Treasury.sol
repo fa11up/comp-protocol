@@ -8,6 +8,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 import {APPROVED_OPERATOR, ORACLE_ASKER} from "./DeploymentConfig.sol";
 import {IShareVault} from "./interfaces/IShareVault.sol";
+import {ILaunchFeeShare} from "./interfaces/ILaunchFeeShare.sol";
 
 /// @notice Where the protocol's own revenue lands: its share of liquidation bonuses, in collateral,
 /// and the stability fees minted to it, in stablecoin. It is also the protocol's reserve, and it can
@@ -84,6 +85,7 @@ contract Treasury {
     event ReserveAssetSet(IERC20 indexed asset, ISwarmFeed indexed priceFeed, uint256 haircutBps);
     event ReserveAssetRemoved(IERC20 indexed asset);
     event OracleFunded(address indexed asker, uint256 imd, uint256 spentToday);
+    event LaunchFeesHandedOff(address indexed factory, uint64 indexed launchNumber, address indexed next);
 
     error Unauthorized();
     error InvalidRecipient();
@@ -345,6 +347,21 @@ contract Treasury {
         uint256 remaining = address(this).balance;
         if (remaining < lastSynced[NATIVE]) lastSynced[NATIVE] = remaining;
         emit Withdrawn(NATIVE, to, amount);
+    }
+
+    // --- launch fee share ---------------------------------------------------------------------
+
+    /// @notice Hand this Treasury's share of a launch pool's future LP fees to another address.
+    /// @dev A launch factory pays its requester's share to whoever `setRequester` last named, and only
+    /// that address may name the next one. Without this function, naming the Treasury would be
+    /// permanent: it could receive the fees but never move the role on. Operator-only, the same
+    /// authority as `withdraw`, because it redirects revenue. It moves only FUTURE fees; anything
+    /// already paid or owed stays here.
+    function handOffLaunchFees(ILaunchFeeShare factory, uint64 launchNumber, address next) external {
+        if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
+        if (next == address(0) || next == address(this)) revert InvalidRecipient();
+        factory.setRequester(launchNumber, next);
+        emit LaunchFeesHandedOff(address(factory), launchNumber, next);
     }
 
     /// @notice Release reserve IMD for a redemption priced and burned by this Treasury's vault.

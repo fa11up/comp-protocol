@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Treasury} from "../src/Treasury.sol";
+import {ILaunchFeeShare} from "../src/interfaces/ILaunchFeeShare.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
@@ -51,6 +52,25 @@ contract ReenteringRecipient {
 
     receive() external payable {
         creditedDuringCall = treasury.syncNative();
+    }
+}
+
+/// @dev The requester-share rules of an IdentityMD launch factory (PoolFees.setRequester), verbatim.
+contract MockLaunchFactory {
+    error NotRequester(uint64 launchNumber);
+    error ZeroRequester();
+
+    mapping(uint64 launchNumber => address) public requesterOf;
+
+    function open(uint64 launchNumber, address requester) external {
+        requesterOf[launchNumber] = requester;
+    }
+
+    function setRequester(uint64 launchNumber, address next) external {
+        address current = requesterOf[launchNumber];
+        if (current == address(0) || msg.sender != current) revert NotRequester(launchNumber);
+        if (next == address(0)) revert ZeroRequester();
+        requesterOf[launchNumber] = next;
     }
 }
 
@@ -273,5 +293,45 @@ contract TreasuryTest is Test {
         }
         treasury.syncNative();
         assertEq(treasury.totalReceived(treasury.NATIVE()), uint256(a) + uint256(b));
+    }
+
+    // --- launch fee share ---------------------------------------------------------------------
+
+    function test_operatorHandsTheLaunchFeeShareOn() public {
+        MockLaunchFactory factory = new MockLaunchFactory();
+        factory.open(7, address(treasury));
+        vm.prank(APPROVED_OPERATOR);
+        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, DESTINATION);
+        assertEq(factory.requesterOf(7), DESTINATION, "future fees now go to the new address");
+    }
+
+    function test_onlyTheOperatorMayHandOffLaunchFees() public {
+        MockLaunchFactory factory = new MockLaunchFactory();
+        factory.open(7, address(treasury));
+        vm.prank(STRANGER);
+        vm.expectRevert(Treasury.Unauthorized.selector);
+        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, STRANGER);
+        assertEq(factory.requesterOf(7), address(treasury));
+    }
+
+    function test_handOffRefusesDegenerateDestinations() public {
+        MockLaunchFactory factory = new MockLaunchFactory();
+        factory.open(7, address(treasury));
+        vm.startPrank(APPROVED_OPERATOR);
+        vm.expectRevert(Treasury.InvalidRecipient.selector);
+        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, address(0));
+        vm.expectRevert(Treasury.InvalidRecipient.selector);
+        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, address(treasury));
+        vm.stopPrank();
+    }
+
+    /// @dev The factory, not the Treasury, decides who the requester is: a launch the Treasury does not
+    /// hold cannot be redirected through it.
+    function test_handOffOfALaunchTheTreasuryDoesNotHoldFails() public {
+        MockLaunchFactory factory = new MockLaunchFactory();
+        factory.open(7, STRANGER);
+        vm.prank(APPROVED_OPERATOR);
+        vm.expectRevert(abi.encodeWithSelector(MockLaunchFactory.NotRequester.selector, uint64(7)));
+        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, DESTINATION);
     }
 }
