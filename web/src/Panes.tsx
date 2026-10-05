@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { WorkChart, SupplyChart, Sparkline, type ChartData } from "./Charts";
 import { Ticker } from "./motion";
 import { type Runtime } from "./config";
@@ -11,6 +11,7 @@ import {
   Choice,
   Col,
   Info,
+  Select,
   type Actions,
 } from "./actions";
 import type { Failure } from "./explain";
@@ -510,11 +511,14 @@ export function Keeper({
   s,
   actions,
   now,
+  target,
 }: {
   r: Runtime;
   s?: Snapshot;
   actions: Actions;
   now: bigint;
+  /** A borrower opened from the loan book; seq changes on every open, even of the same owner. */
+  target?: { owner: string; seq: number };
 }) {
   const [owner, setOwner] = useState("");
   const [position, setPosition] = useState<any>();
@@ -522,6 +526,37 @@ export function Keeper({
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("inspect");
   useEns([position?.owner]);
+  const inspect = async (who: string) => {
+    setLoading(true);
+    setError("");
+    setPosition(undefined);
+    try {
+      if (!s) throw Error("Wait for state to load.");
+      const a = address(who);
+      const [cr, debt, mark, badDebt, held] = await Promise.all(
+        [
+          "collateralRatio",
+          "debtOf",
+          "liquidationMarks",
+          "badDebtOf",
+          "positions",
+        ].map((fn) => read(r, s.targets.ParameterizedVault, fn, [a])),
+      );
+      setPosition({ cr, debt, mark, badDebt, owner: a, collateral: held[0] });
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (!target) return;
+    setOwner(target.owner);
+    setMode("inspect");
+    void inspect(target.owner);
+    // Only a new open re-inspects; a snapshot refresh must not reset what the keeper typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.seq]);
   const borrower = (f: Failure) => {
     if (!position || !s) return undefined;
     const graceEnds = position.mark[0] + position.mark[1];
@@ -582,36 +617,9 @@ export function Keeper({
         <>
           <form
             className="keeper-search"
-            onSubmit={async (e) => {
+            onSubmit={(e) => {
               e.preventDefault();
-              setLoading(true);
-              setError("");
-              setPosition(undefined);
-              try {
-                if (!s) throw Error("Wait for state to load.");
-                const a = address(owner);
-                const [cr, debt, mark, badDebt, held] = await Promise.all(
-                  [
-                    "collateralRatio",
-                    "debtOf",
-                    "liquidationMarks",
-                    "badDebtOf",
-                    "positions",
-                  ].map((fn) => read(r, s.targets.ParameterizedVault, fn, [a])),
-                );
-                setPosition({
-                  cr,
-                  debt,
-                  mark,
-                  badDebt,
-                  owner: a,
-                  collateral: held[0],
-                });
-              } catch (e) {
-                setError(message(e));
-              } finally {
-                setLoading(false);
-              }
+              void inspect(owner);
             }}
           >
             <label htmlFor="keeper-borrower">Borrower address</label>
@@ -911,16 +919,13 @@ export function Governance({
       {!isGov && <Col label="Pending">{pendingBlock}</Col>}
       {isGov && (
         <Col label="Operator">
-          <label>
-            Operation
-            <select value={op} onChange={(e) => setOp(e.target.value)}>
-              {operations.map(([id, label]) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select
+            id="gov-operation"
+            label="Operation"
+            value={op}
+            onChange={setOp}
+            options={operations}
+          />
           {op === "spread" && (
             <ActionForm
               {...common}
@@ -1059,20 +1064,20 @@ function Reporter({
   const [error, setError] = useState("");
   return (
     <>
-      <label>
-        Feed
-        <select
-          value={selected}
-          onChange={(e) => {
-            setSelected(e.target.value);
-            setReporter(false);
-          }}
-        >
-          {["PriceFeed", "NhiFeed", "SpotFeed"].map((n) => (
-            <option key={n}>{n}</option>
-          ))}
-        </select>
-      </label>
+      <Select
+        id="reporter-feed"
+        label="Feed"
+        value={selected}
+        onChange={(v) => {
+          setSelected(v);
+          setReporter(false);
+        }}
+        options={[
+          ["PriceFeed", "PriceFeed"],
+          ["NhiFeed", "NhiFeed"],
+          ["SpotFeed", "SpotFeed"],
+        ]}
+      />
       <button
         type="button"
         disabled={!actions.account || !s}

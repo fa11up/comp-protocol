@@ -12,7 +12,7 @@ import {
 } from "./history";
 import { fmt, ratio, WAD, message, liquidationPrice, cushion } from "./math";
 import { Ticker } from "./motion";
-import { Info } from "./actions";
+import { Info, Select } from "./actions";
 import { useEns, ensName, displayName } from "./ens";
 
 type Loaded<T> = Result<T> & { snapshot?: Snapshot; loading?: boolean };
@@ -86,9 +86,12 @@ const stateOf = (cr: bigint, min: bigint, ceiling: bigint) =>
 export function LoanBook({
   charts,
   available,
+  onOpen,
 }: {
   charts: ChartData;
   available: boolean;
+  /** Opens a borrower in the keeper desk. */
+  onOpen?: (owner: string) => void;
 }) {
   const { book } = charts;
   const host = useRef<HTMLDivElement>(null);
@@ -268,6 +271,7 @@ export function LoanBook({
             ceiling={ceiling!}
             selected={selected}
             onSelect={setSelected}
+            onOpen={onOpen}
             coverage={book.data!.history}
           />
         </>
@@ -284,6 +288,7 @@ function LoanFeed({
   ceiling,
   selected,
   onSelect,
+  onOpen,
   coverage,
 }: {
   positions: Book["positions"];
@@ -292,6 +297,7 @@ function LoanFeed({
   ceiling: bigint;
   selected?: string;
   onSelect: (owner?: string) => void;
+  onOpen?: (owner: string) => void;
   coverage: Book["history"];
 }) {
   const [query, setQuery] = useState("");
@@ -340,26 +346,30 @@ function LoanFeed({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <select
+        <Select
           id="loan-zone"
-          aria-label="Filter by zone"
+          label="Filter by zone"
+          showLabel={false}
           value={zone}
-          onChange={(e) => setZone(e.target.value as "all" | Zone)}
-        >
-          <option value="all">All zones</option>
-          <option value="Liquidatable">Liquidatable</option>
-          <option value="Redeemable">Redeemable</option>
-          <option value="Safe">Safe</option>
-        </select>
-        <select
+          onChange={(v) => setZone(v as "all" | Zone)}
+          options={[
+            ["all", "All zones"],
+            ["Liquidatable", "Liquidatable"],
+            ["Redeemable", "Redeemable"],
+            ["Safe", "Safe"],
+          ]}
+        />
+        <Select
           id="loan-order"
-          aria-label="Sort positions"
+          label="Sort positions"
+          showLabel={false}
           value={order}
-          onChange={(e) => setOrder(e.target.value as "ratio" | "debt")}
-        >
-          <option value="ratio">Ratio ↑</option>
-          <option value="debt">Debt ↓</option>
-        </select>
+          onChange={(v) => setOrder(v as "ratio" | "debt")}
+          options={[
+            ["ratio", "Ratio ↑"],
+            ["debt", "Debt ↓"],
+          ]}
+        />
       </div>
       <div className="loan-columns" aria-hidden="true">
         <span>Position</span>
@@ -379,10 +389,12 @@ function LoanFeed({
             >
               <button
                 type="button"
-                aria-pressed={selected === p.owner}
-                onClick={() =>
-                  onSelect(selected === p.owner ? undefined : p.owner)
-                }
+                aria-current={selected === p.owner || undefined}
+                title={`Open ${displayName(p.owner)} in Keeper`}
+                onClick={() => {
+                  onSelect(p.owner);
+                  onOpen?.(p.owner);
+                }}
               >
                 <span className="loan-who">
                   <b className={ensName(p.owner) ? "ens-name" : undefined}>

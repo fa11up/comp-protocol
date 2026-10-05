@@ -7,7 +7,14 @@ import {
 } from "viem";
 import { loadConfig, switchChain, wallet, type Runtime } from "./config";
 import { snapshot, type Snapshot, feedsReady } from "./state";
-import { Pane, Tabs, type Actions, type Request, AddressLink } from "./actions";
+import {
+  Pane,
+  Tabs,
+  Select,
+  type Actions,
+  type Request,
+  AddressLink,
+} from "./actions";
 import { Redemption } from "./Redemption";
 import { Position, Work, Oracle, Keeper, Backing, Governance } from "./Panes";
 import { message, fmt } from "./math";
@@ -73,6 +80,15 @@ function Terminal({ r }: { r: Runtime }) {
   const [mobilePane, setMobilePane] = useState("loans");
   const [desk, setDesk] = useState("position");
   const [view, setView] = useState("loans");
+  const [keeperTarget, setKeeperTarget] = useState<{
+    owner: string;
+    seq: number;
+  }>();
+  const openInKeeper = (owner: string) => {
+    setKeeperTarget((t) => ({ owner, seq: (t?.seq ?? 0) + 1 }));
+    setDesk("keeper");
+    setMobilePane("keeper");
+  };
   const charts = useCharts(r, s);
   const dialog = useRef<HTMLDialogElement>(null);
   const locked = useRef(false);
@@ -373,26 +389,17 @@ function Terminal({ r }: { r: Runtime }) {
         </div>
       ) : null}
       <nav className="mobile-nav" aria-label="Terminal panes">
-        <label>
-          View pane
-          <select
-            value={mobilePane}
-            onChange={(e) => {
-              setMobilePane(e.target.value);
-              if (deskTabs.some(([id]) => id === e.target.value))
-                setDesk(e.target.value);
-              else setView(e.target.value);
-            }}
-          >
-            {[...monitor.slice(0, 1), ...deskTabs, ...monitor.slice(1)].map(
-              ([id, label]) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ),
-            )}
-          </select>
-        </label>
+        <Select
+          id="view-pane"
+          label="View pane"
+          value={mobilePane}
+          options={[...monitor.slice(0, 1), ...deskTabs, ...monitor.slice(1)]}
+          onChange={(id) => {
+            setMobilePane(id);
+            if (deskTabs.some(([d]) => d === id)) setDesk(id);
+            else setView(id);
+          }}
+        />
       </nav>
       <main
         id="terminal-main"
@@ -419,7 +426,7 @@ function Terminal({ r }: { r: Runtime }) {
             title="Loan book"
             tag="Live risk bands"
           >
-            <LoanBook charts={charts} available={!!s} />
+            <LoanBook charts={charts} available={!!s} onOpen={openInKeeper} />
           </Pane>
           <Pane monitor id="oracle" index="01" title="Oracle" tag="Feeds">
             <Oracle r={r} s={s} now={now} charts={charts} />
@@ -479,7 +486,13 @@ function Terminal({ r }: { r: Runtime }) {
             <Work r={r} s={s} actions={actions} now={now} charts={charts} />
           </Pane>
           <Pane desk id="keeper" index="06" title="Keeper" tag="Permissionless">
-            <Keeper r={r} s={s} actions={actions} now={now} />
+            <Keeper
+              r={r}
+              s={s}
+              actions={actions}
+              now={now}
+              target={keeperTarget}
+            />
           </Pane>
           <Pane
             desk

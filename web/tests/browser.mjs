@@ -128,6 +128,24 @@ const monitorLabels = {
   oracle: "Oracle",
   backing: "Backing",
 };
+// Site-drawn dropdowns: open by the labelled button, then pick the option by its text.
+async function choose(page, scope, label, text) {
+  await scope.getByRole("button", { name: label }).click();
+  await page.getByRole("option", { name: text, exact: true }).click();
+}
+const paneText = {
+  loans: "Loan book",
+  position: "Position",
+  redemption: "Redeem",
+  work: "Work",
+  keeper: "Keeper",
+  governance: "Govern",
+  oracle: "Oracle",
+  backing: "Backing",
+};
+async function pickPane(page, id) {
+  await choose(page, page.locator(".mobile-nav"), "View pane", paneText[id]);
+}
 // Desktop switches desk tabs; below 1100px the same panes are reached through the pane picker.
 async function tab(page, id) {
   const t = page.getByRole("tab", {
@@ -135,7 +153,7 @@ async function tab(page, id) {
     exact: true,
   });
   if (await t.isVisible()) await t.click();
-  else await page.getByLabel("View pane").selectOption(id);
+  else await pickPane(page, id);
 }
 async function connect(page) {
   await page
@@ -214,13 +232,8 @@ try {
     "Connect rejection recovery, wrong chain and exact add-chain fallback",
   );
   await expectText(page.locator(".topbar .account"), "miyagod.eth");
-  assert.equal(
-    await page
-      .locator("select")
-      .first()
-      .evaluate((n) => getComputedStyle(n).appearance),
-    "none",
-  );
+  // No native dropdowns remain: their open list is drawn by the OS and cannot match the site.
+  assert.equal(await page.locator("select").count(), 0);
   passed(
     "A verified ENS name replaces the connected address; dropdowns use the site's own style",
   );
@@ -412,18 +425,18 @@ try {
   // Operator controls live on the Govern desk tab; the monitor holds no actions.
   const gov = page.locator(".pane-governance");
   await tab(page, "governance");
-  await gov.getByLabel("Operation").selectOption("sync");
+  await choose(page, gov, "Operation", "Sync a reserve token");
   await gov.getByLabel("Token to sync").fill(config.contracts[0].address);
   await review(page, "Review reserve sync");
   await cancel(page);
   await review(page, "Review apply pending");
   await cancel(page);
-  await gov.getByLabel("Operation").selectOption("spread");
+  await choose(page, gov, "Operation", "Propose redemption spread");
   await gov.getByLabel("Spread (25–100 ratio points)").fill("55");
   await review(page, "Review spread proposal");
   await cancel(page);
   const oracle = gov;
-  await gov.getByLabel("Operation").selectOption("report");
+  await choose(page, gov, "Operation", "Reporter fallback");
   await oracle
     .getByRole("button", { name: "Check reporter permission" })
     .click();
@@ -542,7 +555,7 @@ try {
         "governance",
         "redemption",
       ]) {
-        await page.getByLabel("View pane").selectOption(pane);
+        await pickPane(page, pane);
         assert.equal(await page.locator(`.pane-${pane}`).isVisible(), true);
       }
     }
@@ -752,6 +765,26 @@ try {
     .fill("copper penny");
   await expectText(loans.locator(".loan-feed"), "miyagod.eth");
   await loans.getByLabel("Search positions by name or address").fill("");
+  // The zone filter is a site-drawn listbox driven by the keyboard like a native one.
+  await loans.getByRole("button", { name: "Filter by zone" }).focus();
+  await page.keyboard.press("ArrowDown");
+  await page.getByRole("listbox").waitFor();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expectText(
+    loans.getByRole("button", { name: "Filter by zone" }),
+    "Liquidatable",
+  );
+  await choose(page, loans, "Filter by zone", "All zones");
+  // A loan-book row opens that borrower in Keeper, already inspected.
+  await loans.locator(".loan-feed button", { hasText: "keeper.eth" }).click();
+  const opened = page.locator(".pane-keeper");
+  await expectText(opened, "keeper.eth");
+  assert.equal(
+    await opened.getByLabel("Borrower address").inputValue(),
+    candidate,
+  );
+  await expectText(opened, "Liquidation price");
   passed(
     "Deposit owners deduplicated, zero-debt owner excluded, debt area ratio 4:1; hover, keyboard and touch-readable addresses",
     names,
@@ -925,8 +958,7 @@ try {
       await page
         .locator(".pane-body")
         .evaluateAll((nodes) => nodes.forEach((n) => (n.scrollTop = 0)));
-      if (width <= 760)
-        await page.getByLabel("View pane").selectOption("loans");
+      if (width <= 760) await pickPane(page, "loans");
       await page.waitForTimeout(200);
       const dims = await page.evaluate(() => ({
         width: innerWidth,
@@ -969,14 +1001,14 @@ try {
           "redemption",
           "work",
         ]) {
-          await page.getByLabel("View pane").selectOption(pane);
+          await pickPane(page, pane);
           assert.equal(await page.locator(`.pane-${pane}`).isVisible(), true);
         }
-        await page.getByLabel("View pane").selectOption("loans");
+        await pickPane(page, "loans");
       }
     }
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByLabel("View pane").selectOption("oracle");
+    await pickPane(page, "oracle");
     await page
       .locator(".pane-oracle .pane-body")
       .evaluate((n) => (n.scrollTop = 0));

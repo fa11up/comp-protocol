@@ -454,3 +454,176 @@ export function AddressLink({
     <span>—</span>
   );
 }
+/**
+ * A dropdown drawn by the page. A native <select> can be styled closed, but its open list is drawn
+ * by the operating system, so it never matched the terminal. This keeps the native keyboard model:
+ * Enter, Space or the arrows open it; arrows move; Enter selects; Escape and Tab close it.
+ * The list is fixed to the viewport, so a scrolling pane cannot clip it.
+ */
+export function Select({
+  id,
+  label,
+  value,
+  options,
+  onChange,
+  showLabel = true,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  options: readonly (readonly [string, string])[];
+  onChange: (value: string) => void;
+  showLabel?: boolean;
+}) {
+  const button = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLUListElement>(null);
+  const [at, setAt] = useState<{
+    left: number;
+    width: number;
+    top?: number;
+    bottom?: number;
+  }>();
+  const [active, setActive] = useState(0);
+  const index = Math.max(
+    0,
+    options.findIndex(([v]) => v === value),
+  );
+  const open = () => {
+    const r = button.current?.getBoundingClientRect();
+    if (!r) return;
+    const below =
+      innerHeight - r.bottom > Math.min(260, options.length * 32 + 8);
+    setAt({
+      left: r.left,
+      width: r.width,
+      ...(below ? { top: r.bottom - 1 } : { bottom: innerHeight - r.top - 1 }),
+    });
+    setActive(index);
+  };
+  const close = (refocus = true) => {
+    setAt(undefined);
+    if (refocus) button.current?.focus();
+  };
+  const pick = (i: number) => {
+    onChange(options[i][0]);
+    close();
+  };
+  useEffect(() => {
+    if (!at) return;
+    list.current?.focus({ preventScroll: true });
+    const outside = (e: MouseEvent) => {
+      if (
+        !list.current?.contains(e.target as Node) &&
+        !button.current?.contains(e.target as Node)
+      )
+        close(false);
+    };
+    const away = () => close(false);
+    // The list's own scrolling must not close it; only the page or a pane moving under it does.
+    const scrolled = (e: Event) => {
+      if (e.target !== list.current) away();
+    };
+    addEventListener("mousedown", outside);
+    addEventListener("resize", away);
+    addEventListener("scroll", scrolled, true);
+    return () => {
+      removeEventListener("mousedown", outside);
+      removeEventListener("resize", away);
+      removeEventListener("scroll", scrolled, true);
+    };
+  }, [at]);
+  useEffect(() => {
+    // Keep the active option in view by scrolling the list alone, never its ancestors.
+    const box = list.current;
+    const item = box?.querySelector<HTMLElement>(`[data-index="${active}"]`);
+    if (!box || !item) return;
+    if (item.offsetTop < box.scrollTop) box.scrollTop = item.offsetTop;
+    else if (
+      item.offsetTop + item.offsetHeight >
+      box.scrollTop + box.clientHeight
+    )
+      box.scrollTop = item.offsetTop + item.offsetHeight - box.clientHeight;
+  }, [active, at]);
+  return (
+    <div className="select">
+      <span
+        id={`${id}-label`}
+        className={showLabel ? "select-label" : "sr-only"}
+      >
+        {label}
+      </span>
+      <button
+        ref={button}
+        id={id}
+        type="button"
+        className="select-button"
+        aria-haspopup="listbox"
+        aria-expanded={!!at}
+        aria-controls={`${id}-list`}
+        aria-labelledby={`${id}-label ${id}`}
+        onClick={() => (at ? close() : open())}
+        onKeyDown={(e) => {
+          if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
+            e.preventDefault();
+            open();
+          }
+        }}
+      >
+        <span>{options[index]?.[1]}</span>
+      </button>
+      {at && (
+        <ul
+          ref={list}
+          id={`${id}-list`}
+          role="listbox"
+          tabIndex={-1}
+          aria-labelledby={`${id}-label`}
+          aria-activedescendant={`${id}-option-${active}`}
+          className="select-list"
+          style={{
+            left: Math.min(at.left, innerWidth - Math.max(at.width, 180) - 8),
+            minWidth: at.width,
+            top: at.top,
+            bottom: at.bottom,
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setActive((i) => Math.min(options.length - 1, i + 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((i) => Math.max(0, i - 1));
+            } else if (e.key === "Home") {
+              e.preventDefault();
+              setActive(0);
+            } else if (e.key === "End") {
+              e.preventDefault();
+              setActive(options.length - 1);
+            } else if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              pick(active);
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              close();
+            } else if (e.key === "Tab") close(false);
+          }}
+        >
+          {options.map(([v, text], i) => (
+            <li
+              key={v}
+              id={`${id}-option-${i}`}
+              data-index={i}
+              role="option"
+              aria-selected={v === value}
+              className={i === active ? "is-active" : undefined}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => pick(i)}
+            >
+              {text}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

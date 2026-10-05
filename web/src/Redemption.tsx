@@ -345,9 +345,7 @@ export function Redemption({
             <Row label="You receive">{exact(q.out)} IMD</Row>
             <Row label="Your fee">
               {percent(q.fee)} ·{" "}
-              {q.capped
-                ? `$${fmt(q.paidAt)} (backing cap)`
-                : "$1 (par)"}
+              {q.capped ? `$${fmt(q.paidAt)} (backing cap)` : "$1 (par)"}
             </Row>
             <Row label="Served by">{q.source}</Row>
             {q.reserveOut > 0n && q.positionOut > 0n && (

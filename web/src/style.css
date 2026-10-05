@@ -1646,3 +1646,88 @@ details[open] > summary::after {
     gap: 0;
   }
 }
+/* Site-drawn dropdown: the closed control matches inputs; the open list matches the panes. */
+.select {
+  min-width: 0;
+}
+.select-label {
+  display: block;
+  color: var(--muted);
+  margin-block: 8px 4px;
+  font-size: 12px;
+}
+.select-button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 30px 7px 9px;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 52%,
+    calc(100% - 10px) 52%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--text);
+  text-align: start;
+}
+.select-button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-button:hover,
+.select-button[aria-expanded="true"] {
+  border-color: var(--text);
+}
+.select-list {
+  position: fixed;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  z-index: 30;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--text);
+  scrollbar-width: thin;
+}
+.select-list:focus {
+  outline: none;
+}
+.select-list li {
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.select-list li.is-active {
+  background: var(--raised);
+}
+.select-list li[aria-selected="true"] {
+  box-shadow: inset 2px 0 0 var(--text);
+}
+.mobile-nav .select {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-block: 8px;
+}
+.mobile-nav .select-label {
+  margin: 0;
+}
+.mobile-nav .select-button {
+  flex: 1;
+}
+.loan-tools .select-button {
+  min-height: 30px;
+  font-size: 11px;
+}
