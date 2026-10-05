@@ -40,7 +40,7 @@ const plainText = (md) =>
     .replace(/[*_>#|-]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-/** Blurred filler standing in for `text`: random letters in the original's word shapes, so lines
+/** Braille filler standing in for `text`: random patterns in the original's word shapes, so lines
  * wrap like the original while none of its words reach the page. Seeded from the text so builds are
  * reproducible. */
 const bar = (text) => {
@@ -48,8 +48,8 @@ const bar = (text) => {
   let seed = 2166136261;
   for (const ch of src) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
   const rnd = () => ((seed = Math.imul(seed ^ (seed >>> 15), 2246822507) >>> 0), seed / 4294967296);
-  const letters = "etaoinshrdlcumwfgypbvk";
-  const filler = src.replace(/\S/g, () => letters[Math.floor(rnd() * letters.length)]);
+  // Braille patterns U+2801..U+28FF (U+2800 is blank, so it is skipped).
+  const filler = src.replace(/\S/g, () => String.fromCodePoint(0x2801 + Math.floor(rnd() * 255)));
   return `<span class="redacted" role="img" aria-label="Redacted"><span aria-hidden="true">${filler}</span></span>`;
 };
 /** A title with only the word "terminal" barred. */

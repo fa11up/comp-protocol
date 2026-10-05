@@ -2234,9 +2234,7 @@ html.app-page body {
 /* Redacted text: the words are removed at build time; this bar stands in for them. */
 .redacted {
   color: var(--muted);
-  filter: blur(4px);
   user-select: none;
-  pointer-events: none;
 }
 .redaction-note {
   font-size: 11px;
