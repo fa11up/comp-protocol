@@ -198,4 +198,19 @@ contract ShareCollateralTest is Test {
         // 100 IMD at $2 = $200, wrapped or not.
         assertApproxEqAbs(treasury.reserveValueOf(share), 200 ether, 1e6);
     }
+
+    /// @dev F7 (launch audit, three panels, low). The register accepted the vault's own collateral
+    /// against ANY well-formed feed; listed against the per-IMD usdPriceFeed, one raw-unit-priced sIMD
+    /// share read about 125,000x too high and inflated earnLine and backing. Refused at proposal now.
+    function test_theCollateralCanOnlyBeListedAgainstItsOwnPrice() public {
+        Parameters params = vault.parameters();
+        ISwarmFeed wrong = ISwarmFeed(address(vault.usdPriceFeed()));
+        vm.prank(APPROVED_OPERATOR);
+        vm.expectRevert(Treasury.InvalidPriceSource.selector);
+        params.proposeReserveAsset(share, wrong, 10_000);
+
+        ISwarmFeed right = vault.collateralPriceFeed();
+        vm.prank(APPROVED_OPERATOR);
+        params.proposeReserveAsset(share, right, 10_000); // its own collateral price is accepted
+    }
 }

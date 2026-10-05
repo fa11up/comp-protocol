@@ -31,8 +31,14 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
     address private constant CONTROLLER_B = address(0xB0B);
     address private constant STRANGER = address(0xBAD);
 
+    /// @dev The rate governance would set when minting from work is switched on. WAGE_WAD ships as
+    /// zero (minting off at launch, and `claim` refuses while it is), so every test that claims first
+    /// raises the wage through the real 48-hour timelock, as governance would.
+    uint256 private constant RATE = 0.01 ether;
+
     SeedableWorkOracle private work;
     CDPVault private attestedVault;
+    Parameters private governance;
     address private spot;
 
     function setUp() public override {
@@ -41,10 +47,24 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         spot = address(backedVault.spotFeed());
         SeedableWorkOracleFactory factory = new SeedableWorkOracleFactory();
         vm.etch(WORK_ORACLE_FACTORY, address(factory).code);
-        attestedVault = new CDPVault(
+        // A governed vault, because the wage is read from its Parameters: a base CDPVault has none and
+        // its oracle stays at WAGE_WAD, which is zero at launch.
+        ParameterizedVault governed = new ParameterizedVault(
             address(collateral), address(0), WORK_ORACLE_SENTINEL, address(primary), address(health), spot
         );
+        attestedVault = governed;
+        governance = governed.parameters();
         work = SeedableWorkOracle(address(attestedVault.oracle()));
+        _setWage(governance, RATE);
+    }
+
+    function _setWage(Parameters params, uint256 wad) private {
+        vm.prank(APPROVED_OPERATOR);
+        params.proposeWage(wad);
+        vm.warp(params.pendingEta());
+        vm.prank(address(0xA990));
+        params.applyPending();
+        _refreshEthUsd();
     }
 
     // --- the root, and how it gets in ------------------------------------------------------------
@@ -86,7 +106,7 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         vm.prank(CONTROLLER_A);
         uint256 rights = work.claim(AGENT_A, 10, 10, proofA, root);
 
-        assertEq(rights, 10 * WAGE_WAD, "ten tasks at the shipped rate");
+        assertEq(rights, 10 * RATE, "ten tasks at the shipped rate");
         assertEq(work.mintingRights(CONTROLLER_A), rights);
         assertEq(work.creditedTasks(AGENT_A), 10);
         assertEq(work.mintingRights(STRANGER), 0, "nobody else gained anything");
@@ -105,8 +125,8 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         vm.prank(CONTROLLER_B);
         work.claim(AGENT_B, 20, 20, proofB, root);
 
-        assertEq(work.mintingRights(CONTROLLER_A), 10 * WAGE_WAD);
-        assertEq(work.mintingRights(CONTROLLER_B), 20 * WAGE_WAD);
+        assertEq(work.mintingRights(CONTROLLER_A), 10 * RATE);
+        assertEq(work.mintingRights(CONTROLLER_B), 20 * RATE);
     }
 
     function test_aStrangerCannotClaimAnotherAgentsTally() public {
@@ -170,8 +190,8 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         _accept(day2);
         vm.prank(CONTROLLER_A);
         uint256 more = work.claim(AGENT_A, 5, 15, p2, day2);
-        assertEq(more, 5 * WAGE_WAD, "only the five new tasks");
-        assertEq(work.mintingRights(CONTROLLER_A), 15 * WAGE_WAD);
+        assertEq(more, 5 * RATE, "only the five new tasks");
+        assertEq(work.mintingRights(CONTROLLER_A), 15 * RATE);
     }
 
     /// @dev An agent idle on a given day is absent from that day's tree, so proving against an OLDER
@@ -183,7 +203,7 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         _accept(keccak256("day-2-without-agent-a"));
         _controls(AGENT_A, CONTROLLER_A, true);
         vm.prank(CONTROLLER_A);
-        assertEq(work.claim(AGENT_A, 10, 10, p1, day1), 10 * WAGE_WAD);
+        assertEq(work.claim(AGENT_A, 10, 10, p1, day1), 10 * RATE);
     }
 
     // --- pricing, and the mistake not repeated ---------------------------------------------------
@@ -197,6 +217,7 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         );
         SeedableWorkOracle w = SeedableWorkOracle(address(governed.oracle()));
         Parameters params = governed.parameters();
+        _setWage(params, RATE);
 
         (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
         w.seed(uint256(root));
@@ -205,15 +226,38 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         vm.prank(CONTROLLER_A);
         uint256 atOldRate = w.claim(AGENT_A, 10, 10, proofA, root);
 
-        vm.prank(APPROVED_OPERATOR);
-        params.proposeWage(WAGE_WAD * 2);
-        vm.warp(params.pendingEta());
-        vm.prank(address(0xA990));
-        params.applyPending();
-        _refreshEthUsd();
+        _setWage(params, RATE * 2);
 
+        assertEq(atOldRate, 10 * RATE);
         assertEq(w.mintingRights(CONTROLLER_A), atOldRate, "a rate rise cannot reprice a past claim");
-        assertEq(w.wage(), WAGE_WAD * 2, "but it does apply to the next one");
+        assertEq(w.wage(), RATE * 2, "but it does apply to the next one");
+    }
+
+    // --- minting from work is off at launch -------------------------------------------------------
+
+    /// @dev WAGE_WAD ships as zero. A claim then would mark the agent's tasks credited for nothing and
+    /// they could never earn once minting is switched on, so it is refused, and the tasks stay whole.
+    function test_atTheLaunchWageClaimsAreRefusedAndTheTasksStayClaimable() public {
+        assertEq(WAGE_WAD, 0, "minting from work ships switched off");
+        ParameterizedVault fresh = new ParameterizedVault(
+            address(collateral), address(0), WORK_ORACLE_SENTINEL, address(primary), address(health), spot
+        );
+        SeedableWorkOracle w = SeedableWorkOracle(address(fresh.oracle()));
+        Parameters params = fresh.parameters();
+        assertEq(w.wage(), 0);
+
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        w.seed(uint256(root));
+        w.recordRoot();
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.prank(CONTROLLER_A);
+        vm.expectRevert(SwarmWorkOracle.WorkMintingOff.selector);
+        w.claim(AGENT_A, 10, 10, proofA, root);
+        assertEq(w.creditedTasks(AGENT_A), 0, "nothing was marked as credited");
+
+        _setWage(params, RATE);
+        vm.prank(CONTROLLER_A);
+        assertEq(w.claim(AGENT_A, 10, 10, proofA, root), 10 * RATE, "every task still earns once switched on");
     }
 
     // --- consumption ------------------------------------------------------------------------------

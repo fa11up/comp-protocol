@@ -276,6 +276,25 @@ deploy.** Deploy, verify, and only then announce.
 
 ---
 
+## 7b. Minting from work: off at launch, switchable later — with one deploy-time requirement
+
+Minting from work ships OFF (`WAGE_WAD = 0`; `SwarmWorkOracle.claim` refuses while the wage is zero, so
+no agent's tasks are spent for nothing). Turning it on later is a governance action, not a redeploy:
+`Parameters.proposeWage(wad)` (at most one imdUSD per task), visible for 48 hours, then anyone applies it.
+`earnMat` and the reserve listings (also governed) set how much it can ever mint.
+
+**Two things governance cannot do, so they are decided now:**
+
+1. **The vault must be deployed with the real work oracle.** Pass `WORK_ORACLE_SENTINEL` as the vault's
+   `oracle_` so it creates a `SwarmWorkOracle` through `WORK_ORACLE_FACTORY`. The oracle is immutable on
+   the vault. `DeployGoverned`/`DeployProtocol` pass zero, which builds the TEST FAUCET (`MockWorkOracle`);
+   the mainnet CREATE2 script must not.
+2. **The deferred audit finding needs code, and the vault is immutable.** D1 (adjacent-transaction
+   capital counted toward `backedDebt` and the redemption backing cap) is marked in source as "RESOLVE
+   BEFORE MINTING FROM WORK IS SWITCHED ON". Its fix is an age-based exclusion inside the vault, which a
+   proposal cannot add. So switching minting on safely later means EITHER building that exclusion before
+   mainnet (dormant until the wage is raised), OR deploying a new vault when minting is turned on.
+
 ## 8. Open decisions this runbook does not make
 
 * ~~Whether the Treasury's reserve holds IMD or sIMD.~~ **DECIDED: sIMD only.** It falls out of the

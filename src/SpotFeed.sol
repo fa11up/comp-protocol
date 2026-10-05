@@ -18,8 +18,8 @@ import {
 ///
 /// Behaviourally this is PriceFeed: same authority, same attestation policy, same guards. Only the
 /// role differs. The vault prices off the primary's window average and uses this one solely as a
-/// divergence bound, so it is fed point-in-time values and wants a tighter freshness window than a
-/// feed whose value is an average over one.
+/// divergence bound, so it is fed point-in-time values. Its lifetime (SPOT_MAX_AGE) currently equals
+/// the primary's (PRICE_MAX_AGE): both are one hour.
 contract SpotFeed is SwarmFeed {
     constructor(uint256 maxAge_, uint256 maxDeviationBps_)
         SwarmFeed(

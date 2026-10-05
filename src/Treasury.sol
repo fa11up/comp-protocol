@@ -150,6 +150,13 @@ contract Treasury {
             return;
         }
         if (address(priceFeed).code.length == 0) revert InvalidPriceSource();
+        // The vault's own collateral is valued per 1e18 raw units, so it may be listed only against the
+        // vault's own collateral price (launch audit, three panels, low): listed against the per-IMD
+        // usdPriceFeed, sIMD read about 125,000x too high and inflated earnLine and backing with it.
+        if (address(asset) == _linked(abi.encodeWithSignature("gem()"))) {
+            address collateralPrice = _linked(abi.encodeWithSignature("collateralPriceFeed()"));
+            if (collateralPrice != address(0) && address(priceFeed) != collateralPrice) revert InvalidPriceSource();
+        }
         // REVISION (finding 21a2b135): having code is not the same as answering. A source that
         // reverts on, or returns short words from, the two reads reserveValueOf makes would have
         // made reserveValueUsd — and so the vault's work ceiling and every earn — revert
@@ -200,7 +207,9 @@ contract Treasury {
     function reserveValueUsd() public view returns (uint256 total) {
         uint256 count = _reserveAssets.length;
         for (uint256 i; i < count; ++i) {
-            total += reserveValueOf(_reserveAssets[i]);
+            // Saturating: several enormous listings must not revert the sum either.
+            (bool ok, uint256 next) = Math.tryAdd(total, reserveValueOf(_reserveAssets[i]));
+            total = ok ? next : type(uint256).max;
         }
     }
 
@@ -214,7 +223,13 @@ contract Treasury {
         (uint256 balance, bool held) = _readBalance(asset);
         if (!held || balance == 0) return 0;
         ReserveAsset storage entry = _reserve[asset];
-        uint256 marked = Math.mulDiv(balance, price, 10 ** entry.decimals);
+        // A value whose USD figure does not fit in 256 bits is a broken source, not a reserve: counted for
+        // nothing, as promised, rather than reverting the sum and everything that reads it (launch audit,
+        // governance panel). Exact: balance * price / 10**decimals overflows only when balance exceeds
+        // one whole token AND price exceeds max * 10**decimals / balance.
+        uint256 unit = 10 ** entry.decimals;
+        if (balance > unit && price > Math.mulDiv(type(uint256).max, unit, balance)) return 0;
+        uint256 marked = Math.mulDiv(balance, price, unit);
         return Math.mulDiv(marked, entry.haircutBps, BPS);
     }
 
@@ -301,15 +316,15 @@ contract Treasury {
         emit Received(token, credited, totalReceived[token]);
     }
 
-    /// @notice Move funds out, to a destination the caller names.
-    /// @dev Pinned to APPROVED_OPERATOR in source, like every other authority in this protocol, so a
-    /// deployment template cannot substitute it. The destination is an argument rather than a second
-    /// constant because the point of holding revenue is to deploy it later, and where is not decided.
     /// @notice The only account that may withdraw. A source constant, like every authority here.
     function withdrawer() external pure returns (address) {
         return APPROVED_OPERATOR;
     }
 
+    /// @notice Move funds out, to a destination the caller names. Operator only.
+    /// @dev Pinned to APPROVED_OPERATOR in source, like every other authority in this protocol, so a
+    /// deployment template cannot substitute it. The destination is an argument rather than a second
+    /// constant because the point of holding revenue is to deploy it later (governor-run LP, say).
     /// @dev Two things the operator cannot take, whatever the destination:
     ///   - the reserve: any listed reserve asset, and the vault's collateral token (sIMD), which pays
     ///     redemptions first whether or not it is listed. Removing backing takes a delisting through
@@ -434,8 +449,6 @@ contract Treasury {
         emit LaunchFeesHandedOff(address(factory), launchNumber, next);
     }
 
-    /// @notice Release reserve IMD for a redemption priced and burned by this Treasury's vault.
-    /// @dev Neither the caller nor governance can select another reserve asset through this path.
     // --- the oracle budget ----------------------------------------------------------------------
 
     /// @notice The UTC day `oracleSpent` counts, and the IMD sent to the oracle asker within it.
@@ -443,7 +456,9 @@ contract Treasury {
     uint256 public oracleSpent;
 
     /// @notice Send the oracle asker what is left of today's budget, in IMD. Anyone may call it.
-    /// @dev The Treasury's third and last way out, and the only one with no key behind it: the
+    /// @dev One of the Treasury's keyless exits, with `payStream`, `redeemIMD` (vault only) and the
+    /// vault's `cover` burn. It tops the asker up to one day's budget rather than adding a full day's
+    /// worth whatever it already holds, because the asker has no way to return IMD. The
     /// destination is a source constant, the amount is capped per UTC day by the vault's governed
     /// `Parameters.oracleBudget`, and the token is the collateral's. When the collateral is a share
     /// (sIMD), the IMD is WITHDRAWN from the share vault straight to the asker, so the asker holds the
@@ -464,6 +479,13 @@ contract Treasury {
         if (budget <= oracleSpent) return 0;
         uint256 want = budget - oracleSpent;
         bool share = _isShare(token);
+        // Top up, never pile up (launch audit, oracle panel, medium): the asker has no way to return
+        // IMD, so it is sent at most what brings its balance to one day's budget. Unspent budget stays
+        // here, in the reserve, instead of accumulating in a contract nothing can withdraw from.
+        address imd = share ? IShareVault(token).asset() : token;
+        uint256 held = IERC20(imd).balanceOf(ORACLE_ASKER);
+        uint256 room = budget > held ? budget - held : 0;
+        if (room < want) want = room;
         uint256 available = share ? IShareVault(token).maxWithdraw(address(this)) : IERC20(token).balanceOf(address(this));
         sent = want < available ? want : available;
         if (sent == 0) return 0;
@@ -508,6 +530,8 @@ contract Treasury {
         emit Withdrawn(shares, ORACLE_ASKER, before - remaining);
     }
 
+    /// @notice Release reserve collateral for a redemption priced and burned by this Treasury's vault.
+    /// @dev Neither the caller nor governance can select another reserve asset through this path.
     function redeemIMD(address to, uint256 amount) external {
         if (msg.sender != vault) revert Unauthorized();
         address token = _linked(abi.encodeWithSignature("gem()"));

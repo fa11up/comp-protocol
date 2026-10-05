@@ -58,7 +58,8 @@ contract ImdUSD is ERC20 {
     }
 
     /// @notice Burn from an account as instructed by the registered vault, without an ERC-20 allowance.
-    /// @dev CDPVault only burns the caller's tokens during repayment, liquidation or redemption.
+    /// @dev CDPVault burns the caller's tokens during repayment, liquidation and redemption, and the
+    /// Treasury's own imdUSD in `cover`, which retires realized bad debt with the protocol's surplus.
     function burn(address account, uint256 amount) external onlyVault {
         _burn(account, amount);
     }

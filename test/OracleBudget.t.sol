@@ -82,8 +82,26 @@ contract OracleBudgetTest is Test {
         assertEq(treasury.fundOracle(), 0, "nothing more today");
         assertEq(imd.balanceOf(ORACLE_ASKER), ORACLE_BUDGET_PER_DAY);
 
+        // Next day: the asker still holds yesterday's unspent budget, so it is topped up, not added to.
         vm.warp(block.timestamp + 1 days);
-        assertEq(treasury.fundOracle(), ORACLE_BUDGET_PER_DAY, "the budget resets at the UTC day");
+        assertEq(treasury.fundOracle(), 0, "a full asker is not topped up past one day's budget");
+        // Once it spends some, the next top-up restores exactly that much.
+        vm.prank(ORACLE_ASKER);
+        imd.transfer(address(0xDEAD), 4 ether);
+        assertEq(treasury.fundOracle(), 4 ether, "the top-up replaces what was spent");
+        assertEq(imd.balanceOf(ORACLE_ASKER), ORACLE_BUDGET_PER_DAY);
+    }
+
+    /// @dev Launch audit (oracle panel, medium): the asker has no way to return IMD, so funding it a
+    /// full day's budget regardless of what it held piled the reserve up in a contract nothing can
+    /// withdraw from. It is now topped up to one day's budget and never past it.
+    function test_theAskerIsToppedUpNeverPiledUp() public {
+        _shares(treasury, 500 ether);
+        for (uint256 day; day < 5; ++day) {
+            treasury.fundOracle();
+            vm.warp(block.timestamp + 1 days);
+        }
+        assertEq(imd.balanceOf(ORACLE_ASKER), ORACLE_BUDGET_PER_DAY, "five idle days hold one day's budget, not five");
     }
 
     function test_sendsOnlyWhatTheTreasuryHas() public {

@@ -37,9 +37,10 @@ interface IPoolManagerExtsload {
 ///   - DRIFT. A feed that quotes IMD/ETH may be asked for when IMD's own Uniswap v4 pool sits further
 ///     from the feed than half the feed's deviation cap — the band the price-movement design calls
 ///     for, narrower than the cap so the feed is never asked to make a jump it cannot take. Drift
-///     must be ARMED and still present ARM_DELAY_BLOCKS later: a pool pushed off-price and back inside
-///     one transaction (a flash loan) cannot trigger a paid update; holding it off-price across blocks
-///     means fighting arbitrageurs with real capital.
+///     must be ARMED and still present ARM_DELAY_BLOCKS later, so one push-and-restore inside a single
+///     transaction cannot trigger a paid update. Two such pushes five blocks apart can (launch audit,
+///     low): accepted, because each pays the pool's 1% fee both ways, the result is only an honest
+///     attestation, and the Treasury's spend is capped by the daily budget.
 ///
 /// Anyone may also `askPaid`: the caller pays the Intake's price in IMD and an update is bought for any
 /// feed at any time, with none of the need checks, because no protocol money is spent. That is how a
@@ -51,8 +52,9 @@ interface IPoolManagerExtsload {
 /// oracle: anyone can still buy an attestation off chain and relay it through SwarmRelay.
 ///
 /// Delivery goes through SwarmRelay, so each feed keeps its one relayer and a keeper can still bundle
-/// a relay with a liquidation. If delivery fails (the callback reverts or runs out of the Intake's
-/// gas stipend), the Intake records it and the attestation stays public: anyone can relay it by hand.
+/// a relay with a liquidation. The callback never reverts on a refused or duplicate relay: it clears the
+/// feed's in-flight slot either way and reports whether it relayed. An answer it could not deliver stays
+/// public, and anyone can relay it by hand.
 contract OracleAsker {
     using SafeERC20 for IERC20;
 
@@ -74,7 +76,7 @@ contract OracleAsker {
     event Armed(address indexed feed, uint256 atBlock, uint256 driftBps);
     event Asked(address indexed feed, bytes32 indexed requestId, uint256 price, bool forStaleness);
     event AskedPaid(address indexed feed, bytes32 indexed requestId, address indexed payer, uint256 price);
-    event Delivered(address indexed feed, bytes32 indexed requestId);
+    event Delivered(address indexed feed, bytes32 indexed requestId, bool relayed);
 
     error UnknownFeed(address feed);
     error WrongBody();
@@ -221,8 +223,15 @@ contract OracleAsker {
             f.inFlight = bytes32(0);
             f.inFlightAt = 0;
         }
-        SwarmRelay(ATTESTATION_RELAYER).relay(SwarmFeed(feed), a, signature);
-        emit Delivered(feed, requestId);
+        // Never revert past this point (launch audit, oracle panel, medium). If the answer was already
+        // relayed by hand, or the feed refuses it, a reverting callback would roll back the clearing
+        // above and hold the feed's in-flight slot for ASK_TIMEOUT, refusing ask and askPaid for two
+        // hours. The slot is cleared either way; `relayed` says whether this delivery landed.
+        bool relayed;
+        try SwarmRelay(ATTESTATION_RELAYER).relay(SwarmFeed(feed), a, signature) {
+            relayed = true;
+        } catch {}
+        emit Delivered(feed, requestId, relayed);
     }
 
     // --- what the chain says ----------------------------------------------------------------------

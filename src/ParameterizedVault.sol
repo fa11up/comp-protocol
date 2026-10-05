@@ -28,6 +28,7 @@ import {TREASURY_FACTORY} from "./DeploymentConfig.sol";
 /// limits Parameters enforces on itself.
 contract ParameterizedVault is CDPVault {
     error TreasuryFactoryMissing();
+    error TreasuryNotOurs();
 
     /// @notice The governed source of this vault's economics. Immutable: a governor who could
     /// replace it would have unbounded authority through the replacement.
@@ -68,6 +69,9 @@ contract ParameterizedVault is CDPVault {
         // creation code would otherwise sit inside this contract's initcode and push it over.
         if (TREASURY_FACTORY.code.length == 0) revert TreasuryFactoryMissing();
         treasury = TreasuryFactory(TREASURY_FACTORY).create();
+        // Trust the factory's answer only after it proves it: the Treasury must serve this vault
+        // (launch audit, governance panel). A factory that returned anything else is refused here.
+        if (treasury.vault() != address(this)) revert TreasuryNotOurs();
         usdPriceFeed = new UsdPriceFeed(ISwarmFeed(priceFeed_));
         // A share collateral is priced as its exchange rate times the underlying's USD price. The
         // adapter works per 1e18 RAW units, so sIMD's 24 decimals against IMD's 18 cannot misvalue it.
@@ -101,8 +105,17 @@ contract ParameterizedVault is CDPVault {
         return parameters.redemptionDivisor();
     }
 
+    /// @dev The lagged backing applies exactly while minting from work is on.
+    function _lagApplies() internal view override returns (bool) {
+        return parameters.wage() != 0;
+    }
+
     function _surplus() internal view override returns (address) {
         return address(treasury);
+    }
+
+    function _syncSurplus(address) internal override {
+        treasury.sync(stablecoin);
     }
 
     function skew() public view override returns (uint256) {
@@ -215,10 +228,23 @@ contract ParameterizedVault is CDPVault {
     /// it was credited as if surplus collateral stood behind it. totalBadDebt is accrued debt (fees
     /// included) while totalDebt is principal, so the subtraction over-counts slightly, in the
     /// tightening direction. A position left with collateral below the liquidation payout but not yet
-    /// drained is not recorded until someone finishes it; the remainder is seizable at the usual 10%
-    /// bonus, and the sweep in `bite` then records it.
+    /// drained is not recorded until someone finishes it; the remainder is seizable at the usual bonus,
+    /// and dust below one wei of debt is taken whole by `bite` (or swept by `cover`), which records it.
+    ///
+    /// D1, BUILT AND DORMANT (launch audit 2026-10-05, vault panel, medium). Excluding only the CURRENT
+    /// transaction's capital left adjacent transactions open: borrow in one, earn (or cash) in the next,
+    /// repay and withdraw in a third, and work-minted imdUSD outlived the debt that authorised it, or a
+    /// redemption took the reserve at par while backing was 0.4. Fixed by the lagged capital in CDPVault
+    /// (`laggedNow`, BACKING_WARMUP): increases are credited over a day, decreases at once. It applies only
+    /// while the wage is nonzero (`_lagApplies`), i.e. once minting from work is switched on; it is tracked
+    /// from deployment so it is warm then. Proofs: docs/AUDIT-VAULT-2026-10-05.md, test/LaggedBacking.t.sol.
     function backedDebt() public view returns (uint256) {
         uint256 debt = Math.min(totalDebt, _debtAtTransactionStart());
+        if (_lagApplies()) {
+            // D1: debt from earlier transactions counts only as it has warmed up.
+            (uint256 lagDebt,) = laggedNow();
+            debt = Math.min(debt, lagDebt);
+        }
         uint256 bad = totalBadDebt;
         return debt > bad ? debt - bad : 0;
     }

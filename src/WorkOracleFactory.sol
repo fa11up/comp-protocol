@@ -30,7 +30,8 @@ contract WorkOracleFactory {
     event WorkOracleCreated(address indexed vault, address oracle);
 
     /// @notice Deploy a work oracle whose sole consumer is the caller.
-    /// @param maxAge_ Seconds after which an attested tally is stale and grants nothing new.
+    /// @param maxAge_ Seconds after which the feed's latest tally reads stale. Claims against an accepted
+    /// root are NOT gated on it (launch audit, deferred with minting from work: see WAGE_WAD).
     function create(uint256 maxAge_) external returns (SwarmWorkOracle oracle) {
         oracle = new SwarmWorkOracle(msg.sender, maxAge_);
         emit WorkOracleCreated(msg.sender, address(oracle));

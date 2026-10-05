@@ -50,6 +50,8 @@ abstract contract SwarmFeed is ISwarmFeed {
     error WindowSpanOutOfRange(uint64 span);
     error WindowNotAdvancing(uint64 toBlock, uint64 lastAccepted);
     error InvalidWindow();
+    error WindowInFuture(uint64 toBlock, uint256 head);
+    error WindowTooOld(uint64 toBlock, uint256 head);
     error UnboundQuestionNeedsRelayer();
     error QuestionNeedsWindowBounds();
     error InvalidAttestationChain();
@@ -229,8 +231,15 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// Two further bounds, because answering the right question is not yet answering it honestly:
     ///   - the span is bounded, so the question cannot be answered over a single block (a point read
     ///     dressed up as a window median) nor over a month (which smooths away a real move);
-    ///   - toBlock must advance, so a freshly signed attestation cannot answer over an ANCIENT window
-    ///     in which the price was whatever the buyer needed it to be.
+    ///   - toBlock must advance past the last accepted window;
+    ///   - and, on the chain the data is about, the window must be RECENT: it closed at or before this
+    ///     block and no more than one feed lifetime (maxAge, in 12-second blocks) ago. Advancing alone
+    ///     was not enough (launch audit, oracle panel, high): after any gap in updates, a buyer could
+    ///     have a fresh signature put on a window from hours or days earlier, chosen for its price, and
+    ///     it would be accepted and dated now; a window in the future would also have pushed
+    ///     lastToBlock past every honest one. A deployment whose data lives on another chain (the
+    ///     Sepolia feeds attest mainnet) cannot see that chain's head, so the bound applies only when
+    ///     attestationChainId is this chain — which it is for every mainnet feed.
     function _requireQuestion(OracleAttestation calldata a) private {
         (bytes memory prefix, uint64 minSpan, uint64 maxSpan) = questionPolicy();
         if (prefix.length == 0) return;
@@ -238,6 +247,10 @@ abstract contract SwarmFeed is ISwarmFeed {
         uint64 span = a.toBlock - a.fromBlock;
         if (span < minSpan || span > maxSpan) revert WindowSpanOutOfRange(span);
         if (a.toBlock <= lastToBlock) revert WindowNotAdvancing(a.toBlock, lastToBlock);
+        if (attestationChainId == block.chainid) {
+            if (a.toBlock > block.number) revert WindowInFuture(a.toBlock, block.number);
+            if (block.number - a.toBlock > maxAge / 12) revert WindowTooOld(a.toBlock, block.number);
+        }
         bytes32 expected = expectedQuestionHash(a.fromBlock, a.toBlock);
         if (a.questionHash != expected) revert WrongQuestion(expected, a.questionHash);
         lastToBlock = a.toBlock;

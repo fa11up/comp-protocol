@@ -68,8 +68,8 @@ contract Parameters is Governed {
 
     uint256 private constant BPS = 10_000;
 
-    /// @notice Hard cap on the work ceiling's ratio term. 5000 is the cliff where worst-case backing
-    /// touches one at the loosest NHI (mat 150); this is half of it, 120% with an empty reserve.
+    /// @notice Hard cap on the work ceiling's ratio term. 7000 is the cliff where worst-case backing
+    /// touches one at the loosest NHI (mat 170); at 2500 it is 136% with an empty reserve.
     /// A constant, so governance can lower the ratio and can never raise it past here.
     uint256 public constant MAX_EARN_MAT_BPS = 2_500;
 
@@ -214,10 +214,7 @@ contract Parameters is Governed {
         _propose(abi.encode(Change.OracleBudget, imdPerDay));
     }
 
-    /// @notice Queue a listing, repricing or (with a zero price source) delisting of one of the
-    /// Treasury's reserve assets. The Treasury's own rules apply at proposal — imdUSD is refused with
-    /// `StablecoinIsNotReserve`, a haircut must be at most 10000 — so a change the register would refuse
-    /// never occupies the slot. Applying it, like every other change, is anyone's to do after the delay.
+    /// @notice Propose the redemption fee divisor, within MIN_/MAX_REDEMPTION_DIVISOR.
     function proposeRedemptionDivisor(uint256 divisor) external {
         _propose(abi.encode(Change.RedemptionDivisor, divisor));
     }
@@ -227,6 +224,11 @@ contract Parameters is Governed {
         _propose(abi.encode(Change.Stream, payee, perDay));
     }
 
+    /// @notice Queue a listing, repricing or (with a zero price source) delisting of one of the
+    /// Treasury's reserve assets. The Treasury's own rules apply at proposal — imdUSD is refused with
+    /// `StablecoinIsNotReserve`, a haircut must be at most 10000, the vault's collateral only against its
+    /// own collateral price — so a change the register would refuse never occupies the slot. Applying it,
+    /// like every other change, is anyone's to do after the delay.
     function proposeReserveAsset(IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps) external {
         _propose(abi.encode(Change.ReserveAsset, asset, priceFeed, haircutBps));
     }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {DeployPreflight} from "./DeployPreflight.sol";
 import {Script, console2} from "forge-std/Script.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {SpotFeed} from "../src/SpotFeed.sol";
@@ -27,7 +28,7 @@ import {
 ///      3, verified by recovering live attestation signatures against candidate uint8 values.
 /// Both are immutable, so 519's feeds are permanently inert. Nothing here is upgradeable either —
 /// that is the point — so every constant below is checked against chain state by `verify()`.
-contract DeployProtocol is Script {
+contract DeployProtocol is Script, DeployPreflight {
     // The attester, relayer, reporters, quorum, answer type and payload chainId are no longer
     // written here at all: PriceFeed and NhiFeed take none of them, because every one of them is
     // pinned in src/DeploymentConfig.sol. This script cannot get them wrong, and neither can a
@@ -50,6 +51,7 @@ contract DeployProtocol is Script {
     uint16 constant MIN_AGREED = 15; // mirrors SwarmFeed.MIN_AGREED
 
     function run() external {
+        _preflight();
         // Kept only to check the broadcasting key against the authority the source pins. A deployer
         // who cannot report cannot seed the feed, which is launch 519's failure by another road.
         // Deliberately NOT required to equal ATTESTATION_RELAYER: relaying is a hot, automated role

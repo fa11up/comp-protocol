@@ -431,6 +431,22 @@
   },
   {
     "type": "error",
+    "name": "WindowInFuture",
+    "inputs": [
+      {
+        "name": "toBlock",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "head",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "WindowNotAdvancing",
     "inputs": [
       {
@@ -453,6 +469,22 @@
         "name": "span",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "WindowTooOld",
+    "inputs": [
+      {
+        "name": "toBlock",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "head",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

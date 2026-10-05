@@ -127,7 +127,7 @@ uint256 constant CUT_BPS = 1_000;
 uint256 constant LINE = 1_000_000e18;
 
 /// @dev Each redemption raises the fee's base by redeemed / supply / this. At 2, redeeming 10% of
-/// supply at once costs 5.5% (the 5% cap); at the former 4 it cost 3%. Chosen 2026-10-05.
+/// supply at once costs 5.0% (the cap); at the former 4 it cost 3%. Chosen 2026-10-05.
 uint256 constant REDEMPTION_DIVISOR = 2;
 
 /// @dev The operator stream at launch: who the Treasury pays imdUSD to, and how much per UTC day.
@@ -163,9 +163,14 @@ uint256 constant EARN_MAT_BPS = 2_500;
 address constant ERC8004_ADAPTER = 0xde152AfB7db5373F34876E1499fbD893A82dD336;
 
 // imdUSD earned per accepted task, 1e18-scaled. Governed through `Parameters`, hard-bounded there at one
-// imdUSD per task. Shipped at a hundredth of a imdUSD; the work ceiling binds on top, so a claim is
-// bounded twice -- by what was earned and by what backs the protocol.
-uint256 constant WAGE_WAD = 0.01 ether;
+// imdUSD per task; the work ceiling binds on top, so a claim is bounded twice -- by what was earned and
+// by what backs the protocol.
+// ZERO AT LAUNCH: minting from work stays off until the upstream integration is complete (decided
+// 2026-10-05). Rights are tasks x wage, so no task earns any, and SwarmWorkOracle.claim refuses while
+// the wage is zero so no agent's tasks are spent for nothing. Governance turns it on by proposing a
+// wage behind the 48-hour timelock. Raising it also switches on the lagged backing that closes audit
+// finding D1 (CDPVault.laggedNow), built in and tracked from deployment.
+uint256 constant WAGE_WAD = 0;
 
 // The pre-deployed WorkOracleFactory, and the sentinel a vault passes as its oracle to ask for a real
 // attested work oracle from it.
@@ -217,7 +222,8 @@ uint256 constant MAX_ORACLE_BUDGET_PER_DAY = 100 ether;
 // The asker's anti-spam policy. A feed may be paid for at most once per ASK_MIN_INTERVAL, never while
 // a request for it is in flight (until ASK_TIMEOUT), and never above ASK_MAX_PRICE IMD per request. A
 // drift must be armed and still present ARM_DELAY_BLOCKS later, within ARM_WINDOW_BLOCKS, so a pool
-// pushed off-price and back inside one transaction cannot trigger a paid update. A staleness ask needs
+// pushed off-price and back inside one transaction cannot trigger a paid update (two pushes five blocks
+// apart can; accepted, see OracleAsker). A staleness ask needs
 // no arming: it is allowed once a value is STALE_AT_BPS of the way to its maxAge.
 uint256 constant ASK_MIN_INTERVAL = 10 minutes;
 uint256 constant ASK_TIMEOUT = 2 hours;

@@ -230,11 +230,44 @@ contract OracleAskerTest is Test {
         bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
         SwarmFeed.OracleAttestation memory a = _attestation(keccak256("late"), 0.87 ether);
         bytes memory good = _sign(healthFeed, a);
-        assertFalse(intake.complete(id, abi.encode(id, a, hex"00")), "a bad signature is not delivered");
+        (uint256 before,) = healthFeed.latestValue();
+        // The callback no longer reverts on a refused relay (launch audit, oracle panel, medium): it
+        // completes, reports relayed = false, and frees the feed's in-flight slot.
+        vm.expectEmit(true, true, false, true, address(asker));
+        emit OracleAsker.Delivered(address(healthFeed), id, false);
+        assertTrue(intake.complete(id, abi.encode(id, a, hex"00")), "the callback itself succeeds");
+        (uint256 value,) = healthFeed.latestValue();
+        assertEq(value, before, "a bad signature changed nothing");
+        (,,,,, uint64 inFlightAt, bytes32 inFlight) = asker.feeds(address(healthFeed));
+        assertEq(inFlight, bytes32(0), "the in-flight slot is free");
+        assertEq(inFlightAt, 0);
         vm.prank(STRANGER);
         SwarmRelay(ATTESTATION_RELAYER).relay(healthFeed, a, good);
-        (uint256 value,) = healthFeed.latestValue();
-        assertEq(value, 0.87 ether);
+        (value,) = healthFeed.latestValue();
+        assertEq(value, 0.87 ether, "and the answer can still be relayed by hand");
+    }
+
+    /// @dev Launch audit (oracle panel, medium): an answer relayed by hand BEFORE the Intake's callback
+    /// made the callback revert (replayed request), which rolled back the slot clearing and refused
+    /// ask / askPaid for ASK_TIMEOUT. Now the callback completes and the slot is free at once.
+    function test_aHandRelayBeforeTheCallbackDoesNotHoldTheSlot() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("raced"), 0.86 ether);
+        bytes memory sig = _sign(healthFeed, a);
+        vm.prank(STRANGER);
+        SwarmRelay(ATTESTATION_RELAYER).relay(healthFeed, a, sig);
+        vm.expectEmit(true, true, false, true, address(asker));
+        emit OracleAsker.Delivered(address(healthFeed), id, false);
+        assertTrue(intake.complete(id, abi.encode(id, a, sig)), "the duplicate delivery does not revert");
+        (,,,,,, bytes32 inFlight) = asker.feeds(address(healthFeed));
+        assertEq(inFlight, bytes32(0), "the feed can be asked for again without waiting ASK_TIMEOUT");
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(STRANGER, 1 ether);
+        vm.startPrank(STRANGER);
+        imd.approve(address(asker), PRICE);
+        asker.askPaid(address(healthFeed), HEALTH_BODY, PRICE);
+        vm.stopPrank();
     }
 
     // --- on demand ------------------------------------------------------------------------------

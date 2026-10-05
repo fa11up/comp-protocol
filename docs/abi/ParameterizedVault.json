@@ -37,6 +37,19 @@
   },
   {
     "type": "function",
+    "name": "BACKING_WARMUP",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "CHOP_PERCENT",
     "inputs": [],
     "outputs": [
@@ -503,6 +516,63 @@
   {
     "type": "function",
     "name": "indexCheckpointAt",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "laggedAt",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "laggedDebt",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "laggedNow",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "debt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "secured",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "laggedSecured",
     "inputs": [],
     "outputs": [
       {
@@ -1409,6 +1479,11 @@
   {
     "type": "error",
     "name": "TreasuryFactoryMissing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TreasuryNotOurs",
     "inputs": []
   },
   {

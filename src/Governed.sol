@@ -16,9 +16,10 @@ import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
 /// be able to hold a validated change over the protocol indefinitely, choosing its moment.
 ///
 /// The payload is `bytes` so this contract knows nothing about what it governs; the subclass decodes
-/// it in `_validate` and `_apply`. `_validate` runs twice, at proposal and again at application,
-/// because a bound that reads live state (a ceiling against outstanding debt) can hold when proposed
-/// and be false two days later. The second check is the one that protects anybody.
+/// it in `_validate` and `_apply`. `_validate` runs twice, at proposal and again at application, so a
+/// bound that reads live state still holds when the change lands. (Parameters' ceiling no longer reads
+/// outstanding debt — an audit showed that let anyone hold a proposal hostage — but the reserve-listing
+/// check does read the listed token and feed, which can change in the meantime.)
 abstract contract Governed {
     /// @notice How long a proposal must be public before it can be applied.
     uint256 public constant TIMELOCK = 48 hours;

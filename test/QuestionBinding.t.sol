@@ -146,6 +146,55 @@ contract QuestionBindingTest is Test {
         assertEq(feed.expectedQuestionHash(26_000_000, 26_000_600), _expected(26_000_000, 26_000_600));
     }
 
+    // --- window recency (launch audit, oracle panel, high) ---------------------------------------
+    // On the chain the data is about (mainnet feeds attest mainnet), the window must have closed at or
+    // before this block and within one feed lifetime of it. BoundFeed's maxAge is one day, so 7,200
+    // blocks. Before the fix only "toBlock advances" was checked, and a fresh signature over a window
+    // from days ago, chosen for its price, was accepted and dated now.
+
+    function test_onTheDataChainAWindowThatClosedDaysAgoIsRefused() public {
+        vm.chainId(1);
+        vm.roll(26_100_000);
+        uint64 to = 26_100_000 - 21_400; // about three days of blocks before the head
+        SwarmFeed.OracleAttestation memory a = _attestation(_expected(to - 600, to), 1_500_000_000_000_000, to - 600, to);
+        bytes memory sig = _sign(a);
+        vm.prank(STRANGER);
+        vm.expectRevert(abi.encodeWithSelector(SwarmFeed.WindowTooOld.selector, to, uint256(26_100_000)));
+        feed.submitAttestation(a, sig);
+    }
+
+    function test_onTheDataChainAWindowInTheFutureIsRefused() public {
+        vm.chainId(1);
+        vm.roll(26_100_000);
+        uint64 to = 26_101_000;
+        SwarmFeed.OracleAttestation memory a = _attestation(_expected(to - 600, to), 1_500_000_000_000_000, to - 600, to);
+        bytes memory sig = _sign(a);
+        vm.expectRevert(abi.encodeWithSelector(SwarmFeed.WindowInFuture.selector, to, uint256(26_100_000)));
+        feed.submitAttestation(a, sig);
+        assertEq(feed.lastToBlock(), 0, "nothing pushed lastToBlock past the honest windows");
+    }
+
+    function test_onTheDataChainARecentWindowIsAccepted() public {
+        vm.chainId(1);
+        vm.roll(26_100_000);
+        uint64 to = 26_100_000 - 20;
+        SwarmFeed.OracleAttestation memory a = _attestation(_expected(to - 600, to), 1_500_000_000_000_000, to - 600, to);
+        feed.submitAttestation(a, _sign(a));
+        assertEq(feed.lastToBlock(), to);
+        assertFalse(feed.isStale());
+    }
+
+    /// @dev A feed whose data lives on another chain (Sepolia feeds attest mainnet) cannot see that
+    /// chain's head, so the bound does not apply there; the advancing rule still does.
+    function test_aFeedOnAnotherChainThanItsDataIsUnaffected() public {
+        assertEq(block.chainid, 11155111);
+        vm.roll(100);
+        SwarmFeed.OracleAttestation memory a =
+            _attestation(_expected(26_000_000, 26_000_600), 1_500_000_000_000_000, 26_000_000, 26_000_600);
+        feed.submitAttestation(a, _sign(a));
+        assertEq(feed.lastToBlock(), 26_000_600);
+    }
+
     function _expected(uint64 fromBlock, uint64 toBlock) private pure returns (bytes32) {
         return keccak256(
             abi.encodePacked(

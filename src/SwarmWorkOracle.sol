@@ -50,6 +50,7 @@ interface IAdapter8004 {
 /// remains the bridge. It is evidence that the plane published the work, not proof the work happened.
 contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
     error InvalidVault();
+    error WorkMintingOff();
     error Unauthorized();
     error InvalidAccount();
     error ZeroAmount();
@@ -144,6 +145,10 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
         returns (uint256 rights)
     {
         if (!acceptedRoots[root]) revert UnknownRoot();
+        // While the wage is zero (minting from work is off) a claim would mark the agent's tasks as
+        // credited for nothing, and they could never earn once minting is switched on. Refused instead,
+        // so every task stays claimable for the day the wage is set.
+        if (wage() == 0) revert WorkMintingOff();
         if (!_controls(agentId, msg.sender)) revert NotTheController();
         bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(agentId, accepted, cumulative))));
         if (!_verify(proof, root, leaf)) revert BadProof();

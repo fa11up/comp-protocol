@@ -10,6 +10,7 @@ import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
+import {IERC20 as IERC20Like} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice `cover`: the protocol's surplus imdUSD (its Treasury's) retires realized bad debt.
 /// @dev A realized bad debt is made the way the vault makes one: a crash, a mark, and a liquidation
@@ -164,6 +165,115 @@ contract CoverTest is WorkBackingFixture {
         vm.expectRevert(CDPVault.ZeroAmount.selector);
         backedVault.cover(BORROWER, 0);
     }
+    // --- dust (launch audit, vault panel + governance panel, medium) ------------------------------
+    // At sIMD's scale (about 8.7e13 USD per 1e18 raw units) one wei of debt seizes ~13,800 raw units,
+    // so a smaller collateral could never be bitten, and `cover` refused any non-zero collateral. A
+    // drained borrower re-locking one raw unit froze the bad debt. These tests price the collateral at
+    // that scale (1e12 per 1e18 raw), where one wei of debt seizes 1.2e6 raw units.
+
+    uint256 private constant SIMD_SCALE_PRICE = 1e12;
+
+    function _relockDust() private returns (uint256 bad) {
+        bad = _drain();
+        _setVaultPrice(SIMD_SCALE_PRICE);
+        vm.prank(APPROVED_OPERATOR);
+        collateral.mint(BORROWER, 1);
+        vm.startPrank(BORROWER);
+        collateral.approve(address(backedVault), 1);
+        backedVault.lock(1);
+        vm.stopPrank();
+        (uint256 held,) = backedVault.positions(BORROWER);
+        assertEq(held, 1, "one raw unit re-locked onto the drained position");
+    }
+
+    function test_reLockedDustNoLongerBlocksCover() public {
+        uint256 bad = _relockDust();
+        _fundTreasury(bad);
+        uint256 treasuryGemBefore = collateral.balanceOf(address(reserve));
+        vm.prank(STRANGER);
+        backedVault.cover(BORROWER, bad);
+        (uint256 held,) = backedVault.positions(BORROWER);
+        assertEq(held, 0, "the dust was swept");
+        assertEq(collateral.balanceOf(address(reserve)), treasuryGemBefore + 1, "to the Treasury");
+        assertEq(backedVault.totalBadDebt(), 0, "and the bad debt is retired");
+        assertEq(backedVault.debtOf(BORROWER), 0);
+    }
+
+    function test_reLockedDustIsTakenWholeByABite() public {
+        uint256 bad = _relockDust();
+        backedVault.bark(BORROWER); // still marked from the drain: a no-op unless expired
+        uint256 keeperGemBefore = collateral.balanceOf(KEEPER);
+        vm.prank(KEEPER);
+        backedVault.bite(BORROWER, 1);
+        (uint256 held,) = backedVault.positions(BORROWER);
+        assertEq(held, 0, "a one-wei bite drains dust below the one-wei seizure");
+        assertEq(collateral.balanceOf(KEEPER), keeperGemBefore + 1);
+        assertEq(backedVault.totalBadDebt(), bad - 1, "drained again, the residual is recorded");
+    }
+
+    /// @dev The variant with no owner action: the largest coverable bite leaves a remainder at the
+    /// one-wei seizure (not swept), then the price falls and that remainder can no longer be seized.
+    function test_dustLeftByAPriceFallIsStillReachable() public {
+        _setVaultPrice(3 * SIMD_SCALE_PRICE);
+        uint256 locked = 1.2e24 + 1.2e6; // one imdUSD's seizure at 1e12, plus one one-wei seizure
+        _open(BORROWER, locked, 2 ether);
+        _open(KEEPER, 450 ether * 1e6, 250 ether); // enough collateral at this scale to borrow imdUSD
+        _setVaultPrice(SIMD_SCALE_PRICE);
+        backedVault.bark(BORROWER);
+        vm.warp(vm.getBlockTimestamp() + 6 hours);
+        _refreshEthUsd();
+        _setVaultPrice(SIMD_SCALE_PRICE);
+        vm.prank(KEEPER);
+        backedVault.bite(BORROWER, 1 ether);
+        (uint256 remainder,) = backedVault.positions(BORROWER);
+        assertEq(remainder, 1.2e6, "left exactly one one-wei seizure, which the sweep does not take");
+        assertGt(backedVault.debtOf(BORROWER), 0, "with debt still owed");
+
+        _setVaultPrice(SIMD_SCALE_PRICE / 2); // a further fall: the remainder is now below one wei's seizure
+        vm.prank(KEEPER);
+        backedVault.bite(BORROWER, 1);
+        (remainder,) = backedVault.positions(BORROWER);
+        assertEq(remainder, 0, "taken whole instead of reverting InsufficientCollateral");
+        assertGt(backedVault.totalBadDebt(), 0, "the shortfall is realized and coverable");
+    }
+
+    function test_coverStillRefusesAPositionWithRealCollateral() public {
+        _drain();
+        _setVaultPrice(SIMD_SCALE_PRICE);
+        vm.prank(APPROVED_OPERATOR);
+        collateral.mint(BORROWER, 5e6);
+        vm.startPrank(BORROWER);
+        collateral.approve(address(backedVault), 5e6);
+        backedVault.lock(5e6); // above the 1.2e6 one-wei seizure: bite reaches it, so cover must not
+        vm.stopPrank();
+        vm.expectRevert(CDPVault.NoRealizedBadDebt.selector);
+        backedVault.cover(BORROWER, 1);
+    }
+
+    // --- bookkeeping (launch audit, governance panel, low) ----------------------------------------
+
+    /// @dev cover burned Treasury imdUSD outside its receipt accounting, so imdUSD that arrived since the
+    /// last sync vanished from totalReceived. It now syncs the Treasury first.
+    function test_coverKeepsTheTreasurysReceiptsWhole() public {
+        uint256 bad = _drain();
+        uint256 extra = 7 ether;
+        IERC20Like stableToken = IERC20Like(address(stable));
+        uint256 receivedBefore = reserve.totalReceived(stableToken);
+        _fundTreasury(bad + extra); // arrives, never synced
+        // Everything that arrived since the last sync: this funding plus fees reminted earlier.
+        uint256 unsynced = stable.balanceOf(address(reserve)) - reserve.lastSynced(stableToken);
+        assertGe(unsynced, bad + extra);
+        uint256 remintedBefore = backedVault.totalFeesMinted();
+        backedVault.cover(BORROWER, bad);
+        uint256 reminted = backedVault.totalFeesMinted() - remintedBefore;
+        reserve.sync(stableToken);
+        assertEq(
+            reserve.totalReceived(stableToken),
+            receivedBefore + unsynced + reminted,
+            "every imdUSD that arrived is on the books, including what cover then burned"
+        );
+    }
+
 }
 
 /// @notice The base vault has no surplus account: its fee recipient is a wallet that never agreed to
@@ -207,4 +317,5 @@ contract CoverBaseVaultTest is Test {
         vm.expectRevert(CDPVault.NoSurplus.selector);
         vault.cover(BORROWER, 1);
     }
+
 }

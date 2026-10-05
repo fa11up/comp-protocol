@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {DeployPreflight} from "./DeployPreflight.sol";
 import {Script, console2} from "forge-std/Script.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {SpotFeed} from "../src/SpotFeed.sol";
@@ -34,12 +35,13 @@ import {
 ///
 /// Running this is a decision, not an upgrade: the live v3 vault is a plain CDPVault with its
 /// economics compiled in, and nothing here migrates it. A position in the old vault stays there.
-contract DeployGoverned is Script {
+contract DeployGoverned is Script, DeployPreflight {
     uint256 constant MAX_DEVIATION_BPS = 5_000;
     uint16 constant MIN_PANEL_SIZE = 25;
     uint16 constant MIN_AGREED = 15;
 
     function run() external {
+        _preflight();
         address operator = vm.envAddress("OPERATOR");
         // The broadcaster no longer has to be anything in particular. It used to be required to BE
         // the pinned reporter so the script could seed the feeds; with the fallback gone there is

@@ -11,6 +11,13 @@ import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TreasuryFactoryEtch} from "./helpers/TreasuryFactoryEtch.sol";
 import {TREASURY_FACTORY} from "src/DeploymentConfig.sol";
 
+/// @dev A factory that returns a Treasury serving someone else.
+contract ForeignTreasuryFactory {
+    function create() external returns (Treasury) {
+        return new Treasury(address(0xF0E));
+    }
+}
+
 /// @notice The vault creates its Treasury through TREASURY_FACTORY, for the EIP-3860 initcode limit.
 contract TreasuryFactoryTest is Test {
     function _vault() private returns (ParameterizedVault) {
@@ -53,5 +60,17 @@ contract TreasuryFactoryTest is Test {
     function test_theVaultsInitcodeFitsEip3860WithRoom() public pure {
         uint256 size = type(ParameterizedVault).creationCode.length;
         assertLt(size, 49_152 - 4_096, "keep at least 4 KB of headroom under EIP-3860");
+    }
+
+    /// @dev F10 (launch audit, governance panel). The vault trusted whatever TREASURY_FACTORY returned.
+    /// It now refuses a Treasury that does not serve it.
+    function test_aTreasuryServingAnotherVaultIsRefused() public {
+        vm.etch(TREASURY_FACTORY, address(new ForeignTreasuryFactory()).code);
+        TestSwarmFeed primary = new TestSwarmFeed(0.001 ether);
+        address imd = address(new MockIMD());
+        address health = address(new TestSwarmFeed(0.9 ether));
+        address spot = address(new MirroredSwarmFeed(address(primary)));
+        vm.expectRevert(ParameterizedVault.TreasuryNotOurs.selector);
+        new ParameterizedVault(imd, address(0), address(0), address(primary), health, spot);
     }
 }
