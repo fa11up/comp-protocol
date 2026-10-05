@@ -37,6 +37,7 @@ Each step assumes the previous one is merged and green. Steps 2 and 3 are indepe
 |---|---|---|
 | 1 | Rename COMP → imdUSD | the token's identity is immutable once deployed |
 | 2 | sIMD as the collateral token (wrap on deposit) — **built** | decides what collateral *is*. Deploy the vault with `StakedIMD` `0x9Efa934D9fAd4AE28c998a40195646b965a97247` as its collateral token: it then prices collateral through a `SharePriceFeed` it creates, and `lockIMD` wraps plain IMD on deposit. Fork-tested against the live vault (`test/ShareCollateralFork.t.sol`). |
+| 2b | Oracle paid from the Treasury (`OracleAsker` + `Treasury.fundOracle`) — **built, waits on upstream** | without it every price update is bought by hand in a browser. `OracleAsker` buys through the IdentityMD Intake only when the chain shows a need (a feed 75% of the way to stale, or IMD's v4 pool armed-and-still >half the deviation cap away) and delivers through SwarmRelay inside the Intake's 200k-gas callback stipend (measured 76,807). `fundOracle` streams at most `Parameters.oracleBudget` IMD per UTC day to it — keyless, unwrapping sIMD on the way. **Blocked on Intake PR #66 merging and deploying:** `INTAKE` and `ORACLE_ASKER` are placeholders (`0x…F06`/`0x…f07`) and the asker's constructor refuses an `INTAKE` with no code. |
 | 3 | **Delete the reporter fallback** | a single key can otherwise re-anchor the price — see §4 |
 | 4 | CREATE2 deployment script with address assertions | removes the silent-misconfiguration failure mode — see §6 |
 | 5 | Independent audit of this configuration | the layer that bricked launch 519, never reviewed |
@@ -223,6 +224,12 @@ and Robinhood Chain.
 4. **Dry-run.** The script recomputes each CREATE2 address from the compiled initcode and
    **asserts it equals the source constant.** A mistyped address fails here, before any gas is spent.
    This assertion is the whole reason to prefer CREATE2 over two broadcasts.
+   **`ORACLE_ASKER` is a fourth computed address, and it comes AFTER the feeds:** its constructor
+   takes the feed addresses and their body hashes, so its initcode (and CREATE2 address) depends on
+   them, while the Treasury the vault creates reads it as a source constant. Feeds do not reference
+   it, so there is no cycle: compute the feeds' addresses, then the asker's, then write the constant.
+   Its body hashes are `keccak256` of the frozen oracle.request bodies — the same bytes the feeds'
+   pinned questions were generated from.
 5. **Broadcast once**: the three prereqs at their computed addresses, then the three feeds, then the
    vault — which creates imdUSD, `Parameters`, the Treasury's sibling and `UsdPriceFeed` in its own
    constructor, so the stack comes up linked with no follow-up transaction.

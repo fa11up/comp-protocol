@@ -1,0 +1,274 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.26;
+
+import {Test} from "forge-std/Test.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SwarmFeed} from "src/SwarmFeed.sol";
+import {SwarmRelay} from "src/SwarmRelay.sol";
+import {OracleAsker} from "src/OracleAsker.sol";
+import {MockIMD} from "src/MockIMD.sol";
+import {ConfigurableSwarmFeed} from "./helpers/ConfigurableSwarmFeed.sol";
+import {MockIntake, MockPoolManager} from "./helpers/MockIntake.sol";
+import {
+    APPROVED_OPERATOR,
+    INTAKE,
+    ORACLE_ACTION,
+    ATTESTATION_RELAYER,
+    POOL_MANAGER,
+    IMD_POOL_ID,
+    ASK_MIN_INTERVAL,
+    ASK_TIMEOUT,
+    ARM_DELAY_BLOCKS,
+    ARM_WINDOW_BLOCKS
+} from "src/DeploymentConfig.sol";
+
+/// @notice The treasury-paid oracle: it pays only when the chain says an update is needed, cannot be
+/// spammed, and delivers through SwarmRelay inside the Intake's gas stipend.
+contract OracleAskerTest is Test {
+    uint256 private constant ATTESTER_KEY = 0xA11CE;
+    address private constant STRANGER = address(0x5757);
+    uint256 private constant PRICE = 0.5 ether;
+    uint256 private constant IMD_ETH = 0.001 ether;
+
+    MockIMD private imd;
+    MockIntake private intake;
+    MockPoolManager private pool;
+    ConfigurableSwarmFeed private priceFeed;
+    ConfigurableSwarmFeed private healthFeed;
+    OracleAsker private asker;
+    bytes private constant PRICE_BODY = '{"question":"IMD/ETH median"}';
+    bytes private constant HEALTH_BODY = '{"question":"network health"}';
+
+    function setUp() public {
+        vm.chainId(11155111);
+        vm.warp(10 days);
+        vm.roll(1_000);
+        vm.etch(ATTESTATION_RELAYER, address(new SwarmRelay()).code);
+        vm.etch(INTAKE, address(new MockIntake()).code);
+        vm.etch(POOL_MANAGER, address(new MockPoolManager()).code);
+        intake = MockIntake(INTAKE);
+        pool = MockPoolManager(POOL_MANAGER);
+        imd = new MockIMD();
+        intake.setPrice(ORACLE_ACTION, address(imd), PRICE);
+
+        priceFeed = new ConfigurableSwarmFeed(vm.addr(ATTESTER_KEY), ATTESTATION_RELAYER, 1, 3, 1 days, 2000);
+        healthFeed = new ConfigurableSwarmFeed(vm.addr(ATTESTER_KEY), ATTESTATION_RELAYER, 1, 3, 1 days, 2000);
+        address[] memory feeds = new address[](2);
+        feeds[0] = address(priceFeed);
+        feeds[1] = address(healthFeed);
+        bytes32[] memory hashes = new bytes32[](2);
+        hashes[0] = keccak256(PRICE_BODY);
+        hashes[1] = keccak256(HEALTH_BODY);
+        bool[] memory tracks = new bool[](2);
+        tracks[0] = true;
+        asker = new OracleAsker(IERC20(address(imd)), feeds, hashes, tracks);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(asker), 100 ether);
+
+        priceFeed.seed(IMD_ETH);
+        healthFeed.seed(0.9 ether);
+        _setPool(IMD_ETH);
+    }
+
+    /// @dev The pool's sqrtPriceX96 for a price in wei of ETH per 1e18 IMD (currency0 ETH, currency1 IMD).
+    function _setPool(uint256 weiPerImd) private {
+        uint160 sqrtP = uint160(Math.sqrt(Math.mulDiv(1e18, 1 << 192, weiPerImd)));
+        pool.set(keccak256(abi.encode(IMD_POOL_ID, uint256(6))), sqrtP);
+    }
+
+    function test_poolPriceReadsTheRightSlotInTheRightDirection() public view {
+        assertApproxEqRel(asker.poolPrice(), IMD_ETH, 1e12, "wei of ETH per 1e18 IMD, from slot0");
+        assertEq(asker.driftBps(address(priceFeed)), 0);
+    }
+
+    // --- when it pays ---------------------------------------------------------------------------
+
+    function test_aFeedNearStaleMayBeAskedForWithoutArming() public {
+        vm.warp(block.timestamp + 18 hours); // 75% of a 1-day maxAge
+        uint256 before = imd.balanceOf(address(asker));
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        assertTrue(id != bytes32(0));
+        assertEq(before - imd.balanceOf(address(asker)), PRICE, "paid exactly the Intake's price");
+        assertEq(imd.allowance(address(asker), INTAKE), 0, "no allowance left behind");
+        assertEq(intake.bodyOf(id), HEALTH_BODY, "the pinned body went to the Intake");
+    }
+
+    function test_aFreshFeedThatHasNotDriftedIsNotPaidFor() public {
+        vm.expectRevert(OracleAsker.NotArmed.selector);
+        asker.ask(address(priceFeed), PRICE_BODY);
+        vm.expectRevert(OracleAsker.NotNeeded.selector);
+        asker.ask(address(healthFeed), HEALTH_BODY);
+        vm.expectRevert(OracleAsker.NotNeeded.selector);
+        asker.arm(address(priceFeed)); // no drift to arm
+    }
+
+    /// @dev Drift past half the feed's 20% cap must be armed, and still there ARM_DELAY_BLOCKS later.
+    function test_driftMustBeArmedAndStillPresentBlocksLater() public {
+        _setPool(IMD_ETH * 115 / 100);
+        vm.expectRevert(OracleAsker.NotArmed.selector);
+        asker.ask(address(priceFeed), PRICE_BODY);
+
+        asker.arm(address(priceFeed));
+        vm.roll(block.number + ARM_DELAY_BLOCKS - 1);
+        vm.expectRevert(OracleAsker.NotArmed.selector);
+        asker.ask(address(priceFeed), PRICE_BODY);
+
+        vm.roll(block.number + 1);
+        asker.ask(address(priceFeed), PRICE_BODY);
+    }
+
+    /// @dev A pool pushed off-price to arm and then put back cannot be cashed in.
+    function test_aDriftThatDoesNotPersistIsNotPaidFor() public {
+        _setPool(IMD_ETH * 115 / 100);
+        asker.arm(address(priceFeed));
+        _setPool(IMD_ETH);
+        vm.roll(block.number + ARM_DELAY_BLOCKS);
+        vm.expectRevert(OracleAsker.NotNeeded.selector);
+        asker.ask(address(priceFeed), PRICE_BODY);
+    }
+
+    function test_anArmLapsesAfterItsWindow() public {
+        _setPool(IMD_ETH * 115 / 100);
+        asker.arm(address(priceFeed));
+        vm.roll(block.number + ARM_WINDOW_BLOCKS + 1);
+        vm.expectRevert(OracleAsker.NotArmed.selector);
+        asker.ask(address(priceFeed), PRICE_BODY);
+    }
+
+    function test_driftInsideTheBandDoesNotArm() public {
+        _setPool(IMD_ETH * 109 / 100); // 9%, under half of the 20% cap
+        vm.expectRevert(OracleAsker.NotNeeded.selector);
+        asker.arm(address(priceFeed));
+    }
+
+    // --- what stops spam --------------------------------------------------------------------------
+
+    function test_oneRequestInFlightAndAMinimumInterval() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 first = asker.ask(address(healthFeed), HEALTH_BODY);
+
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.InFlight.selector, first));
+        asker.ask(address(healthFeed), HEALTH_BODY);
+
+        // Undelivered past its timeout, the slot frees; the interval has long passed.
+        vm.warp(block.timestamp + ASK_TIMEOUT);
+        asker.ask(address(healthFeed), HEALTH_BODY);
+        assertEq(asker.feedOf(first), address(0), "the timed-out request no longer counts");
+    }
+
+    function test_theIntervalHoldsEvenAfterADelivery() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        // A delivery that does not refresh the value (a bad signature) still frees nothing early.
+        intake.complete(id, abi.encode(id, _attestation(keccak256("x"), 0.9 ether), hex"00"));
+        vm.warp(block.timestamp + ASK_TIMEOUT);
+        uint256 next = block.timestamp;
+        asker.ask(address(healthFeed), HEALTH_BODY);
+        vm.warp(next + ASK_MIN_INTERVAL - 1);
+        // In flight again, so that is what refuses it first.
+        vm.expectRevert();
+        asker.ask(address(healthFeed), HEALTH_BODY);
+    }
+
+    function test_onlyThePinnedBodyForAKnownFeed() public {
+        vm.warp(block.timestamp + 20 hours);
+        vm.expectRevert(OracleAsker.WrongBody.selector);
+        asker.ask(address(healthFeed), PRICE_BODY);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.UnknownFeed.selector, STRANGER));
+        asker.ask(STRANGER, HEALTH_BODY);
+    }
+
+    function test_neverPaysAboveTheCeilingOrForAnUnsoldAction() public {
+        vm.warp(block.timestamp + 20 hours);
+        intake.setPrice(ORACLE_ACTION, address(imd), 2 ether);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.PriceTooHigh.selector, 2 ether));
+        asker.ask(address(healthFeed), HEALTH_BODY);
+        intake.setPrice(ORACLE_ACTION, address(imd), 0);
+        vm.expectRevert(OracleAsker.NotSold.selector);
+        asker.ask(address(healthFeed), HEALTH_BODY);
+    }
+
+    // --- delivery ---------------------------------------------------------------------------------
+
+    /// @dev The whole point: the Intake calls back, the attestation goes through SwarmRelay into the
+    /// feed, and all of it fits inside the Intake's fixed 200,000-gas stipend.
+    function test_deliveryRelaysIntoTheFeedInsideTheIntakeStipend() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("delivered"), 0.88 ether);
+        bool delivered = intake.complete(id, abi.encode(id, a, _sign(healthFeed, a)));
+        assertTrue(delivered, "delivered within the stipend");
+        (uint256 value,) = healthFeed.latestValue();
+        assertEq(value, 0.88 ether, "the feed holds the attested figure");
+        assertEq(asker.feedOf(id), address(0));
+        (,,,, uint64 inFlightAt, bytes32 inFlight) = asker.feeds(address(healthFeed));
+        assertEq(inFlight, bytes32(0));
+        assertEq(inFlightAt, 0);
+        emit log_named_uint("callback gas used (stipend 200000)", intake.lastCallbackGasUsed());
+        assertLt(intake.lastCallbackGasUsed(), 150_000, "leaves headroom under the stipend");
+    }
+
+    function test_onlyTheIntakeMayDeliver() public {
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("d"), 0.88 ether);
+        bytes memory sig = _sign(healthFeed, a);
+        vm.prank(STRANGER);
+        vm.expectRevert(OracleAsker.NotTheIntake.selector);
+        asker.onOracleResult(keccak256("any"), a, sig);
+        vm.prank(INTAKE);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.UnknownRequest.selector, keccak256("any")));
+        asker.onOracleResult(keccak256("any"), a, sig);
+    }
+
+    /// @dev A delivery the feed refuses is recorded as undelivered, and the answer can still be relayed
+    /// by hand by anyone, because SwarmRelay is permissionless.
+    function test_aFailedDeliveryCanStillBeRelayedByHand() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("late"), 0.87 ether);
+        bytes memory good = _sign(healthFeed, a);
+        assertFalse(intake.complete(id, abi.encode(id, a, hex"00")), "a bad signature is not delivered");
+        vm.prank(STRANGER);
+        SwarmRelay(ATTESTATION_RELAYER).relay(healthFeed, a, good);
+        (uint256 value,) = healthFeed.latestValue();
+        assertEq(value, 0.87 ether);
+    }
+
+    // --- helpers ----------------------------------------------------------------------------------
+
+    function _attestation(bytes32 id, uint256 figure) private view returns (SwarmFeed.OracleAttestation memory a) {
+        a.requestId = id;
+        a.chainId = 1;
+        a.questionHash = keccak256("q");
+        a.answerType = 3;
+        a.answer = abi.encode(figure);
+        a.figure = figure;
+        a.fromBlock = 100;
+        a.toBlock = 200;
+        a.blockHash = keccak256("b");
+        a.panelJobId = keccak256("panel");
+        a.panelSize = 60;
+        a.quorum = 20;
+        a.agreed = 40;
+        a.issuedAt = uint64(block.timestamp);
+        a.expiresAt = uint64(block.timestamp + 1 hours);
+    }
+
+    function _sign(ConfigurableSwarmFeed feed, SwarmFeed.OracleAttestation memory a) private view returns (bytes memory) {
+        bytes32 body = keccak256(
+            bytes.concat(
+                abi.encode(
+                    feed.ATTESTATION_TYPEHASH(), a.requestId, a.chainId, a.questionHash, a.answerType,
+                    keccak256(a.answer), a.figure
+                ),
+                abi.encode(
+                    a.fromBlock, a.toBlock, a.blockHash, a.panelJobId, a.panelSize, a.quorum, a.agreed,
+                    a.issuedAt, a.expiresAt
+                )
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(ATTESTER_KEY, keccak256(abi.encodePacked("\x19\x01", feed.DOMAIN_SEPARATOR(), body)));
+        return abi.encodePacked(r, s, v);
+    }
+}

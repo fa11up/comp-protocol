@@ -1,6 +1,19 @@
 [
   {
     "type": "function",
+    "name": "fundOracle",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "sent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "isReserveAsset",
     "inputs": [
       {
@@ -31,6 +44,32 @@
     "outputs": [
       {
         "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "oracleDay",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "oracleSpent",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -297,6 +336,31 @@
   },
   {
     "type": "event",
+    "name": "OracleFunded",
+    "inputs": [
+      {
+        "name": "asker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "imd",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "spentToday",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Received",
     "inputs": [
       {
@@ -444,6 +508,11 @@
   {
     "type": "error",
     "name": "NotAReserveAsset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OracleAskerMissing",
     "inputs": []
   },
   {

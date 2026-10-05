@@ -44,6 +44,18 @@ contract MockShareVault is ERC20 {
         return shares * rate / 1e18;
     }
 
+    function maxWithdraw(address owner) external view returns (uint256) {
+        return balanceOf(owner) * rate / 1e18;
+    }
+
+    /// @dev Burns the shares worth `assets`, rounded up against the owner as ERC-4626 requires.
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares) {
+        require(msg.sender == owner, "owner only");
+        shares = (assets * 1e18 + rate - 1) / rate;
+        _burn(owner, shares);
+        underlying.transfer(receiver, assets);
+    }
+
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
         underlying.transferFrom(msg.sender, address(this), assets);
         shares = assets * 1e18 / rate;
