@@ -196,7 +196,7 @@ contract TreasuryTest is Test {
         assertGt(arrived, 0, "the protocol share must reach the treasury");
         uint256 px = 0.9 ether;
         uint256 repaid = 50 ether;
-        uint256 seized = repaid * 110 * 1e16 / px;
+        uint256 seized = repaid * (100 + vault.CHOP_PERCENT()) * 1e16 / px;
         uint256 bonus = seized - repaid * 1e18 / px;
         assertEq(arrived, bonus * 3_333 / 10_000, "exactly the configured share of the bonus");
 

@@ -195,8 +195,10 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         // The payout is capped at backing per COMP, so the model has to cap it too. This used to be
         // par-minus-fee unconditionally, with a separate branch below expecting a revert whenever
         // that exceeded the burn's share of backing — which is the halt that is gone.
+        // Rounded in the vault's order: the fee-adjusted scale first, then the amount (price 1e18 here).
+        // Applying the fee to an already floored amount differs by a wei below par on tiny burns.
         amounts.payout = Math.mulDiv(
-            Math.mulDiv(amount, _backingPerUnit(beforeState.backing, beforeState.supply), 1e18), 10_000 - feeBps, 10_000
+            amount, Math.mulDiv(_backingPerUnit(beforeState.backing, beforeState.supply), 10_000 - feeBps, 10_000), 1e18
         );
         amounts.reserveOut = Math.min(amounts.payout, beforeState.reserveIMD);
         amounts.cancelled = amounts.reserveOut == amounts.payout

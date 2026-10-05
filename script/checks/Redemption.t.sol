@@ -206,8 +206,8 @@ contract RedemptionTest is Test {
     }
 
     function test_payoutIsIndependentOfWhichEligiblePositionSuppliesIt() public {
-        _open(ALICE, 160 ether, 100 ether);
-        _open(BOB, 190 ether, 100 ether);
+        _open(ALICE, 171 ether, 100 ether);
+        _open(BOB, 219 ether, 100 ether);
         _giveStable(50 ether);
         uint256 snapshot = vm.snapshotState();
         vm.prank(REDEEMER);
@@ -232,10 +232,10 @@ contract RedemptionTest is Test {
     }
 
     function test_ceilingBoundaryIsStrictAndStressPreservesEligibleBand() public {
-        _open(ALICE, 200 ether, 100 ether);
+        _open(ALICE, 220 ether, 100 ether);
         _giveStable(50 ether);
-        assertEq(vault.mat(), 150);
-        assertEq(vault.redemptionCeilingCR(), 200);
+        assertEq(vault.mat(), 170);
+        assertEq(vault.redemptionCeilingCR(), 220);
         vm.expectRevert();
         vm.prank(REDEEMER);
         vault.cash(1 ether, 0, ALICE);
@@ -244,7 +244,7 @@ contract RedemptionTest is Test {
         assertEq(vault.redemptionCeilingCR(), 250);
         vm.prank(REDEEMER);
         vault.cash(1 ether, 0, ALICE);
-        assertGt(vault.collateralRatio(ALICE), 200);
+        assertGt(vault.collateralRatio(ALICE), 220);
     }
 
     function test_justBelowCeilingIsEligible() public {
@@ -448,7 +448,7 @@ contract RedemptionTest is Test {
         (uint256 spread, uint256 eta) = parameters.pendingGap();
         assertEq(spread, 25);
         assertEq(eta, block.timestamp + 48 hours);
-        assertEq(vault.redemptionCeilingCR(), 200);
+        assertEq(vault.redemptionCeilingCR(), 220);
         vm.warp(eta - 1);
         vm.expectRevert(abi.encodeWithSelector(Governed.TooEarly.selector, eta));
         parameters.applyPending();
@@ -456,7 +456,7 @@ contract RedemptionTest is Test {
         vm.prank(REDEEMER);
         parameters.applyPending();
         assertEq(vault.gap(), 25);
-        assertEq(vault.redemptionCeilingCR(), 175);
+        assertEq(vault.redemptionCeilingCR(), 195);
         nhi.setValue(0.6 ether);
         assertEq(vault.redemptionCeilingCR(), 225);
         (spread, eta) = parameters.pendingGap();
@@ -475,8 +475,8 @@ contract RedemptionTest is Test {
         parameters.proposeGap(100);
         vm.warp(parameters.pendingEta());
         parameters.applyPending();
-        assertEq(vault.redemptionCeilingCR(), 250);
-        assertEq(vault.mat(), 150);
+        assertEq(vault.redemptionCeilingCR(), 270);
+        assertEq(vault.mat(), 170);
     }
 
     function test_treasuryOnlyLetsItsVaultReleaseIMD() public {
@@ -576,12 +576,12 @@ contract RedemptionTest is Test {
         _price(0.2 ether);
         _registerImdReserve(10_000);
         _fundReserve(9);
-        _open(ALICE, 120, 16);
+        _open(ALICE, 136, 16);
         vm.prank(REDEEMER);
         vault.earn(4);
         vm.startPrank(ALICE);
         vault.wipe(16);
-        vault.free(120);
+        vault.free(136);
         vm.stopPrank();
         assertEq(comp.totalSupply(), 4);
         assertEq(vault.reserveValue(), 1);
@@ -750,8 +750,8 @@ contract RedemptionTest is Test {
     }
 
     function test_collateralCountsAtMostMinCRTimesPriorPrincipal() public {
-        // 1500 against 1000 is fully backed, so the same burn is allowed once real debt stands
-        // behind the collateral; 3000 against the same debt counts for no more than 1500 does.
+        // 1700 against 1000 is fully backed, so the same burn is allowed once real debt stands
+        // behind the collateral; 3000 against the same debt counts for no more than 1700 does.
         _registerImdReserve(10_000);
         _fundReserve(100 ether);
         _mintWorkAndUnwind();
@@ -761,14 +761,14 @@ contract RedemptionTest is Test {
         uint256 first = vault.cash(100 ether, 0, address(0));
         assertTrue(vm.revertToState(snapshot));
         vm.prank(BOB);
-        vault.free(1500 ether);
+        vault.free(1300 ether);
         vm.prank(REDEEMER);
         assertEq(vault.cash(100 ether, 0, address(0)), first);
-        // Supply 1250 against secured backing 1500 + 100: a burn of 100 may remove at most 128 of
-        // value and removes about 97; a burn of 150 may remove 192 and removes about 145. The
-        // uncounted 1500 of surplus never enters the comparison, which the ineligible 300% candidate
+        // Supply 1250 against secured backing 1700 + 100: a burn of 100 may remove at most 144 of
+        // value and removes about 97; a burn of 150 may remove 216 and removes about 145. The
+        // uncounted 1300 of surplus never enters the comparison, which the ineligible 300% candidate
         // shows: the reserve route needs no candidate, so its backing is what the guard measures.
-        assertEq(vault.collateralRatio(BOB), 150);
+        assertEq(vault.collateralRatio(BOB), 170);
     }
 
     function test_unregisteredReserveIsValuedAtTheRedemptionPriceOnBothSides() public {
@@ -822,16 +822,16 @@ contract RedemptionTest is Test {
         vm.prank(REDEEMER);
         comp.transfer(address(atomic), 100 ether);
         vm.prank(APPROVED_OPERATOR);
-        imd.mint(address(atomic), 13_500 ether);
+        imd.mint(address(atomic), 15_300 ether);
         assertEq(vault.backingPerUnit(), 1e18, "the cap is not what this test measures");
         // The fee is the one a tenth of the supply that existed BEFORE the call pays, and that is
         // the base the next redeemer inherits: the 9000 minted inside the call do not dilute it.
-        (bool ok, uint256 out) = atomic.run(vault, imd, 13_500 ether, 9000 ether, 100 ether, address(0));
+        (bool ok, uint256 out) = atomic.run(vault, imd, 15_300 ether, 9000 ether, 100 ether, address(0));
         assertTrue(ok);
         assertEq(out, 97 ether, "a same-transaction mint bought a cheaper fee");
         assertEq(vault.redemptionBaseRate(), 0.025 ether);
         assertEq(comp.totalSupply(), 900 ether);
-        assertEq(imd.balanceOf(address(atomic)), 13_500 ether + 97 ether);
+        assertEq(imd.balanceOf(address(atomic)), 15_300 ether + 97 ether);
     }
 
     function test_burnBeyondPriorSupplySaturatesInsteadOfDividingByZero() public {
@@ -839,8 +839,8 @@ contract RedemptionTest is Test {
         _fundReserve(1000 ether);
         AtomicRedeemer atomic = new AtomicRedeemer();
         vm.prank(APPROVED_OPERATOR);
-        imd.mint(address(atomic), 300 ether);
-        (bool ok, uint256 out) = atomic.run(vault, imd, 300 ether, 200 ether, 100 ether, address(0));
+        imd.mint(address(atomic), 340 ether);
+        (bool ok, uint256 out) = atomic.run(vault, imd, 340 ether, 200 ether, 100 ether, address(0));
         assertTrue(ok);
         assertEq(out, 95 ether);
         assertEq(vault.redemptionBaseRate(), 0.045 ether);
@@ -849,7 +849,7 @@ contract RedemptionTest is Test {
     function test_freshPrincipalIsChargedButDoesNotMoveTheRateOthersPay() public {
         _open(ALICE, 380 ether, 200 ether);
         uint256 start = block.timestamp;
-        _open(BOB, 160 ether, 100 ether);
+        _open(BOB, 170 ether, 100 ether);
         vm.prank(BOB);
         comp.transfer(REDEEMER, 100 ether);
         assertEq(vault.redemptionFeeBps(100 ether), 500, "a third of supply quotes the cap");
@@ -857,7 +857,7 @@ contract RedemptionTest is Test {
         assertEq(vault.cash(100 ether, 0, BOB), 95 ether, "and is charged it");
         assertEq(vault.redemptionBaseRate(), 0, "but fresh principal moves nothing");
         assertEq(vault.redemptionFeeBps(0), 50);
-        _assertPosition(BOB, 65 ether, 0);
+        _assertPosition(BOB, 75 ether, 0);
 
         // ALICE's principal ages out one half-life after it was minted, and then counts in full.
         _giveStable(20 ether);
@@ -930,7 +930,7 @@ contract RedemptionTest is Test {
     }
 
     function test_cancelledFeesAreNeverFresh() public {
-        _open(ALICE, 1800 ether, 1000 ether);
+        _open(ALICE, 2100 ether, 1000 ether); // 210%: a further 190 still clears the 170% floor
         vm.warp(block.timestamp + 12 hours);
         vm.prank(ALICE);
         vault.draw(100 ether);
@@ -963,7 +963,7 @@ contract RedemptionTest is Test {
     }
 
     function test_repaymentRetiresFreshPrincipalBeforeRedemptionDoes() public {
-        _open(ALICE, 1800 ether, 1000 ether);
+        _open(ALICE, 2100 ether, 1000 ether); // 210%: a further 190 still clears the 170% floor
         vm.warp(block.timestamp + 12 hours);
         vm.prank(ALICE);
         vault.draw(100 ether);
@@ -985,21 +985,21 @@ contract RedemptionTest is Test {
     // --- revision: findings 7cd5035c and 5ee3f2bc -------------------------------------------------
 
     function test_debtFreeDepositHeldAcrossTransactionsIsNotBackingWhenPositionsAreBelowMinCR() public {
-        // The reviewer's scenario: 550 of listed reserve, ALICE 1500 / 1000, the whole 800 work
-        // ceiling minted, then IMD halves. Collateral 750 and reserve 275 back 1800 COMP (0.569 each),
-        // so a 100 COMP burn paying 98.11 is refused: it would take more than its 56.9 share.
+        // The reviewer's scenario: 550 of listed reserve, ALICE 1700 / 1000, the whole 800 work
+        // ceiling minted, then IMD halves. Collateral 850 and reserve 275 back 1800 COMP (0.625 each),
+        // so a 100 COMP burn paying 98.11 is refused: it would take more than its 62.5 share.
         _registerImdReserve(10_000);
         _fundReserve(550 ether);
-        _open(ALICE, 1500 ether, 1000 ether);
+        _open(ALICE, 1700 ether, 1000 ether);
         assertEq(vault.earnLine(), 800 ether);
         vm.prank(REDEEMER);
         vault.earn(800 ether);
         _price(0.5 ether);
-        assertEq(vault.collateralRatio(ALICE), 75);
+        assertEq(vault.collateralRatio(ALICE), 85);
         _expectCapped(100 ether, ALICE);
 
         // A debt-free deposit in its own transaction used to fill the gap between what ALICE holds
-        // (750) and the cap (1500): it is not in the transient tally, bears no debt and comes back
+        // (850) and the cap (1700): it is not in the transient tally, bears no debt and comes back
         // the next transaction. Bounded per position, it contributes nothing.
         // Now that the consequence is a capped payout rather than a refusal, "contributes nothing"
         // is DIRECTLY measurable: the same burn is quoted at exactly the same figure either side of
@@ -1008,30 +1008,32 @@ contract RedemptionTest is Test {
         uint256 quotedBefore = _quote(100 ether, 0.5 ether);
         vm.prank(BOB);
         vault.lock(1500 ether);
-        assertEq(vault.securedCollateral(), 1500 ether, "only ALICE's collateral is secured");
+        assertEq(vault.securedCollateral(), 1700 ether, "only ALICE's collateral is secured");
         assertEq(_quote(100 ether, 0.5 ether), quotedBefore, "1500 idle IMD bought the redeemer nothing");
         _expectCapped(100 ether, ALICE);
         // One wei of debt contributes one wei's worth of IMD, not the deposit.
         vm.prank(BOB);
         vault.draw(1);
-        assertEq(vault.securedCollateral(), 1500 ether + 4, "two wei of USD at half a dollar");
+        assertEq(vault.securedCollateral(), 1700 ether + 4, "two wei of USD at half a dollar");
         _expectCapped(100 ether, ALICE);
 
         // The variant without a price move: the operator withdraws reserve and NHI falls to 0.60.
         _price(1 ether);
         vm.prank(BOB);
         vault.wipe(1);
-        // Half of what is actually left, not a literal 400: the three burns above now PAY (they
+        // A third of what is actually left, not a literal 400: the three burns above now PAY (they
         // used to revert and leave the reserve at its initial 550), so a fixed figure overdraws it.
+        // A third rather than half since the 170% floor: those burns are paid at 0.625, not 0.569,
+        // and what remains must still cover the par burn below on its own.
         // Read FIRST: a view inside the argument list consumes the prank (this reverted
         // Unauthorized once already), so the balance is hoisted out of the pranked call.
-        uint256 half = imd.balanceOf(address(treasury)) / 2;
+        uint256 third = imd.balanceOf(address(treasury)) / 3;
         vm.prank(APPROVED_OPERATOR);
-        treasury.withdraw(imd, APPROVED_OPERATOR, half);
+        treasury.withdraw(imd, APPROVED_OPERATOR, third);
         nhi.setValue(0.6 ether);
         assertEq(vault.mat(), 200);
         // The cap does NOT bind here, and that is the correct reading rather than a weaker test: the
-        // price is back at 1 and mat 200 lets twice ALICE's principal count, so her whole 1500
+        // price is back at 1 and mat 200 lets twice ALICE's principal count, so her whole 1700
         // qualifies and a COMP is backed to par. The burn is paid par minus the fee.
         assertEq(vault.backingPerUnit(), 1e18, "a higher mat lets all of ALICE's collateral count");
         uint256 parPayout = _quote(100 ether, 1 ether);
@@ -1043,9 +1045,9 @@ contract RedemptionTest is Test {
         // BOB's 1500 was never backing, so he can still take all of it back out.
         vm.prank(BOB);
         vault.free(1500 ether);
-        // Still the full 1500: the reserve covered the whole payout, so ALICE's position never
+        // Still the full 1700: the reserve covered the whole payout, so ALICE's position never
         // funded it and her secured term is untouched.
-        assertEq(vault.securedCollateral(), 1500 ether, "only ALICE's collateral, and all of it");
+        assertEq(vault.securedCollateral(), 1700 ether, "only ALICE's collateral, and all of it");
     }
 
     function test_securedCollateralIsBoundedPerPositionAndRepricedWhenTouched() public {
@@ -1055,14 +1057,14 @@ contract RedemptionTest is Test {
         vault.lock(500 ether);
         assertEq(vault.securedCollateral(), 2000 ether, "a debt-free position adds nothing");
         vm.prank(ALICE);
-        vault.free(1500 ether);
-        assertEq(vault.securedCollateral(), 1500 ether, "inside the bound, collateral counts whole");
+        vault.free(1300 ether);
+        assertEq(vault.securedCollateral(), 1700 ether, "inside the bound, collateral counts whole");
         // A fall in price raises the IMD the bound buys; the term is re-priced only when touched.
         _price(0.5 ether);
-        assertEq(vault.securedCollateral(), 1500 ether);
+        assertEq(vault.securedCollateral(), 1700 ether);
         vm.prank(ALICE);
         vault.lock(1500 ether);
-        assertEq(vault.securedCollateral(), 3000 ether, "4000 IMD of bound at half a dollar");
+        assertEq(vault.securedCollateral(), 3200 ether, "4000 IMD of bound at half a dollar");
         _price(1 ether);
         vm.prank(ALICE);
         vault.wipe(500 ether);
@@ -1071,7 +1073,7 @@ contract RedemptionTest is Test {
         vault.wipe(500 ether);
         assertEq(vault.securedCollateral(), 0, "no principal, no term");
         (uint256 collateral,) = vault.positions(ALICE);
-        assertEq(collateral, 3000 ether, "the collateral itself is untouched");
+        assertEq(collateral, 3200 ether, "the collateral itself is untouched");
     }
 
     function test_healthyPositionCountsWholeAtAnyPrice() public {
@@ -1088,7 +1090,7 @@ contract RedemptionTest is Test {
     }
 
     function test_mintRepayRoundTripsCannotKeepPrincipalFresh() public {
-        _open(ALICE, 1800 ether, 1000 ether);
+        _open(ALICE, 2100 ether, 1000 ether); // 210%: a further 190 still clears the 170% floor
         // Three days: every six hours, five mint/repay pairs that change nothing on net. The old
         // record retired each pair at its mean age, leaving the 1000 younger every time.
         for (uint256 i; i < 12; ++i) {
@@ -1110,7 +1112,7 @@ contract RedemptionTest is Test {
     }
 
     function test_aRoundTripReturnsTheRecordToWhereItWas() public {
-        _open(ALICE, 1800 ether, 1000 ether);
+        _open(ALICE, 2100 ether, 1000 ether); // 210%: a further 190 still clears the 170% floor
         uint256 start = block.timestamp;
         vm.warp(start + 6 hours);
         vm.startPrank(ALICE);
@@ -1139,14 +1141,15 @@ contract RedemptionTest is Test {
         // test_equalTranchesAgeOutAtTheirAverageAge). Repaying 250 retires the youngest 250, so the
         // remaining 1250 carries the whole record's principal-time: 1500 x 4h / 1250 = 4.8h at the
         // repayment, and the record ages out at 13h12m rather than 14h.
-        _open(ALICE, 2400 ether, 1000 ether);
+        // 2600: 173% at 1500 of debt (above the floor), 208% at 1250 (inside the 220% ceiling).
+        _open(ALICE, 2600 ether, 1000 ether);
         uint256 start = block.timestamp;
         vm.warp(start + 6 hours);
         vm.startPrank(ALICE);
         vault.draw(500 ether);
         vault.wipe(250 ether);
         vm.stopPrank();
-        assertLt(vault.collateralRatio(ALICE), 200, "eligible");
+        assertLt(vault.collateralRatio(ALICE), 220, "eligible");
         _giveStable(20 ether);
         vm.warp(start + 13 hours + 12 minutes - 1);
         uint256 fees = vault.stabilityFeeOf(ALICE);
@@ -1199,13 +1202,13 @@ contract RedemptionTest is Test {
     }
 
     function _mintWorkAndUnwind() private {
-        _open(ALICE, 1500 ether, 1000 ether);
+        _open(ALICE, 1700 ether, 1000 ether);
         // isolate=true makes the work mint a later transaction, when the debt counts toward its ceiling.
         vm.prank(REDEEMER);
         vault.earn(250 ether);
         vm.startPrank(ALICE);
         vault.wipe(1000 ether);
-        vault.free(1500 ether);
+        vault.free(1700 ether);
         vm.stopPrank();
         _assertPosition(ALICE, 0, 0);
     }

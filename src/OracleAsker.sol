@@ -30,8 +30,10 @@ interface IPoolManagerExtsload {
 /// @dev Anyone may call `ask`, and that is the point: no keeper key decides when protocol money is
 /// spent. What decides it is on chain:
 ///
-///   - STALENESS. A feed whose value is STALE_AT_BPS of the way to its maxAge (or has none yet) may be
-///     asked for. This needs no arming: nobody can make a feed age faster.
+///   - STALENESS, for feeds configured to be kept alive (NHI: daily, and cheap). A feed whose value is
+///     STALE_AT_BPS of the way to its maxAge (or has none yet) may be asked for. This needs no arming:
+///     nobody can make a feed age faster. Price feeds are NOT kept fresh on a clock; their one-hour
+///     life would cost ~$37k a year per feed. Between updates price actions pause, never misprice.
 ///   - DRIFT. A feed that quotes IMD/ETH may be asked for when IMD's own Uniswap v4 pool sits further
 ///     from the feed than half the feed's deviation cap — the band the price-movement design calls
 ///     for, narrower than the cap so the feed is never asked to make a jump it cannot take. Drift
@@ -39,7 +41,11 @@ interface IPoolManagerExtsload {
 ///     one transaction (a flash loan) cannot trigger a paid update; holding it off-price across blocks
 ///     means fighting arbitrageurs with real capital.
 ///
-/// Spam is bounded four ways: one request in flight per feed (until delivered or ASK_TIMEOUT), at most
+/// Anyone may also `askPaid`: the caller pays the Intake's price in IMD and an update is bought for any
+/// feed at any time, with none of the need checks, because no protocol money is spent. That is how a
+/// borrower who finds the price stale gets one (~$4.25) instead of waiting for the market to move.
+///
+/// Treasury spending is bounded four ways: one request in flight per feed (until delivered or ASK_TIMEOUT), at most
 /// one paid request per feed per ASK_MIN_INTERVAL, a price ceiling per request, and the Treasury's
 /// daily budget, which is all this contract can ever hold. Exhausting the budget does NOT freeze the
 /// oracle: anyone can still buy an attestation off chain and relay it through SwarmRelay.
@@ -53,6 +59,7 @@ contract OracleAsker {
     struct Feed {
         bytes32 bodyHash; // keccak256 of the oracle.request body the feed's pinned question needs
         bool tracksPool; // quotes IMD in ETH, so pool drift applies
+        bool keepAlive; // the Treasury pays to refresh it on staleness
         uint64 lastAsk; // timestamp of the last paid request
         uint64 armedAt; // block a drift was armed at; zero when unarmed
         uint64 inFlightAt; // timestamp the request in flight was sent; zero when none
@@ -66,6 +73,7 @@ contract OracleAsker {
 
     event Armed(address indexed feed, uint256 atBlock, uint256 driftBps);
     event Asked(address indexed feed, bytes32 indexed requestId, uint256 price, bool forStaleness);
+    event AskedPaid(address indexed feed, bytes32 indexed requestId, address indexed payer, uint256 price);
     event Delivered(address indexed feed, bytes32 indexed requestId);
 
     error UnknownFeed(address feed);
@@ -85,10 +93,20 @@ contract OracleAsker {
     /// @param bodyHashes keccak256 of each feed's oracle.request body. The body itself is passed to
     /// `ask` as calldata and checked against this, so it is never stored and never changeable.
     /// @param tracksPool Whether each feed quotes IMD/ETH and so may be asked for on pool drift.
-    constructor(IERC20 payToken_, address[] memory feeds_, bytes32[] memory bodyHashes, bool[] memory tracksPool) {
+    /// @param keepAlive Whether the Treasury's IMD refreshes each feed when it nears its maxAge.
+    constructor(
+        IERC20 payToken_,
+        address[] memory feeds_,
+        bytes32[] memory bodyHashes,
+        bool[] memory tracksPool,
+        bool[] memory keepAlive
+    ) {
         if (INTAKE.code.length == 0) revert IntakeMissing();
         if (address(payToken_).code.length == 0) revert BadConfiguration();
-        if (feeds_.length == 0 || feeds_.length != bodyHashes.length || feeds_.length != tracksPool.length) {
+        if (
+            feeds_.length == 0 || feeds_.length != bodyHashes.length || feeds_.length != tracksPool.length
+                || feeds_.length != keepAlive.length
+        ) {
             revert BadConfiguration();
         }
         payToken = payToken_;
@@ -96,7 +114,7 @@ contract OracleAsker {
             if (feeds_[i].code.length == 0 || bodyHashes[i] == bytes32(0) || feeds[feeds_[i]].bodyHash != 0) {
                 revert BadConfiguration();
             }
-            feeds[feeds_[i]] = Feed(bodyHashes[i], tracksPool[i], 0, 0, 0, bytes32(0));
+            feeds[feeds_[i]] = Feed(bodyHashes[i], tracksPool[i], keepAlive[i], 0, 0, 0, bytes32(0));
         }
     }
 
@@ -125,7 +143,7 @@ contract OracleAsker {
         if (f.lastAsk != 0 && block.timestamp < uint256(f.lastAsk) + ASK_MIN_INTERVAL) {
             revert TooSoon(uint256(f.lastAsk) + ASK_MIN_INTERVAL);
         }
-        bool forStaleness = nearStale(feed);
+        bool forStaleness = f.keepAlive && nearStale(feed);
         if (!forStaleness) {
             if (!f.tracksPool) revert NotNeeded();
             uint256 armedAt = f.armedAt;
@@ -134,16 +152,43 @@ contract OracleAsker {
             }
             if (driftBps(feed) <= _triggerBps(feed)) revert NotNeeded();
         }
-        uint256 price = IIntake(INTAKE).priceOf(ORACLE_ACTION, address(payToken));
-        if (price == 0) revert NotSold();
-        if (price > ASK_MAX_PRICE) revert PriceTooHigh(price);
-
+        uint256 price = _price(ASK_MAX_PRICE);
         // Effects before the external calls; the request id is only known after `request` returns.
-        if (f.inFlight != bytes32(0)) delete feedOf[f.inFlight]; // a timed-out request no longer counts
         f.lastAsk = uint64(block.timestamp);
-        f.inFlightAt = uint64(block.timestamp);
         f.armedAt = 0;
+        requestId = _request(feed, f, body, price);
+        emit Asked(feed, requestId, price, forStaleness);
+    }
 
+    /// @notice Buy an update for `feed` with the caller's own IMD: the Intake's price, at most `maxPrice`,
+    /// pulled from the caller (approve this contract first). No need check and no interval, because no
+    /// protocol money is spent; only one request may be in flight per feed, so a paid ask waits behind
+    /// one that is already on its way.
+    function askPaid(address feed, bytes calldata body, uint256 maxPrice) external returns (bytes32 requestId) {
+        Feed storage f = _feed(feed);
+        if (keccak256(body) != f.bodyHash) revert WrongBody();
+        if (f.inFlight != bytes32(0) && block.timestamp < uint256(f.inFlightAt) + ASK_TIMEOUT) {
+            revert InFlight(f.inFlight);
+        }
+        uint256 price = _price(maxPrice);
+        payToken.safeTransferFrom(msg.sender, address(this), price);
+        requestId = _request(feed, f, body, price);
+        emit AskedPaid(feed, requestId, msg.sender, price);
+    }
+
+    function _price(uint256 ceiling) private view returns (uint256 price) {
+        price = IIntake(INTAKE).priceOf(ORACLE_ACTION, address(payToken));
+        if (price == 0) revert NotSold();
+        if (price > ceiling) revert PriceTooHigh(price);
+    }
+
+    /// @dev Pays the Intake exactly `price` and records the request as this feed's one in flight.
+    function _request(address feed, Feed storage f, bytes calldata body, uint256 price)
+        private
+        returns (bytes32 requestId)
+    {
+        if (f.inFlight != bytes32(0)) delete feedOf[f.inFlight]; // a timed-out request no longer counts
+        f.inFlightAt = uint64(block.timestamp);
         payToken.forceApprove(INTAKE, price);
         requestId = IIntake(INTAKE).request(
             ORACLE_ACTION, body, IIntake.Callback(address(this), this.onOracleResult.selector), address(payToken), price
@@ -151,7 +196,6 @@ contract OracleAsker {
         payToken.forceApprove(INTAKE, 0);
         f.inFlight = requestId;
         feedOf[requestId] = feed;
-        emit Asked(feed, requestId, price, forStaleness);
     }
 
     // --- delivery ---------------------------------------------------------------------------------

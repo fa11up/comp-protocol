@@ -23,7 +23,7 @@ import {
     SKEW_BPS,
     CUT_BPS,
     DUTY_BPS,
-    EARN_MAT_BPS
+    EARN_MAT_BPS, PRICE_MAX_AGE, NHI_MAX_AGE, SPOT_MAX_AGE
 } from "../src/DeploymentConfig.sol";
 
 /// @notice The governed variant of the stack: same feeds, same vault logic, economics in a contract.
@@ -35,9 +35,7 @@ import {
 /// Running this is a decision, not an upgrade: the live v3 vault is a plain CDPVault with its
 /// economics compiled in, and nothing here migrates it. A position in the old vault stays there.
 contract DeployGoverned is Script {
-    uint256 constant MAX_AGE = 86_400;
     uint256 constant MAX_DEVIATION_BPS = 5_000;
-    uint256 constant SPOT_MAX_AGE = 3_600;
     uint16 constant MIN_PANEL_SIZE = 25;
     uint16 constant MIN_AGREED = 15;
 
@@ -59,8 +57,8 @@ contract DeployGoverned is Script {
             console2.log("MockIMD     (reused)", imd);
         }
 
-        PriceFeed priceFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
-        NhiFeed nhiFeed = new NhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
+        PriceFeed priceFeed = new PriceFeed(PRICE_MAX_AGE, MAX_DEVIATION_BPS);
+        NhiFeed nhiFeed = new NhiFeed(NHI_MAX_AGE, MAX_DEVIATION_BPS);
         SpotFeed spotFeed = new SpotFeed(SPOT_MAX_AGE, MAX_DEVIATION_BPS);
 
         // The vault creates its own Parameters, so there is nothing to deploy first and nothing to
@@ -202,7 +200,7 @@ contract DeployGoverned is Script {
             require(!reported, "feed: a reporter fallback is reachable");
             require(feeds[i].attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "feed: wrong answerType");
             require(feeds[i].attestationChainId() == ATTESTATION_CHAIN_ID, "feed: wrong payload chainId");
-            require(feeds[i].maxAge() == (i == 2 ? SPOT_MAX_AGE : MAX_AGE), "feed: wrong maxAge");
+            require(feeds[i].maxAge() == (i == 0 ? PRICE_MAX_AGE : i == 1 ? NHI_MAX_AGE : SPOT_MAX_AGE), "feed: wrong maxAge");
             require(feeds[i].maxDeviationBps() == MAX_DEVIATION_BPS, "feed: wrong maxDeviationBps");
             require(feeds[i].MIN_PANEL_SIZE() == MIN_PANEL_SIZE, "feed: panel floor changed");
             require(feeds[i].MIN_AGREED() == MIN_AGREED, "feed: agreement floor changed");

@@ -105,7 +105,7 @@ contract SelfContainedDeploymentHandler is Test {
     function mintDebt(uint256 seed, uint256 amount) external {
         address actor = actors[seed % 4];
         (uint256 collateral, uint256 debt) = vault.positions(actor);
-        uint256 maximumDebt = collateral * 2 / 3;
+        uint256 maximumDebt = collateral * 100 / vault.mat();
         if (maximumDebt <= debt) return;
         amount = bound(amount, 1, _min(maximumDebt - debt, 1000 ether));
         vm.prank(actor);
@@ -146,7 +146,7 @@ contract SelfContainedDeploymentHandler is Test {
     function withdraw(uint256 seed, uint256 amount) external {
         address actor = actors[seed % 4];
         (uint256 collateral, uint256 debt) = vault.positions(actor);
-        uint256 requiredCollateral = (debt * 3 + 1) / 2;
+        uint256 requiredCollateral = (debt * vault.mat() + 99) / 100;
         if (collateral <= requiredCollateral) return;
         amount = bound(amount, 1, collateral - requiredCollateral);
         vm.prank(actor);
@@ -169,9 +169,11 @@ contract SelfContainedDeploymentHandler is Test {
         (uint256 collateral, uint256 debt) = vault.positions(actor);
         uint256 rights = oracle.mintingRights(actor);
         bytes32 beforeState = _stateDigest(actor);
+        uint256 maximumDebt = collateral * 100 / vault.mat();
+        uint256 floorCollateral = (debt * vault.mat() + 99) / 100;
         vm.startPrank(actor);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        vault.draw(collateral * 2 / 3 - debt + 1);
+        vault.draw(maximumDebt - debt + 1);
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
         vault.wipe(debt + 1);
         vm.expectRevert(CDPVault.InsufficientRights.selector);
@@ -180,7 +182,7 @@ contract SelfContainedDeploymentHandler is Test {
         vault.free(collateral + 1);
         if (debt != 0) {
             vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-            vault.free(collateral - (debt * 3 + 1) / 2 + 1);
+            vault.free(collateral - floorCollateral + 1);
         }
         vm.expectRevert(CDPVault.ZeroAmount.selector);
         vault.lock(0);
@@ -325,7 +327,7 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
                 handler.INITIAL_RIGHTS(),
                 "consumed work cannot return on repayment"
             );
-            assertLe(d * 3, c * 2, "all borrower positions stay collateralized");
+            assertLe(d * handler.vault().mat(), c * 100, "all borrower positions stay collateralized");
         }
         assertGt(work, 0, "work issuance remains part of the supply identity");
         assertEq(vault.totalEarned(), work, "independent work history");

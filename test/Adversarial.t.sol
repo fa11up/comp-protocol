@@ -205,7 +205,7 @@ contract AdversarialTest is LegacyWorkBacking {
 
     function test_failedLiquidationTransferRollsBackBurnAndPosition() public {
         vm.startPrank(alice);
-        vault.lock(150 ether);
+        vault.lock(170 ether);
         vault.draw(100 ether);
         vm.stopPrank();
         nhiFeed.setValue(0.6 ether);
@@ -215,7 +215,7 @@ contract AdversarialTest is LegacyWorkBacking {
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(collateral)));
         vault.bite(alice, 100 ether);
         (uint256 c, uint256 d) = vault.positions(alice);
-        assertEq(c, 150 ether);
+        assertEq(c, 170 ether);
         assertEq(d, 100 ether);
         assertEq(comp.balanceOf(alice), 100 ether);
         assertEq(comp.totalSupply(), 100 ether);
@@ -223,7 +223,7 @@ contract AdversarialTest is LegacyWorkBacking {
 
     function test_liquidationTransferCallbackCannotReenter() public {
         vm.startPrank(alice);
-        vault.lock(150 ether);
+        vault.lock(170 ether);
         vault.draw(100 ether);
         vm.stopPrank();
         nhiFeed.setValue(0.6 ether);
@@ -234,9 +234,9 @@ contract AdversarialTest is LegacyWorkBacking {
         assertEq(collateral.blockedCallbacks(), 16);
         assertEq(collateral.blockedCallbacksForRecipient(alice), 8, "liquidator payout blocks every reentry");
         assertEq(collateral.blockedCallbacksForRecipient(address(this)), 8, "marker payout blocks every reentry");
-        assertEq(collateral.balanceOf(alice), 959 ether);
-        assertEq(collateral.balanceOf(address(this)), 1 ether);
-        assertEq(collateral.balanceOf(address(vault)), 40 ether);
+        assertEq(collateral.balanceOf(alice), 948 ether);
+        assertEq(collateral.balanceOf(address(this)), 2 ether);
+        assertEq(collateral.balanceOf(address(vault)), 50 ether);
         assertEq(comp.totalSupply(), 0);
     }
 }

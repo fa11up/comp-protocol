@@ -350,7 +350,7 @@ contract Audit20261004Test is WorkBackingFixture {
     function _markedThenRestored() private {
         _setVaultPrice(2 ether);
         _openDebt(2000 ether); // 4000 IMD collateral at $2 = $8000, $2000 debt
-        _setVaultPrice(0.7 ether); // $2800 against $2000: 140%, below the 150% floor
+        _setVaultPrice(0.7 ether); // $2800 against $2000: 140%, below the 170% floor
         vm.prank(address(0xA11CE));
         backedVault.bark(BORROWER);
         (bool marked,,) = _mark(BORROWER);

@@ -88,10 +88,10 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 10 ether);
         (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
-        assertEq(collateral, 272.5 ether);
+        assertEq(collateral, 270 ether);
         assertEq(debt, 90 ether);
         assertEq(comp.balanceOf(LIQUIDATOR), 990 ether);
-        assertEq(imd.balanceOf(LIQUIDATOR) + imd.balanceOf(MARKER), 27.5 ether);
+        assertEq(imd.balanceOf(LIQUIDATOR) + imd.balanceOf(MARKER), 30 ether);
     }
 
     function testFuzz_MintRejectsOneWeiBeyondMaximumDivergence(bool spotAbove) public {
@@ -218,11 +218,11 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 10 ether);
         assertEq(_markState(), matureMark, "liquidation must retain the original keeper snapshot");
-        assertEq(imd.balanceOf(MARKER), 0.25 ether);
-        assertEq(imd.balanceOf(LIQUIDATOR), 27.25 ether);
+        assertEq(imd.balanceOf(MARKER), 0.5 ether);
+        assertEq(imd.balanceOf(LIQUIDATOR), 29.5 ether);
         assertEq(imd.balanceOf(FEE_RECIPIENT), 0);
         (uint256 remainingCollateral, uint256 remainingDebt) = vault.positions(BORROWER);
-        assertEq(remainingCollateral, collateral - 27.5 ether);
+        assertEq(remainingCollateral, collateral - 30 ether);
         assertEq(remainingDebt, debt - 10 ether);
     }
 

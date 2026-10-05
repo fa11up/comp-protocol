@@ -111,7 +111,7 @@ contract TokensTest is ProtocolFixture {
         fresh.mint(alice, 1);
         vm.expectRevert(ImdUSD.Unauthorized.selector);
         fresh.burn(alice, 1);
-        _open(alice, 150 ether, 100 ether);
+        _open(alice, 170 ether, 100 ether);
         address[4] memory callers = [address(this), OPERATOR, alice, bob];
         for (uint256 i; i < callers.length; ++i) {
             vm.startPrank(callers[i]);
@@ -141,7 +141,7 @@ contract TokensTest is ProtocolFixture {
     }
 
     function test_standardTransfersAllowancesAndFailuresOnBothTokens() public {
-        _open(alice, 150 ether, 100 ether);
+        _open(alice, 170 ether, 100 ether);
         _checkERC20(imd);
         _checkERC20(comp);
     }

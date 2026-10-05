@@ -147,7 +147,7 @@ contract WorkBackingHandler is WorkBackingFixture {
         // what mat requires depends on the ETH/USD leg this handler moves.
         (uint256 price,) = backedVault.usdPriceFeed().latestValue();
         if (price == 0) return;
-        uint256 required = Math.mulDiv((debt * 150 + 99) / 100, 1e18, price) + 1;
+        uint256 required = Math.mulDiv((debt * backedVault.mat() + 99) / 100, 1e18, price) + 1;
         if (deposited <= required) return;
         uint256 amount = bound(raw, 1, deposited - required);
         vm.prank(BORROWER);

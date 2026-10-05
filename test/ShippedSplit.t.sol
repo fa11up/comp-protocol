@@ -60,7 +60,7 @@ contract ShippedSplitTest is Test {
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, REPAID);
 
-        uint256 seized = REPAID * 110 * 1e16 / PRICE;
+        uint256 seized = REPAID * (100 + vault.CHOP_PERCENT()) * 1e16 / PRICE;
         uint256 bonus = seized - REPAID * 1e18 / PRICE;
         uint256 markerCut = bonus * CHIP_BPS / 10_000;
         uint256 protocolCut = bonus * CUT_BPS / 10_000;
@@ -81,7 +81,7 @@ contract ShippedSplitTest is Test {
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, REPAID);
         (uint256 collateralAfter,) = vault.positions(BORROWER);
-        assertEq(collateralBefore - collateralAfter, REPAID * 110 * 1e16 / PRICE, "exactly the formula seizure");
+        assertEq(collateralBefore - collateralAfter, REPAID * (100 + vault.CHOP_PERCENT()) * 1e16 / PRICE, "exactly the formula seizure");
     }
 
     /// @dev The cap the vault enforces, stated against the shipped values rather than assumed.

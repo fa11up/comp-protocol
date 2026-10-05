@@ -27,6 +27,16 @@ address constant CHAINLINK_ETH_USD = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
 /// Chainlink answers again; a reserve asset it prices counts for nothing meanwhile.
 uint256 constant ETH_USD_MAX_AGE = 1 days;
 
+/// @dev Feed lifetimes, the constructor arguments every deployment script passes. A price older than an
+/// hour refuses every price-dependent action until someone buys a fresh one: on demand, by the caller
+/// (OracleAsker.askPaid) or by the Treasury when IMD's pool drifts (OracleAsker.ask). The protocol does
+/// NOT keep prices fresh on a clock — 24 updates a day per feed is ~$37k a year — so a quiet market is
+/// paused for borrowing between updates, never mispriced. NHI moves slowly and stays daily, and
+/// Treasury-funded staleness asks apply to it alone. `tail()` is the shorter of PRICE and NHI.
+uint256 constant PRICE_MAX_AGE = 1 hours;
+uint256 constant SPOT_MAX_AGE = 1 hours;
+uint256 constant NHI_MAX_AGE = 1 days;
+
 // ---------------------------------------------------------------------------------------------
 // Feed authority and attestation policy — pinned in source, never supplied by a deployer.
 // ---------------------------------------------------------------------------------------------
@@ -102,11 +112,12 @@ uint256 constant CHIP_BPS = 1_000;
 /// @dev The protocol's own share of the same bonus, in basis points of it, paid to FEE_RECIPIENT.
 /// This is revenue WITHOUT the protocol supplying capital or becoming the liquidator: the keeper
 /// still brings the stablecoin, takes the inventory risk on seized collateral and pays the gas.
-/// At 3333 a keeper keeps roughly 70% more than the protocol takes, which leaves liquidation worth
-/// doing on smaller positions — and liquidation happening is a solvency property, not a nicety.
+/// At 1000 with a 20% bonus the protocol takes 2% of the debt repaid and a keeper who did not mark
+/// keeps 16%. The former 3333 left a keeper 5.67%, below one sale's loss in IMD's pool for any
+/// liquidation over ~$50k — and liquidation happening is a solvency property, not a nicety.
 /// The vault refuses any value above 10_000 minus CHIP_BPS. The borrower's loss is
 /// unchanged at any setting: this divides the existing bonus rather than seizing more collateral.
-uint256 constant CUT_BPS = 3_333;
+uint256 constant CUT_BPS = 1_000;
 
 /// @dev Annual stability fee on open debt, in basis points. It accrues through the `chi` index from
 /// that index's last checkpoint (`indexCheckpointAt`), so a governed change in `duty` applies from the

@@ -158,11 +158,11 @@ export function Landing() {
               <p>
                 Deposit IMD or sIMD and mint imdUSD against it; IMD is staked
                 for you. A position must stay at or above the minimum collateral
-                ratio: 150% while the network is healthy, rising toward 200% as
+                ratio: 170% while the network is healthy, rising toward 200% as
                 network health falls.
               </p>
               <p className="figure">
-                150–200% <span>minimum ratio</span>
+                170–200% <span>minimum ratio</span>
               </p>
             </article>
             <article>
@@ -193,7 +193,7 @@ export function Landing() {
               <p>
                 Anyone can mark a position below the minimum ratio. Once its
                 grace period passes, anyone can repay its debt; the position
-                gives up collateral worth 110% of it, and the 10% bonus is
+                gives up collateral worth 120% of it, and the 20% bonus is
                 shared with whoever marked it.
               </p>
               <p className="figure">

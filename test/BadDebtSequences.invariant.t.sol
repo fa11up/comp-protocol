@@ -10,7 +10,7 @@ import {MockIMD} from "src/MockIMD.sol";
 import {APPROVED_OPERATOR, FEE_RECIPIENT, CHIP_BPS} from "src/DeploymentConfig.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
-/// @dev At a price of 1.1 COMP/IMD, every repayment wei seizes exactly one collateral wei.
+/// @dev At a price of (100 + CHOP_PERCENT)%, every repayment wei seizes exactly one collateral wei.
 /// This deliberately makes complete exhaustion reachable throughout random call sequences.
 contract BadDebtSequenceHandler is Test {
     address public constant MARKER = address(0xA001);
@@ -27,6 +27,8 @@ contract BadDebtSequenceHandler is Test {
     uint256 public markerReceived;
     uint256 public liquidatorReceived;
     uint256 public exhaustionCount;
+    /// @dev 1 + the liquidation bonus, read from the vault: the price at which seizure is one-for-one.
+    uint256 public unitPrice;
 
     constructor() {
         imd = new MockIMD();
@@ -35,6 +37,7 @@ contract BadDebtSequenceHandler is Test {
         TestSwarmFeed nhi = new TestSwarmFeed(0.6 ether);
         vault = new BaselineVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
         comp = vault.stablecoin();
+        unitPrice = (100 + vault.CHOP_PERCENT()) * 1e16;
         for (uint256 i; i < actors.length; ++i) {
             address actor = actors[i];
             _deposit(actor, 60 ether);
@@ -44,7 +47,7 @@ contract BadDebtSequenceHandler is Test {
             vm.stopPrank();
             debt[actor] = 100 ether;
         }
-        _price(1.1 ether);
+        _price(unitPrice);
         // Every sequence starts with a real recorded shortfall and two further exhaustible positions.
         _liquidate(actors[0], 60 ether);
     }
@@ -60,7 +63,7 @@ contract BadDebtSequenceHandler is Test {
         address actor = actors[seed % actors.length];
         uint256 outstanding = debt[actor];
         uint256 available = collateral[actor];
-        if (outstanding == 0 || available == 0 || available * 110 >= outstanding * 200) return;
+        if (outstanding == 0 || available == 0 || available * unitPrice >= outstanding * 2 ether) return;
         uint256 maximum = available < outstanding ? available : outstanding;
         _liquidate(actor, bound(rawAmount, 1, maximum));
     }
@@ -94,7 +97,7 @@ contract BadDebtSequenceHandler is Test {
         comp.transfer(LIQUIDATOR, amount);
         vm.stopPrank();
         debt[actor] += amount;
-        _price(1.1 ether);
+        _price(unitPrice);
     }
 
     function withdrawDebtFree(uint256 seed, uint256 rawAmount) external {
@@ -122,7 +125,7 @@ contract BadDebtSequenceHandler is Test {
             recorded[actor] = debt[actor];
             ++exhaustionCount;
         }
-        uint256 bonus = amount - amount * 1 ether / 1.1 ether;
+        uint256 bonus = amount - amount * 1 ether / unitPrice;
         uint256 markerCut = bonus * CHIP_BPS / 10_000;
         markerReceived += markerCut;
         liquidatorReceived += amount - markerCut;

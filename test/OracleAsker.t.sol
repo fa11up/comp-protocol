@@ -62,7 +62,10 @@ contract OracleAskerTest is Test {
         hashes[1] = keccak256(HEALTH_BODY);
         bool[] memory tracks = new bool[](2);
         tracks[0] = true;
-        asker = new OracleAsker(IERC20(address(imd)), feeds, hashes, tracks);
+        // The price feed lives on demand; the health feed is kept alive by the Treasury.
+        bool[] memory keepAlive = new bool[](2);
+        keepAlive[1] = true;
+        asker = new OracleAsker(IERC20(address(imd)), feeds, hashes, tracks, keepAlive);
         vm.prank(APPROVED_OPERATOR);
         imd.mint(address(asker), 100 ether);
 
@@ -202,7 +205,7 @@ contract OracleAskerTest is Test {
         (uint256 value,) = healthFeed.latestValue();
         assertEq(value, 0.88 ether, "the feed holds the attested figure");
         assertEq(asker.feedOf(id), address(0));
-        (,,,, uint64 inFlightAt, bytes32 inFlight) = asker.feeds(address(healthFeed));
+        (,,,,, uint64 inFlightAt, bytes32 inFlight) = asker.feeds(address(healthFeed));
         assertEq(inFlight, bytes32(0));
         assertEq(inFlightAt, 0);
         emit log_named_uint("callback gas used (stipend 200000)", intake.lastCallbackGasUsed());
@@ -232,6 +235,56 @@ contract OracleAskerTest is Test {
         SwarmRelay(ATTESTATION_RELAYER).relay(healthFeed, a, good);
         (uint256 value,) = healthFeed.latestValue();
         assertEq(value, 0.87 ether);
+    }
+
+    // --- on demand ------------------------------------------------------------------------------
+
+    /// @dev A price feed is not kept alive: once stale, the Treasury still pays only for drift.
+    function test_aStalePriceFeedIsNotRefreshedWithTreasuryMoney() public {
+        vm.warp(block.timestamp + 2 days);
+        assertTrue(asker.nearStale(address(priceFeed)));
+        vm.expectRevert(OracleAsker.NotArmed.selector);
+        asker.ask(address(priceFeed), PRICE_BODY);
+    }
+
+    /// @dev Anyone can buy an update with their own IMD, at any time, with no need check.
+    function test_askPaidSpendsTheCallersIMDNotTheTreasurys() public {
+        address borrower = address(0xB0B);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(borrower, 1 ether);
+        uint256 treasuryBefore = imd.balanceOf(address(asker));
+        vm.startPrank(borrower);
+        imd.approve(address(asker), PRICE);
+        bytes32 id = asker.askPaid(address(priceFeed), PRICE_BODY, PRICE);
+        vm.stopPrank();
+        assertEq(imd.balanceOf(borrower), 1 ether - PRICE, "the caller paid");
+        assertEq(imd.balanceOf(address(asker)), treasuryBefore, "the asker's budget is untouched");
+        assertEq(imd.allowance(address(asker), INTAKE), 0);
+        assertEq(asker.feedOf(id), address(priceFeed));
+        (,, , uint64 lastAsk,,,) = asker.feeds(address(priceFeed));
+        assertEq(lastAsk, 0, "a paid ask does not use up the Treasury's interval");
+
+        // It is delivered exactly like a Treasury ask.
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("paid"), IMD_ETH * 101 / 100);
+        assertTrue(intake.complete(id, abi.encode(id, a, _sign(priceFeed, a))));
+        (uint256 value,) = priceFeed.latestValue();
+        assertEq(value, IMD_ETH * 101 / 100);
+    }
+
+    function test_askPaidHonoursTheCallersCeilingAndTheInFlightSlot() public {
+        address borrower = address(0xB0B);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(borrower, 2 ether);
+        vm.startPrank(borrower);
+        imd.approve(address(asker), 2 ether);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.PriceTooHigh.selector, PRICE));
+        asker.askPaid(address(priceFeed), PRICE_BODY, PRICE - 1);
+        bytes32 first = asker.askPaid(address(priceFeed), PRICE_BODY, PRICE);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.InFlight.selector, first));
+        asker.askPaid(address(priceFeed), PRICE_BODY, PRICE);
+        vm.expectRevert(OracleAsker.WrongBody.selector);
+        asker.askPaid(address(priceFeed), HEALTH_BODY, PRICE);
+        vm.stopPrank();
     }
 
     // --- helpers ----------------------------------------------------------------------------------

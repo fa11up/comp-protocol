@@ -86,7 +86,7 @@ contract UsdDenominationTest is Test {
         _open(usdVault, 1_000 ether, 0.5 ether);
         assertEq(usdVault.collateralRatio(BORROWER), 400_000, "the usd vault prices a COMP as a dollar");
 
-        // And 1,000 COMP of debt is simply unopenable in ETH terms: 1 ETH cannot back it at mat 150.
+        // And 1,000 COMP of debt is simply unopenable in ETH terms: 1 ETH cannot back it at mat 170.
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
         ethVault.draw(1_000 ether);

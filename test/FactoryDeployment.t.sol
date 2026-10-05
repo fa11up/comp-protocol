@@ -91,14 +91,14 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
         // The existing COMP token is separately authorized after construction.
         vm.startPrank(OPERATOR);
         comp.setVault(address(vault));
-        imd.mint(BORROWER, 150 ether);
+        imd.mint(BORROWER, 170 ether);
         oracle.grantRights(BORROWER, 40 ether);
         vm.stopPrank();
         vm.startPrank(BORROWER);
-        imd.approve(address(vault), 150 ether);
-        vault.lock(150 ether);
+        imd.approve(address(vault), 170 ether);
+        vault.lock(170 ether);
         vault.draw(100 ether);
-        assertEq(vault.collateralRatio(BORROWER), 150);
+        assertEq(vault.collateralRatio(BORROWER), 170);
         assertEq(oracle.mintingRights(BORROWER), 40 ether);
         vm.stopPrank();
         _establishWorkBacking(vault, 40 ether);
@@ -109,7 +109,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
         assertEq(vault.totalEarned(), 40 ether);
         assertEq(oracle.mintingRights(BORROWER), 0);
         vault.wipe(100 ether);
-        vault.free(150 ether);
+        vault.free(170 ether);
         vm.stopPrank();
         (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
         assertEq(collateral, 0);
@@ -118,7 +118,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
             comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalEarned() + vault.totalFeesMinted()
         );
         assertEq(comp.balanceOf(BORROWER), 40 ether);
-        assertEq(imd.balanceOf(BORROWER), 150 ether);
+        assertEq(imd.balanceOf(BORROWER), 170 ether);
         assertEq(imd.balanceOf(address(vault)), backingCollateral[address(vault)]);
     }
 
@@ -239,13 +239,13 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
     function test_createBorrowRoundTripWithoutInitialization() public {
         _deploy(false);
         _seedFeeds();
-        _roundTrip(150 ether, 100 ether, 40 ether);
+        _roundTrip(170 ether, 100 ether, 40 ether);
     }
 
     function test_create2BorrowRoundTripWithoutInitialization() public {
         _deploy(true);
         _seedFeeds();
-        _roundTrip(150 ether, 100 ether, 40 ether);
+        _roundTrip(170 ether, 100 ether, 40 ether);
     }
 
     /// forge-config: default.fuzz.runs = 1000
@@ -258,7 +258,7 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         _deploy(useCreate2);
         _seedFeeds();
         uint256 collateral = bound(uint256(rawCollateral), 3, type(uint128).max);
-        uint256 debt = bound(uint256(rawDebt), 1, collateral * 100 / 150);
+        uint256 debt = bound(uint256(rawDebt), 1, collateral * 100 / 170);
         _roundTrip(collateral, debt, bound(uint256(rawWork), 1, type(uint128).max));
     }
 
@@ -363,15 +363,15 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         for (uint256 mode; mode < 2; ++mode) {
             _deploy(mode == 1);
             vm.prank(OPERATOR);
-            imd.mint(BORROWER, 150 ether);
+            imd.mint(BORROWER, 170 ether);
             vm.startPrank(BORROWER);
-            imd.approve(address(vault), 150 ether);
+            imd.approve(address(vault), 170 ether);
             vm.expectRevert(CDPVault.ZeroAmount.selector);
             vault.lock(0);
-            vault.lock(150 ether);
+            vault.lock(170 ether);
             vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
             vault.draw(100 ether + 1);
-            _assertAccounting(150 ether, 0, 0);
+            _assertAccounting(170 ether, 0, 0);
             vault.draw(100 ether);
             vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
             vault.free(1);
@@ -379,10 +379,10 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
             vault.wipe(100 ether + 1);
             vm.expectRevert(CDPVault.InsufficientRights.selector);
             vault.earn(1);
-            _assertAccounting(150 ether, 100 ether, 0);
+            _assertAccounting(170 ether, 100 ether, 0);
             assertEq(comp.balanceOf(BORROWER), 100 ether);
             vault.wipe(100 ether);
-            vault.free(150 ether);
+            vault.free(170 ether);
             vm.expectRevert(CDPVault.InsufficientCollateral.selector);
             vault.free(1);
             vm.stopPrank();
@@ -394,10 +394,10 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         _deploy(true);
         _seedFeeds();
         vm.prank(OPERATOR);
-        imd.mint(BORROWER, 150 ether);
+        imd.mint(BORROWER, 170 ether);
         vm.startPrank(BORROWER);
-        imd.approve(address(vault), 150 ether);
-        vault.lock(150 ether);
+        imd.approve(address(vault), 170 ether);
+        vault.lock(170 ether);
         vault.draw(100 ether);
         vm.stopPrank();
         // Refresh each feed independently so both stale branches are exercised after valid seeding.
@@ -413,14 +413,14 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
             vm.expectRevert(CDPVault.StaleFeed.selector);
             vault.free(1);
             vm.stopPrank();
-            _assertAccounting(150 ether, 100 ether, 0);
+            _assertAccounting(170 ether, 100 ether, 0);
         }
         vm.startPrank(BORROWER);
         vault.wipe(100 ether);
-        vault.free(150 ether);
+        vault.free(170 ether);
         vm.stopPrank();
         _assertAccounting(0, 0, 0);
-        assertEq(imd.balanceOf(BORROWER), 150 ether);
+        assertEq(imd.balanceOf(BORROWER), 170 ether);
     }
 
     function test_zeroArgumentsDoNotBypassCollateralOrDistinctFeedGuards() public {

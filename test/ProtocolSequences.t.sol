@@ -24,10 +24,10 @@ contract ProtocolSequencesTest is ProtocolFixture {
 
     function _sequence(uint128 c, uint128 d, uint128 r, uint128 w) private {
         uint256 collateral = bound(uint256(c), 3, type(uint128).max);
-        uint256 debt = bound(uint256(d), 1, collateral * 100 / 150);
+        uint256 debt = bound(uint256(d), 1, collateral * 100 / 170);
         uint256 repayment = bound(uint256(r), 1, debt);
         uint256 remainingDebt = debt - repayment;
-        uint256 minimumCollateral = (remainingDebt * 150 + 99) / 100;
+        uint256 minimumCollateral = (remainingDebt * 170 + 99) / 100;
         uint256 withdrawal = bound(uint256(w), 1, collateral - minimumCollateral);
         uint256 previousSupply = comp.totalSupply();
         uint256 previousCustody = imd.balanceOf(address(vault));
@@ -61,8 +61,8 @@ contract ProtocolSequencesTest is ProtocolFixture {
 
         vault.free(withdrawal);
         _assertPosition(alice, collateral - withdrawal, remainingDebt);
-        assertGe((collateral - withdrawal) * 100, remainingDebt * 150);
-        assertGe(vault.collateralRatio(alice), 150);
+        assertGe((collateral - withdrawal) * 100, remainingDebt * 170);
+        assertGe(vault.collateralRatio(alice), 170);
         assertEq(imd.balanceOf(alice), previousWallet + withdrawal);
         assertEq(imd.balanceOf(address(vault)), previousCustody + collateral - withdrawal);
 
@@ -80,7 +80,7 @@ contract ProtocolSequencesTest is ProtocolFixture {
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_oneWeiBeyondBorrowAndWithdrawalLimitsReverts(uint128 rawDebt) public {
         uint256 debt = bound(uint256(rawDebt), 1, type(uint128).max);
-        uint256 collateral = (debt * 150 + 99) / 100;
+        uint256 collateral = (debt * 170 + 99) / 100;
         vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
         oracle.grantRights(alice, debt + 1);

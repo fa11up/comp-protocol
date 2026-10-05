@@ -144,7 +144,7 @@ contract ShareCollateralTest is Test {
         vm.prank(KEEPER);
         vault.draw(600 ether);
 
-        // IMD falls to $1.40: the borrower sits at 140%, under mat 150; the keeper stays safe.
+        // IMD falls to $1.40: the borrower sits at 140%, under mat 170; the keeper stays safe.
         primary.setValue(IMD_ETH * 7 / 10);
         vm.prank(KEEPER);
         vault.bark(BORROWER);

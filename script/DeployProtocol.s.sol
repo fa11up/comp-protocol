@@ -15,7 +15,7 @@ import {
     ORACLE_ATTESTER,
     ATTESTATION_RELAYER,
     ATTESTATION_CHAIN_ID,
-    ATTESTATION_ANSWER_TYPE
+    ATTESTATION_ANSWER_TYPE, PRICE_MAX_AGE, NHI_MAX_AGE, SPOT_MAX_AGE
 } from "../src/DeploymentConfig.sol";
 
 /// @notice In-house deployment of the COMP feed + vault stack, with every authority held by us.
@@ -33,7 +33,6 @@ contract DeployProtocol is Script {
     // pinned in src/DeploymentConfig.sol. This script cannot get them wrong, and neither can a
     // launch manifest — there is no argument to substitute. verify() reads them back off chain.
 
-    uint256 constant MAX_AGE = 86_400; // also bounds CDPVault.tail()
     // The cap and the update frequency are one knob, not two. A tight cap only works if updates are
     // frequent enough that the market never moves further than it between them; a feed updated
     // rarely needs a loose one or it simply cannot follow. At 2000 this feed could not absorb a
@@ -43,7 +42,6 @@ contract DeployProtocol is Script {
     // 1.5x the last value. It is a testnet number: the principled fix is to make the bound a
     // function of elapsed time, or to trigger updates on price movement rather than on a clock.
     uint256 constant MAX_DEVIATION_BPS = 5_000;
-    uint256 constant SPOT_MAX_AGE = 3_600; // a spot read is only a sanity bound; one hour is generous
 
     // Attestation v2 signs panelSize/quorum/agreed, so the CONSUMER sets the real bar. A request can
     // therefore ask for a low quorum — so that it attests at all — while the feed still refuses
@@ -72,8 +70,8 @@ contract DeployProtocol is Script {
             console2.log("MockIMD     (reused)", imd);
         }
 
-        PriceFeed priceFeed = new PriceFeed(MAX_AGE, MAX_DEVIATION_BPS);
-        NhiFeed nhiFeed = new NhiFeed(MAX_AGE, MAX_DEVIATION_BPS);
+        PriceFeed priceFeed = new PriceFeed(PRICE_MAX_AGE, MAX_DEVIATION_BPS);
+        NhiFeed nhiFeed = new NhiFeed(NHI_MAX_AGE, MAX_DEVIATION_BPS);
         // A named artifact of its own, not a second PriceFeed: a launch manifest identifies a
         // deployment by contract name and cannot list one twice. SPOT_MAX_AGE is tighter because a
         // point-in-time price goes stale faster than the window average it is checking.
@@ -144,7 +142,7 @@ contract DeployProtocol is Script {
             );
             require(feeds[i].attestationAnswerType() != 1, "feed: answerType is the address enum, as on 519");
             require(feeds[i].attestationChainId() == ATTESTATION_CHAIN_ID, "feed: wrong payload chainId");
-            require(feeds[i].maxAge() == (i == 2 ? SPOT_MAX_AGE : MAX_AGE), "feed: wrong maxAge");
+            require(feeds[i].maxAge() == (i == 0 ? PRICE_MAX_AGE : i == 1 ? NHI_MAX_AGE : SPOT_MAX_AGE), "feed: wrong maxAge");
             require(feeds[i].maxDeviationBps() == MAX_DEVIATION_BPS, "feed: wrong maxDeviationBps");
             require(feeds[i].MIN_PANEL_SIZE() == MIN_PANEL_SIZE, "feed: panel floor changed");
             require(feeds[i].MIN_AGREED() == MIN_AGREED, "feed: agreement floor changed");

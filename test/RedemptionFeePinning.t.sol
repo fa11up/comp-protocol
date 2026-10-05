@@ -61,7 +61,8 @@ contract RedemptionFeePinningTest is WorkBackingFixture {
     /// geometrically." Twenty pairs every six hours, for gas, with no net change to debt or balance.
     function test_mintThenRepayRoundTripsCannotWashTheRecordYoung() public {
         _setVaultPrice(1 ether);
-        _open(BORROWER, 1800 ether, 1000 ether);
+        // 210%: a 190 round trip dips to 176%, above the 170% floor, and the position stays eligible.
+        _open(BORROWER, 2100 ether, 1000 ether);
         vm.prank(BORROWER);
         stable.transfer(HOLDER, 100 ether);
 

@@ -305,7 +305,7 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 10 ether);
         (uint256 held, uint256 debt) = vault.positions(BORROWER);
-        assertEq(held, 189 ether);
+        assertEq(held, 188 ether); // 10 repaid seizes 12 at a 20% bonus
         assertEq(debt, 100 ether);
         assertEq(vault.totalDebt(), 100 ether, "liquidation also pays accrued fees first");
         assertEq(vault.stabilityFeeOf(BORROWER), 0);

@@ -41,10 +41,10 @@ contract CDPVaultRecoveryTest is Test {
         vault = new CDPVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
         comp = vault.stablecoin();
         vm.prank(APPROVED_OPERATOR);
-        imd.mint(ALICE, 151 ether);
+        imd.mint(ALICE, 171 ether);
         vm.startPrank(ALICE);
         imd.approve(address(vault), type(uint256).max);
-        vault.lock(150 ether);
+        vault.lock(170 ether);
         vault.draw(100 ether);
         comp.transfer(BOB, 10 ether);
         vm.stopPrank();
@@ -92,10 +92,10 @@ contract CDPVaultRecoveryTest is Test {
         vm.startPrank(ALICE);
         vault.wipe(100 ether);
         _assertCleared();
-        vault.free(150 ether);
+        vault.free(170 ether);
         vm.stopPrank();
         assertEq(vault.debtOf(ALICE), 0);
-        assertEq(imd.balanceOf(ALICE), 151 ether);
+        assertEq(imd.balanceOf(ALICE), 171 ether);
     }
 
     function test_freshAgreedRecoveryClearsOnAllRoutes() public {
@@ -140,7 +140,7 @@ contract CDPVaultRecoveryTest is Test {
             } else {
                 _recover(route);
                 (uint256 collateral, uint256 debt) = vault.positions(ALICE);
-                assertEq(collateral, 150 ether + (route == 1 ? 1 : 0));
+                assertEq(collateral, 170 ether + (route == 1 ? 1 : 0));
                 assertEq(debt, 100 ether - (route == 2 ? 1 : 0));
             }
             _assertOriginalMark();

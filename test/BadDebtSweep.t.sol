@@ -19,6 +19,10 @@ import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
 /// costs 932 wei at that price, so every later bite reverted InsufficientCollateral
 /// (0x3a23d825, checked on chain for 1, 100 and 500). The position could never drain, so
 /// _recordBadDebt never fired: badDebtOf reported 157364181818182858 while totalBadDebt stayed 0.
+/// @dev Those figures were at a 10% bonus. The position is replayed as it was; the bonus is now 20%,
+/// so the largest coverable debt is 1505749499999999047, the shortfall 294250500000000953, and the
+/// same liquidation strands 717 wei against a 1017-wei seizure for one wei of debt: still frozen
+/// without the sweep. (At 10% this arithmetic reproduces the live 887 and 932 exactly.)
 contract BadDebtSweepTest is Test {
     address private constant BORROWER = address(0xB0B);
     address private constant KEEPER = address(0xCAFE);
@@ -26,8 +30,8 @@ contract BadDebtSweepTest is Test {
     uint256 private constant COLLATERAL = 1531680210045556243504;
     uint256 private constant DEBT = 1800000000000000000;
     uint256 private constant CRASH_PRICE = 1179684498206226;
-    uint256 private constant MAX_REPAYABLE = 1642635818181817142;
-    uint256 private constant SHORTFALL = 157364181818182858;
+    uint256 private constant MAX_REPAYABLE = 1505749499999999047;
+    uint256 private constant SHORTFALL = 294250500000000953;
 
     MockIMD private imd;
     ImdUSD private comp;
@@ -69,15 +73,15 @@ contract BadDebtSweepTest is Test {
         vault.bite(BORROWER, MAX_REPAYABLE);
 
         (uint256 collateral,) = vault.positions(BORROWER);
-        assertEq(collateral, 0, "the 887 wei the live vault stranded must be swept");
+        assertEq(collateral, 0, "the dust the live vault stranded (717 wei at 20%) must be swept");
         assertEq(vault.debtOf(BORROWER), SHORTFALL, "principal is never forgiven");
         // Before the sweep this read zero, for good: the position could never drain.
         assertEq(vault.totalBadDebt(), SHORTFALL, "draining the position realizes the loss");
 
         // The dust reached the liquidator on top of the formula payout. Marker and liquidator are
         // the same address here, so the vault pays one combined transfer.
-        uint256 formulaPayout = (MAX_REPAYABLE * 110 * 1e16) / CRASH_PRICE;
-        assertEq(imd.balanceOf(KEEPER), formulaPayout + 887, "liquidator receives the formula payout plus the dust");
+        uint256 formulaPayout = (MAX_REPAYABLE * (100 + vault.CHOP_PERCENT()) * 1e16) / CRASH_PRICE;
+        assertEq(imd.balanceOf(KEEPER), formulaPayout + 717, "liquidator receives the formula payout plus the dust");
     }
 
     /// @dev The sweep must not touch a borrower made whole: clearing the debt leaves them solvent
@@ -104,7 +108,7 @@ contract BadDebtSweepTest is Test {
         vm.prank(KEEPER);
         vault.bark(BORROWER);
 
-        uint256 coverable = (COLLATERAL * price) / (110 * 1e16);
+        uint256 coverable = (COLLATERAL * price) / ((100 + vault.CHOP_PERCENT()) * 1e16);
         if (coverable > DEBT) coverable = DEBT;
         vm.assume(coverable >= 1);
         uint256 repay = bound(uint256(rawRepay), 1, coverable);
@@ -115,7 +119,7 @@ contract BadDebtSweepTest is Test {
         // Nothing is ever left that a further liquidation could not take.
         (uint256 collateral,) = vault.positions(BORROWER);
         if (vault.debtOf(BORROWER) != 0 && collateral != 0) {
-            assertGe(collateral, (110 * 1e16) / price, "stranded collateral no liquidation can reach");
+            assertGe(collateral, ((100 + vault.CHOP_PERCENT()) * 1e16) / price, "stranded collateral no liquidation can reach");
         }
     }
 

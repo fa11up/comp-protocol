@@ -65,12 +65,12 @@ contract MarkerBadDebtTest is Test {
         assertEq(imd.balanceOf(MARKER), 0, "marking alone earns nothing");
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 100 ether);
-        assertEq(imd.balanceOf(MARKER), 1 ether);
-        assertEq(imd.balanceOf(FEE_RECIPIENT), 2.5 ether);
-        assertEq(imd.balanceOf(LIQUIDATOR), 106.5 ether);
-        _assertPosition(BORROWER, 30 ether, 0);
+        assertEq(imd.balanceOf(MARKER), 2 ether);
+        assertEq(imd.balanceOf(FEE_RECIPIENT), 5 ether);
+        assertEq(imd.balanceOf(LIQUIDATOR), 113 ether);
+        _assertPosition(BORROWER, 20 ether, 0);
         assertEq(imd.balanceOf(BORROWER), 0);
-        assertEq(imd.balanceOf(address(vault)), 30 ether);
+        assertEq(imd.balanceOf(address(vault)), 20 ether);
         assertEq(comp.totalSupply(), 0);
         (,, bool marked, address marker) = vault.liquidationMarks(BORROWER);
         assertFalse(marked);
@@ -85,10 +85,10 @@ contract MarkerBadDebtTest is Test {
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 100 ether);
-        assertEq(imd.balanceOf(MARKER), 1 ether);
-        assertEq(imd.balanceOf(LIQUIDATOR), 109 ether);
+        assertEq(imd.balanceOf(MARKER), 2 ether);
+        assertEq(imd.balanceOf(LIQUIDATOR), 118 ether);
         assertEq(imd.balanceOf(FEE_RECIPIENT), 0);
-        _assertPosition(BORROWER, 30 ether, 0);
+        _assertPosition(BORROWER, 20 ether, 0);
     }
 
     function test_sameMarkerAndLiquidatorReceiveOneCombinedCollateralTransfer() public {
@@ -106,14 +106,14 @@ contract MarkerBadDebtTest is Test {
             ++collateralTransfers;
             if (logs[i].topics[2] == bytes32(uint256(uint160(LIQUIDATOR)))) {
                 ++transfersToLiquidator;
-                assertEq(abi.decode(logs[i].data, (uint256)), 107.5 ether);
+                assertEq(abi.decode(logs[i].data, (uint256)), 115 ether);
             }
         }
         assertEq(transfersToLiquidator, 1, "combined marker and liquidator payment");
         assertEq(collateralTransfers, 2, "one combined transfer plus the protocol transfer");
-        assertEq(imd.balanceOf(LIQUIDATOR), 107.5 ether);
-        assertEq(imd.balanceOf(FEE_RECIPIENT), 2.5 ether);
-        _assertPosition(BORROWER, 30 ether, 0);
+        assertEq(imd.balanceOf(LIQUIDATOR), 115 ether);
+        assertEq(imd.balanceOf(FEE_RECIPIENT), 5 ether);
+        _assertPosition(BORROWER, 20 ether, 0);
     }
 
     function test_maximumCombinedBonusSharesPreserveLiquidatorPrincipal() public {
@@ -124,20 +124,20 @@ contract MarkerBadDebtTest is Test {
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 100 ether);
         assertEq(imd.balanceOf(LIQUIDATOR), 100 ether);
-        assertEq(imd.balanceOf(MARKER), 1 ether);
-        assertEq(imd.balanceOf(FEE_RECIPIENT), 9 ether);
-        _assertPosition(BORROWER, 30 ether, 0);
+        assertEq(imd.balanceOf(MARKER), 2 ether);
+        assertEq(imd.balanceOf(FEE_RECIPIENT), 18 ether);
+        _assertPosition(BORROWER, 20 ether, 0);
     }
 
     function test_oneBpsBeyondCombinedBonusLimitRevertsAtomically() public {
         _deploy(10_001 - CHIP_BPS);
-        _open(BORROWER, 55 ether, 100 ether);
+        _open(BORROWER, 60 ether, 100 ether);
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.InvalidBonusShares.selector);
         vault.bite(BORROWER, 50 ether);
-        _assertUnpaid(BORROWER, 55 ether, 100 ether);
+        _assertUnpaid(BORROWER, 60 ether, 100 ether);
     }
 
     function test_oneWeiRepaymentHasNoBonusOrZeroValueMarkerTransfer() public {
@@ -175,7 +175,7 @@ contract MarkerBadDebtTest is Test {
         _open(BORROWER, collateral, debt);
         _setPrice(price);
         _mark(BORROWER, MARKER);
-        uint256 seized = repayment * 1.1 ether / price;
+        uint256 seized = repayment * ((100 + vault.CHOP_PERCENT()) * 1e16) / price;
         uint256 principalCollateral = repayment * 1 ether / price;
         uint256 bonus = seized - principalCollateral;
         uint256 markerCut = bonus * CHIP_BPS / 10_000;
@@ -210,7 +210,7 @@ contract MarkerBadDebtTest is Test {
         vm.warp(markedAt + grace);
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 100 ether);
-        assertEq(imd.balanceOf(MARKER), 1 ether);
+        assertEq(imd.balanceOf(MARKER), 2 ether);
         assertEq(imd.balanceOf(NEXT_MARKER), 0);
     }
 
@@ -236,22 +236,22 @@ contract MarkerBadDebtTest is Test {
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 100 ether);
         assertEq(imd.balanceOf(MARKER), 0);
-        assertEq(imd.balanceOf(NEXT_MARKER), 1 ether);
+        assertEq(imd.balanceOf(NEXT_MARKER), 2 ether);
     }
 
     function test_markerPaymentFailureRollsBackBurnAndNewBadDebt() public {
-        _open(BORROWER, 55 ether, 100 ether);
+        _open(BORROWER, 60 ether, 100 ether);
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         vm.mockCallRevert(
             address(imd),
-            abi.encodeCall(imd.transfer, (MARKER, 0.5 ether)),
+            abi.encodeCall(imd.transfer, (MARKER, 1 ether)),
             abi.encodeWithSelector(TransferUnavailable.selector)
         );
         vm.prank(LIQUIDATOR);
         vm.expectRevert(TransferUnavailable.selector);
         vault.bite(BORROWER, 50 ether);
-        _assertUnpaid(BORROWER, 55 ether, 100 ether);
+        _assertUnpaid(BORROWER, 60 ether, 100 ether);
         assertEq(comp.balanceOf(LIQUIDATOR), 100 ether);
         assertEq(comp.totalSupply(), 100 ether);
         assertEq(vault.totalDebt(), 100 ether);
@@ -262,7 +262,7 @@ contract MarkerBadDebtTest is Test {
     }
 
     function test_liquidationRecordsExactShortfallWithoutForgivingIt() public {
-        _open(BORROWER, 55 ether, 100 ether);
+        _open(BORROWER, 60 ether, 100 ether);
         _setPrice(1 ether);
         assertEq(vault.badDebtOf(BORROWER), 50 ether);
         assertEq(vault.totalBadDebt(), 0, "only realized exhaustion enters the accumulator");
@@ -270,7 +270,7 @@ contract MarkerBadDebtTest is Test {
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vault.bite(BORROWER, 50 ether + 1);
-        _assertUnpaid(BORROWER, 55 ether, 100 ether);
+        _assertUnpaid(BORROWER, 60 ether, 100 ether);
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 50 ether);
         _assertPosition(BORROWER, 0, 50 ether);
@@ -285,8 +285,8 @@ contract MarkerBadDebtTest is Test {
     }
 
     function test_multipleExhaustedPositionsAndRepaymentsUpdateOnlyTheirShortfalls() public {
-        _open(BORROWER, 55 ether, 100 ether);
-        _open(SECOND_BORROWER, 44 ether, 80 ether);
+        _open(BORROWER, 60 ether, 100 ether);
+        _open(SECOND_BORROWER, 48 ether, 80 ether);
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         _mark(SECOND_BORROWER, NEXT_MARKER);
@@ -312,12 +312,12 @@ contract MarkerBadDebtTest is Test {
     }
 
     function test_recapitalizationCannotEraseHistoricalDebtAndSecondExhaustionDoesNotDoubleCount() public {
-        _open(BORROWER, 55 ether, 100 ether);
+        _open(BORROWER, 60 ether, 100 ether);
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 50 ether);
-        _deposit(BORROWER, 11 ether);
+        _deposit(BORROWER, 12 ether);
         assertEq(vault.totalBadDebt(), 50 ether);
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 10 ether);
@@ -336,8 +336,8 @@ contract MarkerBadDebtTest is Test {
     }
 
     function test_badDebtCoverageBoundaryAndOneCollateralWeiBelowIt() public {
-        _open(BORROWER, 110 ether, 100 ether);
-        _open(SECOND_BORROWER, 110 ether - 1, 100 ether);
+        _open(BORROWER, 120 ether, 100 ether);
+        _open(SECOND_BORROWER, 120 ether - 1, 100 ether);
         _setPrice(1 ether);
         assertEq(vault.badDebtOf(BORROWER), 0);
         assertEq(vault.badDebtOf(SECOND_BORROWER), 1);
@@ -351,7 +351,7 @@ contract MarkerBadDebtTest is Test {
     }
 
     function test_badDebtWithoutCollateralDoesNotNeedAValidPrice() public {
-        _open(BORROWER, 55 ether, 100 ether);
+        _open(BORROWER, 60 ether, 100 ether);
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
@@ -373,12 +373,13 @@ contract MarkerBadDebtTest is Test {
         _setPrice((debt * 2 ether + collateral - 1) / collateral);
         _open(BORROWER, collateral, debt);
         _setPrice(price);
-        // An independently derived integer inequality: floor(repayment * 1.1e18 / price) <= collateral.
-        uint256 capacity = ((collateral + 1) * price - 1) / 1.1 ether;
+        // An independently derived integer inequality: floor(repayment * bonusScale / price) <= collateral.
+        uint256 bonusScale = (100 + vault.CHOP_PERCENT()) * 1e16;
+        uint256 capacity = ((collateral + 1) * price - 1) / bonusScale;
         uint256 covered = capacity < debt ? capacity : debt;
         assertEq(vault.badDebtOf(BORROWER), debt - covered);
-        assertLe(covered * 1.1 ether / price, collateral);
-        if (covered < debt) assertGt((covered + 1) * 1.1 ether / price, collateral);
+        assertLe(covered * bonusScale / price, collateral);
+        if (covered < debt) assertGt((covered + 1) * bonusScale / price, collateral);
         assertEq(vault.totalBadDebt(), 0, "views do not record unrealized losses");
     }
 

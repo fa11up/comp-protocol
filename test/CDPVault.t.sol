@@ -23,8 +23,8 @@ contract CDPVaultTest is ProtocolFixture {
         assertEq(address(vault.gem()), address(imd));
         assertEq(address(vault.stablecoin()), address(comp));
         assertEq(address(vault.oracle()), address(oracle));
-        assertEq(vault.mat(), 150);
-        assertEq(vault.CHOP_PERCENT(), 10);
+        assertEq(vault.mat(), 170);
+        assertEq(vault.CHOP_PERCENT(), 20);
         assertEq(vault.collateralRatio(alice), type(uint256).max);
     }
 
@@ -81,7 +81,7 @@ contract CDPVaultTest is ProtocolFixture {
         new BaselineVault(
             address(imd), address(comp), address(0), address(nhiFeed), address(nhiFeed), address(spotFeed)
         );
-        assertEq(vault.mat(), 150, "distinct NHI remains independent of the price change");
+        assertEq(vault.mat(), 170, "distinct NHI remains independent of the price change");
         assertEq(vault.lull(), 6 hours);
     }
 
@@ -177,17 +177,17 @@ contract CDPVaultTest is ProtocolFixture {
         vault.bite(alice, 0);
     }
 
-    function test_borrowAt150PercentPreservesRightsAndEmitsEvent() public {
-        _open(alice, 150 ether, 0);
+    function test_borrowAt170PercentPreservesRightsAndEmitsEvent() public {
+        _open(alice, 170 ether, 0);
         vm.prank(alice);
         vm.expectEmit(true, false, false, true, address(vault));
         emit CDPVault.Draw(alice, 100 ether);
         vault.draw(100 ether);
-        _assertPosition(alice, 150 ether, 100 ether);
+        _assertPosition(alice, 170 ether, 100 ether);
         assertEq(comp.totalSupply(), 100 ether);
         assertEq(comp.balanceOf(alice), 100 ether);
         assertEq(oracle.mintingRights(alice), 1000 ether);
-        assertEq(vault.collateralRatio(alice), 150);
+        assertEq(vault.collateralRatio(alice), 170);
     }
 
     function test_workMintConsumesRightsWithoutCollateralOrDebt() public {
@@ -220,28 +220,28 @@ contract CDPVaultTest is ProtocolFixture {
     function test_borrowWithoutAnyWorkRights() public {
         address borrower = address(0xCAFE);
         vm.prank(OPERATOR);
-        imd.mint(borrower, 150 ether);
+        imd.mint(borrower, 170 ether);
         vm.prank(borrower);
-        imd.approve(address(vault), 150 ether);
-        _open(borrower, 150 ether, 100 ether);
-        _assertPosition(borrower, 150 ether, 100 ether);
+        imd.approve(address(vault), 170 ether);
+        _open(borrower, 170 ether, 100 ether);
+        _assertPosition(borrower, 170 ether, 100 ether);
         assertEq(oracle.mintingRights(borrower), 0);
         assertEq(vault.totalEarned(), 0);
         assertEq(comp.totalSupply(), 100 ether);
     }
 
     function test_workAndBorrowChannelsKeepSupplyAccountingSeparate() public {
-        _open(alice, 150 ether, 100 ether);
+        _open(alice, 170 ether, 100 ether);
         _establishWorkBacking(vault, 50 ether);
         vm.prank(alice);
         vault.earn(50 ether);
-        _assertPosition(alice, 150 ether, 100 ether);
+        _assertPosition(alice, 170 ether, 100 ether);
         assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 150 ether);
         assertEq(vault.totalEarned(), 50 ether);
         assertEq(oracle.mintingRights(alice), 950 ether);
         vm.prank(alice);
         vault.wipe(100 ether);
-        _assertPosition(alice, 150 ether, 0);
+        _assertPosition(alice, 170 ether, 0);
         assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 50 ether);
         assertEq(vault.totalEarned(), 50 ether);
         assertEq(oracle.mintingRights(alice), 950 ether);
@@ -269,7 +269,7 @@ contract CDPVaultTest is ProtocolFixture {
     }
 
     function test_zeroPriceBlocksBothMintChannelsButAllowsRepayment() public {
-        _open(alice, 150 ether, 100 ether);
+        _open(alice, 170 ether, 100 ether);
         priceFeed.setValue(0);
         vm.startPrank(alice);
         vm.expectRevert(CDPVault.InvalidPrice.selector);
@@ -277,7 +277,7 @@ contract CDPVaultTest is ProtocolFixture {
         vm.expectRevert(CDPVault.InvalidPrice.selector);
         vault.earn(1);
         vault.wipe(100 ether);
-        vault.free(150 ether);
+        vault.free(170 ether);
         vm.stopPrank();
         assertEq(comp.totalSupply(), 0);
     }
@@ -286,11 +286,11 @@ contract CDPVaultTest is ProtocolFixture {
         vm.prank(alice);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
         vault.draw(1);
-        _open(alice, 150 ether, 100 ether);
+        _open(alice, 170 ether, 100 ether);
         vm.prank(alice);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
         vault.draw(1);
-        _assertPosition(alice, 150 ether, 100 ether);
+        _assertPosition(alice, 170 ether, 100 ether);
         assertEq(oracle.mintingRights(alice), 1000 ether);
         assertEq(comp.totalSupply(), 100 ether);
     }
@@ -314,10 +314,10 @@ contract CDPVaultTest is ProtocolFixture {
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vault.free(201 ether);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        vault.free(50 ether + 1);
-        vault.free(50 ether);
+        vault.free(30 ether + 1);
+        vault.free(30 ether);
         vm.stopPrank();
-        _assertPosition(alice, 150 ether, 100 ether);
+        _assertPosition(alice, 170 ether, 100 ether);
         vm.prank(bob);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vault.free(1);
@@ -339,16 +339,16 @@ contract CDPVaultTest is ProtocolFixture {
     }
 
     function test_partialAndFullRepaymentWithoutApprovalPreservesWorkRights() public {
-        _open(alice, 150 ether, 100 ether);
+        _open(alice, 170 ether, 100 ether);
         vm.startPrank(alice);
         vm.expectEmit(true, false, false, true, address(vault));
         emit CDPVault.Wipe(alice, 40 ether);
         vault.wipe(40 ether);
-        _assertPosition(alice, 150 ether, 60 ether);
+        _assertPosition(alice, 170 ether, 60 ether);
         assertEq(comp.totalSupply(), 60 ether);
         assertEq(comp.allowance(alice, address(vault)), 0);
         vault.wipe(60 ether);
-        vault.free(150 ether);
+        vault.free(170 ether);
         vm.stopPrank();
         _assertPosition(alice, 0, 0);
         assertEq(comp.totalSupply(), 0);
@@ -357,7 +357,7 @@ contract CDPVaultTest is ProtocolFixture {
     }
 
     function test_repaymentRejectsExcessDebtAndInsufficientBalanceAtomically() public {
-        _open(alice, 150 ether, 100 ether);
+        _open(alice, 170 ether, 100 ether);
         vm.startPrank(alice);
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
         vault.wipe(100 ether + 1);
@@ -368,21 +368,21 @@ contract CDPVaultTest is ProtocolFixture {
         vm.prank(bob);
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
         vault.wipe(1);
-        _assertPosition(alice, 150 ether, 100 ether);
+        _assertPosition(alice, 170 ether, 100 ether);
         assertEq(comp.totalSupply(), 100 ether);
     }
 
-    function test_liquidationRejectsDebtFreeExactly150AndAbove150() public {
+    function test_liquidationRejectsDebtFreeExactly170AndAbove170() public {
         vm.expectRevert(CDPVault.HealthyPosition.selector);
         vault.bite(alice, 1);
-        _open(alice, 150 ether, 100 ether);
+        _open(alice, 170 ether, 100 ether);
         vm.expectRevert(CDPVault.HealthyPosition.selector);
         vault.bite(alice, 1);
         vm.prank(alice);
         vault.lock(1 ether);
         vm.expectRevert(CDPVault.HealthyPosition.selector);
         vault.bite(alice, 1);
-        _assertPosition(alice, 151 ether, 100 ether);
+        _assertPosition(alice, 171 ether, 100 ether);
     }
 
     function test_directDonationDoesNotCreateWithdrawableCollateral() public {
@@ -396,7 +396,7 @@ contract CDPVaultTest is ProtocolFixture {
 
     function testFuzz_depositMintRepayWithdrawSequence(uint256 c, uint256 d, uint256 r, uint256 w) public {
         c = bound(c, 2, 1e36);
-        d = bound(d, 1, c * 2 / 3);
+        d = bound(d, 1, c * 100 / 170);
         r = bound(r, 0, d);
         vm.startPrank(OPERATOR);
         imd.mint(alice, c);
@@ -405,12 +405,12 @@ contract CDPVaultTest is ProtocolFixture {
         vm.startPrank(alice);
         if (r != 0) vault.wipe(r);
         uint256 remainingDebt = d - r;
-        uint256 requiredCollateral = remainingDebt + remainingDebt / 2 + remainingDebt % 2;
+        uint256 requiredCollateral = (remainingDebt * 170 + 99) / 100;
         w = bound(w, 0, c - requiredCollateral);
         if (w != 0) vault.free(w);
         _assertPosition(alice, c - w, remainingDebt);
         assertEq(comp.totalSupply(), remainingDebt);
-        assertGe(vault.collateralRatio(alice), 150);
+        assertGe(vault.collateralRatio(alice), 170);
         if (remainingDebt != 0) vault.wipe(remainingDebt);
         if (c != w) vault.free(c - w);
         vm.stopPrank();

@@ -277,12 +277,12 @@ abstract contract SwarmFeedTest is Test {
         nhi.seed(0.85 ether);
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, 100 ether);
-        assertEq(imd.balanceOf(LIQUIDATOR), 109 ether, "liquidator receives principal plus 90% of bonus");
-        assertEq(imd.balanceOf(address(this)), 1 ether, "distinct marker receives 10% of bonus");
-        assertEq(imd.balanceOf(LIQUIDATOR) + imd.balanceOf(address(this)), 110 ether);
+        assertEq(imd.balanceOf(LIQUIDATOR), 118 ether, "liquidator receives principal plus 90% of bonus");
+        assertEq(imd.balanceOf(address(this)), 2 ether, "distinct marker receives 10% of bonus");
+        assertEq(imd.balanceOf(LIQUIDATOR) + imd.balanceOf(address(this)), 120 ether);
         assertEq(comp.totalSupply(), 0);
         (uint256 remaining, uint256 debt) = vault.positions(BORROWER);
-        assertEq(remaining, 30 ether);
+        assertEq(remaining, 20 ether);
         assertEq(debt, 0);
     }
 

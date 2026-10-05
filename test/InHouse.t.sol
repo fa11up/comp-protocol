@@ -155,7 +155,7 @@ contract InHouseTest is LegacyWorkBacking {
     /// Full loop through both mint channels at a real, non-unit price.
     function test_seedThenBorrowRepayAtLivePrice() public {
         _seed(PRICE, 0.9e18);
-        assertEq(vault.mat(), 150, "NHI 0.9 should give mat 150");
+        assertEq(vault.mat(), 170, "NHI 0.9 should give mat 170");
         assertEq(vault.lull(), 6 hours);
 
         uint256 debt = 1e18;
@@ -185,12 +185,12 @@ contract InHouseTest is LegacyWorkBacking {
         );
     }
 
-    /// The bug that parked launch 493: the payout must be priced, not a flat 110/100.
-    /// Opens at 160% so a single in-band (<=20%) price fall puts it under mat 150.
+    /// The bug that parked launch 493: the payout must be priced, not a flat (100 + bonus)/100.
+    /// Opens at 180% so a single in-band (<=20%) price fall puts it under mat 170.
     function test_liquidationPayoutIsPricedNotFlat() public {
         _seed(PRICE, 0.9e18);
         uint256 debt = 1e18;
-        uint256 collateral = (debt * 1e18 * 160) / (PRICE * 100);
+        uint256 collateral = (debt * 1e18 * 180) / (PRICE * 100);
         vm.startPrank(OPERATOR);
         imd.mint(OPERATOR, collateral);
         imd.approve(address(vault), collateral);
@@ -205,8 +205,9 @@ contract InHouseTest is LegacyWorkBacking {
         vault.bark(OPERATOR);
         skip(6 hours);
         uint256 repay = debt / 2;
-        uint256 expected = (repay * 11e17) / fallen; // floor(debtToRepay * 1.1e18 / price)
-        assertTrue(expected != repay * 110 / 100, "at a non-unit price the two formulas must differ");
+        uint256 bonusScale = (100 + vault.CHOP_PERCENT()) * 1e16;
+        uint256 expected = (repay * bonusScale) / fallen; // floor(debtToRepay * bonusScale / price)
+        assertTrue(expected != repay * (100 + vault.CHOP_PERCENT()) / 100, "at a non-unit price the two formulas must differ");
 
         uint256 markerCut = (expected - repay * 1e18 / fallen) * CHIP_BPS / 10_000;
         uint256 markerBefore = imd.balanceOf(address(this));
@@ -425,7 +426,7 @@ contract InHouseTest is LegacyWorkBacking {
         _seed(PRICE, 0.9e18);
 
         uint256 debt = 1 ether;
-        uint256 collateral = (debt * 1e18 * 160) / (PRICE * 100);
+        uint256 collateral = (debt * 1e18 * 180) / (PRICE * 100);
         vm.startPrank(OPERATOR);
         imd.mint(OPERATOR, collateral);
         imd.approve(address(v), collateral);
@@ -438,7 +439,7 @@ contract InHouseTest is LegacyWorkBacking {
         v.bark(OPERATOR);
         skip(6 hours);
 
-        uint256 seized = (debt * 11e17) / fallen;
+        uint256 seized = (debt * ((100 + v.CHOP_PERCENT()) * 1e16)) / fallen;
         uint256 principal = (debt * 1e18) / fallen;
         uint256 expectedCut = ((seized - principal) * shareBps) / 10_000;
         uint256 markerCut = ((seized - principal) * CHIP_BPS) / 10_000;

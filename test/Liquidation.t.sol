@@ -33,21 +33,22 @@ contract LiquidationTest is ProtocolFixture {
     }
 
     function test_partialLiquidationPaysExactBonusAndClearsRecoveredMark() public {
-        _priceDrivenPosition(130 ether);
+        // 145 at a 20% bonus: repaying 50 seizes 60, leaving 85 against 50 of debt, exactly the 170% floor.
+        _priceDrivenPosition(145 ether);
         _markAndWait(alice);
         uint256 liquidatorBalance = imd.balanceOf(bob);
 
         vm.prank(bob);
         vm.expectEmit(true, true, false, true, address(vault));
-        emit CDPVault.Bite(alice, bob, 50 ether, 55 ether);
+        emit CDPVault.Bite(alice, bob, 50 ether, 60 ether);
         vault.bite(alice, 50 ether);
 
-        _assertPosition(alice, 75 ether, 50 ether);
+        _assertPosition(alice, 85 ether, 50 ether);
         _assertPosition(bob, 0, 0);
         _assertMark(alice, 0, 0, false);
-        assertEq(vault.collateralRatio(alice), 150);
-        _assertDefaultSplit(imd.balanceOf(bob) - liquidatorBalance, 55 ether, 50 ether);
-        assertEq(imd.balanceOf(address(vault)), 75 ether);
+        assertEq(vault.collateralRatio(alice), 170);
+        _assertDefaultSplit(imd.balanceOf(bob) - liquidatorBalance, 60 ether, 50 ether);
+        assertEq(imd.balanceOf(address(vault)), 85 ether);
         assertEq(comp.balanceOf(bob), 50 ether);
         assertEq(comp.totalSupply(), 50 ether + vault.totalEarned());
         assertEq(oracle.mintingRights(alice), 1000 ether, "borrowing and liquidation do not consume work rights");
@@ -66,38 +67,38 @@ contract LiquidationTest is ProtocolFixture {
         vm.prank(bob);
         vault.bite(alice, 100 ether);
 
-        _assertPosition(alice, 30 ether, 0);
+        _assertPosition(alice, 20 ether, 0);
         _assertMark(alice, 0, 0, false);
-        _assertDefaultSplit(imd.balanceOf(bob) - liquidatorBalance, 110 ether, 100 ether);
+        _assertDefaultSplit(imd.balanceOf(bob) - liquidatorBalance, 120 ether, 100 ether);
         assertEq(comp.balanceOf(bob), 0);
         assertEq(comp.totalSupply(), 0);
         assertEq(comp.allowance(bob, address(vault)), 0, "liquidation burns caller COMP without approval");
         vm.prank(alice);
-        vault.free(30 ether);
+        vault.free(20 ether);
         assertEq(imd.balanceOf(address(vault)), 0);
-        assertEq(imd.balanceOf(alice), 890 ether);
+        assertEq(imd.balanceOf(alice), 880 ether);
         assertEq(vault.collateralRatio(alice), type(uint256).max);
     }
 
     function test_partialLiquidationAtHalfUnitPricePaysExactCollateralAndRoundsDown() public {
         uint256 payout = _checkPartialLiquidation(100 ether + 7, 50 ether + 3, 250 ether, 0.5 ether);
-        assertEq(payout, 110 ether + 6, "fractional 0.6 wei of collateral is rounded down");
+        assertEq(payout, 120 ether + 7, "fractional 0.2 wei of collateral is rounded down");
     }
 
     function test_partialLiquidationAtDoubleUnitPricePaysExactCollateralAndRoundsDown() public {
         uint256 payout = _checkPartialLiquidation(100 ether + 7, 50 ether + 3, 65 ether, 2 ether);
-        assertEq(payout, 27.5 ether + 1, "fractional 0.65 wei of collateral is rounded down");
+        assertEq(payout, 30 ether + 1, "fractional 0.8 wei of collateral is rounded down");
     }
 
     function test_fullLiquidationAtHalfUnitPricePaysExactCollateralAndClearsMark() public {
         uint256 payout = _checkPartialLiquidation(100 ether + 3, 100 ether + 3, 250 ether, 0.5 ether);
-        assertEq(payout, 220 ether + 6);
+        assertEq(payout, 240 ether + 7);
         _assertMark(alice, 0, 0, false);
     }
 
     function test_fullLiquidationAtDoubleUnitPricePaysExactCollateralAndClearsMark() public {
         uint256 payout = _checkPartialLiquidation(100 ether + 3, 100 ether + 3, 65 ether, 2 ether);
-        assertEq(payout, 55 ether + 1);
+        assertEq(payout, 60 ether + 1);
         _assertMark(alice, 0, 0, false);
     }
 
@@ -143,7 +144,7 @@ contract LiquidationTest is ProtocolFixture {
         vm.warp(markedAt + 6 hours);
         vm.prank(bob);
         vault.bite(alice, 100 ether);
-        _assertPosition(alice, 30 ether, 0);
+        _assertPosition(alice, 20 ether, 0);
     }
 
     function test_liquidationExecutesAtExactEndOfMarkWindow() public {
@@ -156,8 +157,8 @@ contract LiquidationTest is ProtocolFixture {
         uint256 beforeCollateral = imd.balanceOf(bob);
         vm.prank(bob);
         vault.bite(alice, 100 ether);
-        _assertDefaultSplit(imd.balanceOf(bob) - beforeCollateral, 110 ether, 100 ether);
-        _assertPosition(alice, 30 ether, 0);
+        _assertDefaultSplit(imd.balanceOf(bob) - beforeCollateral, 120 ether, 100 ether);
+        _assertPosition(alice, 20 ether, 0);
         _assertMark(alice, 0, 0, false);
         assertEq(comp.totalSupply(), 0);
     }
@@ -190,9 +191,9 @@ contract LiquidationTest is ProtocolFixture {
         vm.warp(newMark + 8640);
         vm.prank(bob);
         vault.bite(alice, 100 ether);
-        _assertPosition(alice, 30 ether, 0);
+        _assertPosition(alice, 20 ether, 0);
         _assertMark(alice, 0, 0, false);
-        _assertDefaultSplit(imd.balanceOf(bob) - 1000 ether, 110 ether, 100 ether);
+        _assertDefaultSplit(imd.balanceOf(bob) - 1000 ether, 120 ether, 100 ether);
         assertEq(comp.totalSupply(), 0);
     }
 
@@ -202,7 +203,7 @@ contract LiquidationTest is ProtocolFixture {
         uint256 firstMark = block.timestamp;
         vm.warp(firstMark + 1 hours);
         vm.prank(alice);
-        vault.lock(20 ether);
+        vault.lock(40 ether);
         _assertMark(alice, 0, 0, false);
         assertEq(vault.collateralRatio(alice), vault.mat());
         vm.prank(bob);
@@ -279,7 +280,7 @@ contract LiquidationTest is ProtocolFixture {
 
         nhiFeed.setValue(0.7 ether);
         assertEq(vault.collateralRatio(alice), ratioBefore);
-        assertEq(vault.mat(), 180);
+        assertEq(vault.mat(), 188);
         assertEq(vault.lull(), 8640);
         vault.bark(alice);
         uint256 markedAt = block.timestamp;
@@ -294,8 +295,8 @@ contract LiquidationTest is ProtocolFixture {
         vault.bite(alice, 100 ether);
         (uint256 priceAfter,) = priceFeed.latestValue();
         assertEq(priceAfter, priceBefore, "only NHI moved");
-        _assertDefaultSplit(imd.balanceOf(bob) - beforeBalance, 110 ether, 100 ether);
-        _assertPosition(alice, 60 ether, 0);
+        _assertDefaultSplit(imd.balanceOf(bob) - beforeBalance, 120 ether, 100 ether);
+        _assertPosition(alice, 50 ether, 0);
         _assertMark(alice, 0, 0, false);
     }
 
@@ -308,22 +309,23 @@ contract LiquidationTest is ProtocolFixture {
         _assertMark(alice, block.timestamp, 0, true);
         vm.prank(bob);
         vault.bite(alice, 100 ether);
-        _assertPosition(alice, 60 ether, 0);
-        _assertDefaultSplit(imd.balanceOf(bob) - 1000 ether, 110 ether, 100 ether);
+        _assertPosition(alice, 50 ether, 0);
+        _assertDefaultSplit(imd.balanceOf(bob) - 1000 ether, 120 ether, 100 ether);
     }
 
     function test_oneWeiNhiDeclineAcrossFractionalThresholdKeepsGraceSnapshot() public {
-        _open(alice, 170 ether, 100 ether);
+        // At NHI .75 the curve is exactly 182; one wei lower it rounds up to 183.
+        _open(alice, 182 ether, 100 ether);
         vm.prank(alice);
         comp.transfer(bob, 100 ether);
         nhiFeed.setValue(0.75 ether);
-        assertEq(vault.mat(), 170);
+        assertEq(vault.mat(), 182);
         vm.expectRevert(CDPVault.HealthyPosition.selector);
         vault.bark(alice);
 
         nhiFeed.setValue(0.75 ether - 1);
-        assertEq(vault.mat(), 171, "fractional threshold rounds up");
-        assertEq(vault.collateralRatio(alice), 170, "collateral value has not changed");
+        assertEq(vault.mat(), 183, "fractional threshold rounds up");
+        assertEq(vault.collateralRatio(alice), 182, "collateral value has not changed");
         vault.bark(alice);
         (uint256 markedAt,,,) = vault.liquidationMarks(alice);
         _assertMark(alice, markedAt, 12959, true);
@@ -341,10 +343,10 @@ contract LiquidationTest is ProtocolFixture {
         vm.prank(bob);
         vault.bite(alice, 100 ether);
 
-        _assertDefaultSplit(imd.balanceOf(bob) - beforeBalance, 110 ether, 100 ether);
+        _assertDefaultSplit(imd.balanceOf(bob) - beforeBalance, 120 ether, 100 ether);
         (uint256 price,) = priceFeed.latestValue();
         assertEq(price, 1 ether, "only NHI moved");
-        _assertPosition(alice, 60 ether, 0);
+        _assertPosition(alice, 62 ether, 0);
         _assertMark(alice, 0, 0, false);
         assertEq(comp.totalSupply(), vault.totalEarned());
     }
@@ -385,7 +387,7 @@ contract LiquidationTest is ProtocolFixture {
         vm.warp(markedAt + 6 hours);
         vm.prank(bob);
         vault.bite(alice, 100 ether);
-        _assertPosition(alice, 30 ether, 0);
+        _assertPosition(alice, 20 ether, 0);
     }
 
     function test_nhiRiseAndRepeatedMarksCannotExtendGraceSnapshot() public {
@@ -407,13 +409,13 @@ contract LiquidationTest is ProtocolFixture {
         vm.warp(markedAt + 8640);
         vm.prank(bob);
         vault.bite(alice, 100 ether);
-        _assertPosition(alice, 30 ether, 0);
+        _assertPosition(alice, 20 ether, 0);
     }
 
     function test_onePriceMoveLiquidatesMultiplePositionsWithoutCrossAccountSeizure() public {
         priceFeed.setValue(2 ether);
         _open(alice, 140 ether, 100 ether);
-        _open(bob, 240 ether, 200 ether);
+        _open(bob, 250 ether, 200 ether);
         address liquidator = address(0xCAFE);
         vm.prank(alice);
         comp.transfer(liquidator, 100 ether);
@@ -426,17 +428,17 @@ contract LiquidationTest is ProtocolFixture {
 
         vm.startPrank(liquidator);
         vault.bite(alice, 100 ether);
-        _assertPosition(alice, 30 ether, 0);
-        _assertPosition(bob, 240 ether, 200 ether);
-        _assertDefaultSplit(imd.balanceOf(liquidator), 110 ether, 100 ether);
+        _assertPosition(alice, 20 ether, 0);
+        _assertPosition(bob, 250 ether, 200 ether);
+        _assertDefaultSplit(imd.balanceOf(liquidator), 120 ether, 100 ether);
         vault.bite(bob, 200 ether);
         vm.stopPrank();
-        _assertPosition(bob, 20 ether, 0);
+        _assertPosition(bob, 10 ether, 0);
         _assertPosition(liquidator, 0, 0);
         _assertMark(alice, 0, 0, false);
         _assertMark(bob, 0, 0, false);
-        _assertDefaultSplit(imd.balanceOf(liquidator), 330 ether, 300 ether);
-        assertEq(imd.balanceOf(address(vault)), 50 ether);
+        _assertDefaultSplit(imd.balanceOf(liquidator), 360 ether, 300 ether);
+        assertEq(imd.balanceOf(address(vault)), 30 ether);
         assertEq(comp.balanceOf(liquidator), 0);
         assertEq(comp.totalSupply(), 0);
     }
@@ -514,7 +516,7 @@ contract LiquidationTest is ProtocolFixture {
         nhiFeed.setStale(false);
         vm.prank(bob);
         vault.bite(alice, 100 ether);
-        _assertPosition(alice, 30 ether, 0);
+        _assertPosition(alice, 20 ether, 0);
     }
 
     function test_zeroPriceBlocksLiquidationWithoutChangingBalances() public {
@@ -540,11 +542,11 @@ contract LiquidationTest is ProtocolFixture {
         _markAndWait(alice);
         vm.prank(bob);
         vault.bite(alice, 100 ether);
-        _assertPosition(alice, 30 ether, 0);
+        _assertPosition(alice, 20 ether, 0);
         _assertPosition(bob, 0, 0);
         assertEq(comp.balanceOf(alice), 100 ether);
         assertEq(comp.balanceOf(bob), 0);
-        _assertDefaultSplit(imd.balanceOf(bob) - 1000 ether, 110 ether, 100 ether);
+        _assertDefaultSplit(imd.balanceOf(bob) - 1000 ether, 120 ether, 100 ether);
         assertEq(vault.totalEarned(), 100 ether);
         assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalEarned());
         assertEq(oracle.mintingRights(bob), 900 ether);
@@ -558,26 +560,27 @@ contract LiquidationTest is ProtocolFixture {
         _markAndWait(alice);
         vm.prank(alice);
         vault.bite(alice, 100 ether);
-        _assertPosition(alice, 30 ether, 0);
+        _assertPosition(alice, 20 ether, 0);
         assertEq(comp.balanceOf(alice), 0);
-        _assertDefaultSplit(imd.balanceOf(alice) - 860 ether, 110 ether, 100 ether);
+        _assertDefaultSplit(imd.balanceOf(alice) - 860 ether, 120 ether, 100 ether);
         assertEq(imd.balanceOf(bob), 1000 ether);
     }
 
     function test_repeatedPartialLiquidationsKeepOriginalGraceUntilRecovery() public {
-        _priceDrivenPosition(120 ether);
+        // 132.5 at a 20% bonus: three repayments of 25 each seize 30, leaving 42.5 against 25 (170%).
+        _priceDrivenPosition(132.5 ether);
         (uint256 markedAt, uint256 grace) = _markAndWait(alice);
         vm.startPrank(bob);
         for (uint256 i = 1; i <= 3; ++i) {
             vault.bite(alice, 25 ether);
             uint256 repaid = i * 25 ether;
-            uint256 seized = repaid * 110 / 100;
-            _assertPosition(alice, 120 ether - seized, 100 ether - repaid);
+            uint256 seized = repaid * 120 / 100;
+            _assertPosition(alice, 132.5 ether - seized, 100 ether - repaid);
             _assertDefaultSplit(imd.balanceOf(bob) - 1000 ether, seized, repaid);
             assertEq(comp.totalSupply(), 100 ether - repaid);
             if (i < 3) _assertMark(alice, markedAt, grace, true);
         }
-        assertEq(vault.collateralRatio(alice), 150);
+        assertEq(vault.collateralRatio(alice), 170);
         _assertMark(alice, 0, 0, false);
         vm.expectRevert(CDPVault.HealthyPosition.selector);
         vault.bite(alice, 1);
@@ -610,7 +613,8 @@ contract LiquidationTest is ProtocolFixture {
     }
 
     function test_partialLiquidationAtFirstNonzeroBonus() public {
-        _checkPartialLiquidation(11, 10, 11, 1 ether);
+        // At 20% the first repayment carrying a whole-unit bonus is 5 (seizing 6).
+        _checkPartialLiquidation(6, 5, 6, 1 ether);
     }
 
     /// @dev These legacy scenarios mark from this test, a distinct address from every liquidator.
@@ -649,11 +653,25 @@ contract LiquidationTest is ProtocolFixture {
     /// and only while debt survives the repayment.
     function _sweptAmount(uint256 remainder, uint256 repayment, uint256 debt, uint256 price)
         private
-        pure
+        view
         returns (uint256)
     {
         if (remainder == 0 || repayment >= debt) return 0;
-        return remainder < uint256(1.1 ether) / price ? remainder : 0;
+        return remainder < (100 + vault.CHOP_PERCENT()) * 1e16 / price ? remainder : 0;
+    }
+
+    /// @dev Collateral that opens safely at twice `liquidationPrice` and is below the floor at it,
+    /// at least the payout, including integer-rounding edges.
+    function _unhealthyCollateral(uint128 rawCollateral, uint256 debt, uint256 payout, uint256 liquidationPrice)
+        private
+        view
+        returns (uint256)
+    {
+        uint256 floorScale = vault.mat() * 1e16;
+        uint256 openingPrice = liquidationPrice * 2;
+        uint256 openingMinimum = (debt * floorScale + openingPrice - 1) / openingPrice;
+        uint256 unhealthyMaximum = (debt * floorScale + liquidationPrice - 1) / liquidationPrice - 1;
+        return bound(uint256(rawCollateral), payout > openingMinimum ? payout : openingMinimum, unhealthyMaximum);
     }
 
     function _checkPartialLiquidation(
@@ -664,13 +682,10 @@ contract LiquidationTest is ProtocolFixture {
     ) private returns (uint256 actualPayout) {
         uint256 debt = bound(uint256(rawDebt), 1, type(uint128).max);
         uint256 repayment = bound(uint256(rawRepayment), 1, debt);
-        uint256 payout = repayment * 1.1 ether / liquidationPrice;
+        uint256 bonusScale = (100 + vault.CHOP_PERCENT()) * 1e16;
+        uint256 payout = repayment * bonusScale / liquidationPrice;
         uint256 openingPrice = liquidationPrice * 2;
-        uint256 openingMinimum = (debt * 1.5 ether + openingPrice - 1) / openingPrice;
-        // The highest collateral below 150% at the execution price, including integer-rounding edges.
-        uint256 unhealthyMaximum = (debt * 150 ether + liquidationPrice * 100 - 1) / (liquidationPrice * 100) - 1;
-        uint256 collateral =
-            bound(uint256(rawCollateral), payout > openingMinimum ? payout : openingMinimum, unhealthyMaximum);
+        uint256 collateral = _unhealthyCollateral(rawCollateral, debt, payout, liquidationPrice);
         vm.prank(OPERATOR);
         imd.mint(alice, collateral);
         priceFeed.setValue(openingPrice);
@@ -701,8 +716,8 @@ contract LiquidationTest is ProtocolFixture {
             imd.balanceOf(bob) - liquidatorBalance, payout, repayment * 1 ether / liquidationPrice, seized - payout
         );
         assertEq(actualPayout, payout, "exact price-divided total collateral seizure");
-        assertLe(actualPayout * liquidationPrice, repayment * 1.1 ether, "payout does not round up");
-        assertLt(repayment * 1.1 ether, (actualPayout + 1) * liquidationPrice, "no extra collateral is withheld");
+        assertLe(actualPayout * liquidationPrice, repayment * bonusScale, "payout does not round up");
+        assertLt(repayment * bonusScale, (actualPayout + 1) * liquidationPrice, "no extra collateral is withheld");
         assertEq(imd.balanceOf(alice), ownerBalance);
         assertEq(imd.balanceOf(address(vault)), collateral - seized + 300 ether);
         assertEq(comp.balanceOf(bob), debt + 100 ether - repayment);

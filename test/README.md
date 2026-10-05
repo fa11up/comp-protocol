@@ -144,7 +144,7 @@ is worth one ETH: `reserveValueUsd` is asserted in dollars and `reserveValue`,
   zero for debt opened in that transaction, while the same position counts in
   full one transaction later. A repayment in the same transaction tightens the
   term immediately (the smaller of the start-of-transaction and live totals).
-- **Bad debt.** A liquidation that drains a position at exactly its 110% payout
+- **Bad debt.** A liquidation that drains a position at exactly its 120% payout
   leaves residual principal in `totalDebt` that `backedDebt` excludes; after a
   year of fees a one-wei repayment re-records the residual as accrued debt above
   the principal, and the subtraction saturates to zero instead of reverting; a
@@ -219,7 +219,7 @@ no additional profile, RPC, downloaded dependency or scratch source is needed.
 - `Redemption.t.sol` covers reserve-only execution without touching a position,
   exact reserve exhaustion, same-call continuation into a borrower, a one-wei
   reserve shortfall, and refusal to spend other Treasury assets. Ceiling equality
-  is refused and one wei below is accepted at both 150% and 200% minimum ratios.
+  is refused and one wei below is accepted at both 170% and 200% minimum ratios.
   Tests compare exact collateral/debt fractions, including full repayment,
   accrued fees, recovery below mat, and candidate-independent payouts.
 - Failure cases cover zero/dust burns, excessive amounts, insufficient caller

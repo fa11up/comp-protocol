@@ -56,7 +56,7 @@ contract ShareCollateralForkTest is Test {
         (uint256 collateral,) = vault.positions(BORROWER);
         assertEq(collateral, shares, "credited the shares the live vault minted");
         assertGt(shares, 0);
-        // 1,000 IMD at 0.003 ETH and $3,000/ETH is $9,000; at mat 150 it backs up to $6,000 of debt.
+        // 1,000 IMD at 0.003 ETH and $3,000/ETH is $9,000; at mat 170 it backs up to about $5,294 of debt.
         vm.prank(BORROWER);
         vault.draw(5_000 ether);
         uint256 cr = vault.collateralRatio(BORROWER);

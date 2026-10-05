@@ -108,7 +108,10 @@ contract CDPVault is ReentrancyGuard {
         uint256 feeBps
     );
 
-    uint256 public constant CHOP_PERCENT = 10;
+    /// @dev 20%, decided 2026-10-05 against IMD's own pool: the liquidator keeps 16% after the marker's
+    /// and the protocol's shares, which stays profitable selling up to ~$290k of collateral into a
+    /// full-range pool of ~$2.3M per side with a 1% fee (docs/PARAMETERS-2026-10-05.md).
+    uint256 public constant CHOP_PERCENT = 20;
     uint256 public constant REDEMPTION_FEE_FLOOR_BPS = 50;
     uint256 public constant REDEMPTION_FEE_CAP_BPS = 500;
     /// @dev floor(1e18 * 2**(-1/43200)): a twelve-hour half-life, with per-second decay.
@@ -859,7 +862,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 collateral = _positions[owner].collateral;
         if (collateral == 0) return debt;
         uint256 price = _price();
-        // A ratio of at least 110 guarantees full coverage and avoids overflow on very large collateral.
+        // A ratio of at least 100 + CHOP_PERCENT guarantees full coverage and avoids overflow on very large collateral.
         if (_collateralRatio(collateral, debt, price) >= 100 + CHOP_PERCENT) return 0;
         uint256 payoutScale = (100 + CHOP_PERCENT) * 1e16;
         uint256 covered = Math.mulDiv(collateral, price, payoutScale);
@@ -870,7 +873,10 @@ contract CDPVault is ReentrancyGuard {
         return extra >= debt - covered ? 0 : debt - covered - extra;
     }
 
-    /// @notice Minimum CR, derived only from NHI: 200 at/below .60; 150 at/above .85.
+    /// @notice Minimum CR, derived only from NHI: 200 at/below .60; 170 at/above .85.
+    /// @dev The floor is 170 because grace is LONGEST (six hours) when the network is healthy, which is
+    /// where the floor applies: 170 covers a 20% bonus after a stressed six-hour-plus fall and the sale
+    /// of the largest liquidation that is still profitable in one trade (docs/PARAMETERS-2026-10-05.md).
     /// @dev Linear interpolation rounds up to a whole percent, so rounding cannot weaken the threshold.
     function mat() public view returns (uint256) {
         (uint256 nhi,) = nhiFeed.latestValue();
@@ -1041,9 +1047,9 @@ contract CDPVault is ReentrancyGuard {
     }
 
     function _mat(uint256 nhi) private pure returns (uint256) {
-        if (nhi >= 0.85e18) return 150;
+        if (nhi >= 0.85e18) return 170;
         if (nhi <= 0.6e18) return 200;
-        return 150 + Math.mulDiv(0.85e18 - nhi, 50, 0.25e18, Math.Rounding.Ceil);
+        return 170 + Math.mulDiv(0.85e18 - nhi, 30, 0.25e18, Math.Rounding.Ceil);
     }
 
     function _lull(uint256 nhi) private pure returns (uint256) {

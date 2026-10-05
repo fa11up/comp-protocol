@@ -19,7 +19,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _openDebt(1000 ether);
         vm.prank(BORROWER);
-        backedVault.free(200 ether); // 180%, inside the healthy 150..200 band.
+        backedVault.free(200 ether); // 180%, inside the healthy 170..220 band.
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(address(reserve), 1000 ether);
     }
@@ -193,7 +193,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
         _advance(12 hours); // the original 1000 has aged out
         vm.prank(BORROWER);
-        backedVault.draw(100 ether); // fresh, dated now
+        backedVault.draw(50 ether); // fresh, dated now; 1800/1050 stays above the 170% floor
         _advance(6 hours);
         uint256 fees = backedVault.stabilityFeeOf(BORROWER);
         assertGt(fees, 0);
@@ -291,7 +291,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         vm.prank(APPROVED_OPERATOR);
         reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
         uint256 gap = bound(gapSeed, 1, 12 hours - 1);
-        uint256 topUp = bound(topUpSeed, 1, 150 ether); // 1800/1150 stays healthy and inside the band
+        uint256 topUp = bound(topUpSeed, 1, 58 ether); // 1800/1058 stays healthy and inside the band
         uint256 start = vm.getBlockTimestamp();
         vm.warp(start + gap);
         _refreshEthUsd();
@@ -451,9 +451,9 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         vm.warp(eta - 1);
         vm.expectRevert(abi.encodeWithSelector(Governed.TooEarly.selector, eta));
         parameters.applyPending();
-        assertEq(backedVault.redemptionCeilingCR(), 200);
+        assertEq(backedVault.redemptionCeilingCR(), 220);
         _apply();
-        assertEq(backedVault.redemptionCeilingCR(), 175);
+        assertEq(backedVault.redemptionCeilingCR(), 195);
         health.setValue(0.6 ether);
         assertEq(backedVault.redemptionCeilingCR(), 225);
         vm.prank(APPROVED_OPERATOR);

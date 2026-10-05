@@ -131,7 +131,7 @@ contract RedemptionTest is WorkBackingFixture {
     }
 
     function test_healthyCeilingExactlyRefusedAndOneWeiBelowAccepted() public {
-        _assertCeilingBoundary(0.85 ether, 150, 200);
+        _assertCeilingBoundary(0.85 ether, 170, 220);
     }
 
     function test_stressedCeilingExactlyRefusedAndOneWeiBelowAccepted() public {
@@ -139,7 +139,7 @@ contract RedemptionTest is WorkBackingFixture {
     }
 
     function test_minimumRatioRemainsInsideEligibleBandAtHealthyAndStressedNHI() public {
-        _open(BORROWER, 150 ether, 100 ether);
+        _open(BORROWER, 170 ether, 100 ether);
         _giveStable(1 ether);
         assertEq(backedVault.collateralRatio(BORROWER), backedVault.mat());
         uint256 healthyOut = _quote(1 ether);
@@ -159,12 +159,12 @@ contract RedemptionTest is WorkBackingFixture {
     }
 
     function test_fullPositionRedemptionRetiresDebtAndLeavesFeeAsBorrowerCollateral() public {
-        _open(BORROWER, 150 ether, 100 ether);
+        _open(BORROWER, 170 ether, 100 ether);
         _giveStable(100 ether);
         vm.prank(REDEEMER);
         assertEq(backedVault.cash(100 ether, 95 ether, BORROWER), 95 ether);
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
-        assertEq(c, 55 ether);
+        assertEq(c, 75 ether);
         assertEq(d, 0);
         assertEq(backedVault.totalDebt(), 0);
         assertEq(stable.totalSupply(), 0);
@@ -172,13 +172,14 @@ contract RedemptionTest is WorkBackingFixture {
         assertEq(collateral.balanceOf(address(reserve)), 0);
         vm.prank(BORROWER);
         backedVault.free(c);
-        assertEq(collateral.balanceOf(BORROWER), 55 ether);
+        assertEq(collateral.balanceOf(BORROWER), 75 ether);
         assertEq(collateral.balanceOf(address(backedVault)), 0);
     }
 
     function test_positionBelowMinCRCanRecoverByRedemptionAndClearItsMark() public {
         _open(BORROWER, 180 ether, 100 ether);
-        _giveStable(20 ether);
+        // At a 170% floor, 40 of redemption (paid at the 5% cap) lifts 144% back to 176%.
+        _giveStable(40 ether);
         _setVaultPrice(0.8 ether);
         assertEq(backedVault.collateralRatio(BORROWER), 144);
         assertLt(backedVault.collateralRatio(BORROWER), backedVault.mat());
@@ -187,11 +188,11 @@ contract RedemptionTest is WorkBackingFixture {
         assertTrue(marked);
 
         vm.prank(REDEEMER);
-        assertEq(backedVault.cash(20 ether, 23.75 ether, BORROWER), 23.75 ether);
+        assertEq(backedVault.cash(40 ether, 47.5 ether, BORROWER), 47.5 ether);
 
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
-        assertEq(c, 156.25 ether);
-        assertEq(d, 80 ether);
+        assertEq(c, 132.5 ether);
+        assertEq(d, 60 ether);
         assertGt(c * 100 ether, 180 ether * d);
         assertGe(backedVault.collateralRatio(BORROWER), backedVault.mat());
         (,, marked,) = backedVault.liquidationMarks(BORROWER);
@@ -199,8 +200,8 @@ contract RedemptionTest is WorkBackingFixture {
     }
 
     function test_payoutDoesNotDependOnWhichEligibleRatioTheCallerChooses() public {
-        _open(BORROWER, 151 ether, 100 ether);
-        _open(SECOND_BORROWER, 199 ether, 100 ether);
+        _open(BORROWER, 171 ether, 100 ether);
+        _open(SECOND_BORROWER, 219 ether, 100 ether);
         _giveStable(10 ether);
         uint256 expected = _quote(10 ether);
         uint256 snapshot = vm.snapshotState();
@@ -213,7 +214,7 @@ contract RedemptionTest is WorkBackingFixture {
         assertEq(secondOut, expected);
         assertEq(secondOut, firstOut, "a higher-ratio candidate cannot pay the redeemer more");
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
-        assertEq(c, 151 ether);
+        assertEq(c, 171 ether);
         assertEq(d, 100 ether);
     }
 
@@ -451,7 +452,7 @@ contract RedemptionTest is WorkBackingFixture {
     function test_debtUnwindCannotLeaveReserveRedemptionWorseningBacking() public {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _reserveIMD(100 ether);
-        _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        _mintWorkAndUnwind(1700 ether, 1000 ether, 250 ether);
         assertEq(backedVault.reserveValue(), 100 ether);
         // The borrower is gone: 100 of reserve stands behind 250 of work-issued COMP and nothing
         // else does, so a COMP is backed at 0.4. Paying par here is exactly what the old
@@ -469,7 +470,7 @@ contract RedemptionTest is WorkBackingFixture {
     function test_underbackedReserveBoundaryRejectsOneWeiBelowAndAcceptsEquality() public {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _reserveIMD(246.25 ether - 1);
-        _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        _mintWorkAndUnwind(1700 ether, 1000 ether, 250 ether);
         // THERE IS NO LONGER A BOUNDARY, and that is this test's result. 246.25 of reserve against
         // 250 of supply is the level at which a PAR payout of 9.85 exactly preserved backing, so
         // one wei below it the old guard refused and at it the guard allowed. The payout now scales
@@ -520,7 +521,7 @@ contract RedemptionTest is WorkBackingFixture {
         _setVaultPrice(0.2 ether);
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _reserveIMD(9);
-        _mintWorkAndUnwind(120, 16, 4);
+        _mintWorkAndUnwind(136, 16, 4);
         // 9 IMD wei at 0.2 floors to 1 USD wei of reserve behind 4 wei of supply, so a COMP is
         // backed at a quarter and the burn is paid 1 wei, not the 4 that par would pay.
         assertEq(backedVault.reserveValue(), 1);
@@ -541,7 +542,7 @@ contract RedemptionTest is WorkBackingFixture {
     function test_discountedReserveRejectsUnsafePayoutAndAcceptsRecapitalization() public {
         _register(collateral, backedVault.usdPriceFeed(), 5000);
         _reserveIMD(100 ether);
-        _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        _mintWorkAndUnwind(1700 ether, 1000 ether, 250 ether);
         // A 50% haircut: 100 IMD in the Treasury is 50 of REGISTERED value behind 250 of supply.
         assertEq(backedVault.reserveValue(), 50 ether);
         // But the figure the cap uses is 0.4, not 0.2, and that is correct rather than an oversight:
@@ -583,7 +584,7 @@ contract RedemptionTest is WorkBackingFixture {
     function _assertUnderbackedPositionRejected(uint256 reserveAmount) private {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _reserveIMD(reserveAmount);
-        _mintWorkAndUnwind(1500 ether, 1000 ether, 250 ether);
+        _mintWorkAndUnwind(1700 ether, 1000 ether, 250 ether);
         _open(SECOND_BORROWER, 180 ether, 100 ether);
         uint256 out = _quote(10 ether);
         uint256 cancelled =

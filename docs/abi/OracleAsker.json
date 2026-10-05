@@ -21,6 +21,11 @@
         "name": "tracksPool",
         "type": "bool[]",
         "internalType": "bool[]"
+      },
+      {
+        "name": "keepAlive",
+        "type": "bool[]",
+        "internalType": "bool[]"
       }
     ],
     "stateMutability": "nonpayable"
@@ -51,6 +56,35 @@
         "name": "body",
         "type": "bytes",
         "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "requestId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "askPaid",
+    "inputs": [
+      {
+        "name": "feed",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "body",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "maxPrice",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -118,6 +152,11 @@
       },
       {
         "name": "tracksPool",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "keepAlive",
         "type": "bool",
         "internalType": "bool"
       },
@@ -341,6 +380,37 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AskedPaid",
+    "inputs": [
+      {
+        "name": "feed",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "requestId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

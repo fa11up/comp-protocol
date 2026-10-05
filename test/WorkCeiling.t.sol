@@ -114,8 +114,14 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertEq(backedVault.earnLine(), 1);
         _mintWork(WORKER, 1);
         _assertRejected(WORKER, 1);
-        vm.prank(BORROWER);
+        // One more unit of collateral first: 6 against 4 would be 150%, under the 170% floor.
+        vm.prank(APPROVED_OPERATOR);
+        collateral.mint(BORROWER, 1);
+        vm.startPrank(BORROWER);
+        collateral.approve(address(backedVault), 1);
+        backedVault.lock(1);
         backedVault.draw(1);
+        vm.stopPrank();
         assertEq(backedVault.earnLine(), 2);
         _mintWork(OTHER_WORKER, 1);
     }
@@ -151,26 +157,28 @@ contract WorkCeilingTest is WorkBackingFixture {
         _setRatio(ratio);
         health.setValue(bound(rawNhi, 0.5 ether, 0.95 ether));
         uint256 mat = backedVault.mat();
-        assertGe(mat, 150);
+        assertGe(mat, 170);
         // Exact rational worst-case C = mat * D / 100, W = R + rD (before rounding).
         uint256 backingScaled = mat * debt * 100 + value * 10_000;
         uint256 liabilitiesScaled = debt * 10_000 + value * 10_000 + debt * backedVault.earnMat();
         assertGt(backingScaled, liabilitiesScaled);
-        assertGe(backingScaled - liabilitiesScaled, debt * 2500);
+        // Tight at the 170 floor and the 2500 ratio cap: 17000 - 10000 - 2500.
+        assertGe(backingScaled - liabilitiesScaled, debt * 4500);
         // The reserve cancels, proving the bound also for R beyond the fuzz range.
         assertEq(backingScaled - liabilitiesScaled, (mat * 100 - 10_000 - ratio) * debt);
     }
 
-    function test_bindingMinimumRatioGives120PercentAtEmptyReserveAnd5000IsTheCliff() public view {
+    function test_bindingMinimumRatioGives136PercentAtEmptyReserveAnd7000IsTheCliff() public view {
         uint256 debt = 100 ether;
         uint256 assets = backedVault.mat() * debt / 100;
         assertEq(backedVault.earnMat(), 2500);
-        assertEq(assets * 10_000 / (debt + debt * backedVault.earnMat() / 10_000), 12_000);
+        assertEq(assets * 10_000 / (debt + debt * backedVault.earnMat() / 10_000), 13_600);
         for (uint256 i; i < 5; ++i) {
             uint256[5] memory reserves = [uint256(0), 1, 50 ether, 200 ether, uint256(type(uint128).max)];
             uint256 r = reserves[i];
             assertGt(assets + r, debt + r + debt / 4);
-            assertEq(assets + r, debt + r + debt / 2, "5000 bps has no surplus for any R");
+            // The cliff is mat - 100: at a 170 floor that is 7000 bps.
+            assertEq(assets + r, debt + r + debt * 7 / 10, "7000 bps has no surplus for any R");
         }
     }
 
@@ -383,9 +391,10 @@ contract WorkCeilingTest is WorkBackingFixture {
         _setVaultPrice(0.5 ether);
         vm.prank(OTHER_WORKER);
         backedVault.bark(BORROWER);
-        // The largest debt whose 110% payout at 0.5 is exactly the 200 of collateral: the position
-        // drains to zero collateral and the residual principal is recorded as bad debt.
-        uint256 repaid = 90_909_090_909_090_909_091;
+        // The largest debt whose 120% payout at 0.5 fits the 200 of collateral. It leaves 1 wei, which
+        // no further liquidation could seize, so the sweep folds it in: the position drains to zero
+        // collateral and the residual principal is recorded as bad debt.
+        uint256 repaid = 83_333_333_333_333_333_333;
         vm.prank(WORKER);
         backedVault.bite(BORROWER, repaid);
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);

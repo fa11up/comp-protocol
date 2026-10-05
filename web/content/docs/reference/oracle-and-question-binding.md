@@ -85,7 +85,7 @@ The protocol pays for its own price updates from its Treasury, and no key decide
 
 **`OracleAsker`** buys an attestation for a feed through IdentityMD's on-chain request contract (the Intake), paying the Intake's listed price in IMD. Anyone may call `ask(feed, body)`, but it pays only when the chain shows the update is needed:
 
-- **The feed is close to stale**, a fixed fraction of the way to its maximum age (under consideration), or has no value yet. No preparation is needed; nobody can make a feed age faster.
+- **The network health feed is close to stale**, a fixed fraction of the way to its maximum age (under consideration), or has no value yet. Only feeds marked to be kept alive are refreshed this way; the price feeds are not, because keeping them fresh on a clock would cost far more than it protects.
 - **IMD's own pool has drifted from the feed** by more than half the feed's deviation bound, so an update is bought before the market moves further than the feed can follow in one step. Drift must first be recorded with `arm(feed)` and still be present a number of blocks later (under consideration). A pool pushed off price and back within one transaction, as with a flash loan, cannot trigger a paid update.
 
 `body` must be the exact request the feed's pinned question was built from; the asker stores only its hash. Spending is bounded four ways: one request in flight per feed until it is delivered or times out, a minimum interval between paid requests for the same feed, a maximum price per request, and the daily budget below. Each value is (under consideration).
@@ -93,5 +93,7 @@ The protocol pays for its own price updates from its Treasury, and no key decide
 The Intake delivers the answer by calling the asker back, and the asker hands the attestation to `SwarmRelay`, so the feed checks it exactly as it checks one relayed by hand. If that delivery fails, the attestation is still public and anyone may relay it.
 
 **`Treasury.fundOracle()`** is how the asker gets its IMD. Anyone may call it. It sends the asker what remains of the day's budget, `oracleBudget` on [Parameters](../governance/parameters.md), unstaking the Treasury's sIMD so the asker receives the IMD the Intake is paid in. The budget changes only through a delayed governance proposal and has a hard upper limit, both (under consideration). Days are UTC days.
+
+**`askPaid(feed, body, maxPrice)`** is how anyone else gets a fresh price. The caller pays the Intake's price in their own IMD, at most `maxPrice`, and an update is bought for any feed at any time, with no condition, because no protocol money is spent. When a price feed is stale, borrowing, withdrawing against debt, marking, liquidating and redeeming wait until someone buys an update this way or the pool moves enough for the Treasury to buy one.
 
 Relayers are not reimbursed, and none of this is required: when the budget is spent, or the Intake is unavailable, anyone can still buy an attestation from the oracle service and relay it themselves.

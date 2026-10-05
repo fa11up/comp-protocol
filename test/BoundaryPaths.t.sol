@@ -69,12 +69,12 @@ contract BoundaryPathsTest is ProtocolFixture {
         vault.earn(1000 ether);
         vm.expectRevert(CDPVault.InsufficientRights.selector);
         vault.earn(1);
-        vault.lock(150 ether);
+        vault.lock(170 ether);
         vault.draw(100 ether);
         vault.wipe(100 ether);
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
         vault.wipe(1);
-        vault.free(150 ether);
+        vault.free(170 ether);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vault.free(1);
         vm.stopPrank();
@@ -86,7 +86,7 @@ contract BoundaryPathsTest is ProtocolFixture {
     }
 
     function test_borrowMintFailureRollsBackDebt() public {
-        _open(alice, 150 ether, 0);
+        _open(alice, 170 ether, 0);
         // Fail only the last external step, after the vault has written debt.
         vm.mockCallRevert(
             address(comp),
@@ -96,14 +96,14 @@ contract BoundaryPathsTest is ProtocolFixture {
         vm.prank(alice);
         vm.expectRevert(TokenUnavailable.selector);
         vault.draw(100 ether);
-        _assertPosition(alice, 150 ether, 0);
+        _assertPosition(alice, 170 ether, 0);
         assertEq(oracle.mintingRights(alice), 1000 ether);
         assertEq(comp.totalSupply(), 0);
         assertEq(comp.balanceOf(alice), 0);
         vm.clearMockedCalls();
         vm.prank(alice);
         vault.draw(100 ether);
-        _assertPosition(alice, 150 ether, 100 ether);
+        _assertPosition(alice, 170 ether, 100 ether);
     }
 
     function test_workMintFailureRollsBackConsumedRightsAndWorkAccounting() public {
@@ -216,7 +216,7 @@ contract BoundaryPathsTest is ProtocolFixture {
     }
 
     function test_transferFromFailuresRestoreAllowanceOnAllTokens() public {
-        _open(alice, 150 ether, 100 ether);
+        _open(alice, 170 ether, 100 ether);
         LaunchToken launch = new LaunchToken();
         launch.transfer(alice, 100 ether);
         _assertTransferFromFailures(imd);

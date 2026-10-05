@@ -63,13 +63,13 @@ contract ProtocolHandler is Test {
             vm.stopPrank();
             vm.startPrank(actor);
             imd.approve(address(vault), type(uint256).max);
-            vault.lock(150 ether);
+            vault.lock(170 ether);
             vault.draw(100 ether);
             // Both supply channels start nonzero, so the retired invariant fails immediately.
             assertGe(vault.totalDebt() / 4, vault.totalEarned() + 25 ether);
             vault.earn(25 ether);
             vm.stopPrank();
-            deposited[actor] = 150 ether;
+            deposited[actor] = 170 ether;
             debtMinted[actor] = 100 ether;
             workMinted[actor] = 25 ether;
         }
@@ -163,9 +163,10 @@ contract ProtocolHandler is Test {
     }
 
     function setMarket(uint256 priceSeed, uint256 nhi) external {
-        // Include unit price frequently, with price-only and NHI-only shocks both reachable.
+        // Include unit price frequently, with price-only and NHI-only shocks both reachable. The price
+        // above one is 1.1 so a position opened at the 170% floor is still underwater at mat 200.
         uint256[5] memory prices =
-            [uint256(0.8 ether), uint256(1 ether), uint256(1.2 ether), uint256(0.5 ether), uint256(2 ether)];
+            [uint256(0.8 ether), uint256(1 ether), uint256(1.1 ether), uint256(0.5 ether), uint256(2 ether)];
         priceFeed.setValue(prices[priceSeed % 5]);
         nhiFeed.setValue(bound(nhi, 0.5 ether, 0.95 ether));
     }
@@ -223,7 +224,7 @@ contract ProtocolHandler is Test {
         ) return;
         (uint256 collateral, uint256 debt) = vault.positions(owner);
         // Bound repayment by the collateral's value, including the liquidation bonus.
-        uint256 collateralBound = collateral * _price() / 1.1 ether;
+        uint256 collateralBound = collateral * _price() / _bonusScale();
         uint256 available = _min(_min(debt, comp.balanceOf(caller)), collateralBound);
         if (available == 0) return;
         amount = bound(amount, 1, available);
@@ -234,7 +235,7 @@ contract ProtocolHandler is Test {
         (uint256 collateral, uint256 debt) = vault.positions(owner);
         uint256 beforeIMD = imd.balanceOf(caller);
         uint256 beforeCOMP = comp.balanceOf(caller);
-        uint256 expectedPayout = amount * 1.1 ether / _price();
+        uint256 expectedPayout = amount * _bonusScale() / _price();
         vm.prank(caller);
         vault.bite(owner, amount);
         (uint256 remainingCollateral, uint256 remainingDebt) = vault.positions(owner);
@@ -248,11 +249,11 @@ contract ProtocolHandler is Test {
         // is unchanged by it, and it may only appear when the position is left closed.
         // Predict the dust from the pre-call collateral/debt, independently of actual transfers.
         uint256 swept = collateral - expectedPayout;
-        if (amount == debt || swept >= uint256(1.1 ether) / _price()) swept = 0;
+        if (amount == debt || swept >= _bonusScale() / _price()) swept = 0;
         assertEq(collateral - remainingCollateral, expectedPayout + swept, "seizure includes only eligible dust");
         assertEq(received, expectedPayout + swept - markerCut, "liquidator receives principal, bonus and swept dust");
         assertTrue(
-            swept == 0 || (remainingCollateral == 0 && swept < uint256(1.1 ether) / _price()),
+            swept == 0 || (remainingCollateral == 0 && swept < _bonusScale() / _price()),
             "a sweep may only close an unreachable remainder"
         );
         markerReceived += markerCut;
@@ -338,10 +339,15 @@ contract ProtocolHandler is Test {
 
     function _minimumRatio() private view returns (uint256) {
         (uint256 nhi,) = nhiFeed.latestValue();
-        if (nhi >= 0.85 ether) return 150;
+        if (nhi >= 0.85 ether) return 170;
         if (nhi <= 0.6 ether) return 200;
         // Round up so the handler never permits a ratio below the linear NHI requirement.
-        return 150 + ((0.85 ether - nhi) * 50 + 0.25 ether - 1) / 0.25 ether;
+        return 170 + ((0.85 ether - nhi) * 30 + 0.25 ether - 1) / 0.25 ether;
+    }
+
+    /// @dev 1 + the liquidation bonus, 1e18-scaled, read from the vault.
+    function _bonusScale() private view returns (uint256) {
+        return (100 + vault.CHOP_PERCENT()) * 1e16;
     }
 
     function _healthy(address actor) private view returns (bool) {
@@ -527,7 +533,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         uint256 debtToRepay = 25 ether + 9;
         for (uint256 priceSeed; priceSeed < 5; ++priceSeed) {
             if (priceSeed != 0) handler = new ProtocolHandler();
-            // At price two, borrow up to the healthy 150% threshold before the NHI decline.
+            // At price two, borrow up to the healthy 170% threshold before the NHI decline.
             if (priceSeed == 4) {
                 handler.setMarket(priceSeed, 0.85 ether);
                 handler.mintDebt(0, 100 ether);
@@ -543,7 +549,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
             (uint256 remainingCollateral, uint256 remainingDebt) = handler.vault().positions(owner);
             uint256 received = handler.imd().balanceOf(liquidator) - beforeCollateral;
             assertEq(remainingDebt, debt - debtToRepay, "liquidation retires debt at every price");
-            uint256 seized = debtToRepay * 1.1 ether / price;
+            uint256 seized = debtToRepay * ((100 + handler.vault().CHOP_PERCENT()) * 1e16) / price;
             uint256 markerCut = (seized - debtToRepay * 1 ether / price) * handler.vault().chip() / 10_000;
             assertEq(collateral - remainingCollateral, received + markerCut, "seized collateral reaches both keepers");
             assertEq(received, seized - markerCut, "exact liquidator payout at every market price");
@@ -561,12 +567,13 @@ contract ProtocolInvariantTest is StdInvariant, Test {
 
         address owner = handler.actors(3);
         (uint256 collateral, uint256 debt) = handler.vault().positions(owner);
-        uint256 repaid = uint256(150 ether) * 0.5 ether / 1.1 ether;
-        uint256 ordinaryPayout = repaid * 1.1 ether / 0.5 ether;
-        assertEq(150 ether - ordinaryPayout, 1, "normal liquidation leaves exactly one unreachable wei");
+        uint256 bonusScale = (100 + handler.vault().CHOP_PERCENT()) * 1e16;
+        uint256 repaid = uint256(170 ether) * 0.5 ether / bonusScale;
+        uint256 ordinaryPayout = repaid * bonusScale / 0.5 ether;
+        assertEq(170 ether - ordinaryPayout, 1, "normal liquidation leaves exactly one unreachable wei");
         assertEq(collateral, 0, "the accepted sweep exhausts the collateral");
         assertEq(debt, 100 ether - repaid, "sweeping collateral does not forgive residual debt");
-        assertEq(handler.collateralSeized(owner), 150 ether, "seizure history includes the swept wei");
+        assertEq(handler.collateralSeized(owner), 170 ether, "seizure history includes the swept wei");
         assertEq(handler.successfulLiquidations(), 1);
         invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
         afterInvariant();
@@ -597,11 +604,11 @@ contract ProtocolInvariantTest is StdInvariant, Test {
     }
 
     function test_handlerFractionalNhiThresholdPreservesActionPreconditions() public {
-        // A one-wei NHI decline raises the whole-percent minimum from 150 to 151.
+        // A one-wei NHI decline raises the whole-percent minimum from 170 to 171.
         handler.setMarket(1, 0.85 ether - 1);
-        assertEq(handler.vault().mat(), 151);
+        assertEq(handler.vault().mat(), 171);
         handler.markOrClear(0);
-        assertEq(handler.successfulMarks(), 1, "150% position becomes underwater");
+        assertEq(handler.successfulMarks(), 1, "170% position becomes underwater");
         handler.attemptPrematureLiquidation(0, 1);
         handler.attemptUnsafeMint(0);
         handler.attemptUnsafeWithdrawal(0);
@@ -612,7 +619,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         handler.attemptUnsafeWithdrawal(1);
         handler.withdraw(1, type(uint256).max);
         (uint256 collateral, uint256 debt) = handler.vault().positions(handler.actors(1));
-        assertEq(collateral, 151 ether);
+        assertEq(collateral, 171 ether);
         assertEq(debt, 100 ether);
         handler.deposit(1, 10 ether);
         handler.mintDebt(1, type(uint256).max);

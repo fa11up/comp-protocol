@@ -443,7 +443,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         uint256 fee = backedVault.stabilityFeeOf(BORROWER);
         assertGt(fee, 0);
         assertLt(fee, 50 ether);
-        uint256 seized = 50 ether * 1.1 ether / uint256(0.6 ether);
+        uint256 seized = 50 ether * ((100 + backedVault.CHOP_PERCENT()) * 1e16) / uint256(0.6 ether);
         uint256 principalCollateral = 50 ether * 1 ether / uint256(0.6 ether);
         uint256 cut = (seized - principalCollateral) * backedVault.cut() / 10_000;
         uint256 markerCut = (seized - principalCollateral) * backedVault.chip() / 10_000;

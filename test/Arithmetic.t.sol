@@ -31,13 +31,13 @@ contract ArithmeticTest is ProtocolFixture {
 
     function test_maxUintCollateralSupportsBorrowingWithoutProductOverflow() public {
         uint256 collateral = type(uint256).max;
-        uint256 debt = Math.mulDiv(collateral, 2, 3);
+        uint256 debt = Math.mulDiv(collateral, 10, 17);
         vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
         oracle.grantRights(alice, type(uint256).max);
         vm.stopPrank();
         _open(alice, collateral, debt);
-        assertEq(vault.collateralRatio(alice), 150);
+        assertEq(vault.collateralRatio(alice), 170);
         vm.startPrank(alice);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
         vault.draw(1);
@@ -80,7 +80,7 @@ contract ArithmeticTest is ProtocolFixture {
 
     function testFuzz_ratioMatchesWideMultiplication(uint256 collateral, uint256 debt) public {
         collateral = bound(collateral, 2, type(uint256).max / 100);
-        debt = bound(debt, 1, collateral * 2 / 3);
+        debt = bound(debt, 1, collateral * 100 / 170);
         vm.startPrank(OPERATOR);
         imd.mint(alice, collateral);
         oracle.grantRights(alice, debt);

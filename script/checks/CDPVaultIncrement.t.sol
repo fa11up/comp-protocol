@@ -327,15 +327,15 @@ contract CDPVaultIncrementTest is Test {
         uint256 liquidatorBalance = imd.balanceOf(BOB);
         vm.prank(BOB);
         shared.bite(ALICE, 20 ether);
-        uint256 markerCut = 5 ether * CHIP_BPS / 10_000;
-        assertEq(imd.balanceOf(FEE_RECIPIENT) - protocolBalance, 1 ether);
+        uint256 markerCut = 10 ether * CHIP_BPS / 10_000;
+        assertEq(imd.balanceOf(FEE_RECIPIENT) - protocolBalance, 2 ether);
         assertEq(imd.balanceOf(MARKER), markerCut);
-        assertEq(imd.balanceOf(BOB) - liquidatorBalance, 54 ether - markerCut);
+        assertEq(imd.balanceOf(BOB) - liquidatorBalance, 58 ether - markerCut);
         vm.prank(BOB);
         vault.bite(ALICE, 20 ether);
         (uint256 defaultCollateral, uint256 defaultDebt) = vault.positions(ALICE);
         _position(shared, defaultCollateral, defaultDebt);
-        assertEq(defaultCollateral, 245 ether, "same 110 percent payout regardless of recipients");
+        assertEq(defaultCollateral, 240 ether, "same 120 percent payout regardless of recipients");
     }
 
     function test_bonusSharesCannotConsumeLiquidatorPrincipal() public {
@@ -356,7 +356,8 @@ contract CDPVaultIncrementTest is Test {
     }
 
     function test_badDebtIsVisibleBeforeLiquidationAndTrackedWithoutForgiveness() public {
-        _open(110 ether, 70 ether);
+        // 171% to open; at 0.55 it covers 120 x 0.55 / 1.2 = 55 of its 70.
+        _open(120 ether, 70 ether);
         _fundLiquidator(70 ether);
         _price(0.55 ether);
         nhi.set(0.6 ether);
@@ -366,7 +367,7 @@ contract CDPVaultIncrementTest is Test {
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vm.prank(BOB);
         vault.bite(ALICE, 70 ether);
-        _position(vault, 110 ether, 70 ether);
+        _position(vault, 120 ether, 70 ether);
         vm.prank(BOB);
         vault.bite(ALICE, 55 ether);
         _position(vault, 0, 15 ether);
@@ -391,7 +392,7 @@ contract CDPVaultIncrementTest is Test {
     }
 
     function test_recollateralizationCannotHideRecordedBadDebt() public {
-        _open(110 ether, 70 ether);
+        _open(120 ether, 70 ether);
         _fundLiquidator(70 ether);
         _price(0.55 ether);
         nhi.set(0.6 ether);
@@ -399,9 +400,9 @@ contract CDPVaultIncrementTest is Test {
         vm.prank(BOB);
         vault.bite(ALICE, 55 ether);
         vm.prank(ALICE);
-        vault.lock(10 ether);
-        _position(vault, 10 ether, 15 ether);
-        assertEq(vault.badDebtOf(ALICE), 10 ether);
+        vault.lock(12 ether); // covers 12 x 0.55 / 1.2 = 5.5 of the 15
+        _position(vault, 12 ether, 15 ether);
+        assertEq(vault.badDebtOf(ALICE), 9.5 ether);
         assertEq(vault.totalBadDebt(), 15 ether);
         assertEq(vault.totalDebt(), 15 ether);
     }
@@ -434,8 +435,9 @@ contract CDPVaultIncrementTest is Test {
         uint256 badDebt = vault.badDebtOf(ALICE);
         assertLe(badDebt, debt);
         uint256 covered = debt - badDebt;
-        assertLe(covered * 1.1 ether / price, collateral);
-        if (badDebt != 0) assertGt((covered + 1) * 1.1 ether / price, collateral);
+        uint256 bonusScale = (100 + vault.CHOP_PERCENT()) * 1e16;
+        assertLe(covered * bonusScale / price, collateral);
+        if (badDebt != 0) assertGt((covered + 1) * bonusScale / price, collateral);
     }
 
     function test_feeIsLinearAndReadsDoNotCompoundOrCheckpoint() public {
@@ -526,7 +528,7 @@ contract CDPVaultIncrementTest is Test {
             vm.skip(true);
             return;
         }
-        _open(150 ether, 100 ether);
+        _open(170 ether, 100 ether);
         uint256 started = block.timestamp;
         vm.warp(started + 365 days);
         uint256 fee = 100 ether * DUTY_BPS / 10_000;
@@ -558,7 +560,7 @@ contract CDPVaultIncrementTest is Test {
             vm.skip(true);
             return;
         }
-        _open(110 ether, 70 ether);
+        _open(120 ether, 70 ether);
         _fundLiquidator(70 ether);
         _price(0.55 ether);
         nhi.set(0.6 ether);
