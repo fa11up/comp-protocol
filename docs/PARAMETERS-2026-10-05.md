@@ -97,5 +97,44 @@ ten minutes at a sixth of the cost of keeping it fresh.
 
 ## Not changed, worth a look
 
-- The research report's redemption divisor (4 → 2) and stability fee (200 → 1000 bps) are still open.
-- The terminal has no "buy an update" button for `askPaid` yet.
+- The redemption divisor and the stability fee: analysed below, awaiting a decision.
+- The debt ceiling `line` starts unlimited. The pool absorbs about $290k per profitable liquidation,
+  so an initial ceiling near $1M is worth considering.
+
+## Open: the redemption fee divisor
+
+A redemption's fee is `0.5% + min(base + redeemed ÷ supply ÷ divisor, 4.5%)`, where `base` remembers
+recent redemptions and halves every 12 hours. The divisor sets how fast the fee climbs during a run.
+
+| Redeemed at once (calm start) | divisor 2 | divisor 4 (now) |
+|---|---|---|
+| 1% of supply | 1.00% | 0.75% |
+| 5% | 3.00% | 1.75% |
+| 10% | 5.00% | 3.00% |
+
+A lower divisor protects the positions being redeemed against and slows a run; a higher one keeps the
+peg floor tighter, because redeemers keep arbitraging at a lower fee (imdUSD can sit at about
+$1 × (1 − fee) − 1.5% before they step in). Liquity uses 2 because it redeems against every borrower.
+Here redemption only reaches the reserve and positions already within `gap` of `mat`, and a
+candidate's ratio may not worsen, so borrowers need less protection. **Recommendation: keep 4.**
+
+## Open: the stability fee
+
+The research's 10% was sized to pay for clock-driven oracle updates (~$37k a year per feed). On-demand
+pricing removed that: the Treasury's own oracle bill is about $2,100 a year (NHI kept alive) plus rare
+25%-move asks. Stability fees are also minted as imdUSD, while the oracle is paid in IMD from the
+protocol's liquidation share, so the fee was never what paid the oracle.
+
+What the fee is for, then: a risk premium for bad debt (which scales with debt against the pool's
+depth), protocol revenue, and the peg lever (raise it if imdUSD trades below $1, lower it above). It is
+governed between 0 and 10% behind the 48-hour timelock, so the launch value is a starting point.
+
+| Debt | 2% | 4% | 6% | 10% |
+|---|---|---|---|---|
+| $250k | $5k | $10k | $15k | $25k |
+| $1M | $20k | $40k | $60k | $100k |
+| $3M | $60k | $120k | $180k | $300k |
+
+sIMD collateral earns about 1.8% a year (the staking drip's cap over 1.72M IMD staked), so a borrower's
+net carry is the fee minus 1.8 points. **Recommendation: launch at 4%**, revisit with real debt and peg
+data.
