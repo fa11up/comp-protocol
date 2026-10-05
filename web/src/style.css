@@ -2177,12 +2177,27 @@ html.app-page body {
   overflow: auto;
   font-size: 12px;
 }
-.docs-nav h2 {
-  margin: 18px 0 6px;
+/* Sections fold, with the site's own disclosure: the label on the left, +/− on the right. */
+.docs-nav details {
+  margin-top: 0;
+}
+.docs-nav summary {
+  min-height: 0;
+  padding-block: 9px;
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
+}
+.docs-nav summary:hover,
+.docs-nav details[open] > summary {
+  color: var(--text);
+}
+.docs-nav details[open] > summary {
+  margin-bottom: 2px;
+}
+.docs-nav details ul {
+  margin: 0 0 10px;
 }
 .docs-nav ul {
   list-style: none;
@@ -2205,8 +2220,30 @@ html.app-page body {
   padding-left: 9px;
 }
 .docs-nav .docs-home {
+  display: inline-flex;
+  border-left: 0;
+  padding: 0;
+  color: var(--text);
+}
+.docs-nav .docs-home[aria-current="page"] {
   border-left: 0;
   padding-left: 0;
+}
+/* Redacted text: the words are removed at build time; this bar stands in for them. */
+.redacted {
+  background: var(--text);
+  color: transparent;
+  white-space: break-spaces;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  user-select: none;
+  overflow-wrap: anywhere;
+}
+.redaction-note {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 .docs-skip {
   display: none;
@@ -2335,7 +2372,7 @@ html.app-page body {
 .doc-pager .next {
   text-align: right;
 }
-.doc-pager a span {
+.doc-pager .pager-label {
   display: block;
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -2361,7 +2398,7 @@ html.app-page body {
 .docs-index li + li {
   margin-top: 0;
 }
-.docs-index li span {
+.docs-index .audience {
   font-size: 11px;
   color: var(--muted);
 }

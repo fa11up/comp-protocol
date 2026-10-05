@@ -28,6 +28,29 @@ const REPO = "https://github.com/fa11up/infer-protocol/blob/main/";
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+// The public site has no terminal yet, so anything that refers to it is redacted: removed from the
+// page (not hidden with CSS) and drawn as a black bar of about the same length. Whole pages about
+// the terminal are redacted throughout.
+const TERMINAL_RE = /terminal/i;
+const REDACT_WHOLE = new Set(["guides/use-the-terminal.md"]);
+const plainText = (md) =>
+  md
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*_>#|-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+/** A black bar standing in for `text`: whitespace of the same length (no glyphs to show
+// or measure), so lines wrap like the original. */
+const bar = (text) =>
+  `<span class="redacted" role="img" aria-label="Redacted">${" ".repeat(Math.max(4, Math.min(plainText(text).length, 400)))}</span>`;
+/** A title with only the word "terminal" barred. */
+const titleHtml = (t, redact) => {
+  const e = escapeHtml(t);
+  return redact ? e.replace(/terminal/gi, (w) => bar(w + "xx")) : e;
+};
+const titleText = (t, redact) => (redact ? t.replace(/terminal/gi, "████████") : t);
+
 /** GitHub-style heading ids, so `page.md#a-heading` links keep working. */
 const slugify = (text) =>
   text
@@ -80,7 +103,9 @@ export function renderDocs({ outDir, contentDir, terminal }) {
     const { meta, body } = frontMatter(readFileSync(resolve(contentDir, file), "utf8"), file);
     const [section, name] = file.replace(/\.md$/, "").split("/");
     if (!SECTIONS.some(([s]) => s === section)) throw Error(`${file}: unknown section ${section}`);
-    return { file, section, name, dir: `docs/${section}/${name}`, meta, body, order: Number(meta.order) };
+    // A wholly redacted page gets a neutral address in the public build, so its URL does not leak.
+    const slug = !terminal && REDACT_WHOLE.has(file) ? "redacted" : name;
+    return { file, section, name, dir: `docs/${section}/${slug}`, meta, body, order: Number(meta.order) };
   });
   pages.sort(
     (a, b) =>
@@ -91,19 +116,30 @@ export function renderDocs({ outDir, contentDir, terminal }) {
   const template = readFileSync(resolve(outDir, "docs/index.html"), "utf8");
   if (!template.includes("<!--DOCS-BODY-->")) throw Error("docs/index.html has no <!--DOCS-BODY--> slot");
 
-  const nav = (currentDir) =>
-    `<nav class="docs-nav" id="docs-contents" aria-label="Documentation">` +
-    `<a class="docs-home" href="${linkBetween(currentDir, "docs")}"${currentDir === "docs" ? ' aria-current="page"' : ""}>Docs home</a>` +
-    SECTIONS.map(([s, label]) => {
-      const items = pages.filter((p) => p.section === s);
-      return `<h2>${label}</h2><ul>${items
-        .map(
-          (p) =>
-            `<li><a href="${linkBetween(currentDir, p.dir)}"${p.dir === currentDir ? ' aria-current="page"' : ""}>${escapeHtml(p.meta.title)}</a></li>`,
-        )
-        .join("")}</ul>`;
-    }).join("") +
-    `</nav>`;
+  // The site mark (the favicon's pixels), in the text colour so it follows the theme.
+  const favicon = readFileSync(resolve(contentDir, "../../public/favicon.svg"), "utf8");
+  const markRects = favicon.match(/<g style="fill:var\(--text\)">(.*?)<\/g>/)?.[1];
+  if (!markRects) throw Error("public/favicon.svg: mark not found");
+  const mark = `<svg viewBox="0 0 16 16" width="28" height="28" shape-rendering="crispEdges" aria-hidden="true" focusable="false"><g fill="currentColor">${markRects}</g></svg>`;
+
+  // Sections fold closed; the one holding the current page starts open. Native <details>, no script.
+  const nav = (currentDir) => {
+    const here = pages.find((p) => p.dir === currentDir)?.section;
+    return (
+      `<nav class="docs-nav" id="docs-contents" aria-label="Documentation">` +
+      `<a class="docs-home" href="${linkBetween(currentDir, "docs")}" aria-label="Docs home"${currentDir === "docs" ? ' aria-current="page"' : ""}>${mark}</a>` +
+      SECTIONS.map(([s, label]) => {
+        const items = pages.filter((p) => p.section === s);
+        return `<details${s === here ? " open" : ""}><summary>${label}</summary><ul>${items
+          .map(
+            (p) =>
+              `<li><a href="${linkBetween(currentDir, p.dir)}"${p.dir === currentDir ? ' aria-current="page"' : ""}>${titleHtml(p.meta.title, redact)}</a></li>`,
+          )
+          .join("")}</ul></details>`;
+      }).join("") +
+      `</nav>`
+    );
+  };
 
   const footer = (currentDir) => {
     const root = posix.relative(currentDir, "") || ".";
@@ -116,7 +152,10 @@ export function renderDocs({ outDir, contentDir, terminal }) {
     );
   };
 
+  const redact = !terminal;
   const render = (page) => {
+    const whole = redact && REDACT_WHOLE.has(page.file);
+    const hit = (raw) => redact && (whole || TERMINAL_RE.test(raw));
     const marked = new Marked({ gfm: true });
     const used = new Map();
     marked.use({
@@ -134,9 +173,32 @@ export function renderDocs({ outDir, contentDir, terminal }) {
       renderer: {
         // Swarm-written content: raw HTML is shown as text, never rendered.
         html: (token) => escapeHtml(token.text),
+        paragraph(token) {
+          return hit(token.raw) ? `<p>${bar(token.raw)}</p>\n` : `<p>${this.parser.parseInline(token.tokens)}</p>\n`;
+        },
+        listitem(item) {
+          if (!hit(item.raw)) return false; // default rendering
+          return `<li>${bar(item.text)}</li>\n`;
+        },
+        tablecell(token) {
+          if (!hit(token.text)) return false;
+          const tag = token.header ? "th" : "td";
+          return `<${tag}>${bar(token.text)}</${tag}>\n`;
+        },
+        blockquote(token) {
+          return hit(token.raw) ? `<blockquote><p>${bar(token.raw)}</p></blockquote>\n` : false;
+        },
+        code(token) {
+          return hit(token.text) ? `<p>${bar(token.text)}</p>\n` : false;
+        },
         heading(token) {
-          const inner = this.parser.parseInline(token.tokens);
-          let id = slugify(token.text);
+          const inner = whole && token.depth > 1
+            ? bar(token.text)
+            : redact && TERMINAL_RE.test(token.text)
+              ? titleHtml(token.text, true)
+              : this.parser.parseInline(token.tokens);
+          // A redacted heading's id must not spell out what it hides.
+          let id = whole || (redact && TERMINAL_RE.test(token.text)) ? "redacted" : slugify(token.text);
           const n = used.get(id) ?? 0;
           used.set(id, n + 1);
           if (n) id = `${id}-${n}`;
@@ -194,18 +256,21 @@ export function renderDocs({ outDir, contentDir, terminal }) {
       `<a class="docs-skip" href="#docs-contents">Contents</a>` +
       `<article class="doc">` +
       `<p class="doc-meta">${label}${p.meta.audience ? ` · ${AUDIENCE[p.meta.audience] ?? escapeHtml(p.meta.audience)}` : ""}</p>` +
+      (redact && REDACT_WHOLE.has(p.file) ? `<p class="redaction-note">Redacted until mainnet launch.</p>` : "") +
       rendered.get(p.file) +
-      (sources.length
+      (sources.length && !(redact && REDACT_WHOLE.has(p.file))
         ? `<p class="doc-sources">Sources: ${sources.map((s) => `<a href="${REPO}${escapeHtml(s)}" target="_blank" rel="noreferrer">${escapeHtml(s)}</a>`).join(", ")}</p>`
         : "") +
       `<nav class="doc-pager" aria-label="Next and previous">` +
-      (prev ? `<a class="prev" href="${linkBetween(p.dir, prev.dir)}"><span>Previous</span>${escapeHtml(prev.meta.title)}</a>` : "<span></span>") +
-      (next ? `<a class="next" href="${linkBetween(p.dir, next.dir)}"><span>Next</span>${escapeHtml(next.meta.title)}</a>` : "<span></span>") +
+      (prev ? `<a class="prev" href="${linkBetween(p.dir, prev.dir)}"><span class="pager-label">Previous</span>${titleHtml(prev.meta.title, redact)}</a>` : "<span></span>") +
+      (next ? `<a class="next" href="${linkBetween(p.dir, next.dir)}"><span class="pager-label">Next</span>${titleHtml(next.meta.title, redact)}</a>` : "<span></span>") +
       `</nav></article>` +
       nav(p.dir) +
       `</main>` +
       footer(p.dir);
-    page(p.dir, `${p.meta.title} · imdUSD docs`, summary(p.body) || `imdUSD docs: ${p.meta.title}`, body);
+    const desc = summary(p.body);
+    const safeDesc = redact && (REDACT_WHOLE.has(p.file) || TERMINAL_RE.test(desc)) ? "" : desc;
+    page(p.dir, `${titleText(p.meta.title, redact)} · imdUSD docs`, safeDesc || `imdUSD docs: ${titleText(p.meta.title, redact)}`, body);
   });
 
   const index =
@@ -218,7 +283,7 @@ export function renderDocs({ outDir, contentDir, terminal }) {
       return `<section><h2>${label}</h2><ul>${items
         .map(
           (p) =>
-            `<li><a href="${linkBetween("docs", p.dir)}">${escapeHtml(p.meta.title)}</a>${p.meta.audience ? `<span>${AUDIENCE[p.meta.audience] ?? ""}</span>` : ""}</li>`,
+            `<li><a href="${linkBetween("docs", p.dir)}">${titleHtml(p.meta.title, redact)}</a>${p.meta.audience ? `<span class="audience">${AUDIENCE[p.meta.audience] ?? ""}</span>` : ""}</li>`,
         )
         .join("")}</ul></section>`;
     }).join("") +

@@ -41,6 +41,15 @@ for (const f of files.filter((f) => /\.(html|js|css|webmanifest)$/.test(f))) {
 const mark = (await readFile(`${dir}/favicon.svg`, "utf8")).match(/<g style="fill:var\(--text\)">(.*?)<\/g>/)?.[1];
 const bundle = (await Promise.all(files.filter((f) => f.endsWith(".js")).map((f) => readFile(`${dir}/${f}`, "utf8")))).join("");
 if (!mark || !bundle.includes(mark)) fail("favicon.svg and the theme toggle's favicon are different marks");
+// The terminal is not public yet: in every docs page, the content and the title must not name it
+// (the docs build redacts it). The page shell is exempt: it carries a theme storage key.
+for (const f of files.filter((f) => f.startsWith("docs/") && f.endsWith(".html"))) {
+  const html = await readFile(`${dir}/${f}`, "utf8");
+  const main = html.match(/<main[\s\S]*?<\/main>/)?.[0] ?? "";
+  const title = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
+  const description = html.match(/<meta\s+name="description"\s+content="([^"]*)"/)?.[1] ?? "";
+  if (/terminal/i.test(main + title + description)) fail(`${f} still names the terminal`);
+}
 const manifest = JSON.parse(await readFile(`${dir}/manifest.webmanifest`, "utf8"));
 if (manifest.start_url !== "./") fail(`manifest start_url is ${manifest.start_url}`);
 console.log(`public-check: ${files.length} files; homepage and docs only; no terminal links, no testnet, no chain connection.`);
