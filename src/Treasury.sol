@@ -6,7 +6,8 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
-import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
+import {APPROVED_OPERATOR, ORACLE_ASKER} from "./DeploymentConfig.sol";
+import {IShareVault} from "./interfaces/IShareVault.sol";
 
 /// @notice Where the protocol's own revenue lands: its share of liquidation bonuses, in collateral,
 /// and the stability fees minted to it, in stablecoin. It is also the protocol's reserve, and it can
@@ -69,6 +70,7 @@ contract Treasury {
     event Withdrawn(IERC20 indexed token, address indexed to, uint256 amount);
     event ReserveAssetSet(IERC20 indexed asset, ISwarmFeed indexed priceFeed, uint256 haircutBps);
     event ReserveAssetRemoved(IERC20 indexed asset);
+    event OracleFunded(address indexed asker, uint256 imd, uint256 spentToday);
 
     error Unauthorized();
     error InvalidRecipient();
@@ -80,6 +82,7 @@ contract Treasury {
     error InvalidPriceSource();
     error HaircutOutOfRange(uint256 bps);
     error NotAReserveAsset();
+    error OracleAskerMissing();
 
     // --- the register ---------------------------------------------------------------------------
 
@@ -285,6 +288,78 @@ contract Treasury {
 
     /// @notice Release reserve IMD for a redemption priced and burned by this Treasury's vault.
     /// @dev Neither the caller nor governance can select another reserve asset through this path.
+    // --- the oracle budget ----------------------------------------------------------------------
+
+    /// @notice The UTC day `oracleSpent` counts, and the IMD sent to the oracle asker within it.
+    uint256 public oracleDay;
+    uint256 public oracleSpent;
+
+    /// @notice Send the oracle asker what is left of today's budget, in IMD. Anyone may call it.
+    /// @dev The Treasury's third and last way out, and the only one with no key behind it: the
+    /// destination is a source constant, the amount is capped per UTC day by the vault's governed
+    /// `Parameters.oracleBudget`, and the token is the collateral's. When the collateral is a share
+    /// (sIMD), the IMD is WITHDRAWN from the share vault straight to the asker, so the asker holds the
+    /// asset the Intake is paid in and never touches shares. sIMD's one-block hold applies: shares that
+    /// arrived in this block cannot be withdrawn in it, so a call right after a liquidation reverts and
+    /// succeeds a block later. Refuses an asker with no code, so a placeholder constant fails loudly.
+    /// @return sent IMD sent to the asker by this call; zero once today's budget is spent.
+    function fundOracle() external returns (uint256 sent) {
+        if (ORACLE_ASKER.code.length == 0) revert OracleAskerMissing();
+        address token = _linked(abi.encodeWithSignature("imdToken()"));
+        if (token == address(0)) revert InvalidReserveAsset();
+        uint256 day = block.timestamp / 1 days;
+        if (day != oracleDay) {
+            oracleDay = day;
+            oracleSpent = 0;
+        }
+        uint256 budget = _oracleBudget();
+        if (budget <= oracleSpent) return 0;
+        uint256 want = budget - oracleSpent;
+        bool share = _isShare(token);
+        uint256 available = share ? IShareVault(token).maxWithdraw(address(this)) : IERC20(token).balanceOf(address(this));
+        sent = want < available ? want : available;
+        if (sent == 0) return 0;
+        oracleSpent += sent;
+        if (share) _withdrawUnderlying(IERC20(token), sent);
+        else _withdraw(IERC20(token), ORACLE_ASKER, sent);
+        emit OracleFunded(ORACLE_ASKER, sent, oracleSpent);
+    }
+
+    /// @dev The vault's governed budget, or zero when nothing answers: a Treasury with no Parameters
+    /// behind it streams nothing.
+    function _oracleBudget() private view returns (uint256) {
+        address parameters = _linked(abi.encodeWithSignature("parameters()"));
+        if (parameters == address(0)) return 0;
+        (bool ok, bytes memory data) = parameters.staticcall(abi.encodeWithSignature("oracleBudget()"));
+        if (!ok || data.length != 32) return 0;
+        return abi.decode(data, (uint256));
+    }
+
+    function _isShare(address token) private view returns (bool) {
+        (bool ok, bytes memory data) = token.staticcall(abi.encodeCall(IShareVault.asset, ()));
+        return ok && data.length == 32 && abi.decode(data, (address)) != address(0);
+    }
+
+    /// @dev `_withdraw`'s accounting for a share token whose UNDERLYING leaves: credit what arrived
+    /// since the last sync, move the baseline before the external call, re-derive it afterwards.
+    function _withdrawUnderlying(IERC20 shares, uint256 assets) private {
+        uint256 before = shares.balanceOf(address(this));
+        uint256 counted = lastSynced[shares];
+        if (before > counted) {
+            uint256 credited = before - counted;
+            totalReceived[shares] += credited;
+            emit Received(shares, credited, totalReceived[shares]);
+        }
+        // Baseline at the credited balance BEFORE the call: shares only leave, so a `sync` re-entered
+        // during the withdraw sees no more than this and credits nothing (the double-credit that audit
+        // job da7d5b1c found in `_withdraw` cannot recur here).
+        lastSynced[shares] = before;
+        IShareVault(address(shares)).withdraw(assets, ORACLE_ASKER, address(this));
+        uint256 remaining = shares.balanceOf(address(this));
+        lastSynced[shares] = remaining;
+        emit Withdrawn(shares, ORACLE_ASKER, before - remaining);
+    }
+
     function redeemIMD(address to, uint256 amount) external {
         if (msg.sender != vault) revert Unauthorized();
         address token = _linked(abi.encodeWithSignature("imdToken()"));

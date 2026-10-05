@@ -159,3 +159,35 @@ address constant WORK_ORACLE_SENTINEL = 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFF
 // tally is read from: a feed asked for a figure that is published once a day should not demand one
 // more often than it exists. A stale tally grants nothing NEW and retracts nothing already consumed.
 uint256 constant WORK_ORACLE_MAX_AGE = 1 days;
+
+// --- The oracle budget: price updates bought on chain through the Intake, paid from the Treasury ---
+//
+// The Intake (upstream Identity-md/protocol PR #66) sells swarm work for one transaction and calls back
+// with the result. OracleAsker buys this protocol's feed updates through it and hands each attestation
+// to SwarmRelay, so the feeds keep their single relayer and keepers keep relayAndBite. The Treasury
+// streams it IMD, unwrapped from its sIMD, under a daily budget governed through Parameters.
+// NOT YET DEPLOYED: INTAKE and ORACLE_ASKER are placeholders with no code. The asker refuses to be
+// built against an Intake with no code, and fundOracle refuses to send to an asker with no code, so a
+// placeholder fails loudly instead of streaming IMD into an empty address.
+address constant INTAKE = 0x0000000000000000000000000000000000000F06;
+address constant ORACLE_ASKER = 0x0000000000000000000000000000000000000f07;
+// The Intake's action id: the action, an at sign and its version, right-padded to 32 bytes.
+bytes32 constant ORACLE_ACTION = "oracle.request@oracle-1";
+// IMD's deepest market, read on chain to decide whether a feed has drifted: the Uniswap v4 PoolManager
+// and the native-ETH/IMD pool. MAINNET ONLY; on a testnet the drift trigger reads as "no drift".
+address constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
+bytes32 constant IMD_POOL_ID = 0xb07d640fd9e2eb9dc81b953c8e4fd006bdfeaf276010fb5418eb763ca15abfb3;
+// IMD the Treasury may stream to the asker per UTC day, and the hard cap governance can never exceed.
+uint256 constant ORACLE_BUDGET_PER_DAY = 10 ether;
+uint256 constant MAX_ORACLE_BUDGET_PER_DAY = 100 ether;
+// The asker's anti-spam policy. A feed may be paid for at most once per ASK_MIN_INTERVAL, never while
+// a request for it is in flight (until ASK_TIMEOUT), and never above ASK_MAX_PRICE IMD per request. A
+// drift must be armed and still present ARM_DELAY_BLOCKS later, within ARM_WINDOW_BLOCKS, so a pool
+// pushed off-price and back inside one transaction cannot trigger a paid update. A staleness ask needs
+// no arming: it is allowed once a value is STALE_AT_BPS of the way to its maxAge.
+uint256 constant ASK_MIN_INTERVAL = 10 minutes;
+uint256 constant ASK_TIMEOUT = 2 hours;
+uint256 constant ASK_MAX_PRICE = 1 ether;
+uint256 constant ARM_DELAY_BLOCKS = 5;
+uint256 constant ARM_WINDOW_BLOCKS = 100;
+uint256 constant STALE_AT_BPS = 7_500;

@@ -11,7 +11,9 @@ import {
     CUT_BPS,
     DUTY_BPS,
     EARN_MAT_BPS,
-    WAGE_WAD
+    WAGE_WAD,
+    ORACLE_BUDGET_PER_DAY,
+    MAX_ORACLE_BUDGET_PER_DAY
 } from "./DeploymentConfig.sol";
 
 /// @notice The vault's economic knobs, moved out of source constants into a governed contract.
@@ -54,7 +56,8 @@ contract Parameters is Governed {
         EarnMat,
         ReserveAsset,
         Wage,
-        Gap
+        Gap,
+        OracleBudget
     }
 
     uint256 private constant BPS = 10_000;
@@ -99,6 +102,9 @@ contract Parameters is Governed {
 
     /// @notice The live imdUSD-per-accepted-task rate, 1e18-scaled.
     uint256 private _wage;
+    /// @notice IMD the Treasury may stream to the oracle asker per UTC day. Governed, and hard-capped
+    /// at MAX_ORACLE_BUDGET_PER_DAY so no proposal can turn the stream into a drain.
+    uint256 public oracleBudget;
 
     /// @notice The vault these parameters govern: its creator, fixed at construction.
     /// @dev Needed for two things that cannot be done without it: checking a proposed ceiling
@@ -115,6 +121,7 @@ contract Parameters is Governed {
     error EarnMatTooHigh(uint256 bps);
     error WageTooHigh(uint256 wad);
     error GapOutOfRange(uint256 spread);
+    error OracleBudgetTooHigh(uint256 imdPerDay);
 
     /// @dev Seeded from the shipped constants, so a fresh Parameters is exactly the configuration
     /// the vault would have had with them compiled in — including the unlimited default ceiling,
@@ -150,6 +157,8 @@ contract Parameters is Governed {
         // this contract refuses to exist with, rather than one discovered at the first proposal.
         if (WAGE_WAD > MAX_WAGE_WAD) revert WageTooHigh(WAGE_WAD);
         _wage = WAGE_WAD;
+        if (ORACLE_BUDGET_PER_DAY > MAX_ORACLE_BUDGET_PER_DAY) revert OracleBudgetTooHigh(ORACLE_BUDGET_PER_DAY);
+        oracleBudget = ORACLE_BUDGET_PER_DAY;
     }
 
     /// @notice Queue a complete replacement set. Always all five, so the pending payload is the whole
@@ -170,6 +179,11 @@ contract Parameters is Governed {
 
     function proposeGap(uint256 spread) external {
         _propose(abi.encode(Change.Gap, spread));
+    }
+
+    /// @notice Queue a change to the daily oracle budget. Refused above MAX_ORACLE_BUDGET_PER_DAY.
+    function proposeOracleBudget(uint256 imdPerDay) external {
+        _propose(abi.encode(Change.OracleBudget, imdPerDay));
     }
 
     /// @notice Queue a listing, repricing or (with a zero price source) delisting of one of the
@@ -235,6 +249,13 @@ contract Parameters is Governed {
         return (bps, at);
     }
 
+    function pendingOracleBudget() external view returns (uint256 imdPerDay, uint256 eta) {
+        (Change kind, uint256 at) = pendingChange();
+        if (at == 0 || kind != Change.OracleBudget) return (0, 0);
+        (, imdPerDay) = abi.decode(pending, (Change, uint256));
+        return (imdPerDay, at);
+    }
+
     function pendingGap() external view returns (uint256 spread, uint256 eta) {
         (Change kind, uint256 at) = pendingChange();
         if (at == 0 || kind != Change.Gap) return (0, 0);
@@ -273,6 +294,11 @@ contract Parameters is Governed {
         if (kind == Change.EarnMat) {
             (, uint256 bps) = abi.decode(payload, (Change, uint256));
             if (bps > MAX_EARN_MAT_BPS) revert EarnMatTooHigh(bps);
+            return;
+        }
+        if (kind == Change.OracleBudget) {
+            (, uint256 imdPerDay) = abi.decode(payload, (Change, uint256));
+            if (imdPerDay > MAX_ORACLE_BUDGET_PER_DAY) revert OracleBudgetTooHigh(imdPerDay);
             return;
         }
         if (kind == Change.Wage) {
@@ -327,6 +353,10 @@ contract Parameters is Governed {
         }
         if (kind == Change.EarnMat) {
             (, _earnMat) = abi.decode(payload, (Change, uint256));
+            return;
+        }
+        if (kind == Change.OracleBudget) {
+            (, oracleBudget) = abi.decode(payload, (Change, uint256));
             return;
         }
         if (kind == Change.Wage) {
