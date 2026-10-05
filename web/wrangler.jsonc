@@ -1,11 +1,16 @@
 // imdusd.com: the public site (homepage + docs), served as static assets by Cloudflare Workers.
-// No Worker script runs; `_headers` and `_redirects` in dist-public/ apply as written.
+// worker/index.js runs first only to redirect http:// to https://; every other request goes to the
+// assets, where `_headers` and `_redirects` in dist-public/ apply as written.
 // Build first with `npm run build:public`; deploy with `npm run deploy:public`.
 {
   "name": "imdusd",
   "compatibility_date": "2026-10-01",
+  "main": "worker/index.js",
   "assets": {
     "directory": "../dist-public",
+    "binding": "ASSETS",
+    // So the http -> https redirect sees every request, including ones for files that exist.
+    "run_worker_first": true,
     // /docs serves /docs/ and the site's relative links keep working.
     "html_handling": "auto-trailing-slash",
     // An unknown path is a plain 404, never the homepage pretending to be some other page.
