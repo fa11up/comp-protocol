@@ -1,5 +1,5 @@
 import { defineConfig, type Plugin } from "vite";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 // Three static pages: the landing page, the terminal and the docs. Plain files at /, /terminal/
@@ -13,10 +13,6 @@ const PUBLIC_HEADERS = `/*
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-/imd-deployment.json
-  Cache-Control: no-cache
-/abi/*
-  Cache-Control: no-cache
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 `;
@@ -32,6 +28,8 @@ function publicSite(): Plugin {
       this.emitFile({ type: "asset", fileName: "_redirects", source: PUBLIC_REDIRECTS });
     },
     writeBundle(options) {
+      // The public homepage reads no chain, so the testnet deployment's ABIs are not shipped.
+      rmSync(resolve(options.dir!, "abi"), { recursive: true, force: true });
       // public/manifest.webmanifest opens the terminal; this site has none, so open the homepage.
       const file = resolve(options.dir!, "manifest.webmanifest");
       const manifest = JSON.parse(readFileSync(file, "utf8"));
@@ -47,6 +45,18 @@ export default defineConfig(({ mode }) => {
   const site = mode === "public";
   return {
   plugins: site ? [react(), publicSite()] : [react()],
+  // The public site reads no chain: swap the live homepage for a stub so viem and the RPC layer
+  // are not bundled at all.
+  resolve: site
+    ? {
+        alias: [
+          {
+            find: /^\.\/landing-live$/,
+            replacement: resolve(import.meta.dirname, "src/landing-live.public.tsx"),
+          },
+        ],
+      }
+    : {},
   base: "./",
   // The points engine lives at ../points/engine.ts so the CLI and the terminal share one file.
   server: { fs: { allow: [".."] } },

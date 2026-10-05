@@ -21,7 +21,7 @@ type Page = "home" | "terminal" | "docs";
 /** One header for every page: brand, network chip, navigation, theme, and a page-specific end. */
 export function SiteHeader({
   page,
-  network = "Sepolia",
+  network,
   children,
 }: {
   page: Page;
@@ -39,7 +39,9 @@ export function SiteHeader({
         <a className="wordmark" href={href()} aria-label="imdUSD home">
           imd<b>USD</b>
         </a>
-        <span className="chip">{network} · testnet</span>
+        <span className="chip">
+          {TERMINAL ? `${network ?? "Sepolia"} · testnet` : "Mainnet · staging"}
+        </span>
         <nav className="site-nav" aria-label="Site">
           {TERMINAL && link("terminal", "terminal/", "Terminal")}
           {link("docs", "docs/", "Docs")}

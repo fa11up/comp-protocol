@@ -17,14 +17,20 @@ const fail = (m) => {
   console.error(`public-check: ${m}`);
   process.exit(1);
 };
-for (const need of ["index.html", "docs/index.html", "imd-deployment.json", "_headers", "_redirects", "manifest.webmanifest"])
+for (const need of ["index.html", "docs/index.html", "_headers", "_redirects", "manifest.webmanifest"])
   if (!files.includes(need)) fail(`missing ${need}`);
 if (files.some((f) => f.startsWith("terminal/"))) fail("the terminal was built into the public site");
+// The public site connects to no chain: no deployment file, no ABIs.
+for (const f of files)
+  if (f === "imd-deployment.json" || f.startsWith("abi/")) fail(`${f} ships a chain deployment`);
 for (const f of files.filter((f) => /\.(html|js|css|webmanifest)$/.test(f))) {
   const text = await readFile(`${dir}/${f}`, "utf8");
   // A link to the terminal, in any of the forms the site writes one.
   if (/["'`(]\.{0,2}\/?terminal\//.test(text)) fail(`${f} still links to the terminal`);
+  // Nothing about the testnet, and no way to reach a chain: no explorer, no RPC endpoint.
+  const leak = text.match(/sepolia|testnet|blockscout|etherscan|publicnode|infura|alchemy|eth_call|eth_getLogs/i);
+  if (leak) fail(`${f} mentions "${leak[0]}"`);
 }
 const manifest = JSON.parse(await readFile(`${dir}/manifest.webmanifest`, "utf8"));
 if (manifest.start_url !== "./") fail(`manifest start_url is ${manifest.start_url}`);
-console.log(`public-check: ${files.length} files; homepage and docs only, no terminal links.`);
+console.log(`public-check: ${files.length} files; homepage and docs only; no terminal links, no testnet, no chain connection.`);

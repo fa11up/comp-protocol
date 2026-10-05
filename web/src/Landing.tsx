@@ -1,130 +1,86 @@
-import { useEffect, useState } from "react";
-import { formatUnits } from "viem";
-import { loadConfig, type Runtime } from "./config";
-import { snapshot, feedsReady, type Snapshot } from "./state";
+import type { ReactNode } from "react";
 import { SiteHeader, href, WHITEPAPER, TERMINAL } from "./site";
-import { AddressLink } from "./actions";
-import { MarketCap, compact } from "./MarketCap";
-import { age, fmt, ratio, WAD } from "./math";
+// The live homepage (chain reads, viem, the deployment file) lives in its own module. The public
+// build aliases it to an empty stub (vite.config.ts), so no chain code ships on imdusd.com.
+import { LiveLanding } from "./landing-live";
 
-// The landing page reads the same contracts the terminal does, without a wallet, so its figures
-// are the protocol's own and never a number written into the page.
-function useLive() {
-  const [r, setR] = useState<Runtime>();
-  const [s, setS] = useState<Snapshot>();
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    loadConfig()
-      .then((runtime) => {
-        if (!active) return;
-        setR(runtime);
-        const read = () =>
-          snapshot(runtime)
-            .then((next) => {
-              if (active) {
-                setS(next);
-                setError("");
-              }
-            })
-            .catch(() => active && setError("unavailable"));
-        void read();
-        timer = setInterval(() => {
-          if (document.visibilityState === "visible") void read();
-        }, 30000);
-      })
-      .catch(() => active && setError("unavailable"));
-    return () => {
-      active = false;
-      if (timer) clearInterval(timer);
-    };
-  }, []);
-  return { r, s, error };
-}
+/**
+ * The launch parameters, as set in the contracts (CDPVault mat/lull/CHOP_PERCENT/REDEMPTION_FEE_*,
+ * DeploymentConfig PRICE_MAX_AGE/DUTY_BPS). The public homepage's figures AND its prose both read
+ * this one table, so they cannot disagree with each other. Governance changes wait 48 hours.
+ */
+export const LAUNCH = {
+  minRatioHealthy: "170%",
+  minRatioStressed: "200%",
+  minRatio: "170–200%",
+  bonus: "20%",
+  redemptionFee: "0.5–5%",
+  grace: "0–6 h",
+  priceMaxAge: "1 hour",
+  stabilityFee: "4.44% a year",
+};
 
-const usd = (v?: bigint) =>
-  v === undefined ? "—" : `$${compact.format(Number(formatUnits(v, 18)))}`;
-
-function LivePanel({ s, error }: { s?: Snapshot; error: string }) {
-  const [now, setNow] = useState(BigInt(Math.floor(Date.now() / 1000)));
-  useEffect(() => {
-    const t = setInterval(
-      () => setNow(BigInt(Math.floor(Date.now() / 1000))),
-      1000,
-    );
-    return () => clearInterval(t);
-  }, []);
-  const v = s?.v ?? {};
-  const price = s?.feeds.USD;
-  const lines: [string, string, string?][] = s
-    ? [
-        [
-          "Backing per imdUSD",
-          v.backingPerUnit === undefined
-            ? "not reported"
-            : `$${fmt(v.backingPerUnit < WAD ? v.backingPerUnit : WAD)}`,
-        ],
-        ["Reserves", usd(v.reserveValue)],
-        [
-          "IMD / USD",
-          price
-            ? `$${fmt(price.value, 18, 2)} · ${price.stale ? "stale" : age(price.updated, now)}`
-            : "—",
-          price?.stale ? "danger" : undefined,
-        ],
-        ["Minimum collateral ratio", ratio(v.mat)],
-        [
-          "Price actions",
-          feedsReady(s) ? "open" : "paused",
-          feedsReady(s) ? "healthy" : "danger",
-        ],
-      ]
-    : [];
+/** The public homepage's panel: launch parameters, not a live read of any chain. */
+function LaunchPanel() {
+  const lines: [string, string][] = [
+    ["Minimum collateral ratio", LAUNCH.minRatio],
+    ["Liquidation bonus", LAUNCH.bonus],
+    ["Redemption fee", LAUNCH.redemptionFee],
+    ["Stability fee", LAUNCH.stabilityFee],
+    ["Price max age", LAUNCH.priceMaxAge],
+  ];
   return (
     <section className="live-panel" aria-labelledby="live-heading">
       <div className="live-head">
-        <h2 id="live-heading">
-          Live · {s ? `block ${s.block}` : "reading the chain"}
-        </h2>
-        <span
-          className="live-dot"
-          data-state={s ? "live" : error ? "down" : "wait"}
-          aria-hidden="true"
-        />
+        <h2 id="live-heading">Launch parameters</h2>
       </div>
-      {s ? (
-        <>
-          <dl className="live-lines">
-            {lines.map(([k, val, tone]) => (
-              <div key={k}>
-                <dt>{k}</dt>
-                <dd className={tone ? `${tone}-text` : undefined}>{val}</dd>
-              </div>
-            ))}
-          </dl>
-          <p className="live-cap">
-            <MarketCap supply={v.supply} />
-          </p>
-        </>
-      ) : (
-        <p className="live-wait" role="status">
-          {error
-            ? TERMINAL
-              ? "Live figures are unavailable right now. The terminal shows which read failed."
-              : "Live figures are unavailable right now. Try again shortly."
-            : "Reading the contracts…"}
-        </p>
-      )}
+      <dl className="live-lines">
+        {lines.map(([k, val]) => (
+          <div key={k}>
+            <dt>{k}</dt>
+            <dd>{val}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="live-wait">
+        Set in the contracts. Governance changes wait 48 hours.
+      </p>
     </section>
   );
 }
 
 export function Landing() {
-  const { r, s, error } = useLive();
+  return TERMINAL ? <LiveLanding /> : <PublicLanding />;
+}
+
+/** imdusd.com: no chain connection at all, so nothing on the page can show a testnet value. */
+function PublicLanding() {
+  return (
+    <Page
+      panel={<LaunchPanel />}
+      contracts={
+        <p className="note">
+          Contract addresses are published here at mainnet launch.
+        </p>
+      }
+    />
+  );
+}
+
+export function Page({
+  network,
+  panel,
+  contracts,
+  contractsHeading = "Contracts",
+}: {
+  network?: string;
+  panel: ReactNode;
+  contracts: ReactNode;
+  contractsHeading?: string;
+}) {
   return (
     <div className="site">
-      <SiteHeader page="home" network={r?.config.network.name}>
+      <SiteHeader page="home" network={network}>
         {TERMINAL ? (
           <a className="button primary" href={href("terminal/")}>
             Open terminal
@@ -166,7 +122,7 @@ export function Landing() {
               </a>
             </div>
           </div>
-          <LivePanel s={s} error={error} />
+          {panel}
         </section>
 
         <section className="mechanics" aria-labelledby="mechanics-heading">
@@ -177,11 +133,11 @@ export function Landing() {
               <p>
                 Deposit IMD or sIMD and mint imdUSD against it; IMD is staked
                 for you. A position must stay at or above the minimum collateral
-                ratio: 170% while the network is healthy, rising toward 200% as
-                network health falls.
+                ratio: {LAUNCH.minRatioHealthy} while the network is healthy,
+                rising toward {LAUNCH.minRatioStressed} as network health falls.
               </p>
               <p className="figure">
-                170–200% <span>minimum ratio</span>
+                {LAUNCH.minRatio} <span>minimum ratio</span>
               </p>
             </article>
             <article>
@@ -192,7 +148,7 @@ export function Landing() {
                 redemption and stays in the protocol as backing.
               </p>
               <p className="figure">
-                0.5–5% <span>redemption fee</span>
+                {LAUNCH.redemptionFee} <span>redemption fee</span>
               </p>
             </article>
             <article>
@@ -212,39 +168,19 @@ export function Landing() {
               <p>
                 Anyone can mark a position below the minimum ratio. Once its
                 grace period passes, anyone can repay its debt; the position
-                gives up collateral worth 120% of it, and the 20% bonus is
-                shared with whoever marked it.
+                gives up collateral worth its debt plus the {LAUNCH.bonus}{" "}
+                bonus, which is shared with whoever marked it.
               </p>
               <p className="figure">
-                0–6 h <span>grace, set by network health</span>
+                {LAUNCH.grace} <span>grace, set by network health</span>
               </p>
             </article>
           </div>
         </section>
 
         <section className="contracts" aria-labelledby="contracts-heading">
-          <h2 id="contracts-heading">On Sepolia</h2>
-          <p className="note">
-            The testnet deployment. The token is deployed there under its
-            testnet name, COMP; contracts and parameters will change before
-            mainnet.
-          </p>
-          <div className="contract-list">
-            {r ? (
-              r.config.contracts.map((c) => (
-                <AddressLink
-                  key={c.name}
-                  value={c.address}
-                  explorer={r.config.network.explorer}
-                  label={c.name}
-                />
-              ))
-            ) : (
-              <p className="note">
-                {error ? "Deployment unavailable." : "Loading…"}
-              </p>
-            )}
-          </div>
+          <h2 id="contracts-heading">{contractsHeading}</h2>
+          {contracts}
         </section>
       </main>
       <footer className="site-footer">
