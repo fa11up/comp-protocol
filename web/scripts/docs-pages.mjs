@@ -161,14 +161,28 @@ export function renderDocs({ outDir, contentDir, terminal }) {
   };
 
   const redact = !terminal;
+  // A vault function named in code is linked to its entry on the Vault functions page, on its first
+  // mention in a page's prose. Headings, tables and existing links are left alone.
+  const FN_FILE = "reference/vault-functions.md";
+  const fnPage = byFile.get(FN_FILE);
+  const VAULT_FNS = new Set(fnPage ? [...fnPage.body.matchAll(/^###\s+`(\w+)\(/gm)].map((m) => m[1]) : []);
+  const noLink = (t) => {
+    if (!t || typeof t !== "object") return;
+    if (t.type === "codespan") t.noLink = true;
+    for (const k of ["tokens", "items", "header"]) if (Array.isArray(t[k])) t[k].forEach(noLink);
+    if (Array.isArray(t.rows)) t.rows.forEach((r) => r.forEach(noLink));
+  };
   const render = (page) => {
+    const linked = new Set();
     const whole = redact && REDACT_WHOLE.has(page.file);
     const hit = (raw) => redact && (whole || TERMINAL_RE.test(raw));
     const marked = new Marked({ gfm: true });
     const used = new Map();
     marked.use({
       walkTokens(token) {
+        if (token.type === "heading" || token.type === "table") noLink(token);
         if (token.type !== "link") return;
+        noLink(token);
         const [target, hash] = token.href.split("#");
         if (/^[a-z]+:/i.test(target)) return; // external
         if (!target) return; // same-page anchor
@@ -212,6 +226,12 @@ export function renderDocs({ outDir, contentDir, terminal }) {
         code(token) {
           return hit(token.text) ? `<p>${bar(token.text)}</p>\n` : false;
         },
+        codespan(token) {
+          const m = /^(\w+)(\(.*\))?$/.exec(token.text);
+          if (!fnPage || page === fnPage || token.noLink || !m || !VAULT_FNS.has(m[1]) || linked.has(m[1])) return false;
+          linked.add(m[1]);
+          return `<a class="fn-link" href="${linkBetween(page.dir, fnPage.dir)}#${m[1]}"><code>${token.text}</code></a>`;
+        },
         heading(token) {
           const inner = whole && token.depth > 1
             ? bar(token.text)
@@ -220,6 +240,9 @@ export function renderDocs({ outDir, contentDir, terminal }) {
               : this.parser.parseInline(token.tokens);
           // A redacted heading's id must not spell out what it hides.
           let id = whole || (redact && TERMINAL_RE.test(token.text)) ? "redacted" : slugify(token.text);
+          // Function entries get short anchors (#bark, not #barkaddress-owner) so other pages can link them.
+          const fn = page === fnPage && /^`(\w+)\(/.exec(token.text);
+          if (fn) id = fn[1];
           const n = used.get(id) ?? 0;
           used.set(id, n + 1);
           if (n) id = `${id}-${n}`;
