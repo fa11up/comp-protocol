@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { formatUnits } from "viem";
 import { loadConfig, type Runtime } from "./config";
 import { snapshot, feedsReady, type Snapshot } from "./state";
-import { SiteHeader, href, WHITEPAPER } from "./site";
+import { SiteHeader, href, WHITEPAPER, TERMINAL } from "./site";
 import { AddressLink } from "./actions";
 import { MarketCap, compact } from "./MarketCap";
 import { age, fmt, ratio, WAD } from "./math";
@@ -110,7 +110,9 @@ function LivePanel({ s, error }: { s?: Snapshot; error: string }) {
       ) : (
         <p className="live-wait" role="status">
           {error
-            ? "Live figures are unavailable right now. The terminal shows which read failed."
+            ? TERMINAL
+              ? "Live figures are unavailable right now. The terminal shows which read failed."
+              : "Live figures are unavailable right now. Try again shortly."
             : "Reading the contracts…"}
         </p>
       )}
@@ -123,9 +125,15 @@ export function Landing() {
   return (
     <div className="site">
       <SiteHeader page="home" network={r?.config.network.name}>
-        <a className="button primary" href={href("terminal/")}>
-          Open terminal
-        </a>
+        {TERMINAL ? (
+          <a className="button primary" href={href("terminal/")}>
+            Open terminal
+          </a>
+        ) : (
+          <a className="button primary" href={href("docs/")}>
+            Read the docs
+          </a>
+        )}
       </SiteHeader>
       <main className="home">
         <section className="hero">
@@ -139,9 +147,20 @@ export function Landing() {
               checked on chain against the exact question each feed pins.
             </p>
             <div className="hero-actions">
-              <a className="button primary" href={href("terminal/")}>
-                Open the terminal
-              </a>
+              {TERMINAL ? (
+                <a className="button primary" href={href("terminal/")}>
+                  Open the terminal
+                </a>
+              ) : (
+                <a
+                  className="button primary"
+                  href={WHITEPAPER}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Read the whitepaper ↗
+                </a>
+              )}
               <a className="button" href={href("docs/")}>
                 Read the docs
               </a>
@@ -231,7 +250,7 @@ export function Landing() {
       <footer className="site-footer">
         <span>imdUSD · built on IdentityMD</span>
         <nav aria-label="Footer">
-          <a href={href("terminal/")}>Terminal</a>
+          {TERMINAL && <a href={href("terminal/")}>Terminal</a>}
           <a href={href("docs/")}>Docs</a>
           <a href={WHITEPAPER} target="_blank" rel="noreferrer">
             Whitepaper ↗
@@ -246,16 +265,18 @@ export function Docs() {
   return (
     <div className="site">
       <SiteHeader page="docs">
-        <a className="button primary" href={href("terminal/")}>
-          Open terminal
-        </a>
+        {TERMINAL && (
+          <a className="button primary" href={href("terminal/")}>
+            Open terminal
+          </a>
+        )}
       </SiteHeader>
       <main className="docs-placeholder">
         <h1>Docs are being written</h1>
         <p className="lede">
           Guides for borrowing, redeeming, keeping and the oracle will live
-          here. Until then, the whitepaper describes the design and the terminal
-          shows every figure live.
+          here. Until then, the whitepaper describes the design
+          {TERMINAL ? " and the terminal shows every figure live." : "."}
         </p>
         <div className="hero-actions">
           <a
@@ -266,9 +287,11 @@ export function Docs() {
           >
             Read the whitepaper ↗
           </a>
-          <a className="button" href={href("terminal/")}>
-            Open the terminal
-          </a>
+          {TERMINAL && (
+            <a className="button" href={href("terminal/")}>
+              Open the terminal
+            </a>
+          )}
         </div>
       </main>
     </div>

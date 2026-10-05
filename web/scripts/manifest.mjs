@@ -5,6 +5,11 @@ import { keccak256, toBytes } from "viem";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+// The export to inventory: dist/ (the full terminal) by default, or `--out dist-public` for the
+// public site. The public site's homepage reads the same deployment file and ABIs, so it gets the
+// same verified inventory.
+const outArg = process.argv.indexOf("--out");
+const out = `${root}/${outArg >= 0 ? process.argv[outArg + 1] : "dist"}`;
 const base = JSON.parse(await readFile(`${root}/web/deployment-source.json`));
 export const canonical = (value) => JSON.stringify(sort(value));
 function sort(v) {
@@ -36,7 +41,7 @@ if (Object.keys(base).some((k) => !allowed.includes(k)))
   throw Error("Unexpected deployment field");
 const digest = (b) => createHash("sha256").update(b).digest("hex");
 for (const c of base.contracts) {
-  const raw = await readFile(`${root}/dist/${c.abiPath}`);
+  const raw = await readFile(`${out}/${c.abiPath}`);
   const abi = JSON.parse(raw);
   if (
     !Array.isArray(abi) ||
@@ -91,18 +96,18 @@ async function inventory(dir, prefix = "") {
   }
   return files;
 }
-const assets = await inventory(`${root}/dist`);
+const assets = await inventory(`${out}`);
 if (assets.length > 128) throw Error("Too many assets");
 const manifest = { ...base, assets };
 if (process.argv.includes("--check")) {
   if (
     canonical(manifest) !==
-    canonical(JSON.parse(await readFile(`${root}/dist/imd-deployment.json`)))
+    canonical(JSON.parse(await readFile(`${out}/imd-deployment.json`)))
   )
     throw Error("Manifest inventory mismatch");
 } else
   await writeFile(
-    `${root}/dist/imd-deployment.json`,
+    `${out}/imd-deployment.json`,
     JSON.stringify(manifest, null, 2) + "\n",
   );
 console.log(

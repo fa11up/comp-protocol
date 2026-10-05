@@ -23,3 +23,4 @@ web/.vite/
 
 # points CLI output
 /points.json
+/dist-public/

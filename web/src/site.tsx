@@ -9,6 +9,12 @@ export function appRoot(): URL {
   return new URL(meta?.content || "./", document.baseURI);
 }
 export const href = (path = "") => new URL(path, appRoot()).href;
+/**
+ * Whether this build serves the terminal. `vite build --mode public` makes the public site that goes on
+ * imdusd.com: the homepage and docs only, with every terminal link replaced, so nothing links to a page
+ * that is not served.
+ */
+export const TERMINAL = import.meta.env.MODE !== "public";
 export const WHITEPAPER = "https://infer.miyagod.eth.limo";
 
 type Page = "home" | "terminal" | "docs";
@@ -35,7 +41,7 @@ export function SiteHeader({
         </a>
         <span className="chip">{network} · testnet</span>
         <nav className="site-nav" aria-label="Site">
-          {link("terminal", "terminal/", "Terminal")}
+          {TERMINAL && link("terminal", "terminal/", "Terminal")}
           {link("docs", "docs/", "Docs")}
           <a href={WHITEPAPER} target="_blank" rel="noreferrer">
             Whitepaper ↗
