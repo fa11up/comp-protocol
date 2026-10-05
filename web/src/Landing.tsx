@@ -10,14 +10,12 @@ import { LiveLanding } from "./landing-live";
  * this one table, so they cannot disagree with each other. Governance changes wait 48 hours.
  */
 export const LAUNCH = {
-  minRatioHealthy: "170%",
-  minRatioStressed: "200%",
-  minRatio: "170–200%",
-  bonus: "20%",
-  redemptionFee: "0.5–5%",
-  grace: "0–6 h",
-  priceMaxAge: "1 hour",
-  stabilityFee: "4.44% a year",
+  minRatio: "Pending",
+  bonus: "Pending",
+  redemptionFee: "Pending",
+  grace: "Pending",
+  priceMaxAge: "Pending",
+  stabilityFee: "Pending",
 };
 
 /** The public homepage's panel: launch parameters, not a live read of any chain. */
@@ -43,7 +41,8 @@ function LaunchPanel() {
         ))}
       </dl>
       <p className="live-wait">
-        Set in the contracts. Governance changes wait 48 hours.
+        Final values are set before mainnet launch. Governance changes wait 48
+        hours.
       </p>
     </section>
   );
@@ -133,8 +132,7 @@ export function Page({
               <p>
                 Deposit IMD or sIMD and mint imdUSD against it; IMD is staked
                 for you. A position must stay at or above the minimum collateral
-                ratio: {LAUNCH.minRatioHealthy} while the network is healthy,
-                rising toward {LAUNCH.minRatioStressed} as network health falls.
+                ratio, which rises as network health falls.
               </p>
               <p className="figure">
                 {LAUNCH.minRatio} <span>minimum ratio</span>
@@ -168,8 +166,8 @@ export function Page({
               <p>
                 Anyone can mark a position below the minimum ratio. Once its
                 grace period passes, anyone can repay its debt; the position
-                gives up collateral worth its debt plus the {LAUNCH.bonus}{" "}
-                bonus, which is shared with whoever marked it.
+                gives up collateral worth its debt plus a liquidation bonus,
+                which is shared with whoever marked it.
               </p>
               <p className="figure">
                 {LAUNCH.grace} <span>grace, set by network health</span>

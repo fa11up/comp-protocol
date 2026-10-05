@@ -617,6 +617,19 @@ dialog [role="status"] {
   .wallet-bar button {
     min-height: 34px;
   }
+  /* The theme toggle stays at the top right of the header instead of wrapping under the brand;
+     the brand leaves room for it. */
+  .topbar {
+    position: relative;
+  }
+  .topbar .theme-toggle {
+    position: absolute;
+    top: 13px;
+    right: 0;
+  }
+  .topbar .brand {
+    padding-inline-end: 52px;
+  }
   .statusbar {
     font-size: 10px;
     gap: 8px;

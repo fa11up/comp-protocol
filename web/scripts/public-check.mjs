@@ -31,6 +31,11 @@ for (const f of files.filter((f) => /\.(html|js|css|webmanifest)$/.test(f))) {
   const leak = text.match(/sepolia|testnet|blockscout|etherscan|publicnode|infura|alchemy|eth_call|eth_getLogs/i);
   if (leak) fail(`${f} mentions "${leak[0]}"`);
 }
+// The favicon is drawn twice: public/favicon.svg (follows the OS theme) and theme.tsx (follows the
+// in-page toggle). Both must be the same mark.
+const mark = (await readFile(`${dir}/favicon.svg`, "utf8")).match(/<path d="([^"]+)"/)?.[1];
+const bundle = (await Promise.all(files.filter((f) => f.endsWith(".js")).map((f) => readFile(`${dir}/${f}`, "utf8")))).join("");
+if (!mark || !bundle.includes(mark)) fail("favicon.svg and the theme toggle's favicon are different marks");
 const manifest = JSON.parse(await readFile(`${dir}/manifest.webmanifest`, "utf8"));
 if (manifest.start_url !== "./") fail(`manifest start_url is ${manifest.start_url}`);
 console.log(`public-check: ${files.length} files; homepage and docs only; no terminal links, no testnet, no chain connection.`);
