@@ -60,7 +60,7 @@ Held by contracts, not keys:
 
 | constant | points at | consequence |
 |---|---|---|
-| `FEE_RECIPIENT` | the **Treasury** contract | protocol revenue cannot land in a wallet |
+| `feeRecipient()` | the **Treasury the vault creates** in its constructor | protocol revenue cannot land in a wallet. `ParameterizedVault` overrides `feeRecipient()`, so the `FEE_RECIPIENT` constant is read only by the plain `CDPVault`, which mainnet does not deploy. **No standalone Treasury is needed** (docs job 2f5a387d found the runbook deploying one that would receive nothing). |
 | `ATTESTATION_RELAYER` | the **SwarmRelay** contract | relaying is permissionless; no relayer key to lose |
 | `WORK_ORACLE_FACTORY` | the **WorkOracleFactory** contract | the work oracle's creation code lives outside the vault |
 
@@ -79,10 +79,11 @@ Three separate balances, and they are not interchangeable:
   bite anything. This is working capital, not an expense.
 * **IMD** for oracle requests, 0.5 IMD each.
 
-`Treasury.withdraw` is `APPROVED_OPERATOR`-only, so the daemon **cannot** pull its own funding
-without the cold key. Do not put that key on the daemon. Top the daemon's wallet up periodically
-instead; at ~$4.25 an update the sums are small. A budgeted `spender` role on the Treasury would
-automate it and is deliberately not built — it is new authority and wants its own audit.
+Oracle requests are no longer the keeper's to fund: `Treasury.fundOracle()` streams up to
+`Parameters.oracleBudget` IMD a day to `OracleAsker`, which pays the Intake (prereq 2b). That is the
+budgeted, keyless route the earlier "spender role" note asked for — a destination fixed in source and
+a governed daily cap, not an authority. The keeper still needs ETH for gas and imdUSD inventory to
+bite. `Treasury.withdraw` stays `APPROVED_OPERATOR`-only; do not put that key on the daemon.
 
 ---
 
@@ -97,7 +98,7 @@ is immutable and silent** — this is exactly how launch 519 shipped two dead fe
 |---|---|---|
 | `CHAINLINK_ETH_USD` | `0x694AA176…` (Sepolia) | **`0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419`** |
 | `APPROVED_OPERATOR` | miyagod.eth EOA | the cold governance address |
-| `FEE_RECIPIENT` | miyagod.eth EOA | **the deployed Treasury** |
+| `FEE_RECIPIENT` | miyagod.eth EOA | unused by `ParameterizedVault`; set it to the cold governance address so nothing names a hot wallet |
 | `ATTESTATION_RELAYER` | the Sepolia SwarmRelay | the mainnet SwarmRelay (CREATE2, §6) |
 | `WORK_ORACLE_FACTORY` | `0x…0f05` placeholder, no code | the mainnet factory (CREATE2, §6) |
 
@@ -200,7 +201,7 @@ one-character mismatch after deploying an immutable feed that refuses every atte
 
 ## 6. Deployment: one broadcast, with assertions
 
-The three prereq contracts are read by other contracts as **source constants**, so their addresses
+The prereq contracts (`SwarmRelay`, `WorkOracleFactory`, and `OracleAsker` — see step 4) are read by other contracts as **source constants**, so their addresses
 must be in the bytecode before the feeds compile. That looks like it forces two broadcasts. It does
 not, because CREATE2 makes an address a pure function of initcode and salt:
 
@@ -208,7 +209,7 @@ not, because CREATE2 makes an address a pure function of initcode and salt:
 address = keccak256(0xff ++ deployer ++ salt ++ keccak256(initcode))[12:]
 ```
 
-None of the three references a feed, so there is no cycle — their addresses are computable with no
+Neither SwarmRelay nor the factory references a feed, so there is no cycle — their addresses are computable with no
 prior transaction. The canonical deterministic deployer
 **`0x4e59b44847b379578588920cA78FbF26c0B4956C`** is live on mainnet and Sepolia with identical
 bytecode (verified 2026-10-04), so the same salts give the same addresses on both, and later on Base
@@ -216,7 +217,7 @@ and Robinhood Chain.
 
 ### The sequence
 
-1. **Compute** the CREATE2 addresses of `SwarmRelay`, `Treasury` and `WorkOracleFactory` from their
+1. **Compute** the CREATE2 addresses of `SwarmRelay` and `WorkOracleFactory` from their
    initcode and chosen salts. No transaction.
 2. **Write** them into `src/DeploymentConfig.sol`, along with every value in §3. Commit — the commit
    hash is what the configuration audit reviews.
@@ -230,7 +231,7 @@ and Robinhood Chain.
    it, so there is no cycle: compute the feeds' addresses, then the asker's, then write the constant.
    Its body hashes are `keccak256` of the frozen oracle.request bodies — the same bytes the feeds'
    pinned questions were generated from.
-5. **Broadcast once**: the three prereqs at their computed addresses, then the three feeds, then the
+5. **Broadcast once**: the prereqs at their computed addresses, then the three feeds, then the
    vault — which creates imdUSD, `Parameters`, the Treasury's sibling and `UsdPriceFeed` in its own
    constructor, so the stack comes up linked with no follow-up transaction.
 6. **Read it back off chain.** Not the script's own logs — the chain:
@@ -247,7 +248,7 @@ and Robinhood Chain.
 | after step | what exists | how to abandon |
 |---|---|---|
 | 1–4 | nothing on chain | delete the branch |
-| 5, prereqs deployed | three ownerless contracts holding nothing | **abandon them.** They cost gas and hold no funds or authority. Pick new salts and start again — do not try to reuse them. |
+| 5, prereqs deployed | ownerless contracts holding nothing | **abandon them.** They cost gas and hold no funds or authority. Pick new salts and start again — do not try to reuse them. |
 | 5, feeds deployed | immutable feeds, unseeded | abandon. An unseeded feed is inert and holds nothing. |
 | 5, vault deployed | the whole stack, no positions | abandon **only before anyone deposits.** After the first deposit there is no rollback, only migration. |
 | 7, seeded | a live protocol | no rollback. |
@@ -279,9 +280,14 @@ deploy.** Deploy, verify, and only then announce.
 
 * ~~Whether the Treasury's reserve holds IMD or sIMD.~~ **DECIDED: sIMD only.** It falls out of the
   collateral choice rather than needing a policy — if collateral is sIMD then the protocol's bonus
-  share arrives as sIMD, and stability fees arrive as COMP which the register refuses as a reserve
+  share arrives as sIMD, and stability fees arrive as imdUSD which the register refuses as a reserve
   asset on principle. So the reserve is sIMD by construction. One registered asset, priced by
   `SharePriceFeed`, and `reserveValueUsd()` sums over a single entry.
+  **It is not listed automatically**: after deploy, propose `proposeReserveAsset(sIMD,
+  vault.collateralPriceFeed(), haircut)` and apply it 48h later. Until then the reserve backs nothing in
+  `earnLine` (redemption is unaffected — it prices the collateral it pays out itself). The Treasury
+  values the vault's own collateral per 1e18 raw units, like the vault, so listing it through
+  `collateralPriceFeed` is correct; before that fix it counted for a millionth of its value.
 * ~~Redemption asset ordering.~~ **Obsolete.** With one reserve asset there is no order to establish,
   and the `Treasury._remove` swap-and-pop hazard — a delisting silently reordering the register — stops
   mattering. A redeemer receives sIMD from the reserve and sIMD from positions: the same asset either

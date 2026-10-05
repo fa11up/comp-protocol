@@ -22,8 +22,9 @@ address constant CHAINLINK_ETH_USD = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
 
 /// @dev Oldest ETH/USD answer UsdPriceFeed treats as fresh. Chainlink's Sepolia heartbeat is an hour,
 /// but the IMD/ETH leg it is multiplied with is deployed with a one-day maxAge, so the composite is
-/// bounded by its slower leg either way. A stale USD price only shrinks the work ceiling (a reserve
-/// asset it prices counts for nothing); it never reaches a liquidation.
+/// bounded by its slower leg either way. A stale USD price makes the collateral price stale, so it
+/// halts every price-dependent action — draw, priced free, cash, bark and bite included — until
+/// Chainlink answers again; a reserve asset it prices counts for nothing meanwhile.
 uint256 constant ETH_USD_MAX_AGE = 1 days;
 
 // ---------------------------------------------------------------------------------------------

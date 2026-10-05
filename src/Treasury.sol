@@ -37,12 +37,16 @@ contract Treasury {
     using SafeERC20 for IERC20;
 
     /// @notice A reserve asset's price source and retained-value factor.
-    /// @param priceFeed USD per whole token, 1e18-scaled, read like any other ISwarmFeed.
+    /// @param priceFeed USD per whole token, 1e18-scaled, read like any other ISwarmFeed — except for
+    /// the creating vault's own collateral, which is priced per 1e18 RAW units (see `decimals`).
     /// @param haircutBps The retained-value factor, in basis points: the asset counts for haircutBps /
     /// 10000 of its market value. Zero counts for nothing; 10000 counts in full. A lower factor
     /// limits the supply a volatile asset can authorise through a downturn.
     /// @param decimals The token's decimals, read once at listing, so a 6-decimal stablecoin is not
-    /// priced as if it had 18.
+    /// priced as if it had 18. Fixed at 18 for the creating vault's collateral, whatever its decimals:
+    /// the vault prices collateral per 1e18 raw units (the only source for sIMD, SharePriceFeed, quotes
+    /// that way), so dividing sIMD's balance by its own 10**24 would undervalue it a million times.
+    /// Found by docs job 2f5a387d.
     struct ReserveAsset {
         ISwarmFeed priceFeed;
         uint256 haircutBps;
@@ -159,7 +163,10 @@ contract Treasury {
             return;
         }
         if (!isReserveAsset(asset)) _reserveAssets.push(asset);
-        _reserve[asset] = ReserveAsset(priceFeed, haircutBps, IERC20Metadata(address(asset)).decimals());
+        uint8 places = address(asset) == _linked(abi.encodeWithSignature("imdToken()"))
+            ? 18
+            : IERC20Metadata(address(asset)).decimals();
+        _reserve[asset] = ReserveAsset(priceFeed, haircutBps, places);
         emit ReserveAssetSet(asset, priceFeed, haircutBps);
     }
 

@@ -11,6 +11,9 @@ import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {ReserveUsdAggregator} from "./helpers/WorkBackingFixture.sol";
 import {MockShareVault} from "./helpers/MockShareVault.sol";
+import {Treasury} from "src/Treasury.sol";
+import {Parameters} from "src/Parameters.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {APPROVED_OPERATOR, CHAINLINK_ETH_USD} from "src/DeploymentConfig.sol";
 
 /// @notice sIMD as collateral: a share of an ERC-4626 vault over IMD, 24 decimals against IMD's 18.
@@ -166,5 +169,31 @@ contract ShareCollateralTest is Test {
         vm.expectRevert(CDPVault.CollateralNotWrappable.selector);
         plain.lockIMD(1 ether);
         vm.stopPrank();
+    }
+
+    /// @dev Docs job 2f5a387d: the Treasury divided a listed asset's balance by 10**decimals, which
+    /// means "price per whole token", while sIMD's only price source quotes per 1e18 RAW units. Listed
+    /// through the vault's own collateralPriceFeed, sIMD counted for a millionth of its value.
+    function test_shareCollateralInTheReserveIsValuedAsTheVaultValuesIt() public {
+        Treasury treasury = vault.treasury();
+        Parameters params = vault.parameters();
+        vm.startPrank(APPROVED_OPERATOR);
+        imd.mint(address(this), 100 ether);
+        vm.stopPrank();
+        imd.approve(address(share), 100 ether);
+        uint256 shares = share.deposit(100 ether, address(treasury));
+
+        ISwarmFeed source = vault.collateralPriceFeed();
+        vm.prank(APPROVED_OPERATOR);
+        params.proposeReserveAsset(share, source, 10_000);
+        vm.warp(block.timestamp + params.TIMELOCK());
+        usd.set(ETH_USD_ANSWER, block.timestamp);
+        primary.setValue(IMD_ETH);
+        params.applyPending();
+
+        (uint256 price,) = source.latestValue();
+        assertEq(treasury.reserveValueOf(share), Math.mulDiv(shares, price, 1e18), "per 1e18 raw, like the vault");
+        // 100 IMD at $2 = $200, wrapped or not.
+        assertApproxEqAbs(treasury.reserveValueOf(share), 200 ether, 1e6);
     }
 }
