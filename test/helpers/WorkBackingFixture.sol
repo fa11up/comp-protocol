@@ -157,6 +157,16 @@ abstract contract WorkBackingFixture is Test {
         return usdValue;
     }
 
+    /// @dev Raise the debt ceiling through governance, for a test about arithmetic at sizes above the
+    /// launch ceiling (LINE, $1M) rather than about the ceiling itself. Takes the 48-hour timelock.
+    function _raiseLine(uint256 next) internal {
+        Parameters.ParamSet memory p = parameters.current();
+        p.line = next;
+        vm.prank(APPROVED_OPERATOR);
+        parameters.propose(p);
+        _apply();
+    }
+
     function _register(IERC20 token, ISwarmFeed feed, uint256 haircut) internal {
         vm.prank(APPROVED_OPERATOR);
         parameters.proposeReserveAsset(token, feed, haircut);

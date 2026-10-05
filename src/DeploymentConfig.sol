@@ -116,15 +116,24 @@ uint256 constant CHIP_BPS = 1_000;
 /// still brings the stablecoin, takes the inventory risk on seized collateral and pays the gas.
 /// At 1000 with a 20% bonus the protocol takes 2% of the debt repaid and a keeper who did not mark
 /// keeps 16%. The former 3333 left a keeper 5.67%, below one sale's loss in IMD's pool for any
-/// liquidation over ~$50k — and liquidation happening is a solvency property, not a nicety.
+/// liquidation over ~$100k — and liquidation happening is a solvency property, not a nicety.
 /// The vault refuses any value above 10_000 minus CHIP_BPS. The borrower's loss is
 /// unchanged at any setting: this divides the existing bonus rather than seizing more collateral.
 uint256 constant CUT_BPS = 1_000;
 
-/// @dev Annual stability fee on open debt, in basis points. It accrues through the `chi` index from
+/// @dev Total imdUSD principal the vault may mint at launch, before governance raises it: $1M. IMD's
+/// pool (~$2.3M a side, full range, 1% fee) absorbs a profitable liquidation of ~$290k at a time, so
+/// debt is kept within what liquidators can actually clear (docs/PARAMETERS-2026-10-05.md).
+uint256 constant LINE = 1_000_000e18;
+
+/// @dev Each redemption raises the fee's base by redeemed / supply / this. At 2, redeeming 10% of
+/// supply at once costs 5.5% (the 5% cap); at the former 4 it cost 3%. Chosen 2026-10-05.
+uint256 constant REDEMPTION_DIVISOR = 2;
+
+/// @dev Annual stability fee on open debt, in basis points. 444 at launch (2026-10-05). It accrues through the `chi` index from
 /// that index's last checkpoint (`indexCheckpointAt`), so a governed change in `duty` applies from the
 /// moment it lands. The base vault reads this constant; ParameterizedVault reads `duty()` instead.
-uint256 constant DUTY_BPS = 200;
+uint256 constant DUTY_BPS = 444;
 
 /// @dev The ratio term of the work-minting ceiling, in basis points of collateral-backed debt:
 /// earnLine = reserveValueUsd + totalDebt * EARN_MAT_BPS / 10000. Section 3 of

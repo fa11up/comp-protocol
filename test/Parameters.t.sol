@@ -17,7 +17,8 @@ import {
     CHIP_BPS,
     SKEW_BPS,
     CUT_BPS,
-    DUTY_BPS
+    DUTY_BPS,
+    LINE
 } from "../src/DeploymentConfig.sol";
 
 /// @notice The governed parameter path end to end: the seam, the delay, the bounds, and the two
@@ -93,7 +94,8 @@ contract ParametersTest is Test {
 
     /// @dev A fresh Parameters is the shipped configuration, so binding it changes nothing.
     function test_governanceStartsFromTheShippedConfiguration() public view {
-        assertEq(vault.line(), type(uint256).max);
+        assertEq(vault.line(), LINE);
+        assertEq(LINE, 1_000_000 ether, "a $1M launch ceiling");
         assertEq(vault.cut(), CUT_BPS);
         assertEq(vault.duty(), DUTY_BPS);
         assertEq(vault.skew(), SKEW_BPS);
@@ -290,7 +292,8 @@ contract ParametersTest is Test {
         vault.draw(100 ether);
         vm.warp(block.timestamp + 365 days);
 
-        assertEq(vault.stabilityFeeOf(BORROWER), 2 ether, "100 COMP for a year at 200 bps");
+        assertEq(vault.stabilityFeeOf(BORROWER), 100 ether * DUTY_BPS / 10_000, "100 imdUSD for a year at duty");
+        assertEq(DUTY_BPS, 444);
 
         vm.prank(APPROVED_OPERATOR);
         params.propose(_set(type(uint256).max, 0, 1_000, 500, 1_000));

@@ -6,7 +6,7 @@ import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {Parameters} from "src/Parameters.sol";
 import {Governed} from "src/Governed.sol";
-import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, REDEMPTION_DIVISOR} from "src/DeploymentConfig.sol";
 
 /// @notice The shipped vault's run fee and automatic work-mint contraction, using real minted COMP.
 contract RedemptionEconomicsTest is WorkBackingFixture {
@@ -34,23 +34,25 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         _refreshEthUsd();
     }
 
-    function test_tenPercentBurnUsesQuarterSupplyFractionAndRetainsTheFee() public {
+    /// @dev 5% of supply / REDEMPTION_DIVISOR (2) = a 2.5% base, so the fee is 50 + 250 = 300 bps.
+    function test_fivePercentBurnUsesHalfSupplyFractionAndRetainsTheFee() public {
+        assertEq(REDEMPTION_DIVISOR, 2);
         assertEq(backedVault.REDEMPTION_FEE_FLOOR_BPS(), FLOOR);
         assertEq(backedVault.REDEMPTION_FEE_CAP_BPS(), CAP);
         assertEq(backedVault.redemptionFeeBps(0), FLOOR);
-        assertEq(backedVault.redemptionFeeBps(100 ether), 300);
+        assertEq(backedVault.redemptionFeeBps(50 ether), 300);
         uint256 wallet = collateral.balanceOf(BORROWER);
-        uint256 payout = _redeem(100 ether);
-        assertEq(payout, 97 ether);
+        uint256 payout = _redeem(50 ether);
+        assertEq(payout, 48.5 ether);
         assertEq(backedVault.redemptionBaseRate(), 0.025 ether);
-        assertEq(stable.totalSupply(), 900 ether);
+        assertEq(stable.totalSupply(), 950 ether);
         assertEq(collateral.balanceOf(BORROWER), wallet + payout);
-        assertEq(collateral.balanceOf(address(reserve)), 903 ether);
+        assertEq(collateral.balanceOf(address(reserve)), 951.5 ether);
         assertEq(collateral.balanceOf(address(backedVault)), 1800 ether);
         assertEq(stable.balanceOf(address(reserve)), 0, "fee never reminted to Treasury");
         assertEq(collateral.balanceOf(APPROVED_OPERATOR), 0, "no fee distribution");
         assertEq(backedVault.totalDebt(), 1000 ether);
-        assertEq(backedVault.totalNonPrincipalRedeemed(), 100 ether);
+        assertEq(backedVault.totalNonPrincipalRedeemed(), 50 ether);
     }
 
     function test_repeatedRunFollowsCurveReachesCapAndStaysCapped() public {
@@ -60,7 +62,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         for (uint256 i; i < 24; ++i) {
             uint256 supplyBefore = stable.totalSupply();
             uint256 backingBefore = collateral.balanceOf(address(backedVault)) + collateral.balanceOf(address(reserve));
-            expectedBase += (25 ether * 1e18 / supplyBefore) / 4;
+            expectedBase += (25 ether * 1e18 / supplyBefore) / REDEMPTION_DIVISOR;
             if (expectedBase > BASE_CAP) expectedBase = BASE_CAP;
             uint256 fee = FLOOR + Math.ceilDiv(expectedBase, 1e14);
             assertEq(backedVault.redemptionFeeBps(25 ether), fee, "quote uses pre-burn supply");
@@ -140,36 +142,38 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     function test_freshPrincipalIsChargedTheFullFeeAndOnlyCancelledFeesMoveTheBase() public {
         vm.prank(APPROVED_OPERATOR);
         reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
-        assertEq(backedVault.redemptionFeeBps(100 ether), 300, "the quote includes the increase");
+        assertEq(backedVault.redemptionFeeBps(50 ether), 300, "the quote includes the increase");
         assertEq(backedVault.stabilityFeeOf(BORROWER), 0, "no time has passed since the mint");
         (uint256 collateralBefore,) = backedVault.positions(BORROWER);
-        assertEq(_redeem(100 ether), 97 ether, "fresh principal pays the whole quoted fee");
+        assertEq(_redeem(50 ether), 48.5 ether, "fresh principal pays the whole quoted fee");
         (uint256 collateralAfter, uint256 debtAfter) = backedVault.positions(BORROWER);
-        assertEq(collateralBefore - collateralAfter, 97 ether);
-        assertEq(debtAfter, 900 ether);
+        assertEq(collateralBefore - collateralAfter, 48.5 ether);
+        assertEq(debtAfter, 950 ether);
         assertEq(backedVault.redemptionBaseRate(), 0, "principal younger than twelve hours leaves the base");
         assertEq(backedVault.lastRedemptionAt(), vm.getBlockTimestamp(), "the checkpoint still moves");
         assertEq(backedVault.redemptionFeeBps(0), FLOOR);
 
-        // One wei short of the window is still fresh; the window itself is not. The 2% stability fee
+        // One wei short of the window is still fresh; the window itself is not. The stability fee
         // has accrued for almost twelve hours, and that part of the burn is not principal.
         _advance(12 hours - 1);
         uint256 fees = backedVault.stabilityFeeOf(BORROWER);
         assertGt(fees, 0);
         uint256 supply = stable.totalSupply();
         _redeem(90 ether);
-        uint256 feesOnly = (fees * 1e18 / supply) / 4;
+        uint256 feesOnly = (fees * 1e18 / supply) / REDEMPTION_DIVISOR;
         assertEq(backedVault.redemptionBaseRate(), feesOnly, "only the cancelled fees move the base");
         assertLt(feesOnly, 1e14, "the fee share is below one basis point here");
         _advance(1);
         uint256 decayed = backedVault.decayedRedemptionBaseRate();
         assertGt(decayed, 0);
         supply = stable.totalSupply();
-        assertEq(backedVault.redemptionFeeBps(81 ether), 301, "the sub-point remainder rounds up against the redeemer");
-        _redeem(81 ether);
+        // 43 of 860 is 5% of supply: a 2.5% increase on top of a decayed sub-point remainder.
+        assertEq(supply, 860 ether);
+        assertEq(backedVault.redemptionFeeBps(43 ether), 301, "the sub-point remainder rounds up against the redeemer");
+        _redeem(43 ether);
         assertEq(
             backedVault.redemptionBaseRate(),
-            decayed + (81 ether * 1e18 / supply) / 4,
+            decayed + (43 ether * 1e18 / supply) / REDEMPTION_DIVISOR,
             "seasoned principal follows the curve in full"
         );
 
@@ -178,10 +182,10 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         backedVault.draw(100 ether);
         decayed = backedVault.decayedRedemptionBaseRate();
         supply = stable.totalSupply();
-        _redeem(150 ether);
+        _redeem(120 ether);
         assertEq(
             backedVault.redemptionBaseRate(),
-            decayed + (50 ether * 1e18 / supply) / 4,
+            decayed + (20 ether * 1e18 / supply) / REDEMPTION_DIVISOR,
             "a burn partly against fresh principal counts only the seasoned part"
         );
     }
@@ -206,7 +210,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         assertEq(backedVault.stabilityFeeOf(BORROWER), 0, "the burn cancels every accrued fee");
         assertEq(debtBefore - debtAfter, 50 ether, "the whole burn retires debt");
         assertEq(principalBefore - debtAfter, 50 ether - fees, "fees are cancelled before principal");
-        assertEq(backedVault.redemptionBaseRate(), (fees * 1e18 / supply) / 4, "the fee part is never fresh");
+        assertEq(backedVault.redemptionBaseRate(), (fees * 1e18 / supply) / REDEMPTION_DIVISOR, "the fee part is never fresh");
     }
 
     /// @dev Regression for the previously reported re-dating: one wei of new principal every twelve
@@ -221,10 +225,10 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
             backedVault.draw(1);
         }
         uint256 supply = stable.totalSupply();
-        assertEq(backedVault.redemptionFeeBps(100 ether), 300);
-        _redeem(100 ether);
-        // At most the six wei minted inside the window are excluded; the seasoned tenth counts.
-        uint256 expected = (100 ether * 1e18 / supply) / 4;
+        assertEq(backedVault.redemptionFeeBps(50 ether), 300);
+        _redeem(50 ether);
+        // At most the six wei minted inside the window are excluded; the seasoned twentieth counts.
+        uint256 expected = (50 ether * 1e18 / supply) / REDEMPTION_DIVISOR;
         assertApproxEqAbs(backedVault.redemptionBaseRate(), expected, 10);
         assertEq(backedVault.redemptionFeeBps(0), 300, "the next redeemer pays the raised rate");
     }
@@ -241,8 +245,10 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         vm.warp(start + 23 hours);
         _refreshEthUsd();
         uint256 supply = stable.totalSupply();
-        _redeem(100 ether);
-        assertEq(backedVault.redemptionBaseRate(), (100 ether * 1e18 / supply) / 4, "no principal is fresh any more");
+        _redeem(50 ether);
+        assertEq(
+            backedVault.redemptionBaseRate(), (50 ether * 1e18 / supply) / REDEMPTION_DIVISOR, "no principal is fresh any more"
+        );
     }
 
     /// @dev Two equal tranches six hours apart are dated three hours after the first: the whole
@@ -268,7 +274,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         uint256 fees = backedVault.stabilityFeeOf(BORROWER);
         uint256 supply = stable.totalSupply();
         _redeem(10 ether);
-        assertEq(backedVault.redemptionBaseRate(), (fees * 1e18 / supply) / 4, "both tranches are still fresh");
+        assertEq(backedVault.redemptionBaseRate(), (fees * 1e18 / supply) / REDEMPTION_DIVISOR, "both tranches are still fresh");
 
         vm.warp(start + 15 hours);
         _refreshEthUsd();
@@ -278,7 +284,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         _redeem(10 ether);
         assertEq(
             backedVault.redemptionBaseRate(),
-            decayed + (10 ether * 1e18 / supply) / 4,
+            decayed + (10 ether * 1e18 / supply) / REDEMPTION_DIVISOR,
             "the whole record ages out at the weighted time"
         );
     }
@@ -308,7 +314,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         uint256 decayed = backedVault.decayedRedemptionBaseRate();
         _redeem(10 ether);
         uint256 counted = probe == 0 ? Math.min(fees, 10 ether) : 10 ether;
-        assertEq(backedVault.redemptionBaseRate(), decayed + (counted * 1e18 / supply) / 4);
+        assertEq(backedVault.redemptionBaseRate(), decayed + (counted * 1e18 / supply) / REDEMPTION_DIVISOR);
     }
 
     function test_baseHalvesEveryTwelveHoursAndEventuallyReturnsToFloor() public {
@@ -324,15 +330,16 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         _advance(365 days);
         assertEq(backedVault.decayedRedemptionBaseRate(), 0);
         assertEq(backedVault.redemptionFeeBps(0), FLOOR);
-        assertEq(backedVault.redemptionFeeBps(9 ether), 75, "next redemption adds its own fraction");
-        _redeem(9 ether);
+        // 4.5 of the 900 left is 0.5% of supply: a 0.25% base, 75 bps with the floor.
+        assertEq(backedVault.redemptionFeeBps(4.5 ether), 75, "next redemption adds its own fraction");
+        _redeem(4.5 ether);
         assertEq(backedVault.redemptionBaseRate(), 0.0025 ether);
         assertEq(backedVault.lastRedemptionAt(), vm.getBlockTimestamp());
     }
 
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_decayIsMonotonicAndNewBurnAddsToDecayedBase(uint32 secondsSeed, uint96 amountSeed) public {
-        _redeem(100 ether);
+        _redeem(50 ether); // a 2.5% base, below the cap, so every later second visibly decays it
         uint256 elapsed = bound(secondsSeed, 1, 30 days);
         _advance(elapsed);
         uint256 first = backedVault.decayedRedemptionBaseRate();
@@ -341,7 +348,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         uint256 decayed = backedVault.decayedRedemptionBaseRate();
         assertApproxEqAbs(decayed, first / 2, 1_000_000);
         uint256 amount = bound(amountSeed, 1 ether, 500 ether);
-        uint256 expected = decayed + (amount * 1e18 / stable.totalSupply()) / 4;
+        uint256 expected = decayed + (amount * 1e18 / stable.totalSupply()) / REDEMPTION_DIVISOR;
         if (expected > BASE_CAP) expected = BASE_CAP;
         uint256 fee = FLOOR + Math.ceilDiv(expected, 1e14);
         assertEq(backedVault.redemptionFeeBps(amount), fee);
@@ -352,7 +359,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     }
 
     function test_failedMinimumOutDoesNotChargeFeeOrRestartDecay() public {
-        _redeem(100 ether);
+        _redeem(50 ether);
         _advance(6 hours);
         uint256 rate = backedVault.redemptionBaseRate();
         uint256 decayed = backedVault.decayedRedemptionBaseRate();
@@ -364,8 +371,8 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         assertEq(backedVault.redemptionBaseRate(), rate);
         assertEq(backedVault.decayedRedemptionBaseRate(), decayed);
         assertEq(backedVault.lastRedemptionAt(), last);
-        assertEq(stable.totalSupply(), 900 ether);
-        assertEq(collateral.balanceOf(address(reserve)), 903 ether);
+        assertEq(stable.totalSupply(), 950 ether);
+        assertEq(collateral.balanceOf(address(reserve)), 951.5 ether);
         assertEq(_redeem(10 ether), quoted);
     }
 

@@ -7,7 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
-import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, REDEMPTION_DIVISOR} from "src/DeploymentConfig.sol";
 
 /// @dev Does several vault calls inside ONE transaction. `isolate = true` makes every call a test
 /// makes directly its own transaction, which is what the vault's transient tallies are designed
@@ -73,11 +73,12 @@ contract RedemptionGuardsTest is WorkBackingFixture {
     function test_subBasisPointRemainderIsChargedToTheRedeemerAndKeptInTheBase() public {
         _open(BORROWER, 1800 ether, 1000 ether);
         _reserveIMD(10 ether);
-        // 0.39 of a 1000 supply is 0.975 of a basis point: charged as one, stored exactly.
-        _giveStable(0.39 ether);
-        assertEq(backedVault.redemptionFeeBps(0.39 ether), 51);
+        // 0.195 of a 1000 supply, halved by the divisor, is 0.975 of a basis point: charged as one,
+        // stored exactly.
+        _giveStable(0.195 ether);
+        assertEq(backedVault.redemptionFeeBps(0.195 ether), 51);
         vm.prank(REDEEMER);
-        assertEq(backedVault.cash(0.39 ether, 0, address(0)), 0.39 ether * (10_000 - 51) / 10_000);
+        assertEq(backedVault.cash(0.195 ether, 0, address(0)), 0.195 ether * (10_000 - 51) / 10_000);
         assertEq(backedVault.redemptionBaseRate(), 0.0000975 ether, "the fraction survives in the stored base");
         assertEq(backedVault.redemptionFeeBps(0), 51, "a zero quote rounds the decayed fraction up too");
     }
@@ -88,7 +89,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         _reserveIMD(1000 ether);
         uint256 amount = bound(amountSeed, 10_000, 500 ether);
         _giveStable(amount);
-        uint256 increase = Math.min(amount * 1e18 / 1000 ether / 4, 0.045 ether);
+        uint256 increase = Math.min(amount * 1e18 / 1000 ether / REDEMPTION_DIVISOR, 0.045 ether);
         uint256 fee = 50 + Math.ceilDiv(increase, 1e14);
         assertEq(backedVault.redemptionFeeBps(amount), fee);
         assertGe(fee * 1e14, 50 * 1e14 + increase, "whole basis points never undercharge");
@@ -280,7 +281,8 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         assertGt(_econBacking(), econBefore, "an in-call deposit cannot worsen backing either");
         assertEq(
             withDeposit,
-            Math.mulDiv(10 ether, Math.mulDiv(capped, 10_000 - 250, 10_000), 0.625 ether),
+            // 10 of the 125 of supply, over the divisor, is a 4% base: 450 bps with the floor.
+            Math.mulDiv(10 ether, Math.mulDiv(capped, 10_000 - 450, 10_000), 0.625 ether),
             "paid against the backing the call found, not the backing it brought"
         );
 
@@ -317,12 +319,12 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         collateral.mint(address(actor), 3000 ether);
         // Measured against the instantaneous supply of 2000 this would be a 175-bps burn.
         // Against the 1000 that existed before the call it is 300, which is what it costs.
-        uint256 out = actor.depositMintAndRedeem(3000 ether, 1000 ether, 100 ether, address(0));
-        assertEq(out, 97 ether);
+        uint256 out = actor.depositMintAndRedeem(3000 ether, 1000 ether, 50 ether, address(0));
+        assertEq(out, 48.5 ether);
         assertEq(backedVault.redemptionBaseRate(), 0.025 ether);
         assertEq(backedVault.redemptionFeeBps(0), 300);
-        assertEq(stable.balanceOf(address(actor)), 900 ether);
-        assertEq(stable.totalSupply(), 1900 ether);
+        assertEq(stable.balanceOf(address(actor)), 950 ether);
+        assertEq(stable.totalSupply(), 1950 ether);
     }
 
     function test_aBurnWithNoSupplyBeforeTheTransactionSaturatesTheFee() public {

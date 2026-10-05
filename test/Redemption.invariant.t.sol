@@ -5,7 +5,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {CDPVault} from "src/CDPVault.sol";
-import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, REDEMPTION_DIVISOR} from "src/DeploymentConfig.sol";
 import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
 
 /// @dev Exercises the shipped USD-denominated vault, its Treasury and its nonzero stability fee.
@@ -372,9 +372,9 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         if (stillFresh) lastMintedAt[actor] = block.timestamp - age;
     }
 
-    /// @dev floor(effective / supply) / 4 on top of the decayed base, saturating at the cap.
+    /// @dev floor(effective / supply) / REDEMPTION_DIVISOR on top of the decayed base, saturating at the cap.
     function _curve(uint256 decayed, uint256 effective, uint256 supply) private pure returns (uint256) {
-        uint256 increase = effective == 0 ? 0 : (effective * 1e18 / supply) / 4;
+        uint256 increase = effective == 0 ? 0 : (effective * 1e18 / supply) / REDEMPTION_DIVISOR;
         return Math.min(decayed + increase, BASE_CAP);
     }
 

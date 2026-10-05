@@ -14,7 +14,7 @@ import {MockIMD} from "../../src/MockIMD.sol";
 import {ImdUSD} from "../../src/ImdUSD.sol";
 import {MockWorkOracle} from "../../src/MockWorkOracle.sol";
 import {ISwarmFeed} from "../../src/interfaces/ISwarmFeed.sol";
-import {APPROVED_OPERATOR, CHAINLINK_ETH_USD} from "../../src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, CHAINLINK_ETH_USD, REDEMPTION_DIVISOR} from "../../src/DeploymentConfig.sol";
 
 contract RedemptionFeed is ISwarmFeed {
     uint256 public constant maxAge = 1 days;
@@ -226,9 +226,11 @@ contract RedemptionTest is Test {
         _open(ALICE, 90 ether, 100 ether);
         _giveStable(10 ether);
         assertEq(vault.collateralRatio(ALICE), 180);
+        // 10 of a 100 supply is 5%; over REDEMPTION_DIVISOR (2) the fee saturates at the 500 bps cap,
+        // so 10 x 0.95 at $2 per IMD (0.002 ETH x $1000) is 4.75 IMD.
         vm.prank(REDEEMER);
-        uint256 payout = vault.cash(10 ether, 4.85 ether, ALICE);
-        assertEq(payout, 4.85 ether);
+        uint256 payout = vault.cash(10 ether, 4.75 ether, ALICE);
+        assertEq(payout, 4.75 ether);
         assertEq(imd.balanceOf(REDEEMER), payout);
         _assertPosition(ALICE, 90 ether - payout, 90 ether);
     }
@@ -383,15 +385,17 @@ contract RedemptionTest is Test {
         assertEq(vault.REDEMPTION_FEE_FLOOR_BPS(), 50);
         assertEq(vault.REDEMPTION_FEE_CAP_BPS(), 500);
         assertEq(vault.redemptionBaseRate(), 0);
-        assertEq(vault.redemptionFeeBps(100 ether), 300);
+        // 50 of 1000 over REDEMPTION_DIVISOR (2) is a 2.5% base: 300 bps with the floor.
+        assertEq(vault.redemptionFeeBps(50 ether), 300);
         vm.prank(REDEEMER);
-        assertEq(vault.cash(100 ether, 0, address(0)), 97 ether);
+        assertEq(vault.cash(50 ether, 0, address(0)), 48.5 ether);
         assertEq(vault.redemptionBaseRate(), 0.025 ether);
         assertEq(vault.lastRedemptionAt(), block.timestamp);
-        assertEq(comp.totalSupply(), 900 ether);
-        assertEq(vault.redemptionFeeBps(36 ether), 400);
+        assertEq(comp.totalSupply(), 950 ether);
+        // 19 of the 950 now outstanding over 2 adds exactly 1%.
+        assertEq(vault.redemptionFeeBps(19 ether), 400);
         vm.prank(REDEEMER);
-        vault.cash(36 ether, 0, address(0));
+        vault.cash(19 ether, 0, address(0));
         assertEq(vault.redemptionBaseRate(), 0.035 ether);
     }
 
@@ -429,12 +433,13 @@ contract RedemptionTest is Test {
         _giveStable(200 ether);
         _fundReserve(300 ether);
         vm.prank(REDEEMER);
-        vault.cash(100 ether, 0, address(0));
+        vault.cash(50 ether, 0, address(0));
         vm.warp(block.timestamp + 12 hours);
+        // 47.5 of the 950 left over REDEMPTION_DIVISOR (2) adds 2.5% on top of the decayed half.
         uint256 expectedBase = vault.decayedRedemptionBaseRate() + 0.025 ether;
-        uint256 payout = _quote(90 ether, 1 ether);
+        uint256 payout = _quote(47.5 ether, 1 ether);
         vm.prank(REDEEMER);
-        assertEq(vault.cash(90 ether, payout, address(0)), payout);
+        assertEq(vault.cash(47.5 ether, payout, address(0)), payout);
         assertEq(vault.redemptionBaseRate(), expectedBase);
         assertEq(vault.lastRedemptionAt(), block.timestamp);
         assertApproxEqAbs(expectedBase, 0.0375 ether, 0.00001 ether);
@@ -512,28 +517,29 @@ contract RedemptionTest is Test {
         _mintWorkAndUnwind();
         assertEq(vault.reserveValue(), 100 ether);
         assertEq(comp.totalSupply(), 250 ether);
-        assertEq(vault.redemptionFeeBps(10 ether), 150);
+        // 10 of 250 over REDEMPTION_DIVISOR (2) is a 2% base: 250 bps with the floor.
+        assertEq(vault.redemptionFeeBps(10 ether), 250);
         // Every borrower is gone: 100 of reserve stands behind 250 of supply and nothing else does,
-        // so a COMP is backed at 0.4. Par would pay 9.85 and worsen the ratio, which is what the
+        // so a COMP is backed at 0.4. Par would pay 9.75 and worsen the ratio, which is what the
         // old halt refused; the cap pays 40% of that instead and cannot.
         assertEq(vault.backingPerUnit(), 0.4 ether, "100 of reserve, 250 of supply");
-        assertEq(_parQuote(10 ether, 1 ether), 9.85 ether, "what par would have paid");
-        assertEq(_quote(10 ether, 1 ether), 3.94 ether, "40% of par, less the 150 bps fee");
-        assertEq(_expectCapped(10 ether, address(0)), 3.94 ether);
+        assertEq(_parQuote(10 ether, 1 ether), 9.75 ether, "what par would have paid");
+        assertEq(_quote(10 ether, 1 ether), 3.9 ether, "40% of par, less the 250 bps fee");
+        assertEq(_expectCapped(10 ether, address(0)), 3.9 ether);
         assertGt(vault.backingPerUnit(), 0.4 ether, "and the fee leaves it strictly better");
     }
 
     function test_reserveRedemptionAllowsExactlyUnchangedBacking() public {
         _registerImdReserve(10_000);
-        _fundReserve(246.25 ether);
+        _fundReserve(243.75 ether);
         _mintWorkAndUnwind();
         uint256 assetsBefore = vault.reserveValue();
         uint256 supplyBefore = comp.totalSupply();
-        // 246.25 of reserve against 250 of supply was the level at which a PAR payout of 9.85 left
+        // 243.75 of reserve against 250 of supply was the level at which a PAR payout of 9.75 left
         // backing EXACTLY unchanged — the equality the old guard allowed. The payout now tracks
-        // backing (0.985 of par) rather than sitting at par, so the same burn pays less and backing
+        // backing (0.975 of par) rather than sitting at par, so the same burn pays less and backing
         // comes out strictly BETTER. The boundary stops being a boundary, which is the point.
-        assertEq(_parQuote(10 ether, 1 ether), 9.85 ether, "par at the old equality point");
+        assertEq(_parQuote(10 ether, 1 ether), 9.75 ether, "par at the old equality point");
         uint256 payout = _expectCapped(10 ether, address(0));
         assertGt(
             vault.reserveValue() * supplyBefore,
@@ -546,13 +552,13 @@ contract RedemptionTest is Test {
 
     function test_reserveRedemptionRefusesBackingOneWeiBelowBoundary() public {
         _registerImdReserve(10_000);
-        _fundReserve(246.25 ether - 1);
+        _fundReserve(243.75 ether - 1);
         _mintWorkAndUnwind();
         uint256 assetsBefore = vault.reserveValue();
         uint256 supplyBefore = comp.totalSupply();
         // One wei below the boundary a PAR payout crosses the exact ratio line, which is what the
         // old guard refused. The capped payout does not cross it here or anywhere else, so there
-        // is no longer a cliff one wei either side of 246.25.
+        // is no longer a cliff one wei either side of 243.75.
         assertLt(
             (assetsBefore - _parQuote(10 ether, 1 ether)) * supplyBefore,
             assetsBefore * (supplyBefore - 10 ether),
@@ -818,22 +824,22 @@ contract RedemptionTest is Test {
         // opened with an under-reserved run asserting the burn was refused outright, which is the
         // one half of it the cap replaces rather than preserves.
         _fundReserve(10_000 ether);
-        assertEq(vault.redemptionFeeBps(100 ether), 300);
+        assertEq(vault.redemptionFeeBps(50 ether), 300);
         AtomicRedeemer atomic = new AtomicRedeemer();
-        _giveStable(100 ether);
+        _giveStable(50 ether);
         vm.prank(REDEEMER);
-        comp.transfer(address(atomic), 100 ether);
+        comp.transfer(address(atomic), 50 ether);
         vm.prank(APPROVED_OPERATOR);
         imd.mint(address(atomic), 15_300 ether);
         assertEq(vault.backingPerUnit(), 1e18, "the cap is not what this test measures");
-        // The fee is the one a tenth of the supply that existed BEFORE the call pays, and that is
+        // The fee is the one a twentieth of the supply that existed BEFORE the call pays, and that is
         // the base the next redeemer inherits: the 9000 minted inside the call do not dilute it.
-        (bool ok, uint256 out) = atomic.run(vault, imd, 15_300 ether, 9000 ether, 100 ether, address(0));
+        (bool ok, uint256 out) = atomic.run(vault, imd, 15_300 ether, 9000 ether, 50 ether, address(0));
         assertTrue(ok);
-        assertEq(out, 97 ether, "a same-transaction mint bought a cheaper fee");
+        assertEq(out, 48.5 ether, "a same-transaction mint bought a cheaper fee");
         assertEq(vault.redemptionBaseRate(), 0.025 ether);
-        assertEq(comp.totalSupply(), 900 ether);
-        assertEq(imd.balanceOf(address(atomic)), 15_300 ether + 97 ether);
+        assertEq(comp.totalSupply(), 950 ether);
+        assertEq(imd.balanceOf(address(atomic)), 15_300 ether + 48.5 ether);
     }
 
     function test_burnBeyondPriorSupplySaturatesInsteadOfDividingByZero() public {
@@ -868,12 +874,12 @@ contract RedemptionTest is Test {
         vm.prank(REDEEMER);
         vault.cash(10 ether, 0, ALICE);
         // While the principal is fresh, only the cancelled stability fees move the rate.
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, 200 ether) / 4);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, 200 ether) / REDEMPTION_DIVISOR);
         vm.warp(start + 12 hours);
         uint256 decayed = vault.decayedRedemptionBaseRate();
         vm.prank(REDEEMER);
         vault.cash(10 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, 190 ether) / 4);
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, 190 ether) / REDEMPTION_DIVISOR);
     }
 
     function test_oneWeiTopUpsCannotKeepPrincipalFresh() public {
@@ -884,12 +890,12 @@ contract RedemptionTest is Test {
             vm.prank(ALICE);
             vault.draw(1);
         }
-        _giveStable(100 ether);
+        _giveStable(50 ether);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.cash(100 ether, 0, ALICE);
-        // At most the few wei minted inside the window are excluded; the tenth of supply counts.
-        assertApproxEqAbs(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4, 10);
+        vault.cash(50 ether, 0, ALICE);
+        // At most the few wei minted inside the window are excluded; the twentieth of supply counts.
+        assertApproxEqAbs(vault.redemptionBaseRate(), Math.mulDiv(50 ether, 1 ether, supply) / REDEMPTION_DIVISOR, 10);
         assertEq(vault.redemptionFeeBps(0), 300);
     }
 
@@ -899,13 +905,13 @@ contract RedemptionTest is Test {
         vm.warp(start + 12 hours - 60);
         vm.prank(ALICE);
         vault.draw(1);
-        _giveStable(100 ether);
+        _giveStable(50 ether);
         // One wei moves the record by a second at most, so eleven hours later the 1000 has aged out.
         vm.warp(start + 23 hours);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.cash(100 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4);
+        vault.cash(50 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(50 ether, 1 ether, supply) / REDEMPTION_DIVISOR);
     }
 
     function test_equalTranchesAgeOutAtTheirAverageAge() public {
@@ -922,13 +928,13 @@ contract RedemptionTest is Test {
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
         vault.cash(10 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / REDEMPTION_DIVISOR);
         vm.warp(start + 15 hours);
         uint256 decayed = vault.decayedRedemptionBaseRate();
         supply = comp.totalSupply();
         vm.prank(REDEEMER);
         vault.cash(10 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / 4);
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / REDEMPTION_DIVISOR);
     }
 
     function test_cancelledFeesAreNeverFresh() public {
@@ -944,7 +950,7 @@ contract RedemptionTest is Test {
         // The burn cancels fees first, then fresh principal: only the fees move the rate.
         vm.prank(REDEEMER);
         vault.cash(50 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / REDEMPTION_DIVISOR);
     }
 
     function test_onlyTheFreshPartOfACancelledBurnIsExcluded() public {
@@ -953,15 +959,16 @@ contract RedemptionTest is Test {
         vm.prank(ALICE);
         vault.draw(50 ether);
         _giveStable(200 ether);
-        // 100 burned, 50 of it fresh: the rate rises by 50 / 1050 / 4, not 100 / 1050 / 4.
+        // 100 burned, 50 of it fresh: the rate rises by 50 / 1050 / REDEMPTION_DIVISOR, not 100 / 1050 / it.
         vm.prank(REDEEMER);
         vault.cash(100 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(50 ether, 1 ether, 1050 ether) / 4);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(50 ether, 1 ether, 1050 ether) / REDEMPTION_DIVISOR);
         // Retired fresh principal stays retired: a later burn against the same position counts whole.
+        // 40 keeps the sum under the 4.5% base cap at divisor 2, so the curve is visible.
         uint256 decayed = vault.decayedRedemptionBaseRate();
         vm.prank(REDEEMER);
-        vault.cash(100 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(100 ether, 1 ether, 950 ether) / 4);
+        vault.cash(40 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(40 ether, 1 ether, 950 ether) / REDEMPTION_DIVISOR);
     }
 
     function test_repaymentRetiresFreshPrincipalBeforeRedemptionDoes() public {
@@ -977,11 +984,11 @@ contract RedemptionTest is Test {
         assertGt(fees, 0);
         vm.prank(ALICE);
         vault.wipe(100 ether);
-        _giveStable(100 ether);
+        _giveStable(50 ether);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.cash(100 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4);
+        vault.cash(50 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(50 ether, 1 ether, supply) / REDEMPTION_DIVISOR);
     }
 
     // --- revision: findings 7cd5035c and 5ee3f2bc -------------------------------------------------
@@ -1086,9 +1093,10 @@ contract RedemptionTest is Test {
         _open(ALICE, 36_000 ether, 1000 ether);
         assertEq(vault.collateralRatio(ALICE), 180);
         assertEq(vault.securedCollateral(), 36_000 ether);
-        _giveStable(100 ether);
+        // 50 of 1000 is a 300 bps fee at divisor 2: 50 x 0.97 at five cents is 970 IMD.
+        _giveStable(50 ether);
         vm.prank(REDEEMER);
-        assertEq(vault.cash(100 ether, 0, ALICE), 1940 ether);
+        assertEq(vault.cash(50 ether, 0, ALICE), 970 ether);
     }
 
     function test_mintRepayRoundTripsCannotKeepPrincipalFresh() public {
@@ -1104,12 +1112,12 @@ contract RedemptionTest is Test {
             }
             vm.stopPrank();
         }
-        _giveStable(100 ether);
+        _giveStable(50 ether);
         uint256 supply = comp.totalSupply();
-        assertEq(vault.redemptionFeeBps(100 ether), 300);
+        assertEq(vault.redemptionFeeBps(50 ether), 300);
         vm.prank(REDEEMER);
-        vault.cash(100 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4, "nothing is fresh");
+        vault.cash(50 ether, 0, ALICE);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(50 ether, 1 ether, supply) / REDEMPTION_DIVISOR, "nothing is fresh");
         assertEq(vault.redemptionFeeBps(0), 300);
     }
 
@@ -1128,14 +1136,14 @@ contract RedemptionTest is Test {
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
         vault.cash(10 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4);
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / REDEMPTION_DIVISOR);
         // ...and aged out exactly when it would have: the pair neither re-dated nor re-aged it.
         vm.warp(start + 12 hours);
         uint256 decayed = vault.decayedRedemptionBaseRate();
         supply = comp.totalSupply();
         vm.prank(REDEEMER);
         vault.cash(10 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / 4);
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / REDEMPTION_DIVISOR);
     }
 
     function test_repayingPartOfAFreshRecordKeepsItsPrincipalTime() public {
@@ -1158,23 +1166,23 @@ contract RedemptionTest is Test {
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
         vault.cash(10 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4, "fresh at 13h12m - 1");
+        assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / REDEMPTION_DIVISOR, "fresh at 13h12m - 1");
         vm.warp(start + 13 hours + 12 minutes);
         uint256 decayed = vault.decayedRedemptionBaseRate();
         supply = comp.totalSupply();
         vm.prank(REDEEMER);
         vault.cash(10 ether, 0, ALICE);
-        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / 4, "aged out at 13h12m");
+        assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / REDEMPTION_DIVISOR, "aged out at 13h12m");
     }
 
     function test_feeRoundsFractionalBasisPointsAgainstTheRedeemer() public {
         _open(ALICE, 1800 ether, 1000 ether);
         vm.warp(block.timestamp + 12 hours);
         _giveStable(1 ether);
-        // 0.39 / 1000 / 4 is 0.975 of a basis point: charged as one, never as zero.
-        assertEq(vault.redemptionFeeBps(0.39 ether), 51);
+        // 0.195 / 1000 / 2 is 0.975 of a basis point: charged as one, never as zero.
+        assertEq(vault.redemptionFeeBps(0.195 ether), 51);
         vm.prank(REDEEMER);
-        assertEq(vault.cash(0.39 ether, 0, ALICE), 0.388011 ether);
+        assertEq(vault.cash(0.195 ether, 0, ALICE), 0.1940055 ether);
         assertEq(vault.redemptionBaseRate(), 9.75e13, "the exact fraction is still carried");
     }
 

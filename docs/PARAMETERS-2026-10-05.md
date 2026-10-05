@@ -17,6 +17,9 @@ because each one moves the others. Inputs are IMD's own market, read from chain 
 | Primary price max age | 24 h | **1 h** | `PRICE_MAX_AGE` |
 | Spot price max age | 1 h | 1 h | `SPOT_MAX_AGE` |
 | NHI max age | 24 h | 24 h | `NHI_MAX_AGE` |
+| Redemption fee divisor | 4 | **2** | `REDEMPTION_DIVISOR` (governable next) |
+| Stability fee `duty` | 200 bps | **444 bps** | `DUTY_BPS` (governed, 0–1000) |
+| Debt ceiling `line` | unlimited | **$1M** | `LINE` (governed) |
 | ETH/USD max age | 24 h | **2 h** | `ETH_USD_MAX_AGE`: Chainlink's hourly heartbeat plus one missed round |
 | Price updates | clock | **on demand** | `OracleAsker` |
 

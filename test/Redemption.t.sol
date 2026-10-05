@@ -9,7 +9,7 @@ import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {Treasury} from "src/Treasury.sol";
 import {ISwarmFeed} from "src/interfaces/ISwarmFeed.sol";
-import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
+import {REDEMPTION_DIVISOR, APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
 
 /// @notice Exercises redemption through the shipped vault, Treasury and USD price composition.
 contract RedemptionTest is WorkBackingFixture {
@@ -28,7 +28,7 @@ contract RedemptionTest is WorkBackingFixture {
 
     function test_reserveOnlyLeavesEvenAnAccruedIneligiblePositionUntouched() public {
         _open(BORROWER, 300 ether, 100 ether);
-        _giveStable(10 ether);
+        _giveStable(5 ether);
         _reserveIMD(30 ether);
         vm.warp(vm.getBlockTimestamp() + 365 days);
         _refreshEthUsd();
@@ -37,21 +37,22 @@ contract RedemptionTest is WorkBackingFixture {
         bytes32 beforePosition = _positionState(BORROWER);
         uint256 supply = stable.totalSupply();
         uint256 principal = backedVault.totalDebt();
-        uint256 out = _quote(10 ether);
+        // 5 of a 100 supply, over the divisor, is a 2.5% base: 300 bps with the floor.
+        uint256 out = _quote(5 ether);
 
         vm.expectEmit(true, true, false, true, address(backedVault));
-        emit Cash(REDEEMER, BORROWER, 10 ether, out, out, 0, 300);
+        emit Cash(REDEEMER, BORROWER, 5 ether, out, out, 0, 300);
         vm.prank(REDEEMER);
-        assertEq(backedVault.cash(10 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(5 ether, out, BORROWER), out);
 
         assertEq(_positionState(BORROWER), beforePosition, "reserve redemption touched position accounting");
         assertEq(backedVault.totalDebt(), principal);
         assertEq(collateral.balanceOf(address(backedVault)), 300 ether);
         assertEq(collateral.balanceOf(address(reserve)), 30 ether - out);
         assertEq(collateral.balanceOf(REDEEMER), out);
-        assertEq(stable.totalSupply(), supply - 10 ether);
+        assertEq(stable.totalSupply(), supply - 5 ether);
         assertEq(stable.balanceOf(REDEEMER), 0);
-        assertEq(backedVault.totalNonPrincipalRedeemed(), 10 ether);
+        assertEq(backedVault.totalNonPrincipalRedeemed(), 5 ether);
         assertEq(stable.balanceOf(address(reserve)), 0, "redemption fee must stay in backing");
     }
 
@@ -73,27 +74,27 @@ contract RedemptionTest is WorkBackingFixture {
     function test_reserveExhaustionContinuesIntoPositionInTheSameCall() public {
         _open(BORROWER, 180 ether, 100 ether);
         _open(SECOND_BORROWER, 200 ether, 100 ether);
-        _giveStable(20 ether);
-        // A 10%-of-supply burn charges 3%; reserve pays exactly half the final output.
-        _reserveIMD(9.7 ether);
+        _giveStable(10 ether);
+        // A 5%-of-supply burn charges 3% (2.5% base at divisor 2); reserve pays exactly half.
+        _reserveIMD(4.85 ether);
         bytes32 untouched = _positionState(SECOND_BORROWER);
-        uint256 out = 19.4 ether;
+        uint256 out = 9.7 ether;
         vm.expectEmit(true, true, false, true, address(backedVault));
-        emit Cash(REDEEMER, BORROWER, 20 ether, out, 9.7 ether, 10 ether, 300);
+        emit Cash(REDEEMER, BORROWER, 10 ether, out, 4.85 ether, 5 ether, 300);
         vm.prank(REDEEMER);
-        assertEq(backedVault.cash(20 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, BORROWER), out);
 
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
-        assertEq(c, 170.3 ether);
-        assertEq(d, 90 ether);
+        assertEq(c, 175.15 ether);
+        assertEq(d, 95 ether);
         assertGt(c * 100 ether, 180 ether * d, "exact collateral/debt ratio must rise");
         assertEq(_positionState(SECOND_BORROWER), untouched);
         assertEq(collateral.balanceOf(address(reserve)), 0);
-        assertEq(collateral.balanceOf(address(backedVault)), 370.3 ether);
+        assertEq(collateral.balanceOf(address(backedVault)), 375.15 ether);
         assertEq(collateral.balanceOf(REDEEMER), out);
-        assertEq(stable.totalSupply(), 180 ether);
-        assertEq(backedVault.totalDebt(), 190 ether);
-        assertEq(backedVault.totalNonPrincipalRedeemed(), 10 ether);
+        assertEq(stable.totalSupply(), 190 ether);
+        assertEq(backedVault.totalDebt(), 195 ether);
+        assertEq(backedVault.totalNonPrincipalRedeemed(), 5 ether);
     }
 
     function test_oneWeiReserveShortfallCancelsEnoughPositionDebtForTheLastWei() public {
@@ -224,13 +225,16 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 rights = workOracle.mintingRights(WORKER);
         vm.warp(vm.getBlockTimestamp() + 365 days);
         _refreshEthUsd();
-        assertEq(backedVault.stabilityFeeOf(BORROWER), 2 ether);
-        assertEq(backedVault.debtOf(BORROWER), 102 ether);
+        // A year at duty() on 100 of principal.
+        uint256 yearFee = 100 ether * backedVault.duty() / 10_000;
+        assertEq(yearFee, 4.44 ether);
+        assertEq(backedVault.stabilityFeeOf(BORROWER), yearFee);
+        assertEq(backedVault.debtOf(BORROWER), 100 ether + yearFee);
         uint256 out = _quote(1 ether);
         vm.prank(WORKER);
         backedVault.cash(1 ether, out, BORROWER);
-        assertEq(backedVault.stabilityFeeOf(BORROWER), 1 ether);
-        assertEq(backedVault.debtOf(BORROWER), 101 ether);
+        assertEq(backedVault.stabilityFeeOf(BORROWER), yearFee - 1 ether);
+        assertEq(backedVault.debtOf(BORROWER), 100 ether + yearFee - 1 ether);
         assertEq(backedVault.totalDebt(), 100 ether);
         assertEq(backedVault.totalNonPrincipalRedeemed(), 1 ether);
         assertEq(backedVault.totalFeesMinted(), 0);
@@ -447,8 +451,8 @@ contract RedemptionTest is WorkBackingFixture {
 
     /// @dev Finding `b92320ae`'s exact sequence, which is why the backing guard was added in the
     /// first place: borrow, mint from work, repay, withdraw, then redeem against the reserve. The
-    /// deterioration it reported (100/250 to 90.15/240) is still refused -- by paying 3.94 instead
-    /// of 9.85, rather than by refusing the burn.
+    /// deterioration it reported (100/250 to 90.15/240 at the old fee) is still refused -- by paying
+    /// 3.90 instead of par's 9.75, rather than by refusing the burn.
     function test_debtUnwindCannotLeaveReserveRedemptionWorseningBacking() public {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _reserveIMD(100 ether);
@@ -459,28 +463,29 @@ contract RedemptionTest is WorkBackingFixture {
         // RedemptionWorsensBacking halt existed to stop — 90.15 of reserve against 240 of supply is
         // worse than 100 against 250 — and the cap stops it by paying the right amount instead.
         assertEq(backedVault.backingPerUnit(), 0.4 ether, "100 of reserve, 250 of supply");
-        assertLt(uint256(90.15 ether) * 250 ether, uint256(100 ether) * 240 ether, "par would deteriorate it");
-        assertEq(_quote(10 ether), 3.94 ether, "40% of par, less the 150 bps fee");
+        assertLt(uint256(90.25 ether) * 250 ether, uint256(100 ether) * 240 ether, "par would deteriorate it");
+        // 10 of the 250 supply, over the divisor, is a 2% base: 250 bps with the floor.
+        assertEq(_quote(10 ether), 3.9 ether, "40% of par, less the 250 bps fee");
         assertLt(_quote(10 ether), _parQuote(10 ether));
         _expectProRata(10 ether, 0, BORROWER, WORKER);
-        assertEq(backedVault.reserveValue(), 96.06 ether);
+        assertEq(backedVault.reserveValue(), 96.1 ether);
         assertGt(backedVault.backingPerUnit(), 0.4 ether, "and the fee leaves it strictly better");
     }
 
     function test_underbackedReserveBoundaryRejectsOneWeiBelowAndAcceptsEquality() public {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
-        _reserveIMD(246.25 ether - 1);
+        _reserveIMD(243.75 ether - 1);
         _mintWorkAndUnwind(1700 ether, 1000 ether, 250 ether);
-        // THERE IS NO LONGER A BOUNDARY, and that is this test's result. 246.25 of reserve against
-        // 250 of supply is the level at which a PAR payout of 9.85 exactly preserved backing, so
+        // THERE IS NO LONGER A BOUNDARY, and that is this test's result. 243.75 of reserve against
+        // 250 of supply is the level at which a PAR payout of 9.75 exactly preserved backing, so
         // one wei below it the old guard refused and at it the guard allowed. The payout now scales
         // with backing instead of being fixed at par, so backing is preserved or improved at EVERY
-        // reserve level and the one wei either side of 246.25 is no longer a cliff.
+        // reserve level and the one wei either side of 243.75 is no longer a cliff.
         uint256 out = _quote(10 ether);
-        assertEq(_parQuote(10 ether), 9.85 ether, "what par would have paid at the old boundary");
-        assertLt(out, 9.85 ether, "the cap pays less, because backing is below par");
+        assertEq(_parQuote(10 ether), 9.75 ether, "what par would have paid at the old boundary");
+        assertLt(out, 9.75 ether, "the cap pays less, because backing is below par");
         assertLt(
-            (backedVault.reserveValue() - 9.85 ether) * 250 ether,
+            (backedVault.reserveValue() - 9.75 ether) * 250 ether,
             backedVault.reserveValue() * 240 ether,
             "one wei below the boundary, a par payout loses backing"
         );
@@ -496,7 +501,7 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 beforeBacking = backedVault.reserveValue();
         assertLt(beforeBacking, stable.totalSupply(), "safe redemptions can start below 100% backing");
         uint256 second = _quote(10 ether);
-        assertLt(second, 9.85 ether, "the cap binds at the boundary too");
+        assertLt(second, 9.75 ether, "the cap binds at the boundary too");
         vm.prank(WORKER);
         assertEq(backedVault.cash(10 ether, second, address(0)), second);
         assertGt(
@@ -615,6 +620,9 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 priceSeed,
         uint256 reserveSeed
     ) public {
+        // About rounding across scales, not about the ceiling: lift the $1M launch ceiling so the
+        // range still reaches 1e27.
+        _raiseLine(type(uint256).max);
         uint256 debt = bound(debtSeed, 1 ether, 1e27);
         uint256 amount = bound(amountSeed, 10_000, debt / 2);
         // Every generated price is exactly representable through both real USD price legs.
@@ -624,7 +632,7 @@ contract RedemptionTest is WorkBackingFixture {
         _open(BORROWER, initialCollateral, debt);
         _giveStable(amount);
         // Whole basis points, rounded against the redeemer.
-        uint256 fee = 50 + Math.ceilDiv(Math.min(amount * 1e18 / debt / 4, 0.045 ether), 1e14);
+        uint256 fee = 50 + Math.ceilDiv(Math.min(amount * 1e18 / debt / REDEMPTION_DIVISOR, 0.045 ether), 1e14);
         uint256 expectedOut = Math.mulDiv(amount, (10_000 - fee) * 1e14, price);
         uint256 reserveBefore = bound(reserveSeed, 0, expectedOut);
         _reserveIMD(reserveBefore);

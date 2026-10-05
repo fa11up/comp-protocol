@@ -10,6 +10,7 @@ import {
     SKEW_BPS,
     CUT_BPS,
     DUTY_BPS,
+    LINE,
     EARN_MAT_BPS,
     WAGE_WAD,
     ORACLE_BUDGET_PER_DAY,
@@ -143,7 +144,7 @@ contract Parameters is Governed {
         if (address(vault_) == address(0)) revert ZeroVault();
         vault = vault_;
         _current = ParamSet({
-            line: type(uint256).max,
+            line: LINE,
             cut: CUT_BPS,
             duty: DUTY_BPS,
             skew: SKEW_BPS,

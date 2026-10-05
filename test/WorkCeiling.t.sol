@@ -86,6 +86,9 @@ contract WorkCeilingTest is WorkBackingFixture {
     }
 
     function test_largeDebtRatioUsesFullPrecisionMultiplication() public {
+        // About full-precision arithmetic at sizes far above the $1M launch ceiling, not about the
+        // ceiling: lift it through governance first.
+        _raiseLine(type(uint256).max);
         uint256 debt = uint256(1) << 250;
         _openDebt(debt);
         uint256 ceiling = debt / 4;
@@ -128,6 +131,9 @@ contract WorkCeilingTest is WorkBackingFixture {
 
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_ceilingArithmeticAndAtomicBoundary(uint96 rawDebt, uint96 rawReserve, uint16 rawRatio) public {
+        // About full-precision arithmetic at sizes far above the $1M launch ceiling, not about the
+        // ceiling: lift it through governance first.
+        _raiseLine(type(uint256).max);
         uint256 debt = bound(rawDebt, 1, 1e28);
         uint256 value = bound(rawReserve, 0, 1e28);
         uint256 ratio = bound(rawRatio, 0, 2500);
@@ -151,6 +157,9 @@ contract WorkCeilingTest is WorkBackingFixture {
         uint16 rawRatio,
         uint64 rawNhi
     ) public {
+        // About full-precision arithmetic at sizes far above the $1M launch ceiling, not about the
+        // ceiling: lift it through governance first.
+        _raiseLine(type(uint256).max);
         uint256 debt = bound(rawDebt, 1, type(uint128).max);
         uint256 value = rawReserve;
         uint256 ratio = bound(rawRatio, 0, 2500);
@@ -501,6 +510,9 @@ contract WorkCeilingTest is WorkBackingFixture {
         uint16 rawRatio,
         uint64 rawNhi
     ) public {
+        // About solvency arithmetic at sizes far above the $1M launch ceiling, not about the ceiling:
+        // lift it through governance first.
+        _raiseLine(type(uint256).max);
         uint256 debt = bound(rawDebt, 1e6, 1e28);
         uint256 reserveUnits = bound(rawReserve, 0, 1e28);
         uint256 ratio = bound(rawRatio, 0, 2500);

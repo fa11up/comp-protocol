@@ -17,6 +17,7 @@ import {
     SKEW_BPS,
     CHIP_BPS,
     DUTY_BPS,
+    REDEMPTION_DIVISOR,
     CUT_BPS,
     WORK_ORACLE_FACTORY,
     WORK_ORACLE_SENTINEL,
@@ -644,7 +645,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 cap = (REDEMPTION_FEE_CAP_BPS - REDEMPTION_FEE_FLOOR_BPS) * 1e14;
         uint256 minted = _transient(MINTED_THIS_TX_SLOT);
         uint256 prior = supply > minted ? supply - minted : 0;
-        uint256 increase = amount == 0 ? 0 : prior == 0 ? cap : Math.mulDiv(amount, 1e18, prior) / 4;
+        uint256 increase = amount == 0 ? 0 : prior == 0 ? cap : Math.mulDiv(amount, 1e18, prior) / REDEMPTION_DIVISOR;
         return Math.min(decayedRedemptionBaseRate() + increase, cap);
     }
 
