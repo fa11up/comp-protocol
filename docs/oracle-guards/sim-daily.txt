@@ -1,0 +1,3 @@
+current 20% sym 0.5/0.5 1h           IMD/day median 3.0  p95 11.0  max 12.0  days over 10 IMD: 3
+recommended 20% asym 0.25/1.0 1h     IMD/day median 2.0  p95 11.0  max 15.0  days over 10 IMD: 4
+asym + keepalive 4h                  IMD/day median 10.0  p95 32.0  max 33.0  days over 10 IMD: 16

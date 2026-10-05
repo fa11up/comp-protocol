@@ -26,3 +26,4 @@ web/.vite/
 /dist-public/
 deploy/mainnet/out/*.json
 deploy/mainnet/out/bodies/*.json
+docs/oracle-guards/gt_minute.json

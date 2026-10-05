@@ -3,6 +3,16 @@
 *Running record, maintained 2026-10-04. Ordered by what each costs them, cheapest first, because
 that is the order they are likely to be answered in.*
 
+**Status 2026-10-05 — drafts ready, nothing posted yet.** Bigger asks as GitHub issues on
+Identity-md/protocol, smaller ones as a direct message:
+
+| ask | vehicle | draft |
+|---|---|---|
+| Stability promises for immutable oracle consumers (attester key rotation, attestation v2, question doc v1, receipt v2) | **issue** — the most important new ask | `docs/upstream/ISSUE-1-consumer-stability.md` |
+| Accept imdUSD for swarm work (quote USD, settle IMD or imdUSD) | **issue** (§3 below) | `docs/upstream/ISSUE-2-imdusd-payment.md` |
+| Window-free question identifier | **issue, discussion** (§4) | `docs/upstream/ISSUE-3-stable-question-id.md` |
+| Intake timeline + 4 details; scheduled pricing; `agentRoot` field; `draft.contracts` cap; ERC-8004 coverage | **direct** (§1, 2, 5, 6) | `docs/upstream/DIRECT-ASKS.md` |
+
 Standing principle, learned from the three contributions that landed: **arrive with the work done.**
 `univ4-spot`, `log-count` and the output-type check shipped because they were written, tested and
 reasoned about before they were proposed. The one open ask that is still a discussion rather than a
