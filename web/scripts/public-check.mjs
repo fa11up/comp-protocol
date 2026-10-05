@@ -17,7 +17,7 @@ const fail = (m) => {
   console.error(`public-check: ${m}`);
   process.exit(1);
 };
-for (const need of ["index.html", "docs/index.html", "_headers", "_redirects", "manifest.webmanifest"])
+for (const need of ["index.html", "docs/index.html", "docs/overview/what-is-imdusd/index.html", "_headers", "_redirects", "manifest.webmanifest"])
   if (!files.includes(need)) fail(`missing ${need}`);
 if (files.some((f) => f.startsWith("terminal/"))) fail("the terminal was built into the public site");
 // The public site connects to no chain: no deployment file, no ABIs.
@@ -28,7 +28,11 @@ for (const f of files.filter((f) => /\.(html|js|css|webmanifest)$/.test(f))) {
   // A link to the terminal, in any of the forms the site writes one.
   if (/["'`(]\.{0,2}\/?terminal\//.test(text)) fail(`${f} still links to the terminal`);
   // Nothing about the testnet, and no way to reach a chain: no explorer, no RPC endpoint.
-  const leak = text.match(/sepolia|testnet|blockscout|etherscan|publicnode|infura|alchemy|eth_call|eth_getLogs/i);
+  // Nothing about the testnet anywhere; and no way to reach a chain from the site's code (docs prose
+  // may name RPC methods for integrators, the JavaScript may not call them).
+  const leak =
+    text.match(/sepolia|testnet/i) ??
+    (f.endsWith(".js") ? text.match(/blockscout|etherscan|publicnode|infura|alchemy|eth_call|eth_getLogs/i) : null);
   if (leak) fail(`${f} mentions "${leak[0]}"`);
 }
 // The favicon is drawn twice: public/favicon.svg (follows the OS theme) and theme.tsx (follows the

@@ -266,7 +266,7 @@ try {
   );
   await page.locator(".site-nav").getByRole("link", { name: "Docs" }).click();
   await page
-    .getByRole("heading", { level: 1, name: "Docs are being written" })
+    .getByRole("heading", { level: 1, name: "Documentation" })
     .waitFor();
   assert.equal(
     await page.locator('.site-nav a[aria-current="page"]').textContent(),

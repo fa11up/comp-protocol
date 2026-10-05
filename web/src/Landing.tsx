@@ -210,39 +210,15 @@ export function Page({
   );
 }
 
+/** The docs pages are static HTML built from web/content/docs; React adds only the shared header. */
 export function Docs() {
   return (
-    <div className="site">
-      <SiteHeader page="docs">
-        {TERMINAL && (
-          <a className="button primary" href={href("terminal/")}>
-            Open terminal
-          </a>
-        )}
-      </SiteHeader>
-      <main className="docs-placeholder">
-        <h1>Docs are being written</h1>
-        <p className="lede">
-          Guides for borrowing, redeeming, keeping and the oracle will live
-          here. Until then, the whitepaper describes the design
-          {TERMINAL ? " and the terminal shows every figure live." : "."}
-        </p>
-        <div className="hero-actions">
-          <a
-            className="button primary"
-            href={WHITEPAPER}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Read the whitepaper ↗
-          </a>
-          {TERMINAL && (
-            <a className="button" href={href("terminal/")}>
-              Open the terminal
-            </a>
-          )}
-        </div>
-      </main>
-    </div>
+    <SiteHeader page="docs">
+      {TERMINAL && (
+        <a className="button primary" href={href("terminal/")}>
+          Open terminal
+        </a>
+      )}
+    </SiteHeader>
   );
 }

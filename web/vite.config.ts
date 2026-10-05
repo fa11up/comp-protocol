@@ -1,5 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
+// @ts-expect-error plain ESM build script without types
+import { renderDocs } from "./scripts/docs-pages.mjs";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 // Three static pages: the landing page, the terminal and the docs. Plain files at /, /terminal/
@@ -41,10 +43,28 @@ function publicSite(): Plugin {
   };
 }
 
+/** Static docs pages from web/content/docs, written beside the built docs shell. */
+function docsPages(terminal: boolean): Plugin {
+  return {
+    name: "imdusd-docs-pages",
+    apply: "build",
+    writeBundle(options) {
+      const count = renderDocs({
+        outDir: options.dir!,
+        contentDir: resolve(import.meta.dirname, "content/docs"),
+        terminal,
+      });
+      this.info(`rendered ${count} docs pages`);
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const site = mode === "public";
   return {
-  plugins: site ? [react(), publicSite()] : [react()],
+  plugins: site
+    ? [react(), publicSite(), docsPages(false)]
+    : [react(), docsPages(true)],
   // The public site reads no chain: swap the live homepage for a stub so viem and the RPC layer
   // are not bundled at all.
   resolve: site
