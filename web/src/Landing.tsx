@@ -80,13 +80,9 @@ export function Page({
   return (
     <div className="site">
       <SiteHeader page="home" network={network}>
-        {TERMINAL ? (
+        {TERMINAL && (
           <a className="button primary" href={href("terminal/")}>
             Open terminal
-          </a>
-        ) : (
-          <a className="button primary" href={href("docs/")}>
-            Read the docs
           </a>
         )}
       </SiteHeader>
@@ -182,7 +178,6 @@ export function Page({
         </section>
       </main>
       <footer className="site-footer">
-        <span>imdUSD · built on IdentityMD</span>
         <nav aria-label="Footer">
           {TERMINAL && <a href={href("terminal/")}>Terminal</a>}
           <a href={href("docs/")}>Docs</a>
@@ -190,6 +185,7 @@ export function Page({
             Whitepaper ↗
           </a>
         </nav>
+        <span>imdUSD · built on IdentityMD</span>
       </footer>
     </div>
   );

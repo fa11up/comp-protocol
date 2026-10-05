@@ -2014,6 +2014,10 @@ html.app-page body {
 }
 .site-footer {
   display: flex;
+  /* Overrides the generic footer rule (the terminal's status bar), which stacks in a column:
+     links on the left, the credit on the right, on one line. */
+  flex-direction: row;
+  align-items: baseline;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
