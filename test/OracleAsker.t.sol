@@ -247,6 +247,42 @@ contract OracleAskerTest is Test {
         assertEq(value, 0.87 ether, "and the answer can still be relayed by hand");
     }
 
+    /// @dev Adversarial review 2026-10-05, finding 2 (medium): a body pinned with an ABSOLUTE window
+    /// asks the same question forever; a bound feed refuses every repeat, and the F4 catch used to free
+    /// the slot at once, so the Treasury could buy one undeliverable answer every ASK_MIN_INTERVAL. A
+    /// refused delivery now backs Treasury asks off for a full ASK_TIMEOUT — the cadence the pre-F4 code
+    /// had — while a caller paying with their own IMD (askPaid) is not held back.
+    function test_aRefusedDeliveryBacksTreasuryAsksOffForTheTimeout() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("refused"), 0.87 ether);
+        assertTrue(intake.complete(id, abi.encode(id, a, hex"00")), "the callback completes");
+        emit log_named_uint("refused-delivery callback gas (stipend 200000)", intake.lastCallbackGasUsed());
+        assertLt(intake.lastCallbackGasUsed(), 150_000, "the catch path's extra write fits easily");
+        uint256 until = block.timestamp + ASK_TIMEOUT;
+        vm.warp(block.timestamp + ASK_MIN_INTERVAL);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.TooSoon.selector, until));
+        asker.ask(address(healthFeed), HEALTH_BODY);
+        vm.warp(until - 1);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.TooSoon.selector, until));
+        asker.ask(address(healthFeed), HEALTH_BODY);
+        vm.warp(until);
+        asker.ask(address(healthFeed), HEALTH_BODY);
+    }
+
+    function test_aRefusedDeliveryDoesNotHoldBackACallerWhoPays() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("refused"), 0.87 ether);
+        intake.complete(id, abi.encode(id, a, hex"00"));
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(STRANGER, 1 ether);
+        vm.startPrank(STRANGER);
+        imd.approve(address(asker), PRICE);
+        asker.askPaid(address(healthFeed), HEALTH_BODY, PRICE);
+        vm.stopPrank();
+    }
+
     /// @dev Launch audit (oracle panel, medium): an answer relayed by hand BEFORE the Intake's callback
     /// made the callback revert (replayed request), which rolled back the slot clearing and refused
     /// ask / askPaid for ASK_TIMEOUT. Now the callback completes and the slot is free at once.

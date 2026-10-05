@@ -196,7 +196,8 @@ address constant WORK_ORACLE_SENTINEL = 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFF
 
 // How long an attested work tally stays usable. A day, matching the daily cadence of the receipts the
 // tally is read from: a feed asked for a figure that is published once a day should not demand one
-// more often than it exists. A stale tally grants nothing NEW and retracts nothing already consumed.
+// more often than it exists. It sets when the feed's latest tally reads stale; claims against an accepted
+// root are NOT gated on it (deferred with minting from work, which is off at launch: see WAGE_WAD).
 uint256 constant WORK_ORACLE_MAX_AGE = 1 days;
 
 // --- The oracle budget: price updates bought on chain through the Intake, paid from the Treasury ---

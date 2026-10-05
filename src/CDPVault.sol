@@ -278,15 +278,18 @@ contract CDPVault is ReentrancyGuard {
     /// real, fee-paying position). Use badDebtOf for a current-price, accrued view.
     uint256 public totalBadDebt;
 
-    /// @notice LAGGED CAPITAL — the fix for deferred finding D1 (launch audit 2026-10-05, vault panel,
-    /// medium), built now and DORMANT until minting from work is switched on (`_lagApplies`).
-    /// @dev Slow-moving copies of totalDebt and securedCollateral. An increase is credited linearly over
-    /// BACKING_WARMUP (capital one block old counts for about 0.014%); a decrease counts at once. Where
-    /// it applies, backing reads min(live, lagged), so capital brought in one transaction and withdrawn a
-    /// few later cannot authorise work minting or a redemption at par — the adjacent-transaction gap that
-    /// excluding only the current transaction left open. Tracked from deployment, so it is already warm
-    /// when the wage is raised. Full credit costs real capital held, and paying the stability fee, for
-    /// the whole warm-up.
+    /// @notice LAGGED CAPITAL — the fix for finding D1 (launch audit 2026-10-05, vault panel, medium).
+    /// The redemption cap reads it at every wage (`_backingPerUnit`); the work ceiling only once minting
+    /// from work is switched on (`_lagApplies`).
+    /// @dev Slow-moving copies of totalDebt and securedCollateral. Each checkpoint closes elapsed /
+    /// BACKING_WARMUP of the remaining gap to the live figure (capital one block old counts for about
+    /// 0.014%), and a decrease counts at once. Because every deposit, borrow or repayment by ANYONE is a
+    /// checkpoint, the warm-up is EXPONENTIAL under activity, not linear: capital held a full day is
+    /// credited about 63-64%, two days about 86%, three about 95% (adversarial review 2026-10-05, low).
+    /// That errs toward crediting new capital more slowly, which is the safe direction; a quiet day
+    /// credits it in full. Backing reads min(live, lagged), so capital brought in one transaction and
+    /// withdrawn a few later cannot authorise work minting or a redemption at par. Tracked from
+    /// deployment, so it is warm whenever it is read.
     uint256 public constant BACKING_WARMUP = 1 days;
     uint256 public laggedDebt;
     uint256 public laggedSecured;
@@ -500,12 +503,13 @@ contract CDPVault is ReentrancyGuard {
 
     /// @notice Cover a drained position's realized bad debt with the protocol's own surplus imdUSD.
     /// @dev Maker's Vow.heal, under a name that is not one letter from `heel`. Anyone may call it: it
-    /// only ever cancels debt that has no collateral left behind it, which raises backing per imdUSD
-    /// for every holder. The surplus is the Treasury's imdUSD (the stability fees it collected), and
+    /// only ever cancels debt that no reachable collateral stands behind — a drained position, or one
+    /// holding dust below the seizure for one wei of debt, which is swept to the surplus account first —
+    /// so it raises backing per imdUSD for every holder. The surplus is the Treasury's imdUSD (the stability fees it collected), and
     /// it is spent through the same repayment path as `wipe`, so fees are retired first and the
     /// position's recorded bad debt, totalBadDebt and totalDebt all move together. Reverts on a
-    /// position that still holds collateral (that is not realized bad debt) and on a vault with no
-    /// surplus account.
+    /// position holding collateral a bite could still reach (that is not realized bad debt) and on a
+    /// vault with no surplus account.
     function cover(address owner, uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         address payer = _surplus();
@@ -533,6 +537,10 @@ contract CDPVault is ReentrancyGuard {
         _syncSurplus(payer);
         uint256 feePaid = _reduceDebt(owner, amount);
         stablecoin.burn(payer, amount);
+        // Sync again after the burn and before the fees are reminted, so the baseline drops to the
+        // burned balance and the reminted fees arrive as new receipts (adversarial review 2026-10-05,
+        // low: synced only before, the remint landed below the baseline and was never credited).
+        _syncSurplus(payer);
         if (feePaid != 0) {
             totalFeesMinted += feePaid;
             stablecoin.mint(feeRecipient(), feePaid);
@@ -636,12 +644,26 @@ contract CDPVault is ReentrancyGuard {
     /// @dev Reserve plus secured collateral over supply. Capped at 1e18 because a protocol backed
     /// above par does not pay a premium: the surplus is the borrowers' and the work ceiling's
     /// headroom, not a redeemer's windfall. Read pre-payout, so it is the state the burn found.
+    ///
+    /// ALWAYS LAGGED, NOT ONLY WITH WORK MINTING ON (adversarial review 2026-10-05, medium; the D1
+    /// redemption half). A price fall alone puts backing below par, and then capital brought in one
+    /// transaction lifted it toward par for a redemption in the next. So this is the LOWER of the live
+    /// figure and a lagged one in which fresh capital leaves BOTH sides: warmed-up secured collateral
+    /// over supply less the principal that is still warming up. An attacker's capital can raise the live
+    /// figure but not the lagged one; honest redemptions are not underpaid, because new debt and the
+    /// imdUSD minted against it are excluded together. When every unit of supply is fresh there is no
+    /// lagged figure and the live one stands.
     function _backingPerUnit(uint256 price) private view returns (uint256) {
         uint256 supply = stablecoin.totalSupply();
         if (supply == 0) return 1e18;
-        (uint256 backing,) = _redemptionReserveBacking(0, price);
-        backing += _securedCollateralValue(price);
-        uint256 perUnit = Math.mulDiv(backing, 1e18, supply);
+        (uint256 reserve,) = _redemptionReserveBacking(0, price);
+        uint256 perUnit = Math.mulDiv(reserve + _securedCollateralValue(price, false), 1e18, supply);
+        (uint256 lagDebt,) = laggedNow();
+        uint256 fresh = totalDebt - lagDebt;
+        if (supply > fresh) {
+            uint256 lagged = Math.mulDiv(reserve + _securedCollateralValue(price, true), 1e18, supply - fresh);
+            if (lagged < perUnit) perUnit = lagged;
+        }
         return perUnit < 1e18 ? perUnit : 1e18;
     }
 
@@ -660,20 +682,20 @@ contract CDPVault is ReentrancyGuard {
     /// position by position, so the slow version of the same deposit no longer fills the gap the cap
     /// leaves open when indebted positions hold less than mat.
     ///
-    /// D1, BUILT AND DORMANT (launch audit 2026-10-05, vault panel, medium). Excluding only the CURRENT
+    /// D1 (launch audit 2026-10-05, vault panel, medium). Excluding only the CURRENT
     /// transaction's capital left adjacent transactions open: borrow in one, earn (or cash) in the next,
     /// repay and withdraw in a third, and work-minted imdUSD outlived the debt that authorised it, or a
     /// redemption took the reserve at par while backing was 0.4. Fixed by the lagged capital in CDPVault
-    /// (`laggedNow`, BACKING_WARMUP): increases are credited over a day, decreases at once. It applies only
-    /// while the wage is nonzero (`_lagApplies`), i.e. once minting from work is switched on; it is tracked
-    /// from deployment so it is warm then. Proofs: docs/AUDIT-VAULT-2026-10-05.md, test/LaggedBacking.t.sol.
-    function _securedCollateralValue(uint256 price) private view returns (uint256) {
+    /// (`laggedNow`, BACKING_WARMUP): increases warm up over about a day, decreases count at once. `lagged`
+    /// is passed by `_backingPerUnit` always and by `backedDebt`'s callers while the wage is nonzero.
+    /// Proofs: docs/AUDIT-VAULT-2026-10-05.md, test/LaggedBacking.t.sol, test/RedemptionLagAtLaunch.t.sol.
+    function _securedCollateralValue(uint256 price, bool lagged) private view returns (uint256) {
         uint256 secured = securedCollateral;
         uint256 added = _transient(SECURED_THIS_TX_SLOT);
         uint256 held = secured > added ? secured - added : 0;
         uint256 minted = _transient(MINTED_THIS_TX_SLOT);
         uint256 prior = totalDebt > minted ? totalDebt - minted : 0;
-        if (_lagApplies()) {
+        if (lagged) {
             // D1: capital from earlier transactions counts only as it has warmed up.
             (uint256 lagDebt, uint256 lagSecured) = laggedNow();
             held = Math.min(held, lagSecured);
@@ -1272,7 +1294,12 @@ contract CDPVault is ReentrancyGuard {
         return _saturatingAdd(ratio, (mulmod(whole, price, scale) + fraction % scale) / scale);
     }
 
+    /// @dev Unchecked, because both operations are proven in range (gas review 2026-10-05, ~411 gas per
+    /// health check): max - a never underflows for any uint256 a, and a + b is reached only when
+    /// b <= max - a, so it cannot overflow.
     function _saturatingAdd(uint256 a, uint256 b) private pure returns (uint256) {
-        return b > type(uint256).max - a ? type(uint256).max : a + b;
+        unchecked {
+            return b > type(uint256).max - a ? type(uint256).max : a + b;
+        }
     }
 }

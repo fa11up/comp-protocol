@@ -261,6 +261,8 @@ contract ReserveValuationTest is WorkBackingFixture {
         token.mint(address(reserve), balance);
         uint256 marked = balance * price / (10 ** decimals);
         uint256 expected = marked * haircut / 10_000;
+        // Above $1e18 an answer is a broken source, not a reserve, and counts for nothing.
+        if (expected > 1e36) expected = 0;
         assertEq(reserve.reserveValueOf(token), expected);
         assertEq(reserve.reserveValueUsd(), expected);
         assertEq(backedVault.reserveValue(), _inVaultUnit(expected));
@@ -269,13 +271,25 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(_inVaultUnit(expected), expected, "no conversion: the register and the vault share a unit");
     }
 
-    function test_largeReserveProductUsesFullPrecisionBeforeDecimalScaling() public {
+    /// @dev balance x price overflows 256 bits here, so the product still goes through mulDiv and
+    /// nothing reverts. But the value it yields (2^200 x 1e6 / 2) is far past $1e18, which no real
+    /// reserve reaches, and since the adversarial review of 2026-10-05 it counts for NOTHING: kept, it
+    /// fit in 256 bits yet overflowed the vault's sums that add to it (earnLine, backingPerUnit, cash).
+    function test_reserveValuePastTheSaneBoundCountsForNothingAndNeverReverts() public {
         _register(asset, reservePrice, 5000);
         uint256 balance = uint256(1) << 200;
         asset.mint(address(reserve), balance);
         reservePrice.setValue(1e24);
-        assertEq(reserve.reserveValueUsd(), balance * 1e6 / 2);
-        assertEq(backedVault.reserveValue(), balance * 1e6 / 2, "USD x 1e18 overflows; mulDiv does not");
+        assertEq(reserve.reserveValueOf(asset), 0, "a broken source counts for nothing");
+        assertEq(reserve.reserveValueUsd(), 0);
+        assertEq(backedVault.reserveValue(), 0);
+        backedVault.backingPerUnit();
+        backedVault.earnLine();
+        // Exactly at the bound it still counts: 2e36 of marked value, half after the haircut.
+        reservePrice.setValue(1e18);
+        vm.prank(address(reserve));
+        asset.transfer(address(0xdead), balance - 2e36);
+        assertEq(reserve.reserveValueOf(asset), 1e36, "the bound itself is a value");
     }
 
     function test_registerSumsDifferentDecimalsAndRepricingDoesNotDuplicateAsset() public {

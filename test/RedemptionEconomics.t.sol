@@ -418,10 +418,14 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         // Reserve exits through its authorized owner before this scenario starts.
         _shrinkReserve(1000 ether);
         _mintWork(WORKER, 250 ether);
+        _warmBacking();
         uint256 rights = workOracle.mintingRights(WORKER);
+        // A day of stability fee from the warm-up sits on top of the 1000 of principal; the burn
+        // books it into totalDebt as it cancels it, so measure against the borrower's whole debt.
+        (, uint256 debtBefore) = backedVault.positions(BORROWER);
         _redeem(100 ether);
-        assertEq(backedVault.totalDebt(), 900 ether);
-        assertEq(backedVault.earnLine(), 225 ether);
+        assertEq(backedVault.totalDebt(), debtBefore - 100 ether);
+        assertEq(backedVault.earnLine(), (debtBefore - 100 ether) / 4);
         assertEq(backedVault.reserveValue(), 0);
         _assertWorkBlocked(rights);
     }

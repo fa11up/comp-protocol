@@ -119,6 +119,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         assertEq(collateral.balanceOf(address(backedVault)), 170 ether);
         assertEq(stable.totalSupply(), 35 ether);
         assertEq(backedVault.collateralRatio(BORROWER), 1700);
+        _warmBacking();
         // WAS a RedemptionWorsensBacking halt. The surplus is excluded from the figure the payout is
         // capped at instead, which is the same defence stated as a number rather than a refusal:
         // the 180 of balance would put a COMP at par, the 27 actually secured puts it at 27/35.
@@ -136,8 +137,10 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         assertGt(_econBacking(), backingBefore1, "and the fee leaves backing strictly better");
         // Once principal stands behind the collateral again a COMP is fully backed and the same burn
         // is paid par minus the fee: the cap stops binding, rather than a closed channel reopening.
+        // 89, not 90: the warm-up's day of stability fee leaves 90 just past mat.
         vm.prank(BORROWER);
-        backedVault.draw(90 ether);
+        backedVault.draw(89 ether);
+        _warmBacking();
         assertEq(backedVault.backingPerUnit(), 1e18, "principal behind the collateral restores par");
         out = _quote(10 ether);
         assertEq(out, _parQuote(10 ether), "an unbound cap pays exactly par minus the fee");
@@ -153,6 +156,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         _reserveIMD(100 ether);
         _mintWork(WORKER, 150 ether); // the ceiling exactly: 100 reserve + a quarter of 200 debt
         _shrinkReserve(100 ether);
+        _warmBacking();
         assertEq(stable.totalSupply(), 350 ether);
         assertEq(collateral.balanceOf(address(backedVault)), 370 ether);
         // 370 is held against 350 of supply, so the balance alone would put a COMP at par. What may
@@ -218,6 +222,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         uint256 bad = backedVault.totalBadDebt();
         assertGt(bad, 29 ether); // 100 - 170 x 0.5 / 1.2 = 29.17, plus six hours of fee
         _setVaultPrice(1 ether);
+        _warmBacking();
 
         uint256 held = collateral.balanceOf(address(backedVault));
         uint256 supply = stable.totalSupply();
@@ -265,6 +270,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(address(actor), 400 ether);
         _setVaultPrice(0.625 ether);
+        _warmBacking();
         // 170 IMD at 0.625 is 106.25 of value, under the 170 that 100 of principal would allow, for 125
         // of supply. WAS a RedemptionWorsensBacking halt; the payout is capped at 106.25/125 instead,
         // so what a deposit does to backing is now a figure rather than a question of which burns
@@ -299,11 +305,14 @@ contract RedemptionGuardsTest is WorkBackingFixture {
 
         // The slow version with debt against the collateral is the accepted design, and it is the
         // only thing that moves the cap: 50 of principal at 0.625 secures 160 of the actor's 200, and
-        // it costs real capital exposed in an open position rather than one transaction of gas.
+        // it costs real capital exposed in an open position rather than one transaction of gas — and,
+        // since the adversarial review of 2026-10-05, held through the warm-up.
         actor.mint(50 ether);
         assertEq(
             backedVault.securedCollateral(), securedAfterBurn + 160 ether, "bounded by twice its own principal"
         );
+        assertLe(backedVault.backingPerUnit(), beforeDeposit, "not in the next transaction");
+        _warmBacking();
         assertGt(backedVault.backingPerUnit(), beforeDeposit, "principal behind collateral is what counts");
         uint256 out = _quote(10 ether);
         assertGt(out, withDeposit, "so the same burn is now paid more");
@@ -350,6 +359,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         // Twice what the old version minted: the in-call redemption used to revert and give the
         // collateral back, and now it goes through, so the second deposit needs its own.
         collateral.mint(address(actor), 3600 ether);
+        _warmBacking();
         // 5 IMD of reserve stands behind 25 of work-issued supply and nothing else does.
         uint256 capped = Math.mulDiv(5 ether, 1e18, 25 ether);
         assertEq(backedVault.backingPerUnit(), capped, "a fifth of par, and that is the honest figure");
@@ -364,7 +374,13 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         // The same position held across a transaction is the accepted slow path: its principal
         // then stands behind mat times its collateral, and its surplus is exposed in the meantime.
         actor.depositAndMint(1800 ether, 1000 ether);
-        assertEq(backedVault.backingPerUnit(), 1e18, "capital held across a transaction does count");
+        // ONE transaction later is not enough (adversarial review 2026-10-05): borrow, then redeem in
+        // the next transaction, then unwind, was the same attack one block apart. The position counts
+        // only as it warms up, so the next transaction still sees about a fifth of par...
+        assertLt(backedVault.backingPerUnit(), 1e18 / 2, "capital one transaction old does not count yet");
+        // ...and a day later, held and paying the stability fee throughout, it counts in full.
+        _warmBacking();
+        assertEq(backedVault.backingPerUnit(), 1e18, "capital held for the warm-up does count");
         uint256 out = _quote(10 ether);
         assertEq(out, _parQuote(10 ether), "so the burn is paid par minus the fee");
         assertGt(out, inCall * 4, "four times what the same burn got inside one transaction");

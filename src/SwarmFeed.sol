@@ -202,10 +202,13 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// widening it for.
     function _decimal(uint64 value) private pure returns (bytes memory) {
         if (value == 0) return "0";
-        uint64 digits;
-        for (uint64 v = value; v != 0; v /= 10) ++digits;
+        // Word-sized counters (gas review 2026-10-05): the input stays uint64 and every output byte is
+        // identical, but the loop skips narrow-integer cleanup — about 5,100 gas per bound attestation,
+        // which also widens the OracleAsker callback's headroom under the Intake's 200,000-gas stipend.
+        uint256 digits;
+        for (uint256 v = value; v != 0; v /= 10) ++digits;
         bytes memory out = new bytes(digits);
-        for (uint64 v = value; v != 0; v /= 10) out[--digits] = bytes1(uint8(48 + (v % 10)));
+        for (uint256 v = value; v != 0; v /= 10) out[--digits] = bytes1(uint8(48 + (v % 10)));
         return out;
     }
 

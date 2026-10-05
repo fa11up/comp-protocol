@@ -274,6 +274,29 @@ contract CoverTest is WorkBackingFixture {
         );
     }
 
+    /// @dev Adversarial review 2026-10-05, finding 5 (low): the test above passes with ZERO fees, which
+    /// hid that the fees `cover` remints to the Treasury landed below the pre-burn baseline and were
+    /// never credited. With a quarter of fees outstanding they must reach totalReceived too.
+    function test_coverCreditsTheFeesItRemintsToTheTreasury() public {
+        uint256 bad = _drain();
+        vm.warp(vm.getBlockTimestamp() + 90 days);
+        _refreshEthUsd();
+        uint256 owed = backedVault.debtOf(BORROWER);
+        uint256 fees = owed - bad;
+        assertGt(fees, 0, "fees accrued on the drained position");
+        IERC20Like stableToken = IERC20Like(address(stable));
+        _fundTreasury(owed);
+        reserve.sync(stableToken);
+        uint256 receivedBefore = reserve.totalReceived(stableToken);
+        uint256 held = stable.balanceOf(address(reserve));
+
+        backedVault.cover(BORROWER, owed);
+        assertEq(backedVault.debtOf(BORROWER), 0);
+        assertEq(stable.balanceOf(address(reserve)), held - owed + fees, "the fee part came back to the Treasury");
+        reserve.sync(stableToken);
+        assertEq(reserve.totalReceived(stableToken), receivedBefore + fees, "and it is booked as revenue");
+    }
+
 }
 
 /// @notice The base vault has no surplus account: its fee recipient is a wallet that never agreed to

@@ -94,6 +94,10 @@ contract OracleAsker {
     /// @param feeds_ The feeds this asker buys for; fixed for its lifetime.
     /// @param bodyHashes keccak256 of each feed's oracle.request body. The body itself is passed to
     /// `ask` as calldata and checked against this, so it is never stored and never changeable.
+    /// EACH BODY MUST USE A RELATIVE WINDOW ({"hours": N}), which the service resolves afresh per request.
+    /// A literal {fromBlock, toBlock} pinned here could be answered once: every later answer would repeat
+    /// a window the feed has passed and be refused (adversarial review 2026-10-05). A constructor cannot
+    /// read JSON, so this is checked at deploy time against the frozen payloads (runbook section 6).
     /// @param tracksPool Whether each feed quotes IMD/ETH and so may be asked for on pool drift.
     /// @param keepAlive Whether the Treasury's IMD refreshes each feed when it nears its maxAge.
     constructor(
@@ -230,7 +234,14 @@ contract OracleAsker {
         bool relayed;
         try SwarmRelay(ATTESTATION_RELAYER).relay(SwarmFeed(feed), a, signature) {
             relayed = true;
-        } catch {}
+        } catch {
+            // BACK OFF (adversarial review 2026-10-05, medium). A refused answer must not be bought again
+            // ten minutes later, and again, until the day's budget is gone: the next Treasury-paid ask for
+            // this feed waits the full ASK_TIMEOUT. Written into lastAsk, which shares the storage slot
+            // cleared just above, so the refusal path costs no extra slot. askPaid is unaffected: its
+            // caller pays.
+            f.lastAsk = uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL);
+        }
         emit Delivered(feed, requestId, relayed);
     }
 

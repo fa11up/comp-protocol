@@ -501,14 +501,17 @@ contract RedemptionTest is Test {
         uint256 ceiling = vault.earnLine();
         vm.prank(REDEEMER);
         vault.earn(10 ether);
+        _warmBacking();
+        uint256 fee = vault.stabilityFeeOf(ALICE);
         uint256 payout = _quote(10 ether, 1 ether);
         vm.prank(REDEEMER);
         vault.cash(10 ether, payout, ALICE);
-        _assertPosition(ALICE, 180 ether - payout, 90 ether);
+        // The warm-up's day of fee is booked as the burn cancels it (fees first).
+        _assertPosition(ALICE, 180 ether - payout, 90 ether + fee);
         assertEq(comp.balanceOf(ALICE), 100 ether);
         assertEq(comp.balanceOf(REDEEMER), 0);
         assertEq(vault.totalEarned(), 10 ether);
-        assertEq(vault.earnLine(), ceiling - 2.5 ether);
+        assertEq(vault.earnLine(), ceiling - 2.5 ether + fee / 4);
     }
 
     function test_reserveRedemptionCannotWorsenBackingAfterPermittedDebtUnwind() public {
@@ -1005,6 +1008,7 @@ contract RedemptionTest is Test {
         vault.earn(800 ether);
         _price(0.5 ether);
         assertEq(vault.collateralRatio(ALICE), 85);
+        _warmBacking();
         _expectCapped(100 ether, ALICE);
 
         // A debt-free deposit in its own transaction used to fill the gap between what ALICE holds
@@ -1192,6 +1196,12 @@ contract RedemptionTest is Test {
         assertEq(vault.redemptionBaseRate(), 9.75e13, "the exact fraction is still carried");
     }
 
+    /// @dev Let capital so far finish warming up: the redemption cap reads min(live, lagged) at every
+    /// wage since the adversarial review of 2026-10-05, so same-block figures are discounted by design.
+    function _warmBacking() private {
+        vm.warp(block.timestamp + vault.BACKING_WARMUP());
+    }
+
     function _open(address owner, uint256 collateral, uint256 debt) private {
         vm.startPrank(owner);
         vault.lock(collateral);
@@ -1234,6 +1244,7 @@ contract RedemptionTest is Test {
         if (reserveOut != 0) _fundReserve(reserveOut);
         _mintWorkAndUnwind();
         _open(BOB, 180 ether, 100 ether);
+        _warmBacking();
         uint256 payout = _quote(10 ether, 1 ether);
         uint256 canceled = 10 ether - Math.mulDiv(reserveOut, 1 ether, _payoutScale(10 ether));
         uint256 assetsBefore = 180 ether + reserveOut;

@@ -105,7 +105,8 @@ contract ParameterizedVault is CDPVault {
         return parameters.redemptionDivisor();
     }
 
-    /// @dev The lagged backing applies exactly while minting from work is on.
+    /// @dev The lagged WORK CEILING applies exactly while minting from work is on. (The redemption cap is
+    /// lagged at every wage: adversarial review 2026-10-05, see CDPVault._backingPerUnit.)
     function _lagApplies() internal view override returns (bool) {
         return parameters.wage() != 0;
     }
@@ -231,13 +232,13 @@ contract ParameterizedVault is CDPVault {
     /// drained is not recorded until someone finishes it; the remainder is seizable at the usual bonus,
     /// and dust below one wei of debt is taken whole by `bite` (or swept by `cover`), which records it.
     ///
-    /// D1, BUILT AND DORMANT (launch audit 2026-10-05, vault panel, medium). Excluding only the CURRENT
+    /// D1, BUILT AND DORMANT FOR THE WORK CEILING (launch audit 2026-10-05, vault panel, medium). Excluding only the CURRENT
     /// transaction's capital left adjacent transactions open: borrow in one, earn (or cash) in the next,
     /// repay and withdraw in a third, and work-minted imdUSD outlived the debt that authorised it, or a
     /// redemption took the reserve at par while backing was 0.4. Fixed by the lagged capital in CDPVault
-    /// (`laggedNow`, BACKING_WARMUP): increases are credited over a day, decreases at once. It applies only
-    /// while the wage is nonzero (`_lagApplies`), i.e. once minting from work is switched on; it is tracked
-    /// from deployment so it is warm then. Proofs: docs/AUDIT-VAULT-2026-10-05.md, test/LaggedBacking.t.sol.
+    /// (`laggedNow`, BACKING_WARMUP): increases warm up over about a day, decreases count at once. HERE it
+    /// applies only while the wage is nonzero (`_lagApplies`), i.e. once minting from work is switched on;
+    /// it is tracked from deployment so it is warm then. The redemption half is lagged at every wage. Proofs: docs/AUDIT-VAULT-2026-10-05.md, test/LaggedBacking.t.sol.
     function backedDebt() public view returns (uint256) {
         uint256 debt = Math.min(totalDebt, _debtAtTransactionStart());
         if (_lagApplies()) {

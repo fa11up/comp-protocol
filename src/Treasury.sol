@@ -60,6 +60,8 @@ contract Treasury {
     }
 
     uint256 private constant BPS = 10_000;
+    /// @dev $1e18, 1e18-scaled: far above any real reserve, far below anything a sum could overflow on.
+    uint256 private constant MAX_RESERVE_VALUE = 1e36;
 
     /// @notice The key native ETH is recorded under in `totalReceived` and `lastSynced`. No ERC-20 can
     /// live at the zero address, so it cannot collide with a token's record.
@@ -229,8 +231,11 @@ contract Treasury {
         // one whole token AND price exceeds max * 10**decimals / balance.
         uint256 unit = 10 ** entry.decimals;
         if (balance > unit && price > Math.mulDiv(type(uint256).max, unit, balance)) return 0;
-        uint256 marked = Math.mulDiv(balance, price, unit);
-        return Math.mulDiv(marked, entry.haircutBps, BPS);
+        uint256 value = Math.mulDiv(Math.mulDiv(balance, price, unit), entry.haircutBps, BPS);
+        // A value that fits in 256 bits can still overflow the vault's sums that add to it (earnLine,
+        // backingPerUnit, the redemption backing): anything above $1e18 is a broken source, not a
+        // reserve, and counts for nothing (adversarial review 2026-10-05, low).
+        return value > MAX_RESERVE_VALUE ? 0 : value;
     }
 
     function _reservePrice(IERC20 asset) private view returns (uint256) {

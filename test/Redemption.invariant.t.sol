@@ -43,6 +43,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         uint256 reserveIMD;
         uint256 redeemerIMD;
         uint256 backing;
+        uint256 perUnit;
         uint256 econBacking;
         uint256 ceiling;
         uint256 base;
@@ -198,14 +199,21 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         // Rounded in the vault's order: the fee-adjusted scale first, then the amount (price 1e18 here).
         // Applying the fee to an already floored amount differs by a wei below par on tiny burns.
         amounts.payout = Math.mulDiv(
-            amount, Math.mulDiv(_backingPerUnit(beforeState.backing, beforeState.supply), 10_000 - feeBps, 10_000), 1e18
+            amount, Math.mulDiv(beforeState.perUnit, 10_000 - feeBps, 10_000), 1e18
         );
         amounts.reserveOut = Math.min(amounts.payout, beforeState.reserveIMD);
         amounts.cancelled = amounts.reserveOut == amounts.payout
             ? 0
-            : amount - Math.mulDiv(amounts.reserveOut, 10_000, 10_000 - feeBps);
+            // The vault divides by the payout scale, backing included: the reserve part covers
+            // reserveOut / (backing x (1 - fee)) of the burn, which is only reserveOut / (1 - fee) at par.
+            : amount - Math.mulDiv(amounts.reserveOut, 1e18, Math.mulDiv(beforeState.perUnit, 10_000 - feeBps, 10_000));
         bytes4 failure;
-        if (forceSlippage) {
+        if (amounts.payout == 0) {
+            // Checked before the minimum: a burn worth nothing is refused rather than paid nothing.
+            // Reachable once capital is lagged — work minted against debt borrowed in the same
+            // block backs nothing yet, so the first burn can be worth zero.
+            failure = CDPVault.ZeroAmount.selector;
+        } else if (forceSlippage) {
             failure = CDPVault.MinimumOutNotMet.selector;
         } else if (amounts.cancelled != 0) {
             uint256 debt = beforeState.debt[candidateIndex];
@@ -257,6 +265,26 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
 
     /// @dev A helper rather than a local: the handler is already at the stack limit, and one more
     /// variable in it makes the whole file fail to compile without viaIR.
+    /// @dev The cap the vault pays at since the adversarial review of 2026-10-05: the live figure, or
+    /// the same figure from LAGGED capital if lower. Debt younger than the warm-up is taken out of
+    /// supply, its collateral out of the secured term, so a position borrowed one transaction earlier
+    /// neither dilutes nor backs. Modelled from `laggedNow`, not from `backingPerUnit`, so the payout
+    /// is still asserted against an independent computation. Price is one here.
+    function _laggedPerUnit(uint256 backing, uint256 reserveIMD, uint256 supply) private view returns (uint256) {
+        uint256 perUnit = _backingPerUnit(backing, supply);
+        (uint256 lagDebt, uint256 lagSecured) = backedVault.laggedNow();
+        uint256 debt = backedVault.totalDebt();
+        uint256 fresh = debt - lagDebt;
+        if (supply <= fresh) return perUnit;
+        uint256 prior = Math.min(debt, lagDebt);
+        uint256 bad = backedVault.totalBadDebt();
+        prior = prior > bad ? prior - bad : 0;
+        uint256 secured = Math.min(
+            Math.min(backedVault.securedCollateral(), lagSecured), Math.mulDiv(prior, backedVault.mat(), 100)
+        );
+        return Math.min(perUnit, _backingPerUnit(reserveIMD + secured, supply - fresh));
+    }
+
     function _backingPerUnit(uint256 backing, uint256 supply) private pure returns (uint256) {
         if (supply == 0) return 1e18;
         return Math.min(1e18, Math.mulDiv(backing, 1e18, supply));
@@ -313,6 +341,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         // surfaced as MinimumOutNotMet where an eligibility revert was expected.
         uint256 secured = Math.mulDiv(backedVault.totalDebt() - backedVault.totalBadDebt(), backedVault.mat(), 100);
         state.backing = state.reserveIMD + Math.min(backedVault.securedCollateral(), secured);
+        state.perUnit = _laggedPerUnit(state.backing, state.reserveIMD, state.supply);
         // The ECONOMIC figure, which is the one a pro-rata payout makes monotone. Kept separate
         // because `backing` above is deliberately conservative and is NOT monotone: cancelling a
         // borrower's debt disqualifies mat worth of collateral to retire one COMP of supply.

@@ -229,7 +229,8 @@ and Robinhood Chain.
    takes the feed addresses and their body hashes, so its initcode (and CREATE2 address) depends on
    them, while the Treasury the vault creates reads it as a source constant. Feeds do not reference
    it, so there is no cycle: compute the feeds' addresses, then the asker's, then write the constant.
-   Its body hashes are `keccak256` of the frozen oracle.request bodies — the same bytes the feeds'
+   Every body must use a RELATIVE window (`"window":{"hours":N}`): a literal block window can be answered
+   only once, then every repeat is refused as not advancing. Its body hashes are `keccak256` of the frozen oracle.request bodies — the same bytes the feeds'
    pinned questions were generated from.
 5. **Broadcast once**: the prereqs at their computed addresses, then the three feeds, then the
    vault — which creates imdUSD, `Parameters`, the Treasury's sibling and `UsdPriceFeed` in its own

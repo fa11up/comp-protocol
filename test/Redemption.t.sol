@@ -591,6 +591,7 @@ contract RedemptionTest is WorkBackingFixture {
         _reserveIMD(reserveAmount);
         _mintWorkAndUnwind(1700 ether, 1000 ether, 250 ether);
         _open(SECOND_BORROWER, 180 ether, 100 ether);
+        _warmBacking();
         uint256 out = _quote(10 ether);
         uint256 cancelled =
             10 ether - Math.mulDiv(reserveAmount, 10_000, 10_000 - backedVault.redemptionFeeBps(10 ether));

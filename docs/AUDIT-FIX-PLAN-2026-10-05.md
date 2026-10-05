@@ -31,7 +31,7 @@ once minting is switched on.
 
 | # | Sev | Finding | Recommendation |
 |---|---|---|---|
-| D1 | medium | Redemption backing cap and `backedDebt` excluded only same-transaction capital; borrow → redeem/earn → unwind across adjacent transactions paid the reserve at par while backing was 0.4, or minted unbacked work imdUSD. | **BUILT, DORMANT until the wage is raised (user's call).** Lagged capital in `CDPVault` (`laggedNow`, `BACKING_WARMUP` = 1 day): increases are credited linearly over a day, decreases at once, and backing reads min(live, lagged) in both places — only while `wage() != 0`. Tracked from deployment so it is warm when switched on. `test/LaggedBacking.t.sol` replays the attack one block apart; with the lag disabled backing jumps 0.29 → 1.00 in one block, with it on it does not. |
+| D1 | medium | Redemption backing cap and `backedDebt` excluded only same-transaction capital; borrow → redeem/earn → unwind across adjacent transactions paid the reserve at par while backing was 0.4, or minted unbacked work imdUSD. | **Work half BUILT, DORMANT until the wage is raised (user's call); redemption half ALWAYS ON since phase 2 (A1 below).** Lagged capital in `CDPVault` (`laggedNow`, `BACKING_WARMUP` = 1 day): increases are credited linearly over a day, decreases at once, and backing reads min(live, lagged) in both places — only while `wage() != 0`. Tracked from deployment so it is warm when switched on. `test/LaggedBacking.t.sol` replays the attack one block apart; with the lag disabled backing jumps 0.29 → 1.00 in one block, with it on it does not. |
 | D2 | low | Splitting one redemption into chunks pays about a third less than the fee for its size (each call is charged at its own post-increase rate). | Accept and document: the fee still rises with every chunk, and the base persists for 12 hours. |
 | D3 | low | `backingPerUnit` can fall across a redemption funded from a position when the mat cap binds. | Accept (known: the conservative measure is not monotone); fix the false comment under F11. |
 | D4 | low | The drift trigger can be armed and asked by two single-transaction pool pushes five blocks apart. | Accept: each push pays the 1% pool fee both ways, the result is only an honest attestation, and spend is capped by the daily budget. Correct the NatSpec. |
@@ -47,3 +47,28 @@ Re-run every tree (main, `script/checks`, `AUDIT_PROOFS`, forks, web), then send
 `adversarial-review` pinned to the fixed commit (`build_audits.py e52a025… <fixed>`), weighted to this
 diff. The oracle panel's judge never ran over the specialists' findings, so the adversarial pass should
 also be told to re-check the oracle path in full.
+
+## Phase 2 — adversarial review `5e2f7703` and gas review `ca1b7686` (both at `03e8d0c`)
+
+Archived as `AUDIT-ADVERSARIAL-2026-10-05.md` and `AUDIT-GAS-2026-10-05.md` (sha256 verified). All six
+adversarial findings and the two accepted gas proposals are applied together, so the new fixes were
+written with the gas review's techniques in hand (user's call: wait for the gas review first).
+
+| # | Sev | Finding | As built |
+|---|---|---|---|
+| A1 | **medium** | D1's REDEMPTION half was open at launch: the lag was gated on `wage() != 0`, but a price fall alone puts backing below par, and capital one transaction old (same block, no interest) lifted it to par for a `cash` in the next — 9.875 IMD out where 6.22 was fair. The reviewer's fix (ungate the lag) pays 3.11: the fresh debt still dilutes supply. | `_backingPerUnit` = min(live, lagged), where the lagged figure removes fresh capital from BOTH sides (warmed secured collateral over supply less still-warming principal), at every wage. When all supply is fresh there is no lagged figure and the live one stands, so an honest launch-day redemption is paid at par. `test/RedemptionLagAtLaunch.t.sol` replays the reviewer's proof (now **6.22125 = fair, to the wei**) plus the honest paths. The work half stays wage-gated. |
+| A2 | **medium** | `OracleAsker` pins each body forever; a body with an ABSOLUTE window asks the same question every time, a bound feed refuses every repeat, and F4's catch freed the slot at once — so the Treasury bought one undeliverable answer every 10 minutes. | A refused delivery now sets `lastAsk` so Treasury `ask` backs off a full `ASK_TIMEOUT` (the pre-F4 cadence); `askPaid` is unaffected. NatSpec and runbook §6 now REQUIRE relative windows (`{"hours": N}`). Catch-path callback: 41,625 gas. |
+| A3 | low | The lag warms exponentially under activity (~64% after a day), not linearly as documented. | Documented as built — it errs toward crediting slower, the safe direction. |
+| A4 | low | F9 incomplete: a listed reserve value that fits 256 bits can still overflow the vault's sums. | `reserveValueOf` returns 0 above $1e18 (1e36 scaled): a broken source, not a reserve. |
+| A5 | low | F6 incomplete: fees `cover` remints to the Treasury landed below the pre-burn baseline and were never credited; the regression test only passed because its fees were zero. | `cover` syncs again after the burn, before the remint. `test_coverCreditsTheFeesItRemintsToTheTreasury` (90 days of fees) fails without it. |
+| A6 | info | NatSpec claiming properties the code lacks: `WORK_ORACLE_MAX_AGE` gating claims; `cover` "no collateral left" (it now sweeps dust). | Corrected. |
+| G2 | gas | `SwarmFeed._decimal` narrow loop counters. | `uint256` counters, identical bytes: −5,092 gas per bound attestation. D8 closed in-repo: `test/OracleAskerBoundGas.t.sol` delivers into a feed with the PRODUCTION NhiFeed question (copy asserted equal to a real NhiFeed) at **146,460** first / **113,388** update of the 200,000 stipend. |
+| G3 | gas | `_saturatingAdd` checked arithmetic. | `unchecked`: −411 gas per health check. |
+| G1 | gas | Skip equal `securedCollateral` writes. | Rejected: workload-dependent, grows the vault (initcode margin is the binding limit). |
+
+Test churn from A1, all by design: redemption tests that read backing in the block a position opened
+now warm up first (`_warmBacking`, a day), and `test_sameTransactionMintCannotMakeAnUnbackedRedemptionPass`
+now asserts the adjacent-transaction shortcut is closed. The redemption invariant handler models the
+lagged cap from `laggedNow` (still independent of `backingPerUnit`), a zero payout (`ZeroAmount`), and
+cancelled debt at the real payout scale rather than at par. `script/checks` failure set unchanged by
+name (23/116); `AUDIT_PROOFS` one baseline failure; forks green; ABIs unchanged; vault 43,018 initcode.
