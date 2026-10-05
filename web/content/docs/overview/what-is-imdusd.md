@@ -15,38 +15,38 @@ sources:
 
 imdUSD is a stablecoin meant to be worth one US dollar. You get it by locking staked IMD in a vault and borrowing imdUSD against it.
 
-The collateral is **sIMD** (Staked IMD), the share token of IdentityMD's staking vault: each sIMD is a claim on IMD, the IdentityMD token, held by that vault. You can deposit sIMD you already hold, or deposit IMD and the vault stakes it for you in the same transaction. Everything the vault pays out (withdrawals, liquidations and redemptions) is paid in sIMD, which you unstake in the staking vault to get IMD. How it holds that value is in [How imdUSD holds a dollar](./how-it-holds-a-dollar.md).
+The collateral is **sIMD** (Staked IMD), the share token of IdentityMD's staking vault: each sIMD is a claim on IMD, the IdentityMD token, held by that vault. You can deposit sIMD you already hold, or deposit IMD and the vault stakes it for you in the same transaction. Everything the vault pays out (withdrawals, liquidations and redemptions) is paid in sIMD, which you unstake in the staking vault to get IMD.
 
-The vault is the only contract that can mint or burn imdUSD. There is no owner, pause switch or upgrade path on the token (`ImdUSD`). Contract addresses: (waiting for mainnet launch).
+The vault is the only contract that can mint or burn imdUSD. The token (`ImdUSD`) has no owner, no pause switch and no upgrade path. Contract addresses: (waiting for mainnet launch).
 
 ## Who it is for
 
 - **Borrowers** who hold IMD or sIMD and want dollars without selling it. Start with [Open a position](../guides/open-a-position.md).
 - **Holders** who want to turn imdUSD back into staked IMD. See [Redeem](../guides/redeem.md).
-- **Keepers**, who keep the system solvent by relaying prices and liquidating unsafe positions, and are paid a share of the liquidation bonus. See [How liquidation works](../keepers/how-liquidation-works.md).
+- **Keepers**, who keep the system solvent by relaying prices and liquidating unsafe positions, and are paid from the liquidation bonus. See [How liquidation works](../keepers/how-liquidation-works.md).
 
 ## What backs it
 
 Two things stand behind imdUSD:
 
-1. **Collateral.** Every position must hold more sIMD, valued in dollars, than the imdUSD it owes. The required margin (the collateral ratio, `mat`) rises and falls with the network health index.
+1. **Collateral.** Every position must hold more sIMD, valued in dollars, than the imdUSD it owes. The required margin (the minimum collateral ratio, `mat`) rises and falls with the health of the IdentityMD network.
 2. **A reserve.** The protocol's Treasury holds sIMD and any other assets governance lists. Redemptions are paid from it first.
 
-The value of IMD in dollars is not read from an exchange contract. (sIMD is valued as the IMD it is a claim on, at the staking vault's own exchange rate.) It is an attested price: a panel of IdentityMD agents answers a fixed question, the answer is signed, and anyone may submit it on chain.
+The dollar price of IMD is not read from an exchange contract. A panel of IdentityMD agents answers a fixed question about it, the answer is signed, and anyone may submit it on chain. sIMD is then valued as the IMD it is a claim on. [How imdUSD holds a dollar](./how-it-holds-a-dollar.md) explains how these pieces keep the price near $1.
 
 ## What it pays when redeemed
 
-A holder can burn imdUSD for sIMD at the lesser of $1 and the backing per imdUSD, less a fee. If the system is fully backed, that is $1 of sIMD per imdUSD minus the fee. If it is not, the payout shrinks with the backing instead of the channel closing.
+A holder can burn imdUSD for sIMD worth $1, less a fee. If the system holds less than $1 of backing per imdUSD, the payout shrinks to match instead of redemption closing.
 
 ## What is unproven
 
-- The peg depends on arbitrage between the market price and the redemption price. Nothing guarantees the market price stays at $1.
-- The price comes from one signer (the IdentityMD attester) answering one pinned question. The panel size and agreement floors, the question binding and the divergence guard bound that trust; they do not remove it.
-- Network health is also an attested figure. It moves the collateral requirement and the liquidation grace.
-- A liquidation can leave bad debt. There is no insurance fund and no write-off path; the shortfall is recorded and stays.
-- Work-backed issuance (Mint from work, `earn`) rests on a swarm-published task tally that a panel attests. It is not an on-chain proof that the work happened.
-- The economic parameters are (under consideration); see [Risks and open questions](../economics/risks-and-open-questions.md).
+- The peg depends on traders buying imdUSD below the redemption price. Nothing guarantees the market price stays at $1.
+- The price comes from one signer, the IdentityMD oracle service, answering one fixed question. Minimum panel sizes, the fixed question and a second comparison price limit that trust; they do not remove it.
+- Network health is also a signed figure, and it moves both the collateral requirement and how long a marked borrower has to recover.
+- A liquidation can leave bad debt. There is no insurance fund. Anyone can cancel a drained position's bad debt with imdUSD the Treasury holds (`cover`), but only as far as the Treasury has it.
+- Minting from work (`earn`) rests on a task tally the swarm publishes and a panel signs. It is not an on-chain proof that the work happened.
+- The economic settings are fixed at launch; see [Risks and open questions](../economics/risks-and-open-questions.md).
 
 ## A note on names
 
-The vault's verbs and parameters (`lock`, `draw`, `bite`, `mat`, `duty` and the rest) are an homage to MakerDAO, which invented the collateralised stablecoin; some are borrowed and some coined in its spirit. Their origins are recorded in `docs/NAMING.md`. The terminal and these guides name actions in plain words.
+The vault's verbs and settings (`lock`, `draw`, `bite`, `mat`, `duty` and the rest) are an homage to MakerDAO, which invented the collateralised stablecoin. Their origins are recorded in `docs/NAMING.md`. These guides name actions in plain words, with the contract name alongside.

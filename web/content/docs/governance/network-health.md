@@ -13,38 +13,36 @@ sources:
 
 # Network health
 
-`NhiFeed` stores a network health index (NHI), a unitless measure scaled by 1e18. `mat()` translates it into the minimum collateral ratio; `lull()` translates it into the wait between marking and liquidation. The mapping is fixed in the vault's code, not editable through `Parameters`.
+The network health index (NHI) is a single figure, scaled to one, that describes how well the IdentityMD swarm is running. `NhiFeed` stores it. The vault turns it into two things: the minimum collateral ratio `mat()` and the grace period `lull()` between a mark and a liquidation. That mapping is written into the vault and cannot be changed by governance.
 
-## What the panel is asked to measure
+## What the panel measures
 
-The pinned question reads `https://api.imd.fun/swarm` at answer time and combines three ratios:
+The feed's fixed question asks the panel to read `https://api.imd.fun/swarm` when it answers and combine three ratios:
 
-- Participation: `health.agentsOnline` divided by `health.seatsEnrolled`, capped at full participation. No enrolled seats gives no participation.
-- Service availability: the fraction of `health.verifierUp`, `health.publisherUp` and `health.deployerUp` that are true.
-- Reliability: completed jobs divided by completed plus blocked plus cancelled jobs in `counts.jobStates`. Missing categories count as absent. With no completed, blocked or cancelled jobs, reliability is full; executing jobs are excluded.
+- **Participation:** agents online divided by seats enrolled, at most one. No enrolled seats counts as zero.
+- **Service availability:** the share of the verifier, publisher and deployer services that are up.
+- **Reliability:** completed jobs divided by completed plus blocked plus cancelled jobs. Jobs still running are left out, and with no finished jobs at all reliability counts as full.
 
-The question specifies integer fixed-point arithmetic, truncation at each division and a weighted mean of these components. The weights are (under consideration). This is a live reading of published service counters, not a chain measurement at the question window. The feed verifies the signed answer and pinned question; it does not fetch or independently recompute those counters.
+The question fixes the arithmetic (whole-number maths, rounding down at each division) and takes a weighted average of the three. It is a live reading of the swarm's published counters, not something measured on chain. The feed checks the signature and the question; it cannot re-fetch the counters itself.
 
 ## How `mat` and `lull` move
 
-| Health region | `mat` behavior | `lull` behavior |
+| Network health | `mat` (required ratio) | `lull` (grace) |
 |---|---|---|
-| At or below lower breakpoint | Highest required collateral ratio. | Shortest grace. |
-| Between breakpoints | Linearly decreases as health rises; rounds up to a whole percentage point. | Linearly increases as health rises; integer seconds round down. |
-| At or above upper breakpoint | Lowest required collateral ratio. | Longest grace. |
+| At or below the lower breakpoint | Highest | Shortest |
+| Between the breakpoints | Falls steadily as health rises, rounded up to a whole percent | Grows steadily as health rises, rounded down to a whole second |
+| At or above the upper breakpoint | Lowest | Longest |
 
-The health breakpoints, ratio endpoints, grace endpoints and every bound are (under consideration). Both mappings clamp outside the interpolation interval. `NhiFeed` does not enforce the question's full unit interval on chain: it rejects zero and applies its deviation rules, while `mat` and `lull` clamp large accepted figures to the upper branch.
+Outside the breakpoints both values stay at their end points. The feed rejects a zero figure; a figure above one is treated as the top of the range.
 
-A drop in NHI can make a position unsafe without any change in collateral price or debt. The higher `mat` immediately affects new `draw`, indebted `free`, marking, liquidation and redemption eligibility. The last of these uses `mat + gap`, where `gap` is the governed spread, (under consideration).
+A fall in network health can make a position unsafe with no change in the IMD price or its debt. A higher `mat` applies at once to new borrowing, to withdrawals while in debt, to marking and liquidation, and to redemption eligibility (which uses `mat` plus the governed spread `gap`).
 
-## Grace is a snapshot
+## Grace is fixed when a position is marked
 
-`barkFor` records `lull()` as the mark's `grace`. Changes in health do not shorten or lengthen that existing mark. Re-marking an unexpired unsafe position preserves its timestamp, grace and beneficiary. An expired mark can be replaced and then uses the new health-derived grace.
+A mark stores the `lull()` in force at the moment of marking. Later changes in health do not shorten or lengthen it. Marking again while the mark is still live changes nothing; once a mark has expired, a new one takes the grace in force at that time.
 
-`tail()` is the separate liquidation window after grace, derived from the shorter primary/NHI feed age allowance. Its value is (under consideration). Liquidation is permitted at both window endpoints, subject to fresh agreeing prices and continuing unsafety. An unobserved recovery and later decline does not reset the mark; `heel` records recovery. See [How liquidation works](../keepers/how-liquidation-works.md).
+The liquidation window that follows grace, `tail()`, is the shorter of the price feed's and the health feed's maximum ages. How marks are cleared and expire is covered in [How liquidation works](../keepers/how-liquidation-works.md).
 
-## Availability and economic interpretation
+## Reading the figures
 
-`mat()` and `lull()` return a result even from stale or unset feed data. Price-dependent writes separately require usable NHI, primary, spot and dollar-price legs. Do not treat a ratio read alone as permission to act.
-
-A healthier swarm does not prove deeper IMD liquidity or a safer market price. The health-to-ratio curve is a protocol design choice; the [parameter research](../economics/swarm-evidence.md) questions whether health should relax collateral requirements for a concentrated, thinly traded asset. That recommendation is not an enacted parameter change.
+`mat()` and `lull()` return a value even when the health feed is stale, so a ratio read on its own is not permission to act: every price-dependent action separately requires live feeds. A healthier swarm also says nothing about IMD's market depth, and the [parameter research](../economics/swarm-evidence.md) questions whether health should lower collateral requirements at all.

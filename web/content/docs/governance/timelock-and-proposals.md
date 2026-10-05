@@ -8,27 +8,26 @@ sources:
   - src/Parameters.sol:38-58
   - src/Parameters.sol:157-348
   - src/Treasury.sol:149-161
+  - src/Treasury.sol:330-350
   - src/CDPVault.sol:778-790
 ---
 
 # Timelock and proposals
 
-`Governed` gives `Parameters` one pending proposal slot. `governor()` is the source-pinned `APPROVED_OPERATOR`: (waiting for mainnet launch). Only that account may propose or cancel. Anyone may apply a mature proposal. The fixed `TIMELOCK` duration is (under consideration), in seconds.
+Every parameter change is proposed, waits out a fixed delay (`TIMELOCK`), and is then applied. Only the governor, `governor()`, may propose or cancel; anyone may apply a proposal once its delay has passed. The governor is a single account written into the contract: (waiting for mainnet launch). There is one pending slot at a time.
 
 ## Propose, wait, apply or cancel
 
-1. Read the live parameters and `pendingEta()`. If a proposal is present, inspect it before proceeding: another proposal cannot overwrite it (`ProposalPending`).
-2. As governor, call the appropriate proposal function from the table below. `Parameters._validate` runs before the slot is written. An invalid proposal leaves the slot empty.
-3. Read `pending()` and `pendingEta()`. `Proposed(bytes payload, uint256 eta)` publishes the complete encoded payload and earliest application timestamp. Pending values have no effect on vault behavior.
-4. Wait until the chain timestamp reaches `eta`. There is no automatic execution. Anyone can call `applyPending()` once it matures; earlier calls revert with `TooEarly(eta)`.
-5. On application, the contract clears the pending slot, revalidates the payload, applies it, and emits `Applied(bytes payload)`. All steps are atomic. If validation or application fails, the pending slot and live values are restored by the revert.
-6. Alternatively, the governor can call `cancel()` any time before successful application, including after maturity. It clears the slot and emits `Cancelled(bytes payload)`. A replacement proposal starts a full new delay.
+1. Check `pendingEta()`. If a proposal is already pending, a new one is refused (`ProposalPending`).
+2. The governor calls the proposal function for the change (table below). It is checked against the limits before it is stored, so an invalid proposal never enters the slot.
+3. `Proposed(bytes payload, uint256 eta)` publishes the full change and the earliest time it can apply. A pending change has no effect until applied.
+4. Once the chain time reaches `eta`, anyone may call `applyPending()`. Earlier calls revert with `TooEarly(eta)`. Nothing applies automatically.
+5. Applying clears the slot, re-checks the change, applies it and emits `Applied(bytes payload)`, all in one step: if anything fails, nothing changes.
+6. The governor may instead `cancel()` at any point before it is applied, even after the delay. That emits `Cancelled(bytes payload)`; a replacement starts a full new delay.
 
-`NotGovernor` rejects unauthorized proposals and cancellation. `NothingPending` rejects cancellation or application when the slot is empty. Validation errors and their bounds are explained in [Parameters](./parameters.md).
+`NotGovernor` rejects anyone else proposing or cancelling. `NothingPending` rejects applying or cancelling an empty slot. The limits each change is checked against are in [Parameters](./parameters.md).
 
 ## Payloads and readers
-
-`pending()` is ABI-encoded bytes. Its first word is the `Change` enum; decode by kind, not by guessing from a zero-valued field.
 
 | Proposal | Encoded payload | Typed reader |
 |---|---|---|
@@ -41,12 +40,12 @@ sources:
 | `proposeRedemptionDivisor(uint256 divisor)` | `(Change.RedemptionDivisor, uint256)` | `pendingRedemptionDivisor()` |
 | `proposeStream(address payee, uint256 perDay)` | `(Change.Stream, address, uint256)` | `pendingStream()` |
 
-`pendingChange()` returns the kind and ETA. Enum encodings follow declaration order from `Economics` through `Stream`. When ETA is zero seconds, there is no pending change; the default enum is not a real economics proposal. A kind-specific reader also returns zero ETA when some other kind is pending.
+`pending()` is ABI-encoded bytes whose first word is the kind of change. `pendingChange()` returns the kind and ETA; an ETA of zero means nothing is pending. A kind-specific reader also returns zero when a different kind is pending.
 
-Applying `Economics` calls `vault.drip()` while the old `duty` is still readable, then replaces the whole set. This makes the fee change forward-only. Reserve application calls `Treasury.setReserveAsset`; other kinds replace their respective stored values. A ceiling below outstanding principal is permitted, so a borrower cannot block application by borrowing above a proposed lower ceiling.
+Applying an economics change first calls `vault.drip()` under the old `duty`, so a new fee rate applies only from then on. A debt ceiling below current principal is allowed, so a borrower cannot block a lower ceiling by borrowing up to the old one.
 
 ## Timing and authority limits
 
-A matured proposal never expires. The timelock guarantees a minimum notice period, not execution at ETA or a final deadline. Continue monitoring pending payloads until they are applied or cancelled. Permissionless application does not guarantee someone pays the gas.
+A proposal whose delay has passed never expires. The delay guarantees a minimum notice period, not that the change lands at ETA: watch pending changes until they are applied or cancelled, and note that nobody is obliged to pay the gas to apply one.
 
-There is no voting, delegation or operator-rotation mechanism in these contracts. No proposal may replace the vault's immutable feeds, attester, collateral or Treasury. `Treasury.withdraw` uses the same pinned operator without this delay, and can change backing immediately. The [risk page](../economics/risks-and-open-questions.md) separates those powers.
+There is no voting, delegation or way to rotate the governor. No proposal can replace the vault's feeds, the price signer, the collateral or the Treasury. The same operator can withdraw from the Treasury without a delay, but not sIMD, not a listed reserve asset, and not imdUSD that outstanding bad debt needs; removing backing takes a delisting proposal like any other change. See [Risks and open questions](../economics/risks-and-open-questions.md).

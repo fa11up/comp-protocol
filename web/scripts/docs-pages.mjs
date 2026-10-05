@@ -231,7 +231,14 @@ export function renderDocs({ outDir, contentDir, terminal }) {
   };
 
   // Check every #anchor link resolves to a heading on its target page.
-  const rendered = new Map(pages.map((p) => [p.file, render(p)]));
+  for (const p of pages) {
+    // Launch values are shown as an em dash with one note per page, never spelled out inline.
+    if (p.body.includes("(under consideration)")) throw Error(`${p.file}: write a pending value as — and set pending: true`);
+  }
+  const PENDING_NOTE = `<p class="pending-note">A <span aria-hidden="true">—</span><span class="sr-only">dash</span> marks a value set at mainnet launch.</p>`;
+  const rendered = new Map(
+    pages.map((p) => [p.file, p.meta.pending === "true" ? render(p).replace("</h1>", `</h1>${PENDING_NOTE}`) : render(p)]),
+  );
   for (const p of pages) {
     for (const [, href] of rendered.get(p.file).matchAll(/href="([^"]*#[^"]+)"/g)) {
       const [path, hash] = href.split("#");

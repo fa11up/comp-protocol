@@ -19,7 +19,7 @@ sources:
 
 # Use the terminal
 
-The terminal is a static web page at `/terminal/`. It reads the contracts directly and has no backend. You connect an injected browser wallet to act; you can read everything without one.
+The terminal is a static web page at `/terminal/`. It reads the contracts directly and has no backend. You connect a browser wallet to act; you can read everything without one.
 
 The terminal has two tab rows. **Monitor** tabs only show figures. **Desk** tabs are where you act. This page explains each tab, what each figure means and what a disabled button is telling you. Contract addresses are listed in [Contracts and addresses](../reference/contracts-and-addresses.md): (waiting for mainnet launch).
 
@@ -46,11 +46,11 @@ Selecting a position opens it in the Keeper tab. "Coverage unverified" means the
 
 ### Oracle
 
-- **Divergence / allowed:** how far the primary and spot IMD/ETH prices differ, against the bound `skew`.
+- **Divergence / allowed:** how far the main (primary) and spot IMD/ETH prices differ, against the bound `skew`.
 - **Headroom:** the room left. It reads Stale if either price is stale and Breached if the bound is exceeded.
-- **Price actions:** Open only when the primary, spot, network health and IMD/USD feeds are all fresh and the primary agrees with spot. Otherwise Paused.
+- **Price actions:** Open only when the primary, spot, network health and IMD/USD feeds are all fresh and the main price agrees with spot. Otherwise Paused.
 
-Each feed row expands to show its latest value, when it was updated, its maximum age and its question. **Question: Pinned** means the feed refuses answers to any question other than its own. **None pinned** would mean it accepts any question; **Not reported** means the feed cannot say. Last window is the closing block of the last accepted attestation window. The IMD/USD row is derived on chain from the primary feed and Chainlink ETH/USD, so it is marked Derived and has no question of its own.
+Each feed row expands to show its latest value, when it was updated, its maximum age and its question. **Question: Pinned** means the feed refuses answers to any question other than its own. **None pinned** would mean it accepts any question; **Not reported** means the feed cannot say. **Last window** is the last block of the most recent accepted price window. The IMD/USD row is calculated on chain from the main price and Chainlink ETH/USD, so it is marked Derived and has no question of its own.
 
 ### Backing
 
@@ -83,11 +83,11 @@ Right: enter an amount, a slippage tolerance in basis points and, if the reserve
 
 ### Work
 
-Shows the work rights you can use, then **Mint from work** (`earn`). Rights come from the swarm's daily work tally: the work oracle holds an attested root of that tally, and an agent's controller claims the agent's accepted tasks against it with `claim` on the work oracle. Whether minting from work is open at launch is (under consideration).
+Shows the work rights you can use, then **Mint from work** (`earn`). Rights come from the swarm's daily work tally: the work oracle holds a signed summary of that tally, and whoever controls an agent claims its accepted tasks with `claim` on the work oracle. Minting from work may not be open at launch.
 
 ### Keeper
 
-Choose **Inspect** and paste a borrower address (or click one in the loan book). You see their ratio, collateral, debt, a bad-debt estimate, liquidation price and mark status: None, Grace with a countdown, Active and liquidatable, or Recovered and clearable. Choose **Act** for Mark (`bark`), Mark for a beneficiary (`barkFor`), Clear mark (`heel`) and Liquidate (`bite`). See [Mark and liquidate](../keepers/mark-and-liquidate.md). The terminal calls the vault directly; it does not bundle an attestation relay.
+Choose **Inspect** and paste a borrower address (or click one in the loan book). You see their ratio, collateral, debt, a bad-debt estimate, liquidation price and mark status: None, Grace with a countdown, Active and liquidatable, or Recovered and clearable. Choose **Act** for Mark (`bark`), Mark for a beneficiary (`barkFor`), Clear mark (`heel`) and Liquidate (`bite`). See [Mark and liquidate](../keepers/mark-and-liquidate.md). The terminal calls the vault directly; it does not bundle a price update with the action.
 
 ### Govern
 
@@ -97,7 +97,7 @@ Shows the governed parameters, any pending change with its countdown and a butto
 
 | Where | Message under the button | Meaning |
 |---|---|---|
-| Borrow | "Fresh, agreeing price feeds are required." | A feed is stale or primary and spot diverge. Check Oracle. |
+| Borrow | "Fresh, agreeing price feeds are required." | A price is out of date or the main and spot prices disagree. Check Oracle. |
 | Withdraw | "An indebted position needs fresh feeds to withdraw." | You owe debt, so the vault must price you. A debt-free position can always withdraw. |
 | Redeem | "Fresh, agreeing primary, spot, NHI and USD feeds are required." | Same cause. NHI is the network health feed. |
 | Mint from work | "Fresh feeds, available rights and backing headroom are required." | Feeds stale, you have no minting rights, or the work ceiling is reached. |
@@ -114,6 +114,6 @@ The note names the figure that blocked you. Typical ones:
 
 - **Needs more collateral:** it gives the collateral required and the most you can borrow now.
 - **Primary and spot disagree by X; the vault allows Y:** wait for them to converge.
-- **A required feed is stale:** it lists which feed and how old it is. The page reopens when someone relays a fresh attestation.
+- **A required feed is stale:** it lists which feed and how old it is. Actions reopen when a fresh price arrives.
 - **Total debt would reach X against a ceiling of Y:** the debt ceiling `line` has no room.
 - **The payout is below your minimum:** refresh the quote or widen slippage.

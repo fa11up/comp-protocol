@@ -14,68 +14,66 @@ sources:
 
 # Glossary
 
-Each entry gives the plain meaning first, then the identifier where one exists. Parameter values are (under consideration) throughout.
+Each entry gives the plain meaning first, then the contract name where there is one.
 
-**attestation.** A signed answer from an IdentityMD panel, in the struct `SwarmFeed.OracleAttestation`. A feed accepts a value only from a valid attestation. See [Relay oracle updates](../keepers/relay-oracle-updates.md).
+**attestation.** A signed answer from an IdentityMD agent panel. A price feed changes only when it receives a valid one. See [Relay oracle updates](../keepers/relay-oracle-updates.md).
 
-**backing per imdUSD.** Reserve value plus the collateral that stands behind debt, divided by imdUSD supply, capped at $1. Read with `backingPerUnit()`. Redemption pays the lesser of $1 and this figure, less the fee.
+**backing per imdUSD.** The reserve plus the collateral standing behind debt, divided by imdUSD supply, never above $1. New capital counts toward it gradually, over about a day or longer while the vault is busy. Read with `backingPerUnit()`. Redemption pays against it.
 
-**bark.** Mark an unsafe position so it can later be liquidated. The terminal button is Mark. Function `bark(owner)`, or `barkFor(owner, beneficiary)` to credit another address.
+**bonus.** The extra collateral a liquidator receives on top of the debt they repay (`CHOP_PERCENT`). It is shared between the marker (`chip`), the protocol (`cut`) and the liquidator. See [Keeper economics](../keepers/keeper-economics.md).
 
-**bite.** Liquidate: burn your imdUSD to cancel a marked position's debt and receive its collateral plus the bonus. The terminal button is Liquidate. Function `bite(owner, debtToRepay)`.
+**borrow (`draw`).** Mint imdUSD against your collateral, up to `mat` and the debt ceiling. Needs live prices: every price fresh, and the main and spot prices in agreement.
 
-**bonus.** The extra collateral a liquidator receives on top of the debt repaid, set by `CHOP_PERCENT`. Split into `chip`, `cut` and the biter's remainder.
+**chi.** The stability-fee index. It starts at 1 and rises steadily at the yearly rate `duty`. Each position remembers the value it last paid up to (`chiOf(owner)`). Anyone can record the current value with `drip()`.
 
-**cash.** Redeem: burn imdUSD for sIMD. The terminal button is Redeem. Function `cash(amount, minGemOut, candidate)`.
+**chip.** The marker's share of the liquidation bonus, paid to whoever marked the position.
 
-**chi.** The stability-fee index. It starts at 1 and only rises, linearly with time at the rate `duty`. A position's own checkpoint is `chiOf(owner)`. `drip()` records the current value; anyone may call it.
+**clear mark (`heel`).** Remove the mark from a position that is safe again. Anyone may do it.
 
-**chip.** The marker's share of the liquidation bonus. Paid to the address recorded when the position was marked.
+**collateral ratio.** Collateral value in dollars divided by debt, as a whole percentage. Read with `collateralRatio(owner)`.
 
-**collateral ratio.** Collateral value in dollars divided by debt, as a whole-number percentage. Read with `collateralRatio(owner)`. A debt-free position reads as the maximum integer.
-
-**CHOP_PERCENT.** The liquidation bonus, as a percent of the debt repaid. A source constant.
-
-**clear mark.** Remove a mark from a position that has recovered. The terminal button is Clear mark. Function `heel(owner)`.
+**cover.** Cancel a drained position's bad debt using imdUSD the Treasury holds. Anyone may call `cover(owner, amount)`.
 
 **cut.** The protocol's share of the liquidation bonus, paid to the Treasury.
 
-**duty.** The annual stability fee rate. A governed parameter.
+**debt ceiling (`line`).** The most borrowed principal that can be outstanding across all positions.
 
-**earn.** Mint imdUSD against attested swarm work. The terminal button is Mint from work. Function `earn(amount)`. It is bounded by `earnLine` and needs minting rights from the work oracle.
+**deposit (`lock`, `lockIMD`).** Add collateral: sIMD with `lock`, or IMD with `lockIMD`, which stakes it for you.
 
-**earnLine / earnMat.** `earnLine` is the ceiling on cumulative work-backed issuance: the reserve value plus backed debt scaled by `earnMat`.
+**duty.** The yearly stability fee rate, set by governance.
 
-**gap.** The spread above `mat` that sets the redemption eligibility ceiling: positions below `mat` plus `gap` can be redeemed against.
+**grace (`lull`).** The wait between a mark and the first moment the position can be liquidated. Its length follows network health and is fixed when the mark is made.
 
-**grace.** The wait between a mark and the first moment the position can be liquidated. Its length is `lull()` at the time of marking, and it is stored with the mark.
+**keeper.** Anyone who relays price updates, marks unsafe positions or liquidates them. No permission is needed; keepers are paid from the liquidation bonus. See [Keeper economics](../keepers/keeper-economics.md).
 
-**heel.** See *clear mark*.
+**liquidate (`bite`).** Burn your imdUSD to cancel a marked position's debt and receive its collateral plus the bonus.
 
-**keeper.** Anyone who relays attestations, marks unsafe positions or liquidates them. Permissionless; paid through the liquidation bonus. See [Keeper economics](../keepers/keeper-economics.md).
+**liquidation window (`tail`).** How long a mark stays usable after its grace ends. After that the mark has expired (`MarkExpired`) and the position must be marked again.
 
-**line.** The debt ceiling: the most principal that can be outstanding. Read with `line()`.
+**mark (`bark`).** Flag a position that is below the minimum ratio so it can be liquidated after grace. `barkFor(owner, beneficiary)` credits someone else as the marker. The mark is stored in `liquidationMarks(owner)`.
 
-**liquidation window.** How long a mark stays usable after its grace ends. After that the mark has expired and must be retaken. Function `tail()`; error `MarkExpired`.
+**mat.** The minimum collateral ratio, set by network health. Read with `mat()`.
 
-**lull.** The grace length derived from the network health index. See *grace*.
+**mint from work (`earn`).** Mint imdUSD against swarm work credited to you by the work oracle, up to a ceiling (`earnLine`, scaled by `earnMat`).
 
-**mark.** A record that a position was unsafe at a moment, held in `liquidationMarks(owner)` with its time, its grace and the marker's address. Cleared by Deposit or Repay when the position is safe again, by Borrow or Withdraw when they succeed, or by Clear mark.
+**network health index.** A signed figure about how well the IdentityMD network is running. It sets `mat` and the grace length. See [Network health](../governance/network-health.md).
 
-**mat.** The minimum collateral ratio, derived from the network health index. Read with `mat()`.
+**question hash.** A fingerprint of the exact question a panel answered. Each feed refuses answers to any question but its own. See [Oracle and question binding](../reference/oracle-and-question-binding.md).
 
-**network health index.** A figure scaled to one that the IdentityMD panels attest about the swarm. It sets `mat` and `lull`. Held by the `NhiFeed`. See [Network health](../governance/network-health.md).
+**redeem (`cash`).** Burn imdUSD and receive sIMD. See [Redeem](../guides/redeem.md).
 
-**question hash.** The hash of the question document a panel answered. A feed rebuilds the expected hash from the block window and refuses answers to any other question. Read with `expectedQuestionHash(fromBlock, toBlock)`. See [Oracle and question binding](../reference/oracle-and-question-binding.md).
+**redemption spread (`gap`).** How far above `mat` a position can sit and still be used to fund a redemption.
 
-**reserve.** The assets the Treasury holds: sIMD plus any asset governance lists. Redemption draws on its sIMD first.
+**repay (`wipe`).** Burn imdUSD to pay down your debt. Fees are paid first.
 
-**skew.** The most the primary and spot prices may differ before price-dependent actions pause.
+**reserve.** What the Treasury holds: sIMD plus any assets governance lists. Redemption draws on its sIMD first.
 
-**spot feed.** A second IMD/ETH feed, read at the last block of its window. Used only to check the primary.
+**skew.** The most the main and spot IMD/ETH prices may differ before price-dependent actions pause.
 
-**stability fee.** The interest charged on debt, at `duty`, accrued through `chi`. It is paid first when you Repay.
+**spot price.** A second IMD/ETH reading, taken at the last block of its window, used only to check the main price.
 
-**tail.** See *liquidation window*.
+**stability fee.** Interest on debt at the rate `duty`. It is paid first when you repay.
 
-**wage.** The imdUSD earned per attested work task. Governed, with a hard maximum.
+**wage.** The imdUSD earned per accepted swarm task, set by governance within a hard limit.
+
+**withdraw (`free`).** Take collateral back out. With debt open, it needs live prices and must leave you at or above `mat`.

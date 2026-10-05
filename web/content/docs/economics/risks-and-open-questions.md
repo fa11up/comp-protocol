@@ -4,95 +4,80 @@ section: economics
 order: 3
 audience: everyone
 sources:
-  - src/SwarmFeed.sol:100-185
-  - src/SwarmFeed.sol:232-329
-  - src/UsdPriceFeed.sol:38-95
-  - src/CDPVault.sol:494-640
-  - src/CDPVault.sol:676-849
-  - src/ParameterizedVault.sol:185-199
-  - src/Parameters.sol:264-348
-  - src/Governed.sol:53-89
-  - src/Treasury.sol:115-230
-  - src/Treasury.sol:277-323
-  - src/SharePriceFeed.sol:36-93
-  - src/SwarmWorkOracle.sol:101-191
-  - src/SwarmRelay.sol:24-134
-  - docs/AUDIT-2026-10-03.md:1-184
-  - docs/AUDIT-2026-10-04.md:1-139
-  - docs/INTERNAL-AUDIT-2026-10-04.md:1-279
-  - docs/RESEARCH-PARAMS-2026-10-04.md:1-182
+  - src/SwarmFeed.sol
+  - src/UsdPriceFeed.sol
+  - src/CDPVault.sol
+  - src/ParameterizedVault.sol
+  - src/Parameters.sol
+  - src/Governed.sol
+  - src/Treasury.sol
+  - src/OracleAsker.sol
+  - src/SwarmRelay.sol
+  - docs/AUDIT-2026-10-03.md
+  - docs/AUDIT-2026-10-04.md
+  - docs/INTERNAL-AUDIT-2026-10-04.md
+  - docs/AUDIT-VAULT-2026-10-05.md
+  - docs/AUDIT-GOVERNANCE-2026-10-05.md
+  - docs/AUDIT-ORACLE-2026-10-05.md
+  - docs/AUDIT-ADVERSARIAL-2026-10-05.md
+  - docs/AUDIT-GAS-2026-10-05.md
+  - docs/AUDIT-FIX-PLAN-2026-10-05.md
+  - docs/RESEARCH-PARAMS-2026-10-04.md
+  - docs/PARAMETERS-2026-10-05.md
+  - docs/MAINNET-RUNBOOK.md
 ---
 
 # Risks and open questions
 
-`ParameterizedVault` enforces collateral, pricing and accounting rules; those rules do not guarantee solvency, a dollar market price or keeper participation. imdUSD holders can receive less than $1 of IMD per imdUSD through `cash` when measured backing is below par, before fees and market execution costs.
+The vault enforces its rules for collateral, prices and accounting. Those rules do not guarantee that imdUSD trades at $1, that the system stays solvent or that keepers show up. If backing falls below $1 per imdUSD, redemption pays less than $1.
 
-All economic settings and bounds discussed here are (under consideration). Distinguish a **source-enforced condition**, a **recorded test or observation**, and an **unresolved economic assumption**.
+## Prices and the oracle
 
-## Oracle and service risk
+**The price is signed by one key.** Each feed accepts a value only with a signature from the IdentityMD oracle service, for the feed's own question, from a panel at least as large as the feed's floor. The contract checks that signature. It cannot see the panel itself: it trusts the service's report of how many agents answered and agreed, and it cannot check that the agents worked independently or read the pool correctly.
 
-**Source-enforced.** The concrete feeds require the pinned signer, question hash, panel floors, advancing bounded windows, request uniqueness and timestamp validity. Primary and spot have separate own-history deviation checks; the vault has the cross-feed `skew` check. Chainlink ETH/USD adds a separate availability and pricing dependency.
+**The second price is not independent.** The spot feed reads the same pool as the primary. It catches a bad or manipulated reading of that pool, not a pool that is itself mispriced.
 
-**Residual trust.** One service key attests panel counts and answers. The contract does not verify individual panel signatures, member independence, pool observations, absolute data-chain window recency or the signed `blockHash`. Both price questions use the same pool. Valid signatures and agreeing prices can therefore coexist with misleading economic value.
+**Large moves and stale feeds.** One update can move a feed only so far from its last value, so a real, sudden move may be refused. Once a feed is past its maximum age, the next valid update is accepted without that limit, so the feed can catch up. That recovery leans fully on the signer and the question.
 
-A fresh own-history deviation bound can reject a truthful large market move. After staleness the source allows a valid attestation to re-anchor without that bound. This restores update ability but places more weight on the signer and question. It is not the stronger independent recovery path recommended in the parameter research.
+**A stale or disagreeing feed halts most actions.** Borrowing, withdrawing against debt, marking, liquidating and redeeming all wait for live prices. Depositing and repaying do not. The ETH/USD price comes from Chainlink, and if it goes stale, no IdentityMD update can fix it.
 
-A stale or divergent feed also blocks liquidation and redemption, not just borrowing. Repayment, collateral addition and debt-free withdrawal bypass explicit price gates. Their token and dependency calls can still fail; “no freshness gate” is not an unconditional availability guarantee.
+**Updates cost money.** The Treasury pays for price updates through `OracleAsker`, up to a daily budget that governance sets ([How updates are paid for](../reference/oracle-and-question-binding.md#how-updates-are-paid-for)). A refused request still costs its fee. A budget too small for a volatile market lets feeds go stale, which halts actions rather than mispricing them. Someone still has to call the asker, and relay gas is not reimbursed.
 
-**Open evidence.** Per-leaf launch question binding must be tied to a live service-signed attestation and on-chain acceptance, as detailed in [Swarm evidence](./swarm-evidence.md). Freshness parameters and observation latency must be assessed together; a timestamp check alone does not make a slow service fast.
+## Collateral and liquidity
 
-## Collateral and liquidity risk
+**Seized collateral may not sell at the feed's price.** IMD trades in one concentrated pool. Thin liquidity, withdrawn liquidity, congestion or many liquidations at once can turn the liquidation bonus into a loss.
 
-The vault values sIMD at an attested IMD market observation times the staking vault's exchange rate. It does not guarantee that a liquidator can sell seized collateral at that price. Concentrated liquidity, disappearing liquidity providers, gas congestion and simultaneous liquidations can turn a nominal bonus into a loss.
+**Bad debt can happen.** A fast fall can leave a position owing more than its collateral. That shortfall is recorded. `cover` can cancel it with imdUSD the Treasury holds from fees; if the Treasury holds too little, the shortfall stays and lowers backing for every holder. There is no insurance fund.
 
-`bite` requires collateral for its full priced payout. A keeper can choose a smaller amount, and unseizable dust may be swept, but a deeply short position can leave debt unpaid. `totalBadDebt` records exhausted-collateral residuals; it is not insurance or a write-off. `backedDebt` subtracts recorded losses for work capacity but does not cancel the liability.
+**Backing per imdUSD is a cautious measure.** It counts only collateral that stands behind debt, and it counts new collateral only gradually, over about a day or longer while the vault is busy, so capital brought in just to redeem against cannot inflate it. It can fall after a redemption even when the system as a whole is better backed. A redemption can also fail if no eligible position can cover a reserve shortfall.
 
-Work issuance can remain outstanding after supporting borrower debt is repaid across transactions or reserves are withdrawn. `earnLine` controls new issuance rather than maintaining a permanent backing claim. `backingPerUnit` is conservative and can fall after a redemption reduces principal-based eligibility. A payout formula is not a guarantee that every requested redemption has a feasible candidate.
+**Work-backed issuance is a limit at the moment of minting.** If minting from work is open, it is capped when imdUSD is minted. Later repayments, price falls or parameter changes can leave earlier work-minted imdUSD above the cap; nothing is burned to restore it.
 
-The runbook's share plan adds conversion, decimals and redemption-availability questions. `SharePriceFeed` uses raw-share units while Treasury values whole-token units. The source does not automatically wire a wrapper into the vault. See the visible integration TODO in [Contracts and addresses](../reference/contracts-and-addresses.md).
+## Governance and the Treasury
 
-## Governance and Treasury risk
+**One operator account governs.** It proposes parameter changes, which wait out a fixed delay before anyone may apply them. There is no vote. A proposal never expires, so a matured proposal can be applied long after its date; watch pending proposals until they are applied or cancelled.
 
-`Parameters` limits rates, splits, spreads, work conversion and reserve listings and exposes proposals during a delay. A valid parameter set can still make liquidation unattractive or reserves overvalued. In particular, the bonus-share bound allows no executor remainder for a non-marker liquidator.
+**Valid settings can still be bad settings.** Every parameter has hard limits written into the contracts, but a value inside those limits can still leave liquidation unattractive (the protocol's and marker's shares together may take the whole bonus) or overvalue a listed reserve asset.
 
-`applyPending` is permissionless after the delay, but proposals never expire. A mature proposal can be applied much later than its ETA. Monitoring must include mature unapplied proposals.
+**What the operator can and cannot take from the Treasury.** The operator cannot withdraw sIMD or any listed reserve asset; removing a reserve asset takes a delisting proposal and its delay. It may withdraw imdUSD only above what outstanding bad debt needs, and other unlisted tokens freely. A governed daily stream can pay imdUSD to a governed payee.
 
-The pinned operator can withdraw Treasury tokens to a chosen recipient without the parameter delay. This can immediately reduce redemption liquidity and work backing. The ability to govern a reserve price source also introduces valuation trust even though the vault's own primary feeds are immutable. The source contains no on-chain vote, rotating governor, withdrawal budget or guarantee of multisignature operation.
+## Keepers
 
-## Smart-contract risk and audit scope
+**No one is paid to keep watch.** Keepers need ETH for gas and imdUSD to burn, and they are paid only from liquidation bonuses. A mark earns nothing unless the position is liquidated. If liquidation is not profitable after gas, price impact and the protocol's share, positions may sit unsafe.
 
-The audit dated 2026-10-03 reports 11 findings: one high, two medium, four low and four informational findings. Its high finding concerned a permissionless relay paired with an unbound question. The concrete source leaves all override `questionPolicy`, but the abstract base only requires a nonzero relayer when a question is unbound. A future leaf lacking binding could reintroduce that unsafe combination; a nonzero relay address is not proof of restricted callers.
+**Bundling gives atomicity, not priority.** `relayAndBite` makes an update and a liquidation succeed or fail together, but another keeper can still act first.
 
-The audit dated 2026-10-04 reports five findings: three medium and two low findings involving dollar-denominated recovery checks, malformed reserve responses, token balance-read failure, Treasury receipt accounting and ETH/USD timestamp/decoding checks. The source contains corresponding fixes. The record says regression proofs were reconstructed from reported reproductions because proof source files were not delivered. These facts support targeted regression coverage, not whole-system correctness.
+**An empty loan book is not proof of no positions.** A public node can return nothing for a range it declines to search. See [Reading state](../reference/reading-state.md).
 
-The internal audit identifies redemption/backing-cap and swarm-wide work logic as needing independent review in its assessed scope. It also distinguishes default-run tests from checks outside the default test directory. Test counts in dated reports are not a coverage measure for every function or proof of launch readiness.
+## Smart-contract bugs
 
-Source inspection shows reentrancy guards on token-moving vault paths, exact-deposit accounting, guarded arithmetic and transient transaction accounting. None proves all call sequences safe. Immutable contracts cannot be repaired with a parameter proposal; configuration and bytecode identity need verification before users rely on a deployment.
+The contracts are immutable. A bug cannot be fixed with a parameter change; it needs a new deployment.
 
-## What is established on chain versus in tests
+The code has been through several reviews, each linked under Sources: an external audit on 2026-10-03 (one high finding, about binding each feed to its own question), another on 2026-10-04, an internal audit on 2026-10-04, and on 2026-10-05 three launch audit panels (vault, governance and Treasury, oracle) followed by an adversarial review and a gas review. Their findings were fixed; the fix plan records what was accepted and why. One more focused review of the latest fixes is planned before the deploy commit is frozen. Reviews and tests reduce risk; they do not prove every sequence of calls safe.
 
-**On-chain rules in the source:** signature and question checks; collateral and debt gates; proposal permissions and timing; token mint/burn authority; Merkle inclusion and controller checks. These are implemented conditions, not a claim that this documentation deployed or exercised them.
+## Not yet proven
 
-**Recorded on-chain observations:** the internal audit records a borrow/repay cycle, liquidation split, health mapping and service attestation relay with state read-back. That record does not establish that the full launch configuration and every implemented subsystem were exercised.
-
-**Recorded tests and fork observations:** the internal audit reports 414 passing tests and three skipped tests, plus fork checks for the share adapter and service schema. It assigns redemption, backing cap, swarm-wide work issuance, keeper bundles and the governed stack to test-only evidence in its assessed scope. Fork execution is not an independent production transaction.
-
-**Not established here:** a complete launch acceptance receipt set, independent review of the full resulting configuration, stressed market depth, reliable funded keeper operation or a fully connected paid-oracle path. No contract suite, fork test or live transaction was run for this documentation deliverable. The [evidence page](./swarm-evidence.md) preserves the distinction between recorded results and open checks.
-
-## Keeper and execution risk
-
-Keepers need ETH for gas and imdUSD inventory to burn. Profit also depends on the price paid for that inventory, the amount that can be liquidated, `CHOP_PERCENT`, `chip`, `cut` and the price realized on IMD after unstaking. Marking earns nothing unless liquidation pays the recorded beneficiary. No contract promises a keeper profit.
-
-`relayAndBite` makes update and liquidation atomic, but does not reserve the signed update or the liquidation opportunity. Another keeper may relay first, invalidate a repeated request or take the opportunity. The update purchaser may lose its purchase cost and transaction gas. Choosing the relay itself as marker beneficiary can strand a directly paid marker reward; the relay has no sweep function.
-
-A public RPC's empty log result is not proof of an empty loan book. Use explorer fallback and explicit unreadable states as described in [Reading state](../reference/reading-state.md). A keeper that misses a position cannot liquidate it. Expired marks require a new mark and grace; an unobserved recovery followed by decline can reuse an unexpired mark.
-
-## Oracle budget and payment gap
-
-The source accepts and relays already signed attestations. It pays no direct relay reward and contains no Intake-funded request purchase, automatic Treasury reimbursement or budgeted keeper spending role. Treasury funds can move only through the implemented operator withdrawal and vault redemption paths. The runbook's separate keeper funding plan is an operational plan, not autonomous contract funding.
-
-A useful budget separates request fees, failed or refused requests, relay gas, observation/monitoring costs and liquidation working capital. Request expense per period equals paid requests per period times request price, including unsuccessful purchases. Add gas and monitoring rather than treating liquidation inventory as a recurring expense. Price, cadence and budget values are (under consideration).
-
-The parameter research's update-cost scenarios are illustrative analysis. They do not establish the service price, a launch refresh commitment or sufficient fee income. Tighter freshness can require more spending, but paying more does not prove the service can meet the latency target. Debt that remains open still needs monitoring when no borrower transacts.
-
-Request fees are paid from the Treasury through `OracleAsker`, within a governed daily budget ([How updates are paid for](../reference/oracle-and-question-binding.md#how-updates-are-paid-for)). Three limits remain. A request the panel refuses still costs its fee, so refused requests count against the budget. A budget too small for a volatile market leaves feeds to go stale, which halts price-dependent actions rather than mispricing them. And the asker is triggered by anyone, so someone must call it: monitoring is still needed, and relay gas and liquidation inventory are still the keeper's. Relayers are not reimbursed.
+- That each launch feed accepts a live, service-signed answer to its own question. One attestation per feed is bought and its receipt published with the addresses at launch.
+- How much IMD the pool can absorb under stress, and how many keepers will compete.
+- Whether the oracle service answers fast enough for the maximum price age the feeds allow.
+- That the daily update budget is enough in a volatile market.

@@ -6,7 +6,7 @@ audience: integrators
 sources:
   - src/CDPVault.sol:57-101
   - src/CDPVault.sol:274-1075
-  - src/ParameterizedVault.sol:38-225
+  - src/ParameterizedVault.sol:25-225
   - docs/abi/ParameterizedVault.json:1
   - lib/openzeppelin-contracts/contracts/utils/Address.sol:1
   - lib/openzeppelin-contracts/contracts/utils/math/Math.sol:1
@@ -16,202 +16,197 @@ sources:
 
 # Events and errors
 
-`ParameterizedVault` inherits the events and errors below from `CDPVault` and its libraries. This inventory is generated from `docs/abi/ParameterizedVault.json`, with triggers checked against source. [Vault functions](./vault-functions.md) describes each operation's complete requirements and effects.
+Every event and custom error in the `ParameterizedVault` ABI (`docs/abi/ParameterizedVault.json`), with what triggers it. [Vault functions](./vault-functions.md) gives each function's full requirements.
 
-`indexed` marks an event topic field. Amounts are token raw units; timestamps and durations are seconds. Events describe completed changes; they do not themselves mutate state. A reverted call leaves no committed storage changes, token transfers, rights consumption or logs from that call.
+`indexed` marks a field you can filter on. Amounts are raw token units; times and durations are seconds. A reverted call leaves nothing behind: no storage changes, transfers, consumed rights or logs.
 
 ## Events
 
 ### `Bark(address indexed owner, uint256 markedAt, uint256 grace)`
 
-Emitted when `bark` or `barkFor` creates or replaces an expired mark. `markedAt` is Unix seconds; `grace` is the snapshotted duration in seconds. No reward is paid. The beneficiary is not in this event: read `liquidationMarks(owner)` at the appropriate block or index call data. Repeating an active mark emits nothing.
+A mark was created by `bark` or `barkFor`, or an expired one replaced. `markedAt` is the Unix time; `grace` is the wait, fixed at marking. No reward moves. The beneficiary is not in the event: read `liquidationMarks(owner)` or the call data. Marking an already marked position emits nothing.
 
 ### `Bite(address indexed owner, address indexed liquidator, uint256 debtRepaid, uint256 collateralSeized)`
 
-Emitted after successful liquidation. `debtRepaid` is the total imdUSD burned, including fees. `collateralSeized` is total sIMD removed, including the marker and Treasury shares and any dust sweep; it is not the liquidator net receipt. Requires all `bite` guards.
+A liquidation succeeded. `debtRepaid` is all the imdUSD burned, fees included. `collateralSeized` is all the sIMD taken from the position, including the marker's and Treasury's shares and any swept dust, so it is not what the liquidator received.
 
 ### `Cash(address indexed redeemer, address indexed candidate, uint256 burned, uint256 gemOut, uint256 reserveOut, uint256 debtCancelled, uint256 feeBps)`
 
-Emitted after successful redemption. `burned` is imdUSD raw units burned. `gemOut` is total collateral (sIMD) payout, `reserveOut` its Treasury portion, `debtCancelled` the candidate accrued debt cancelled, and `feeBps` the charged fee in basis points. Candidate can be unused when reserve covers the payout. Requires all `cash` guards.
+A redemption succeeded. `burned` is the imdUSD burned. `gemOut` is the total sIMD paid, of which `reserveOut` came from the Treasury. `debtCancelled` is the candidate's debt cancelled, and `feeBps` the fee charged in basis points. The candidate is unused when the Treasury covered the whole payout.
 
 ### `Cover(address indexed owner, uint256 amount, address indexed payer)`
 
-Emitted when `cover` repays a drained position's debt from the Treasury's imdUSD. `amount` is the imdUSD burned, fees first; `payer` is the Treasury.
+`cover` cancelled `amount` of a drained position's bad debt using the Treasury's imdUSD, fees first. `payer` is the Treasury.
 
 ### `Draw(address indexed account, uint256 amount)`
 
-Positive imdUSD principal minted to `account` after `draw` checks; amount in imdUSD raw units.
+imdUSD was borrowed and minted to `account`.
 
 ### `Earn(address indexed account, uint256 amount)`
 
-Positive imdUSD work issuance to `account` after rights, ceiling and feed checks; amount in imdUSD raw units. Creates no position debt.
+imdUSD was minted to `account` against work rights. It creates no debt.
 
 ### `Free(address indexed account, uint256 amount)`
 
-sIMD withdrawn from caller position after `free` checks; amount in sIMD raw units.
+sIMD was withdrawn from `account`'s position.
 
 ### `Heel(address indexed owner)`
 
-An existing mark was deleted by `heel` or an automatic clearing path in `lock`, `free`, `draw`, `wipe`, `bite` or `cash`. Does not identify the caller or reason. No event for an already absent mark.
+A mark was removed, either by `heel` or automatically by `lock`, `lockIMD`, `free`, `draw`, `wipe`, `bite`, `cash` or `cover`. It does not say who or why. Nothing is emitted if there was no mark.
 
 ### `IndexCheckpointed(uint256 index, uint256 at)`
 
-`drip` stored `index`, scaled by 1e18, at Unix seconds `at`. Can also occur during application of governed economics. No fees are collected by this event.
+`drip` stored the stability-fee index `index` (scaled by 1e18) at time `at`. It also happens when a governance change to the economics is applied. No fees are collected.
 
 ### `Lock(address indexed account, uint256 amount)`
 
-An exact positive collateral deposit was received and credited to `account`; amount in sIMD raw units. `lockIMD` emits it with the sIMD actually received from staking.
+sIMD was deposited to `account`'s position. For `lockIMD`, `amount` is the sIMD that staking actually returned.
 
 ### `OracleSet(address indexed oracle)`
 
-Constructor established the validated work-oracle binding. Not evidence of a mutable oracle setter; the reference is immutable.
+The constructor linked the work oracle. It is emitted once; there is no way to change the oracle.
 
 ### `Wipe(address indexed account, uint256 amount)`
 
-Successful caller repayment, amount in imdUSD raw units including fees retired before principal. Paid fees are reminted to Treasury.
+`account` repaid `amount` of imdUSD, fees first. Paid fees are reminted to the Treasury.
 
-## Custom errors in the deployed vault ABI
-
-All entries below reject the call and roll back its changes. Library errors are included even when ordinary launch operations do not reach their native-currency branch.
-
-### `AddressEmptyCode(address target)`
-
-An address utility expected code at `target`, including an empty-code token target during a safe transfer. Check the dependency address and deployed code.
-
-### `AddressInsufficientBalance(address account)`
-
-The address utility lacks native currency at `account` for its requested operation. Included by the linked library; ordinary vault token transfers send no native currency.
+## Errors
 
 ### `CollateralNotWrappable()`
 
-`lockIMD` was called on a vault whose collateral is not a staking-vault share, so there is nothing to stake IMD into. Deposit the collateral token with `lock` instead.
+`lockIMD` was called on a vault whose collateral is not a staking-vault share, so there is nothing to stake IMD into. Use `lock` instead.
 
 ### `DebtCeilingReached()`
 
-`draw` would carry total minted principal above `line()`. Reduce the borrow or wait for principal repayment or an applied ceiling change.
+`draw` would take total borrowed principal above `line()`. Borrow less, or wait for repayments or a higher ceiling.
 
 ### `ExcessRepayment()`
 
-`wipe` or `bite` exceeds accrued position debt; a redemption quote/burn exceeds supply; or the candidate-funded part exceeds candidate debt. Re-read the relevant debt/supply and reduce amount.
-
-### `FailedInnerCall()`
-
-An address utility low-level call failed without revert data to bubble. Inspect the called token/dependency and transaction trace.
+`wipe`, `bite` or `cover` asked to repay more than the position owes; a redemption exceeds total supply; or the candidate's share of a redemption exceeds the candidate's debt. Reduce the amount.
 
 ### `GracePeriodNotElapsed()`
 
-`bite` is before `markedAt + grace`. Wait for the stored grace to elapse.
+`bite` came before `markedAt + grace`. Wait.
 
 ### `HealthyPosition()`
 
-`bark`, `barkFor` or `bite` found the position at or above `mat()` or debt-free. No liquidation is due; clear any obsolete mark when eligible.
+`bark`, `barkFor` or `bite` found the position at or above `mat()`, or debt-free. Nothing to liquidate; clear the mark if one is left.
 
 ### `IneligibleRedemptionPosition()`
 
-The candidate has no debt or is at/above `redemptionCeilingCR()`. An absent candidate also fails if reserve is short. Choose an eligible position.
+The candidate has no debt or is at or above `redemptionCeilingCR()`, or no candidate was named when the Treasury could not cover the payout. Choose an eligible position.
 
 ### `InsufficientCollateral()`
 
-`free` exceeds caller collateral, or `bite` full payout exceeds owner collateral. Reduce the amount. The base reserve-payment helper also declares this failure, but the deployed override pays through Treasury.
+`free` asked for more collateral than the position holds, or `bite`'s full payout is more than the position holds. Reduce the amount.
 
 ### `InsufficientRights()`
 
-`earn` lacks caller minting rights. Claim valid uncredited work through the work oracle before minting.
+`earn` asked for more than the caller's minting rights. Claim work in the work oracle first.
 
 ### `InvalidBeneficiary()`
 
-`barkFor` was given the zero-address sentinel. Choose a beneficiary able to receive and use the reward.
+`barkFor` was given the zero address. Name a real address.
 
 ### `InvalidBonusShares()`
 
-`bite` found `cut` larger than the bonus fraction left after `chip`. The deployed parameter validation prevents such settings; inspect wiring rather than retrying unchanged.
+`bite` found the protocol's and marker's shares adding up to more than the whole bonus. `Parameters` refuses such settings, so this points to a wiring fault; retrying will not help.
 
 ### `InvalidFeed()`
 
-Constructor received missing or duplicate primary/NHI/spot feed contracts; also named by the dollar-feed constructor for a missing primary. Correct deployment inputs.
+Deployment only: a feed is missing or two feeds are the same contract.
 
 ### `InvalidOracle()`
 
-Constructor work-oracle validation failed: missing code/factory, malformed rights response or a mismatched exposed vault binding. Correct deployment wiring.
+Deployment only: the work oracle is missing, answers `mintingRights` badly, or names a different vault.
 
 ### `InvalidPrice()`
 
-A price-dependent calculation received a zero dollar price, or the agreement check received zero primary or spot. Freshness and price validity are distinct; inspect both legs.
+A price came back as zero: the dollar price, or the primary or spot price in the agreement check. This is separate from staleness, so check both.
 
 ### `InvalidToken()`
 
-Constructor found missing collateral/supplied stablecoin code or identical collateral and stablecoin. Correct deployment inputs.
+Deployment only: the collateral or a supplied stablecoin is not a deployed contract, or they are the same contract.
 
 ### `MarkExpired()`
 
-`bite` is strictly after `markedAt + grace + tail()`. Mark the still-unsafe position again, then observe the new grace.
-
-### `MathOverflowedMulDiv()`
-
-Full-precision multiplication/division cannot fit its result in `uint256`. Check magnitudes, feed scales and dependency values; this is not a usable quote.
+`bite` came after `markedAt + grace + tail()`. Mark again and wait out the new grace.
 
 ### `MinimumOutNotMet()`
 
-`cash` computed less sIMD than `minGemOut`. Obtain a new quote; change the minimum only if the new payout is acceptable.
+`cash` would pay less sIMD than `minGemOut`. Get a new quote.
 
 ### `NoRealizedBadDebt()`
 
-`cover` named a position that still holds collateral or has no recorded bad debt. Only a drained position's realized shortfall can be covered.
+`cover` named a position that still holds collateral a liquidation could reach, or that has no recorded bad debt. Dust too small for any liquidation does not count as reachable: `cover` moves it to the Treasury and records the shortfall first.
 
 ### `NoSurplus()`
 
-`cover` was called on a vault with no surplus account. The launch vault's surplus is its Treasury, so this is reached only by the base vault.
+`cover` was called on a vault with no Treasury to pay from. The launch vault always has one, so only the base vault reaches this.
 
 ### `NotInitialized()`
 
-`draw` or `earn` found `stablecoin.vault()` does not name this vault. Constructor-created `ImdUSD` binds immediately; inspect deployment identity.
+`draw` or `earn` found the stablecoin is not linked to this vault. The launch vault creates and links its own, so check you have the right contracts.
 
 ### `PositionNotMarked()`
 
-`bite` requires a stored mark and found none. Mark an unsafe position first.
+`bite` found no mark. Mark the position first.
 
 ### `PriceDivergence()`
 
-Raw primary/spot difference exceeds the primary-relative `skew` tolerance. Await or relay truthful converging observations; do not manufacture intermediate prices.
+The primary and spot IMD/ETH prices differ by more than `skew` allows. Wait for prices that agree; the next attestations will usually close the gap.
 
 ### `RedemptionWorsensRatio()`
 
-Candidate sIMD out exceeds the exact proportional collateral share of debt cancelled. Choose another candidate or a feasible smaller redemption; reducing size is not guaranteed to help an undercollateralised candidate.
-
-### `ReentrancyGuardReentrantCall()`
-
-A guarded entry point was called while another guarded operation was executing. Remove nested callbacks; `drip` is not guarded.
-
-### `SafeERC20FailedOperation(address token)`
-
-A safe ERC-20 operation on `token` returned failure. Check token behavior, balances and allowance; dependency reverts with their own data can bubble instead.
+The redemption would take more of the candidate's collateral than its share of the debt cancelled. Choose another candidate. A smaller amount does not always help when the candidate is undercollateralised.
 
 ### `StaleFeed()`
 
-A required primary, NHI, spot or ETH/USD leg is stale or unusable under its staleness check. Refresh the failing leg; a swarm relay cannot repair Chainlink.
+The primary, network health, spot or ETH/USD price is too old. Relay a fresh attestation; nothing relayed can fix a stale Chainlink ETH/USD.
+
+### `TreasuryFactoryMissing()`
+
+Deployment only: there is no `TreasuryFactory` at the address written into the vault.
+
+### `TreasuryNotOurs()`
+
+Deployment only: the factory returned a Treasury that does not serve this vault.
 
 ### `UnderwaterPosition()`
 
-`heel` found the position below `mat()` with debt. Restore safety before clearing.
+`heel` found the position below `mat()` with debt. It has not recovered.
 
 ### `UnexpectedCollateralReceived()`
 
-`lock` received a balance increase different from `amount`. Fee-on-transfer or rebasing collateral is unsupported by this exact-deposit check.
+`lock` received a different amount of collateral than requested. Tokens that charge a transfer fee or rebase are not supported.
 
 ### `UnsafeCollateralRatio()`
 
-`draw` or indebted `free` would leave the caller below `mat()`. Borrow/withdraw less, deposit collateral or repay debt.
+`draw`, or `free` with debt open, would leave the position below `mat()`. Borrow or withdraw less, or deposit or repay first.
 
 ### `WorkCeilingReached()`
 
-`earn` would make cumulative work issuance exceed `earnLine()`. More rights alone do not solve insufficient backing headroom.
+`earn` would take total work minting above `earnLine()`. More rights do not help; the ceiling needs room.
 
 ### `ZeroAmount()`
 
-A positive-amount vault operation received zero, or `cash` rounded to zero sIMD out. Use a positive amount with a nonzero feasible payout.
+An amount was zero, or `cash` would pay out zero sIMD.
+
+### Low-level errors
+
+These come from the OpenZeppelin libraries the vault uses. Ordinary use rarely reaches them.
+
+| Error | Meaning |
+|---|---|
+| `AddressEmptyCode(address target)` | A call went to an address with no code, such as a missing token. |
+| `AddressInsufficientBalance(address account)` | A native-currency send lacked balance. The vault sends no ETH, so this is not expected. |
+| `FailedInnerCall()` | A low-level call failed without a reason. Check the trace. |
+| `MathOverflowedMulDiv()` | A multiply-then-divide result did not fit in 256 bits. Check the magnitudes and feed scales. |
+| `ReentrancyGuardReentrantCall()` | A guarded function was called while another was running. `drip` is not guarded. |
+| `SafeERC20FailedOperation(address token)` | A token transfer returned failure. Check balances, approvals and the token. |
 
 ## Errors from other contracts
 
-This is a complete vault ABI inventory, not a closed list of all possible revert data. `ImdUSD`, collateral, feeds, Treasury and the work oracle can revert with their own errors. Decode these against their own ABIs. Standard Solidity arithmetic panics and out-of-gas failures are not custom errors. ERC-20 mint/burn `Transfer` logs are emitted by the token, not the vault.
+The list above is the vault's own. `ImdUSD`, the collateral, the feeds, the Treasury and the work oracle can revert with their own errors; decode those against their own ABIs. Arithmetic panics and out-of-gas are not custom errors. Token `Transfer` logs come from the token, not the vault.
 
-Do not discover positions from `Bark` alone: many positions have never been marked. See [Reading state](./reading-state.md) for complete-history and unreadable-history handling.
+Do not find positions from `Bark` alone: most positions are never marked. See [Reading state](./reading-state.md).
