@@ -40,7 +40,7 @@ Each step assumes the previous one is merged and green. Steps 2 and 3 are indepe
 | 2b | Oracle paid from the Treasury (`OracleAsker` + `Treasury.fundOracle`) — **built, waits on upstream** | without it every price update is bought by hand in a browser. `OracleAsker` buys through the IdentityMD Intake only when the chain shows a need (a feed 75% of the way to stale, or IMD's v4 pool armed-and-still >half the deviation cap away) and delivers through SwarmRelay inside the Intake's 200k-gas callback stipend (measured 76,807). `fundOracle` streams at most `Parameters.oracleBudget` IMD per UTC day to it — keyless, unwrapping sIMD on the way. **Blocked on Intake PR #66 merging and deploying:** `INTAKE` and `ORACLE_ASKER` are placeholders (`0x…F06`/`0x…f07`) and the asker's constructor refuses an `INTAKE` with no code. |
 | 3 | **Delete the reporter fallback** | a single key can otherwise re-anchor the price — see §4 |
 | 4 | CREATE2 deployment script with address assertions | removes the silent-misconfiguration failure mode — see §6 |
-| 5 | Independent audit of this configuration | the layer that bricked launch 519, never reviewed |
+| 5 | Independent audit of this configuration — **done** (three panels + adversarial + gas, `docs/AUDIT-*-2026-10-05.md`, fixes through `9dd2149`). **Still owed, by decision (2026-10-05): one scoped `adversarial-review` of everything after `03e8d0c`, sent right before the deploy commit is frozen** | the phase-2 fixes (notably the always-lagged redemption cap) have had no outside review |
 | 6 | Keeper / watcher daemon | the protocol is not operable without it — see §7 |
 
 ---
@@ -290,11 +290,9 @@ no agent's tasks are spent for nothing). Turning it on later is a governance act
    `oracle_` so it creates a `SwarmWorkOracle` through `WORK_ORACLE_FACTORY`. The oracle is immutable on
    the vault. `DeployGoverned`/`DeployProtocol` pass zero, which builds the TEST FAUCET (`MockWorkOracle`);
    the mainnet CREATE2 script must not.
-2. **The deferred audit finding needs code, and the vault is immutable.** D1 (adjacent-transaction
-   capital counted toward `backedDebt` and the redemption backing cap) is marked in source as "RESOLVE
-   BEFORE MINTING FROM WORK IS SWITCHED ON". Its fix is an age-based exclusion inside the vault, which a
-   proposal cannot add. So switching minting on safely later means EITHER building that exclusion before
-   mainnet (dormant until the wage is raised), OR deploying a new vault when minting is turned on.
+2. ~~The deferred audit finding needs code.~~ **DONE.** D1's lagged capital is built (`laggedNow`,
+   `BACKING_WARMUP`): the redemption cap reads it at every wage, `backedDebt` once the wage is nonzero.
+   Nothing about minting from work needs a new vault.
 
 ## 8. Open decisions this runbook does not make
 
