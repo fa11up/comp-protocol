@@ -17,6 +17,7 @@ because each one moves the others. Inputs are IMD's own market, read from chain 
 | Primary price max age | 24 h | **1 h** | `PRICE_MAX_AGE` |
 | Spot price max age | 1 h | 1 h | `SPOT_MAX_AGE` |
 | NHI max age | 24 h | 24 h | `NHI_MAX_AGE` |
+| ETH/USD max age | 24 h | **2 h** | `ETH_USD_MAX_AGE`: Chainlink's hourly heartbeat plus one missed round |
 | Price updates | clock | **on demand** | `OracleAsker` |
 
 A liquidator who did not mark the position keeps 16% of the debt repaid; the marker gets 2%, the
@@ -96,7 +97,5 @@ ten minutes at a sixth of the cost of keeping it fresh.
 
 ## Not changed, worth a look
 
-- `ETH_USD_MAX_AGE` is still one day. Chainlink's mainnet ETH/USD heartbeat is one hour with a 0.5%
-  deviation trigger, so a tighter bound (two hours) would match the one-hour IMD price.
 - The research report's redemption divisor (4 → 2) and stability fee (200 → 1000 bps) are still open.
 - The terminal has no "buy an update" button for `askPaid` yet.

@@ -20,12 +20,14 @@ address constant FEE_RECIPIENT = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
 /// it is pinned in source like the attester and the feeds rather than supplied by a deployer.
 address constant CHAINLINK_ETH_USD = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
 
-/// @dev Oldest ETH/USD answer UsdPriceFeed treats as fresh. Chainlink's Sepolia heartbeat is an hour,
-/// but the IMD/ETH leg it is multiplied with is deployed with a one-day maxAge, so the composite is
-/// bounded by its slower leg either way. A stale USD price makes the collateral price stale, so it
-/// halts every price-dependent action — draw, priced free, cash, bark and bite included — until
-/// Chainlink answers again; a reserve asset it prices counts for nothing meanwhile.
-uint256 constant ETH_USD_MAX_AGE = 1 days;
+/// @dev Oldest ETH/USD answer UsdPriceFeed treats as fresh. Chainlink publishes mainnet ETH/USD at least
+/// hourly and whenever it moves 0.5%, so while the aggregator is healthy its answer is never more than
+/// 0.5% off. Two hours is that heartbeat plus one missed round: a single late update does not halt the
+/// vault, and a dead aggregator halts it within two hours rather than a day. It matches the one-hour
+/// IMD/ETH lifetime (PRICE_MAX_AGE) instead of outliving it 24 times. A stale USD price makes the
+/// collateral price stale, so it halts every price-dependent action — draw, priced free, cash, bark and
+/// bite included — until Chainlink answers again; a reserve asset it prices counts for nothing meanwhile.
+uint256 constant ETH_USD_MAX_AGE = 2 hours;
 
 /// @dev Feed lifetimes, the constructor arguments every deployment script passes. A price older than an
 /// hour refuses every price-dependent action until someone buys a fresh one: on demand, by the caller
