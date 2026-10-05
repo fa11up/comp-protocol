@@ -76,3 +76,33 @@ uptrend regime is not a distribution, and a sustained drawdown would move every 
 
 **Decided and built (2026-10-05):** `DRIFT_FALL_TRIGGER_OF_CAP_BPS = 2500`, `DRIFT_RISE_TRIGGER_OF_CAP_BPS = 0`
 (never), `ORACLE_BUDGET_PER_DAY = 15 IMD`; `OracleAsker.triggerBps(feed)` exposes both, and the keeper reads it.
+
+## Can the change be used to drain the Treasury? (reviewed 2026-10-05)
+
+Every path by which Treasury IMD can leave for oracle updates, and what the asymmetric trigger does to it:
+
+| # | guard (where) | what it bounds | effect of the change |
+|---|---|---|---|
+| 1 | Daily budget — `Treasury.fundOracle` caps what it sends per UTC day at `Parameters.oracleBudget` (`oracleSpent`) | **the hard ceiling on Treasury loss, whatever anyone does** | raised 10 → 15 IMD/day (~$134 → ~$201 at today's price) |
+| 2 | Top-up, never pile-up — `fundOracle` sends at most `budget − asker balance` | the asker never holds more than one day's budget | none |
+| 3 | Fixed destination — `fundOracle` pays only `ORACLE_ASKER`, a source constant; the asker has no withdraw function and approves the Intake for exactly one request's price, then resets to zero | IMD can only leave the asker as a payment for one of our three questions | none |
+| 4 | Pinned bodies — `ask` takes only the body whose keccak the asker pins per feed (`WrongBody`) | Treasury money buys only our feeds' questions | none |
+| 5 | Need check — `ask` pays only for (a) NHI near stale (keep-alive) or (b) an IMD/ETH feed whose drift was armed ≥5 and ≤100 blocks earlier and is still present | nobody can make the Treasury pay for a feed that does not need it | **(b) narrowed to falls only.** Rises can no longer trigger Treasury spend at all; a fall must exceed 5% instead of 10%. |
+| 6 | Arming delay — the drift must persist ≥5 blocks, so a push-and-restore inside one transaction cannot trigger | flash-loan manipulation | none (still accepted: two pushes 5 blocks apart can, audit D4) |
+| 7 | One request in flight per feed (2h timeout) and ≥10 minutes between Treasury asks per feed, backing off to 2h after a refused delivery | rate per feed | none |
+| 8 | Price ceiling — `ASK_MAX_PRICE` 1 IMD per request (the Intake's price is the dev's) | a mispriced Intake cannot take more per request | none |
+| 9 | `askPaid` pulls the caller's own IMD first, has no need check and is not budgeted | no Treasury money at all | none |
+| 10 | NHI keep-alive needs a value 75% of the way to its 1-day `maxAge` | nobody can age a feed faster | none |
+
+**What an attacker can do now.** Force Treasury-paid price+spot updates by pushing IMD's pool down 5% and
+holding it (or pushing twice) across ≥5 blocks. At today's pool (~207,881 IMD side, 1% fee) that is
+~5,400 IMD (~$72k) per push and ~$2,900 in fees for one forced pair, against 1 IMD (~$13) of Treasury
+spend: **~216:1 against the attacker**, down from ~450:1 under the old 10% symmetric trigger, because a
+smaller push suffices. The attack earns nothing — the attestations are honest — so it is pure griefing,
+and it cannot exceed guard 1: at most 15 IMD a day, however much the attacker spends. A pushed SPOT value
+can pause the vault (it then disagrees with the 2h PRICE median past the 5% skew bound); it cannot
+misprice collateral, which is valued from PRICE.
+
+**Net.** The ceiling is unchanged in kind (guard 1) and higher in size (15 vs 10 IMD/day, a deliberate
+choice from the history). Per-update griefing got cheaper by half but stays two orders of magnitude
+uneconomic, and the whole upward direction stopped being a trigger.
