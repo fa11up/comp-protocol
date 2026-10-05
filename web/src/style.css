@@ -2129,3 +2129,22 @@ html.app-page body {
 .points-feed li > :not(:first-child) {
   text-align: end;
 }
+
+/* "staging" in the public header chip fades slowly in and out. Still for reduced motion. */
+.chip-pulse {
+  animation: chip-pulse 2.4s ease-in-out infinite;
+}
+@keyframes chip-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip-pulse {
+    animation: none;
+  }
+}

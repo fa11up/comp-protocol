@@ -40,7 +40,13 @@ export function SiteHeader({
           imd<b>USD</b>
         </a>
         <span className="chip">
-          {TERMINAL ? `${network ?? "Sepolia"} · testnet` : "Mainnet · staging"}
+          {TERMINAL ? (
+            `${network ?? "Sepolia"} · testnet`
+          ) : (
+            <>
+              Mainnet · <span className="chip-pulse">staging</span>
+            </>
+          )}
         </span>
         <nav className="site-nav" aria-label="Site">
           {TERMINAL && link("terminal", "terminal/", "Terminal")}
