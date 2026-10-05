@@ -33,6 +33,15 @@ function setEyes(open) {
 }
 setEyes(1);
 
+// Where he looks: 0 is the delivered side-eye, 1 is straight at the viewer (pupils centred in each
+// aperture and a touch larger, so the stare reads at a distance). Used for the video's last beat.
+let LOOK = 0;
+function setLook(k) { LOOK = k; }
+function pupils() {
+  const m = (a, b) => a + (b - a) * LOOK;
+  return [[m(545, 588), m(950, 952), m(58, 62)], [m(1000, 1092), m(940, 940), m(66, 71)]];
+}
+
 function tonePass(tc, rc) {
   const t = tc.getContext("2d"), r = rc.getContext("2d");
   const g = (v) => `rgb(${Math.round(255 * v)},${Math.round(255 * v)},${Math.round(255 * v)})`;
@@ -177,7 +186,8 @@ function lineworkPass(c) {
     c.fillStyle = PAL.ivory; c.beginPath(); c.arc(x + r * 0.32, y - r * 0.05, r * 0.2, 0, 7); c.fill();
     c.restore();
   };
-  pupil(P.eyeL, 545, 950, 58); pupil(P.eyeR, 1000, 940, 66);
+  const [l, r] = pupils();
+  pupil(P.eyeL, ...l); pupil(P.eyeR, ...r);
   // re-stroke lids over pupils
   S(P.lidL, 11, PAL.ink); S(P.lidR, 11, PAL.ink);
   // nostrils
