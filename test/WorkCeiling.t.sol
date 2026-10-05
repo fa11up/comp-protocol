@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {Treasury} from "src/Treasury.sol";
 import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {CDPVault} from "src/CDPVault.sol";
@@ -249,8 +250,15 @@ contract WorkCeilingTest is WorkBackingFixture {
         _fundReserve(20 ether);
         _openDebt(100 ether);
         _mintWork(WORKER, 45 ether);
+        // The operator can no longer take a listed reserve asset out: removing backing needs a
+        // delisting through governance, visible for 48 hours.
         vm.prank(APPROVED_OPERATOR);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.ReserveProtected.selector, asset));
         reserve.withdraw(asset, address(0xBEEF), 2 ether);
+        // The reserve shrinks the same 5% through its market instead: 40 tokens at 95% of the price
+        // are worth what 38 were, so the ceiling falls exactly as the withdrawal used to make it.
+        (uint256 assetPrice,) = reservePrice.latestValue();
+        reservePrice.setValue(assetPrice * 95 / 100);
         assertEq(backedVault.earnLine(), 44 ether);
         _assertRejected(OTHER_WORKER, 1);
         _setRatio(0);

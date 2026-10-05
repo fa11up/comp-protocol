@@ -311,12 +311,22 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(reserve.sync(asset), 20 ether);
         assertEq(reserve.sync(asset), 0);
         asset.mint(address(reserve), 4 ether);
+        // Valuation follows custody with the 4 unsynced: 24 tokens at half value.
+        assertEq(reserve.reserveValueUsd(), 12 ether);
+        assertEq(backedVault.reserveValue(), 12 ether);
+        // A listed reserve asset cannot be withdrawn by the operator at all.
+        vm.prank(APPROVED_OPERATOR);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.ReserveProtected.selector, asset));
+        reserve.withdraw(asset, OTHER_WORKER, 2 ether);
+        // The route that remains: delist through governance (48 hours), then withdraw. The withdrawal
+        // still credits what arrived since the last sync before it lowers the baseline.
+        _register(asset, ISwarmFeed(address(0)), 0);
         vm.prank(APPROVED_OPERATOR);
         reserve.withdraw(asset, OTHER_WORKER, 2 ether);
         assertEq(reserve.totalReceived(asset), 24 ether);
         assertEq(reserve.lastSynced(asset), 22 ether);
-        assertEq(reserve.reserveValueUsd(), 11 ether);
-        assertEq(backedVault.reserveValue(), 11 ether);
+        assertEq(reserve.reserveValueUsd(), 0, "delisted: no longer backing");
+        assertEq(backedVault.reserveValue(), 0);
         assertEq(reserve.sync(asset), 0);
     }
 

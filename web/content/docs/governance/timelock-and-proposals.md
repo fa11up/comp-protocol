@@ -38,8 +38,10 @@ sources:
 | `proposeWage(uint256 wad)` | `(Change.Wage, uint256)` | Decode `pending()`; there is no `pendingWage()`. |
 | `proposeGap(uint256 spread)` | `(Change.Gap, uint256)` | `pendingGap()` |
 | `proposeOracleBudget(uint256 imdPerDay)` | `(Change.OracleBudget, uint256)` | `pendingOracleBudget()` |
+| `proposeRedemptionDivisor(uint256 divisor)` | `(Change.RedemptionDivisor, uint256)` | `pendingRedemptionDivisor()` |
+| `proposeStream(address payee, uint256 perDay)` | `(Change.Stream, address, uint256)` | `pendingStream()` |
 
-`pendingChange()` returns the kind and ETA. Enum encodings follow declaration order from `Economics` through `OracleBudget`. When ETA is zero seconds, there is no pending change; the default enum is not a real economics proposal. A kind-specific reader also returns zero ETA when some other kind is pending.
+`pendingChange()` returns the kind and ETA. Enum encodings follow declaration order from `Economics` through `Stream`. When ETA is zero seconds, there is no pending change; the default enum is not a real economics proposal. A kind-specific reader also returns zero ETA when some other kind is pending.
 
 Applying `Economics` calls `vault.drip()` while the old `duty` is still readable, then replaces the whole set. This makes the fee change forward-only. Reserve application calls `Treasury.setReserveAsset`; other kinds replace their respective stored values. A ceiling below outstanding principal is permitted, so a borrower cannot block application by borrowing above a proposed lower ceiling.
 

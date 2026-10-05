@@ -52,7 +52,7 @@ point: an authority held by a contract with no owner cannot be lost, stolen or m
 
 | name | what it can do | where it lives |
 |---|---|---|
-| `APPROVED_OPERATOR` | propose parameter changes, withdraw from the Treasury, list reserve assets | **cold / multisig. Never on a server.** |
+| `APPROVED_OPERATOR` | propose parameter changes (48 h timelock), list and delist reserve assets, withdraw from the Treasury anything that is not the collateral or a listed reserve asset, and imdUSD only down to outstanding bad debt (for governor-managed LP) | **cold / multisig. Never on a server.** |
 | keeper daemon | relay attestations, bite, mark, buy oracle requests | **hot, on its own machine.** Never the swarm worker box: tasks from strangers execute as that user. |
 | deployer | one-time broadcast; needs ETH only | throwaway, discard after §6 |
 

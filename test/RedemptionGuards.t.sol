@@ -152,8 +152,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         _open(SECOND_BORROWER, 170 ether, 100 ether);
         _reserveIMD(100 ether);
         _mintWork(WORKER, 150 ether); // the ceiling exactly: 100 reserve + a quarter of 200 debt
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 100 ether);
+        _shrinkReserve(100 ether);
         assertEq(stable.totalSupply(), 350 ether);
         assertEq(collateral.balanceOf(address(backedVault)), 370 ether);
         // 370 is held against 350 of supply, so the balance alone would put a COMP at par. What may
@@ -205,8 +204,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         // Enough work-issued supply that mat x the loss-adjusted principal (425) falls short of it.
         _reserveIMD(100 ether);
         _mintWork(WORKER, 170 ether); // ceiling: 100 reserve + a quarter of 350 debt
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 100 ether);
+        _shrinkReserve(100 ether);
         // Drain the first position through a liquidation that exhausts its collateral.
         _setVaultPrice(0.5 ether);
         backedVault.bark(BORROWER);

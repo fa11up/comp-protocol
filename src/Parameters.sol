@@ -14,7 +14,10 @@ import {
     EARN_MAT_BPS,
     WAGE_WAD,
     ORACLE_BUDGET_PER_DAY,
-    MAX_ORACLE_BUDGET_PER_DAY
+    MAX_ORACLE_BUDGET_PER_DAY,
+    REDEMPTION_DIVISOR,
+    STREAM_PAYEE,
+    STREAM_PER_DAY
 } from "./DeploymentConfig.sol";
 
 /// @notice The vault's economic knobs, moved out of source constants into a governed contract.
@@ -58,7 +61,9 @@ contract Parameters is Governed {
         ReserveAsset,
         Wage,
         Gap,
-        OracleBudget
+        OracleBudget,
+        RedemptionDivisor,
+        Stream
     }
 
     uint256 private constant BPS = 10_000;
@@ -76,6 +81,16 @@ contract Parameters is Governed {
     /// into a claim the ceiling then has to absorb — and because a rate above one imdUSD per task makes
     /// no sense against a token meant to be worth a dollar.
     uint256 public constant MAX_WAGE_WAD = 1 ether;
+
+    /// @notice Bounds on the redemption fee divisor: each redemption raises the fee base by
+    /// redeemed / supply / divisor. At 1 a run reaches the 5% cap after 4.5% of supply; at 8 it takes
+    /// 36%. Outside these the fee is either a wall or no brake at all.
+    uint256 public constant MIN_REDEMPTION_DIVISOR = 1;
+    uint256 public constant MAX_REDEMPTION_DIVISOR = 8;
+
+    /// @notice Hard cap on the operator stream, in imdUSD per UTC day ($182,500 a year). A constant,
+    /// so no proposal can turn the stream into a drain.
+    uint256 public constant MAX_STREAM_PER_DAY = 500 ether;
 
     uint256 public constant MIN_GAP = 25;
     uint256 public constant MAX_GAP = 100;
@@ -106,6 +121,11 @@ contract Parameters is Governed {
     /// @notice IMD the Treasury may stream to the oracle asker per UTC day. Governed, and hard-capped
     /// at MAX_ORACLE_BUDGET_PER_DAY so no proposal can turn the stream into a drain.
     uint256 public oracleBudget;
+    /// @notice The live redemption fee divisor; see MIN_/MAX_REDEMPTION_DIVISOR.
+    uint256 public redemptionDivisor;
+    /// @notice Who the Treasury's operator stream pays, and at most how much imdUSD per UTC day.
+    address public streamPayee;
+    uint256 public streamPerDay;
 
     /// @notice The vault these parameters govern: its creator, fixed at construction.
     /// @dev Needed for two things that cannot be done without it: checking a proposed ceiling
@@ -123,6 +143,9 @@ contract Parameters is Governed {
     error WageTooHigh(uint256 wad);
     error GapOutOfRange(uint256 spread);
     error OracleBudgetTooHigh(uint256 imdPerDay);
+    error RedemptionDivisorOutOfRange(uint256 divisor);
+    error StreamTooHigh(uint256 perDay);
+    error StreamPayeeMissing();
 
     /// @dev Seeded from the shipped constants, so a fresh Parameters is exactly the configuration
     /// the vault would have had with them compiled in — including the unlimited default ceiling,
@@ -160,6 +183,10 @@ contract Parameters is Governed {
         _wage = WAGE_WAD;
         if (ORACLE_BUDGET_PER_DAY > MAX_ORACLE_BUDGET_PER_DAY) revert OracleBudgetTooHigh(ORACLE_BUDGET_PER_DAY);
         oracleBudget = ORACLE_BUDGET_PER_DAY;
+        _checkDivisor(REDEMPTION_DIVISOR);
+        redemptionDivisor = REDEMPTION_DIVISOR;
+        _checkStream(STREAM_PAYEE, STREAM_PER_DAY);
+        (streamPayee, streamPerDay) = (STREAM_PAYEE, STREAM_PER_DAY);
     }
 
     /// @notice Queue a complete replacement set. Always all five, so the pending payload is the whole
@@ -191,6 +218,15 @@ contract Parameters is Governed {
     /// Treasury's reserve assets. The Treasury's own rules apply at proposal — imdUSD is refused with
     /// `StablecoinIsNotReserve`, a haircut must be at most 10000 — so a change the register would refuse
     /// never occupies the slot. Applying it, like every other change, is anyone's to do after the delay.
+    function proposeRedemptionDivisor(uint256 divisor) external {
+        _propose(abi.encode(Change.RedemptionDivisor, divisor));
+    }
+
+    /// @notice Propose who the operator stream pays and its daily cap. A zero amount turns it off.
+    function proposeStream(address payee, uint256 perDay) external {
+        _propose(abi.encode(Change.Stream, payee, perDay));
+    }
+
     function proposeReserveAsset(IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps) external {
         _propose(abi.encode(Change.ReserveAsset, asset, priceFeed, haircutBps));
     }
@@ -257,6 +293,20 @@ contract Parameters is Governed {
         return (imdPerDay, at);
     }
 
+    function pendingRedemptionDivisor() external view returns (uint256 divisor, uint256 eta) {
+        (Change kind, uint256 at) = pendingChange();
+        if (at == 0 || kind != Change.RedemptionDivisor) return (0, 0);
+        (, divisor) = abi.decode(pending, (Change, uint256));
+        return (divisor, at);
+    }
+
+    function pendingStream() external view returns (address payee, uint256 perDay, uint256 eta) {
+        (Change kind, uint256 at) = pendingChange();
+        if (at == 0 || kind != Change.Stream) return (address(0), 0, 0);
+        (, payee, perDay) = abi.decode(pending, (Change, address, uint256));
+        return (payee, perDay, at);
+    }
+
     function pendingGap() external view returns (uint256 spread, uint256 eta) {
         (Change kind, uint256 at) = pendingChange();
         if (at == 0 || kind != Change.Gap) return (0, 0);
@@ -283,8 +333,29 @@ contract Parameters is Governed {
         return Treasury(payable(vault.treasury()));
     }
 
+    function _checkDivisor(uint256 divisor) private pure {
+        if (divisor < MIN_REDEMPTION_DIVISOR || divisor > MAX_REDEMPTION_DIVISOR) {
+            revert RedemptionDivisorOutOfRange(divisor);
+        }
+    }
+
+    function _checkStream(address payee, uint256 perDay) private pure {
+        if (perDay > MAX_STREAM_PER_DAY) revert StreamTooHigh(perDay);
+        if (perDay != 0 && payee == address(0)) revert StreamPayeeMissing();
+    }
+
     function _validate(bytes memory payload) internal view override {
         Change kind = _kind(payload);
+        if (kind == Change.RedemptionDivisor) {
+            (, uint256 divisor) = abi.decode(payload, (Change, uint256));
+            _checkDivisor(divisor);
+            return;
+        }
+        if (kind == Change.Stream) {
+            (, address payee, uint256 perDay) = abi.decode(payload, (Change, address, uint256));
+            _checkStream(payee, perDay);
+            return;
+        }
         if (kind == Change.Gap) {
             (, uint256 spread) = abi.decode(payload, (Change, uint256));
             if (spread < MIN_GAP || spread > MAX_GAP) {
@@ -348,6 +419,14 @@ contract Parameters is Governed {
 
     function _apply(bytes memory payload) internal override {
         Change kind = _kind(payload);
+        if (kind == Change.RedemptionDivisor) {
+            (, redemptionDivisor) = abi.decode(payload, (Change, uint256));
+            return;
+        }
+        if (kind == Change.Stream) {
+            (, streamPayee, streamPerDay) = abi.decode(payload, (Change, address, uint256));
+            return;
+        }
         if (kind == Change.Gap) {
             (, gap) = abi.decode(payload, (Change, uint256));
             return;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {ISwarmFeed} from "src/interfaces/ISwarmFeed.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -47,13 +48,29 @@ contract WorkBackingHandler is WorkBackingFixture {
         reserve.sync(asset);
     }
 
+    /// @dev A listed reserve asset cannot leave through the operator (ReserveProtected); once delisted
+    /// through governance it can, and the accounting below must hold either way.
     function withdrawReserve(uint256 raw) external {
         uint256 balance = asset.balanceOf(address(reserve));
         if (balance == 0) return;
         uint256 amount = bound(raw, 1, balance);
+        if (reserve.isReserveAsset(asset)) {
+            vm.prank(APPROVED_OPERATOR);
+            vm.expectRevert(abi.encodeWithSelector(Treasury.ReserveProtected.selector, asset));
+            reserve.withdraw(asset, OTHER_WORKER, amount);
+            return;
+        }
         vm.prank(APPROVED_OPERATOR);
         reserve.withdraw(asset, OTHER_WORKER, amount);
         reserveWithdrawn += amount;
+    }
+
+    /// @dev Delist the reserve asset through governance (48 hours). `governReserveHaircut` relists it.
+    function delistReserve() external {
+        if (!reserve.isReserveAsset(asset)) return;
+        _register(asset, ISwarmFeed(address(0)), 0);
+        reserveHaircutBps = 0;
+        _restoreEthUsd();
     }
 
     function rejectUnauthorizedWithdrawal(uint256 raw) external {
@@ -238,7 +255,7 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         handler = new WorkBackingHandler();
-        bytes4[] memory selectors = new bytes4[](12);
+        bytes4[] memory selectors = new bytes4[](13);
         selectors[0] = handler.donate.selector;
         selectors[1] = handler.syncReserve.selector;
         selectors[2] = handler.withdrawReserve.selector;
@@ -251,6 +268,7 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
         selectors[9] = handler.mintWork.selector;
         selectors[10] = handler.governReserveHaircut.selector;
         selectors[11] = handler.setEthUsd.selector;
+        selectors[12] = handler.delistReserve.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
@@ -262,9 +280,13 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
     function test_handlerReachesSuccessfulMintsAndRejectsAfterBackingContracts() public {
         handler.mintWork(100 ether, false);
         handler.mintWork(1, true);
+        handler.withdrawReserve(type(uint256).max); // refused: the asset is listed
+        assertEq(handler.reserveWithdrawn(), 0, "a listed reserve asset cannot be withdrawn");
+        handler.delistReserve();
         handler.withdrawReserve(type(uint256).max);
         handler.governRatio(0);
         handler.mintWork(1, false);
+        handler.governReserveHaircut(5000); // relist at the fixture's factor
         handler.donate(400 ether);
         handler.setReserveMarket(uint96(2000 ether), false); // the fixture's one-ETH asset price
         handler.syncReserve();

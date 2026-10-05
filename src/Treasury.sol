@@ -91,6 +91,7 @@ contract Treasury {
     event ReserveAssetSet(IERC20 indexed asset, ISwarmFeed indexed priceFeed, uint256 haircutBps);
     event ReserveAssetRemoved(IERC20 indexed asset);
     event OracleFunded(address indexed asker, uint256 imd, uint256 spentToday);
+    event StreamPaid(address indexed payee, uint256 amount, uint256 paidToday);
     event LaunchFeesHandedOff(address indexed factory, uint64 indexed launchNumber, address indexed next);
 
     error Unauthorized();
@@ -105,6 +106,9 @@ contract Treasury {
     error NotAReserveAsset();
     error OracleAskerMissing();
     error NativeTransferFailed();
+    error ReserveProtected(IERC20 token);
+    error BadDebtFirst(uint256 outstanding);
+    error NoStream();
 
     // --- the register ---------------------------------------------------------------------------
 
@@ -306,9 +310,69 @@ contract Treasury {
         return APPROVED_OPERATOR;
     }
 
+    /// @dev Two things the operator cannot take, whatever the destination:
+    ///   - the reserve: any listed reserve asset, and the vault's collateral token (sIMD), which pays
+    ///     redemptions first whether or not it is listed. Removing backing takes a delisting through
+    ///     Parameters, visible for 48 hours, and the collateral can never be withdrawn here at all;
+    ///   - the imdUSD that realized bad debt still needs. The operator may withdraw imdUSD (to provide
+    ///     liquidity, say) only down to the vault's outstanding totalBadDebt, so `cover` comes first.
     function withdraw(IERC20 token, address to, uint256 amount) external {
         if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
+        if (address(token) == _linked(abi.encodeWithSignature("gem()")) || isReserveAsset(token)) {
+            revert ReserveProtected(token);
+        }
+        if (address(token) == _linked(abi.encodeWithSignature("stablecoin()"))) {
+            uint256 owed = _badDebt();
+            uint256 balance = token.balanceOf(address(this));
+            if (balance < amount || balance - amount < owed) revert BadDebtFirst(owed);
+        }
         _withdraw(token, to, amount);
+    }
+
+    // --- the operator stream ------------------------------------------------------------------
+
+    /// @notice The UTC day `streamPaid` counts, and the imdUSD the stream has paid within it.
+    uint256 public streamDay;
+    uint256 public streamPaid;
+
+    /// @notice Pay the governed payee what remains of today's stream, in imdUSD. Anyone may call it.
+    /// @dev The payee and the daily amount are `Parameters.streamPayee` / `streamPerDay`, changeable
+    /// only behind the 48-hour timelock and hard-capped there. A day not claimed is not carried over.
+    /// Like `withdraw`, it never spends imdUSD that outstanding bad debt still needs.
+    /// @return paid imdUSD sent by this call; zero once today's amount is paid or nothing is spare.
+    function payStream() external returns (uint256 paid) {
+        address parameters = _linked(abi.encodeWithSignature("parameters()"));
+        IERC20 token = IERC20(_linked(abi.encodeWithSignature("stablecoin()")));
+        if (parameters == address(0) || address(token) == address(0)) revert NoStream();
+        address payee = abi.decode(_read(parameters, abi.encodeWithSignature("streamPayee()")), (address));
+        uint256 perDay = abi.decode(_read(parameters, abi.encodeWithSignature("streamPerDay()")), (uint256));
+        if (payee == address(0) || perDay == 0) revert NoStream();
+        uint256 day = block.timestamp / 1 days;
+        if (day != streamDay) {
+            streamDay = day;
+            streamPaid = 0;
+        }
+        if (perDay <= streamPaid) return 0;
+        uint256 balance = token.balanceOf(address(this));
+        uint256 owed = _badDebt();
+        uint256 spare = balance > owed ? balance - owed : 0;
+        paid = Math.min(perDay - streamPaid, spare);
+        if (paid == 0) return 0;
+        streamPaid += paid;
+        _withdraw(token, payee, paid);
+        emit StreamPaid(payee, paid, streamPaid);
+    }
+
+    /// @dev The vault's realized, uncovered bad debt; zero for a Treasury no vault stands behind.
+    function _badDebt() private view returns (uint256) {
+        (bool ok, bytes memory data) = vault.staticcall(abi.encodeWithSignature("totalBadDebt()"));
+        return ok && data.length == 32 ? abi.decode(data, (uint256)) : 0;
+    }
+
+    function _read(address target, bytes memory call) private view returns (bytes memory data) {
+        bool ok;
+        (ok, data) = target.staticcall(call);
+        if (!ok || data.length != 32) revert NoStream();
     }
 
     // --- native ETH -----------------------------------------------------------------------------

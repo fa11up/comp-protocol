@@ -130,6 +130,11 @@ uint256 constant LINE = 1_000_000e18;
 /// supply at once costs 5.5% (the 5% cap); at the former 4 it cost 3%. Chosen 2026-10-05.
 uint256 constant REDEMPTION_DIVISOR = 2;
 
+/// @dev The operator stream at launch: who the Treasury pays imdUSD to, and how much per UTC day.
+/// Off until governance proposes a payee and an amount (48-hour timelock, capped in Parameters).
+address constant STREAM_PAYEE = address(0);
+uint256 constant STREAM_PER_DAY = 0;
+
 /// @dev Annual stability fee on open debt, in basis points. 444 at launch (2026-10-05). It accrues through the `chi` index from
 /// that index's last checkpoint (`indexCheckpointAt`), so a governed change in `duty` applies from the
 /// moment it lands. The base vault reads this constant; ParameterizedVault reads `duty()` instead.

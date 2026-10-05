@@ -46,6 +46,12 @@ Redeem. Positive `amount` within supply, enough caller imdUSD, fresh agreeing pr
 
 Burns all `amount`, pays Treasury sIMD first and candidate collateral for the shortfall. Cancels candidate fees before principal without reminting fees. Updates secured collateral, loss/mark state, `totalNonPrincipalRedeemed`, base rate and redemption timestamp. Emits `Cash`, possibly `Heel`. Returns collateral (sIMD) raw units `gemOut`. Atomic; no partial fill or approval.
 
+### `cover(address owner, uint256 amount)`
+
+Cover realized bad debt. `owner` must hold no collateral and have recorded bad debt; positive `amount` no greater than its accrued debt; the Treasury must hold the imdUSD. Anyone may call it.
+
+Burns `amount` of the Treasury's imdUSD and applies it to `owner`'s debt exactly as a repayment: fees first (reminted to the Treasury), then principal. Reduces `totalDebt`, the position's recorded bad debt and `totalBadDebt` together. Emits `Cover`. Reverts `NoRealizedBadDebt` for a position that still holds collateral or owes no recorded bad debt.
+
 ### `draw(uint256 amount)`
 
 Borrow imdUSD. Positive `amount`, fresh agreeing prices, reciprocal stablecoin binding, resulting accrued-debt ratio at least `mat()`, and resulting total principal within `line()` are required.
@@ -101,6 +107,10 @@ Every entry below is unrestricted and changes nothing. Feed-dependent reads can 
 ### `CHOP_PERCENT()`
 
 Returns `uint256`. Fixed liquidation bonus, percent of debt repaid: (under consideration).
+
+### `redemptionDivisor()`
+
+Returns `uint256`. Governed divisor of the redemption fee's base increase: each redemption adds redeemed ÷ supply ÷ this. Value: (under consideration).
 
 ### `REDEMPTION_FEE_CAP_BPS()`
 

@@ -51,7 +51,33 @@
   },
   {
     "type": "function",
+    "name": "MAX_REDEMPTION_DIVISOR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_SKEW_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_STREAM_PER_DAY",
     "inputs": [],
     "outputs": [
       {
@@ -91,6 +117,19 @@
   {
     "type": "function",
     "name": "MIN_GAP",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_REDEMPTION_DIVISOR",
     "inputs": [],
     "outputs": [
       {
@@ -372,6 +411,24 @@
   },
   {
     "type": "function",
+    "name": "pendingRedemptionDivisor",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "divisor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "eta",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pendingReserveAsset",
     "inputs": [],
     "outputs": [
@@ -434,6 +491,29 @@
             "internalType": "uint256"
           }
         ]
+      },
+      {
+        "name": "eta",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingStream",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "payee",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "perDay",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "eta",
@@ -524,6 +604,19 @@
   },
   {
     "type": "function",
+    "name": "proposeRedemptionDivisor",
+    "inputs": [
+      {
+        "name": "divisor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "proposeReserveAsset",
     "inputs": [
       {
@@ -547,6 +640,24 @@
   },
   {
     "type": "function",
+    "name": "proposeStream",
+    "inputs": [
+      {
+        "name": "payee",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "perDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "proposeWage",
     "inputs": [
       {
@@ -560,7 +671,46 @@
   },
   {
     "type": "function",
+    "name": "redemptionDivisor",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "skew",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "streamPayee",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "streamPerDay",
     "inputs": [],
     "outputs": [
       {
@@ -714,6 +864,17 @@
   },
   {
     "type": "error",
+    "name": "RedemptionDivisorOutOfRange",
+    "inputs": [
+      {
+        "name": "divisor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SharesExceedBonus",
     "inputs": [
       {
@@ -723,6 +884,22 @@
       },
       {
         "name": "protocolBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StreamPayeeMissing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StreamTooHigh",
+    "inputs": [
+      {
+        "name": "perDay",
         "type": "uint256",
         "internalType": "uint256"
       }

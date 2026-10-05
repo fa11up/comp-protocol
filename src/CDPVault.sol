@@ -63,6 +63,8 @@ contract CDPVault is ReentrancyGuard {
     error NotInitialized();
     error StaleFeed();
     error ZeroAmount();
+    error NoRealizedBadDebt();
+    error NoSurplus();
     error InsufficientCollateral();
     error InsufficientRights();
     error UnsafeCollateralRatio();
@@ -92,6 +94,7 @@ contract CDPVault is ReentrancyGuard {
     event Bite(address indexed owner, address indexed liquidator, uint256 debtRepaid, uint256 collateralSeized);
     event Bark(address indexed owner, uint256 markedAt, uint256 grace);
     event Heel(address indexed owner);
+    event Cover(address indexed owner, uint256 amount, address indexed payer);
     event IndexCheckpointed(uint256 index, uint256 at);
     event Cash(
         address indexed redeemer,
@@ -160,6 +163,12 @@ contract CDPVault is ReentrancyGuard {
     /// This contract has no setter, so the rate is permanent unless a subclass reads it from
     /// somewhere governed — in which case that governor MUST call `drip` in the same
     /// transaction as the change, or the new rate reaches time that has already elapsed.
+    /// @notice Each redemption raises the fee base by redeemed / supply / this. The base vault reads
+    /// the source constant; ParameterizedVault reads its governed Parameters.
+    function redemptionDivisor() public view virtual returns (uint256) {
+        return REDEMPTION_DIVISOR;
+    }
+
     function duty() public view virtual returns (uint256) {
         return DUTY_BPS;
     }
@@ -466,6 +475,36 @@ contract CDPVault is ReentrancyGuard {
         emit Wipe(msg.sender, amount);
     }
 
+    /// @notice Cover a drained position's realized bad debt with the protocol's own surplus imdUSD.
+    /// @dev Maker's Vow.heal, under a name that is not one letter from `heel`. Anyone may call it: it
+    /// only ever cancels debt that has no collateral left behind it, which raises backing per imdUSD
+    /// for every holder. The surplus is the Treasury's imdUSD (the stability fees it collected), and
+    /// it is spent through the same repayment path as `wipe`, so fees are retired first and the
+    /// position's recorded bad debt, totalBadDebt and totalDebt all move together. Reverts on a
+    /// position that still holds collateral (that is not realized bad debt) and on a vault with no
+    /// surplus account.
+    function cover(address owner, uint256 amount) external nonReentrant {
+        if (amount == 0) revert ZeroAmount();
+        if (_positions[owner].collateral != 0 || _recordedBadDebt[owner] == 0) revert NoRealizedBadDebt();
+        address payer = _surplus();
+        if (payer == address(0)) revert NoSurplus();
+        _accrue(owner);
+        uint256 feePaid = _reduceDebt(owner, amount);
+        stablecoin.burn(payer, amount);
+        if (feePaid != 0) {
+            totalFeesMinted += feePaid;
+            stablecoin.mint(feeRecipient(), feePaid);
+        }
+        _clearIfRecovered(owner);
+        emit Cover(owner, amount, payer);
+    }
+
+    /// @dev The account whose imdUSD `cover` spends. None for the base vault, whose fee recipient is a
+    /// wallet that never agreed to this; ParameterizedVault answers its own Treasury.
+    function _surplus() internal view virtual returns (address) {
+        return address(0);
+    }
+
     /// @notice Burn exactly `amount` caller imdUSD for feed-priced IMD, less the capped fee.
     /// @dev Treasury IMD is spent first; only the shortfall cancels the named candidate's debt.
     /// No approval, partial fill or fee transfer. All checks and both payouts are atomic.
@@ -645,7 +684,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 cap = (REDEMPTION_FEE_CAP_BPS - REDEMPTION_FEE_FLOOR_BPS) * 1e14;
         uint256 minted = _transient(MINTED_THIS_TX_SLOT);
         uint256 prior = supply > minted ? supply - minted : 0;
-        uint256 increase = amount == 0 ? 0 : prior == 0 ? cap : Math.mulDiv(amount, 1e18, prior) / REDEMPTION_DIVISOR;
+        uint256 increase = amount == 0 ? 0 : prior == 0 ? cap : Math.mulDiv(amount, 1e18, prior) / redemptionDivisor();
         return Math.min(decayedRedemptionBaseRate() + increase, cap);
     }
 

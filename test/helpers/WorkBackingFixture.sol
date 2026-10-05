@@ -197,6 +197,16 @@ abstract contract WorkBackingFixture is Test {
         asset.mint(address(reserve), value * 2);
     }
 
+    /// @dev Stage a SMALLER collateral reserve: move `amount` of the vault's collateral out of the
+    /// Treasury, as the Treasury. This is test staging, not a contract route — the operator can no
+    /// longer withdraw the collateral (Treasury.withdraw reverts ReserveProtected), which is the point.
+    /// Tests about redemption with a thin or empty reserve use it where they once withdrew. The tokens
+    /// go to the same address the withdrawal used to send them to, so every balance reads as before.
+    function _shrinkReserve(uint256 amount) internal {
+        vm.prank(address(reserve));
+        collateral.transfer(APPROVED_OPERATOR, amount);
+    }
+
     function _mintWork(address worker, uint256 amount) internal {
         vm.prank(worker);
         backedVault.earn(amount);

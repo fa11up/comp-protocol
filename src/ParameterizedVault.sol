@@ -97,6 +97,14 @@ contract ParameterizedVault is CDPVault {
         return parameters.duty();
     }
 
+    function redemptionDivisor() public view override returns (uint256) {
+        return parameters.redemptionDivisor();
+    }
+
+    function _surplus() internal view override returns (address) {
+        return address(treasury);
+    }
+
     function skew() public view override returns (uint256) {
         return parameters.skew();
     }

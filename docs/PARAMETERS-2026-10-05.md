@@ -17,7 +17,7 @@ because each one moves the others. Inputs are IMD's own market, read from chain 
 | Primary price max age | 24 h | **1 h** | `PRICE_MAX_AGE` |
 | Spot price max age | 1 h | 1 h | `SPOT_MAX_AGE` |
 | NHI max age | 24 h | 24 h | `NHI_MAX_AGE` |
-| Redemption fee divisor | 4 | **2** | `REDEMPTION_DIVISOR` (governable next) |
+| Redemption fee divisor | 4 | **2** | `Parameters.redemptionDivisor`, governed 1–8 |
 | Stability fee `duty` | 200 bps | **444 bps** | `DUTY_BPS` (governed, 0–1000) |
 | Debt ceiling `line` | unlimited | **$1M** | `LINE` (governed) |
 | ETH/USD max age | 24 h | **2 h** | `ETH_USD_MAX_AGE`: Chainlink's hourly heartbeat plus one missed round |
@@ -104,7 +104,17 @@ ten minutes at a sixth of the cost of keeping it fresh.
 - The debt ceiling `line` starts unlimited. The pool absorbs about $290k per profitable liquidation,
   so an initial ceiling near $1M is worth considering.
 
-## Open: the redemption fee divisor
+## Treasury exits (decided 2026-10-05)
+
+- **Bad debt first.** `cover(owner, amount)` lets anyone burn the Treasury's imdUSD against a drained
+  position's realized bad debt, through the ordinary repayment path.
+- **Reserve protected.** The operator's `withdraw` refuses the collateral (sIMD, which pays redemptions
+  first) and every listed reserve asset; removing backing requires a delisting behind the timelock.
+  imdUSD may be withdrawn (governors run LP directly) but never below outstanding `totalBadDebt`.
+- **Capped stream.** `payStream()` pays a governed payee up to `streamPerDay` imdUSD per UTC day, hard
+  cap 500 a day; off at launch. It also never dips below outstanding bad debt.
+
+## Analysis: the redemption fee divisor
 
 A redemption's fee is `0.5% + min(base + redeemed ÷ supply ÷ divisor, 4.5%)`, where `base` remembers
 recent redemptions and halves every 12 hours. The divisor sets how fast the fee climbs during a run.
@@ -121,7 +131,7 @@ $1 × (1 − fee) − 1.5% before they step in). Liquity uses 2 because it redee
 Here redemption only reaches the reserve and positions already within `gap` of `mat`, and a
 candidate's ratio may not worsen, so borrowers need less protection. **Recommendation: keep 4.**
 
-## Open: the stability fee
+## Analysis: the stability fee
 
 The research's 10% was sized to pay for clock-driven oracle updates (~$37k a year per feed). On-demand
 pricing removed that: the Treasury's own oracle bill is about $2,100 a year (NHI kept alive) plus rare

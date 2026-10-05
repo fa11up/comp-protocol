@@ -24,6 +24,7 @@ spirit: short, physical, and of a piece with the rest (`heel` calls the dog off 
 | `drip()` | `pokeIndex` | MCD `Jug.drip` | Checkpoint the stability-fee index. |
 | `cash(amount, minGemOut, candidate)` | `redeem` | MCD `End.cash` | Burn imdUSD for sIMD at the lesser of $1 and backing per unit, less the fee. |
 | `heel(owner)` | `clearRecoveredMark` | coined | Clear the mark on a position that has recovered above `mat`. |
+| `cover(owner, amount)` | — | MCD `Vow.heal` (renamed: `heal` is one letter from `heel`) | Burn Treasury imdUSD to repay a drained position's realized bad debt. Anyone may call it. |
 | `earn(amount)` | `mintFromWork` | coined | Mint imdUSD against attested swarm work, within `earnLine`. |
 | `SwarmRelay.relayAndBark` / `relayAndBite` | `relayAndMark` / `relayAndLiquidate` | — | Relay an attestation and act on the fresh price in one transaction. |
 

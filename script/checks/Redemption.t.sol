@@ -1037,8 +1037,14 @@ contract RedemptionTest is Test {
         // Read FIRST: a view inside the argument list consumes the prank (this reverted
         // Unauthorized once already), so the balance is hoisted out of the pranked call.
         uint256 third = imd.balanceOf(address(treasury)) / 3;
+        // The operator can no longer withdraw the collateral reserve (ReserveProtected); the smaller
+        // reserve this variant needs is staged by moving the tokens out as the Treasury, to the same
+        // address the withdrawal used to send them to.
         vm.prank(APPROVED_OPERATOR);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.ReserveProtected.selector, address(imd)));
         treasury.withdraw(imd, APPROVED_OPERATOR, third);
+        vm.prank(address(treasury));
+        imd.transfer(APPROVED_OPERATOR, third);
         nhi.setValue(0.6 ether);
         assertEq(vault.mat(), 200);
         // The cap does NOT bind here, and that is the correct reading rather than a weaker test: the

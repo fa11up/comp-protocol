@@ -86,8 +86,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         // Season the principal: debt younger than twelve hours is charged the fee but does not move
         // the base, and this run is about the documented curve (see test_freshPrincipal... below).
         _advance(12 hours);
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 900 ether);
+        _shrinkReserve(900 ether);
         uint256 reserveOnlyCalls;
         uint256 mixedCalls;
         uint256 positionOnlyCalls;
@@ -140,8 +139,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     /// that has accrued fees moves the base by exactly the fees' share. A reserve-funded burn, and
     /// principal older than twelve hours, follow the curve as before.
     function test_freshPrincipalIsChargedTheFullFeeAndOnlyCancelledFeesMoveTheBase() public {
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        _shrinkReserve(1000 ether);
         assertEq(backedVault.redemptionFeeBps(50 ether), 300, "the quote includes the increase");
         assertEq(backedVault.stabilityFeeOf(BORROWER), 0, "no time has passed since the mint");
         (uint256 collateralBefore,) = backedVault.positions(BORROWER);
@@ -193,8 +191,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     /// @dev Cancelled fees are never fresh, whichever order the principal was minted in: a burn that
     /// covers accrued fees and then fresh principal moves the base by exactly the fees' share.
     function test_cancelledFeesMoveTheBaseEvenWhenTheRestOfTheBurnIsFresh() public {
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        _shrinkReserve(1000 ether);
         _advance(12 hours); // the original 1000 has aged out
         vm.prank(BORROWER);
         backedVault.draw(50 ether); // fresh, dated now; 1800/1050 stays above the 170% floor
@@ -217,8 +214,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     /// hours kept any amount of principal fresh forever. The record's timestamp is amount-weighted
     /// now, so a wei moves it by at most a second and the seasoned principal counts in full.
     function test_oneWeiTopUpsCannotKeepPrincipalFresh() public {
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        _shrinkReserve(1000 ether);
         for (uint256 i; i < 6; ++i) {
             _advance(12 hours - 60);
             vm.prank(BORROWER);
@@ -236,8 +232,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     /// @dev A one-wei top-up a minute inside the window moves the record by one second at most, so
     /// eleven hours later the original principal has aged out and counts in full.
     function test_aWeiTopUpMovesTheRecordByItsShareOfThePrincipal() public {
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        _shrinkReserve(1000 ether);
         uint256 start = vm.getBlockTimestamp();
         _advance(12 hours - 60);
         vm.prank(BORROWER);
@@ -254,8 +249,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     /// @dev Two equal tranches six hours apart are dated three hours after the first: the whole
     /// record is fresh until fifteen hours, the same principal-time as one amount held for twelve.
     function test_equalTranchesAgeOutAtTheirAverageAge() public {
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        _shrinkReserve(1000 ether);
         // Deposit enough for a second 1000 at a healthy ratio while staying inside the band.
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(BORROWER, 1800 ether);
@@ -294,8 +288,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     /// record whose age is the amount-weighted mean, rounded toward the present, and the vault's
     /// freshness decision for the whole record flips exactly where that mean says it should.
     function testFuzz_topUpWeightsTheRecordByAmount(uint256 gapSeed, uint256 topUpSeed, uint256 probeSeed) public {
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        _shrinkReserve(1000 ether);
         uint256 gap = bound(gapSeed, 1, 12 hours - 1);
         uint256 topUp = bound(topUpSeed, 1, 58 ether); // 1800/1058 stays healthy and inside the band
         uint256 start = vm.getBlockTimestamp();
@@ -423,8 +416,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
 
     function test_positionBurnAloneTightensDebtTerm() public {
         // Reserve exits through its authorized owner before this scenario starts.
-        vm.prank(APPROVED_OPERATOR);
-        reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
+        _shrinkReserve(1000 ether);
         _mintWork(WORKER, 250 ether);
         uint256 rights = workOracle.mintingRights(WORKER);
         _redeem(100 ether);

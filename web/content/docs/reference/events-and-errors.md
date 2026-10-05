@@ -34,6 +34,10 @@ Emitted after successful liquidation. `debtRepaid` is the total imdUSD burned, i
 
 Emitted after successful redemption. `burned` is imdUSD raw units burned. `gemOut` is total collateral (sIMD) payout, `reserveOut` its Treasury portion, `debtCancelled` the candidate accrued debt cancelled, and `feeBps` the charged fee in basis points. Candidate can be unused when reserve covers the payout. Requires all `cash` guards.
 
+### `Cover(address indexed owner, uint256 amount, address indexed payer)`
+
+Emitted when `cover` repays a drained position's debt from the Treasury's imdUSD. `amount` is the imdUSD burned, fees first; `payer` is the Treasury.
+
 ### `Draw(address indexed account, uint256 amount)`
 
 Positive imdUSD principal minted to `account` after `draw` checks; amount in imdUSD raw units.
@@ -149,6 +153,14 @@ Full-precision multiplication/division cannot fit its result in `uint256`. Check
 ### `MinimumOutNotMet()`
 
 `cash` computed less sIMD than `minGemOut`. Obtain a new quote; change the minimum only if the new payout is acceptable.
+
+### `NoRealizedBadDebt()`
+
+`cover` named a position that still holds collateral or has no recorded bad debt. Only a drained position's realized shortfall can be covered.
+
+### `NoSurplus()`
+
+`cover` was called on a vault with no surplus account. The launch vault's surplus is its Treasury, so this is reached only by the base vault.
 
 ### `NotInitialized()`
 

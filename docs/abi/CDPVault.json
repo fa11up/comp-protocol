@@ -250,6 +250,24 @@
   },
   {
     "type": "function",
+    "name": "cover",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "cut",
     "inputs": [],
     "outputs": [
@@ -659,6 +677,19 @@
   },
   {
     "type": "function",
+    "name": "redemptionDivisor",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "redemptionFeeBps",
     "inputs": [
       {
@@ -958,6 +989,31 @@
   },
   {
     "type": "event",
+    "name": "Cover",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Draw",
     "inputs": [
       {
@@ -1206,6 +1262,16 @@
   {
     "type": "error",
     "name": "MinimumOutNotMet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoRealizedBadDebt",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoSurplus",
     "inputs": []
   },
   {
