@@ -25,6 +25,38 @@ contract PayingVault is CDPVault {
     }
 }
 
+/// @dev Pays like Uniswap-launch `PoolFees._send`: a bare call forwarding all gas, success read back.
+contract FeePayer {
+    function pay(address to, uint256 amount) external returns (bool ok) {
+        assembly ("memory-safe") {
+            ok := call(gas(), to, amount, 0, 0, 0, 0)
+        }
+    }
+
+    function payWithStipend(address payable to, uint256 amount) external {
+        to.transfer(amount); // 2,300 gas: an empty receive() must still accept it
+    }
+
+    receive() external payable {}
+}
+
+/// @dev Re-enters syncNative while receiving a withdrawal, to try to count the remainder twice.
+contract ReenteringRecipient {
+    Treasury private immutable treasury;
+    uint256 public creditedDuringCall;
+
+    constructor(Treasury treasury_) {
+        treasury = treasury_;
+    }
+
+    receive() external payable {
+        creditedDuringCall = treasury.syncNative();
+    }
+}
+
+/// @dev Refuses ETH, so a failed withdrawal can be observed.
+contract Refuser {}
+
 contract TreasuryTest is Test {
     address private constant STRANGER = address(0x5174);
     address private constant DESTINATION = address(0xD35);
@@ -116,7 +148,7 @@ contract TreasuryTest is Test {
     /// than the constant being bent to the test.
     function test_aLiquidationsProtocolShareArrivesAndSyncRecordsIt() public {
         vm.etch(FEE_RECIPIENT, address(treasury).code);
-        Treasury live = Treasury(FEE_RECIPIENT);
+        Treasury live = Treasury(payable(FEE_RECIPIENT));
 
         TestSwarmFeed price = new TestSwarmFeed(1 ether);
         TestSwarmFeed spot = new TestSwarmFeed(1 ether);
@@ -151,5 +183,95 @@ contract TreasuryTest is Test {
         assertEq(live.totalReceived(IERC20(address(imd))), 0, "arrival alone records nothing");
         assertEq(live.sync(IERC20(address(imd))), arrived, "sync turns the balance into a receipt");
         assertEq(live.totalReceived(IERC20(address(imd))), arrived);
+    }
+
+    // --- native ETH ---------------------------------------------------------------------------
+
+    /// @dev Why it exists: a launch pool pays its requester's LP fees in both currencies, possibly ETH,
+    /// through a bare call. Without receive() that payout fails and is owed forever to an address
+    /// that can never take it.
+    function test_acceptsALaunchPoolFeePayout() public {
+        FeePayer payer = new FeePayer();
+        vm.deal(address(payer), 3 ether);
+        assertTrue(payer.pay(address(treasury), 2 ether), "a PoolFees-style payout succeeds");
+        payer.payWithStipend(payable(address(treasury)), 1 ether);
+        assertEq(address(treasury).balance, 3 ether);
+    }
+
+    function test_syncNativeCreditsArrivalsIncludingForcedOnesAndNothingTwice() public {
+        (bool ok,) = address(treasury).call{value: 2 ether}("");
+        assertTrue(ok);
+        assertEq(treasury.totalReceived(treasury.NATIVE()), 0, "arrival alone records nothing");
+        assertEq(treasury.syncNative(), 2 ether);
+        assertEq(treasury.syncNative(), 0, "a second sync credits nothing");
+
+        vm.deal(address(treasury), address(treasury).balance + 1 ether); // forced: no receive() call
+        vm.prank(STRANGER);
+        assertEq(treasury.syncNative(), 1 ether, "anyone may record it");
+        assertEq(treasury.totalReceived(treasury.NATIVE()), 3 ether);
+    }
+
+    function test_nativeWithdrawalIsOperatorOnlyAndKeepsTheEarnings() public {
+        vm.deal(address(treasury), 5 ether);
+        treasury.syncNative();
+
+        vm.prank(STRANGER);
+        vm.expectRevert(Treasury.Unauthorized.selector);
+        treasury.withdrawNative(payable(DESTINATION), 1 ether);
+
+        vm.prank(APPROVED_OPERATOR);
+        treasury.withdrawNative(payable(DESTINATION), 3 ether);
+        assertEq(DESTINATION.balance, 3 ether);
+        assertEq(treasury.totalReceived(treasury.NATIVE()), 5 ether, "earnings are a running total");
+        assertEq(treasury.syncNative(), 0, "the withdrawal is not fresh revenue");
+    }
+
+    function test_nativeWithdrawalCreditsAnUnsyncedArrivalFirst() public {
+        vm.deal(address(treasury), 4 ether); // never synced
+        vm.prank(APPROVED_OPERATOR);
+        treasury.withdrawNative(payable(DESTINATION), 1 ether);
+        assertEq(treasury.totalReceived(treasury.NATIVE()), 4 ether, "the arrival was not lost to the withdrawal");
+    }
+
+    function test_nativeWithdrawalRefusesDegenerateCallsAndSurfacesAFailedSend() public {
+        vm.deal(address(treasury), 1 ether);
+        vm.startPrank(APPROVED_OPERATOR);
+        vm.expectRevert(Treasury.InvalidRecipient.selector);
+        treasury.withdrawNative(payable(address(0)), 1);
+        vm.expectRevert(Treasury.InvalidRecipient.selector);
+        treasury.withdrawNative(payable(address(treasury)), 1);
+        vm.expectRevert(Treasury.ZeroAmount.selector);
+        treasury.withdrawNative(payable(DESTINATION), 0);
+        address refuser = address(new Refuser());
+        vm.expectRevert(Treasury.NativeTransferFailed.selector);
+        treasury.withdrawNative(payable(refuser), 1);
+        vm.expectRevert(Treasury.NativeTransferFailed.selector);
+        treasury.withdrawNative(payable(DESTINATION), 2 ether); // more than it holds
+        vm.stopPrank();
+        assertEq(address(treasury).balance, 1 ether);
+    }
+
+    function test_reenteringSyncDuringANativeWithdrawalCreditsNothingTwice() public {
+        vm.deal(address(treasury), 10 ether);
+        treasury.syncNative();
+        ReenteringRecipient recipient = new ReenteringRecipient(treasury);
+        vm.prank(APPROVED_OPERATOR);
+        treasury.withdrawNative(payable(address(recipient)), 4 ether);
+        assertEq(recipient.creditedDuringCall(), 0, "the baseline moved before the call");
+        assertEq(treasury.totalReceived(treasury.NATIVE()), 10 ether);
+        assertEq(treasury.syncNative(), 0);
+    }
+
+    function testFuzz_nativeRecordNeverExceedsWhatArrived(uint96 a, uint96 b, uint96 out) public {
+        vm.deal(address(treasury), uint256(a));
+        treasury.syncNative();
+        vm.deal(address(treasury), uint256(a) + uint256(b));
+        uint256 w = bound(uint256(out), 0, uint256(a) + uint256(b));
+        if (w > 0) {
+            vm.prank(APPROVED_OPERATOR);
+            treasury.withdrawNative(payable(DESTINATION), w);
+        }
+        treasury.syncNative();
+        assertEq(treasury.totalReceived(treasury.NATIVE()), uint256(a) + uint256(b));
     }
 }

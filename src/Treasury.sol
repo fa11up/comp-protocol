@@ -29,6 +29,11 @@ import {IShareVault} from "./interfaces/IShareVault.sol";
 /// (`registrar`), so every listing, delisting and repricing waits the same 48 hours a fee change
 /// does, is readable while it waits, and can be applied by anyone. There is no owner path to it.
 ///
+/// It also accepts native ETH, by plain transfer or payout, recorded under `NATIVE` exactly as a
+/// token is: `syncNative` credits it and only the operator moves it out. A launch pool's LP fees are
+/// paid to its requester in BOTH of the pool's currencies, and a pool may be paired with ETH; a
+/// Treasury that refused ETH would leave that half owed forever to an address that can never take it.
+///
 /// What it is NOT: a treasury policy. There is no swap, no liquidity deployment and no accounting of
 /// what revenue was for. Those decisions are not made yet, and a contract that cannot be upgraded is
 /// the wrong place to guess at them. Withdrawal takes its destination as an argument precisely so the
@@ -54,6 +59,10 @@ contract Treasury {
     }
 
     uint256 private constant BPS = 10_000;
+
+    /// @notice The key native ETH is recorded under in `totalReceived` and `lastSynced`. No ERC-20 can
+    /// live at the zero address, so it cannot collide with a token's record.
+    IERC20 public constant NATIVE = IERC20(address(0));
 
     /// @notice The contract that created this treasury: for a deployment, the vault whose revenue
     /// lands here, whose Parameters governs the register, and whose imdUSD may never be reserve.
@@ -87,6 +96,7 @@ contract Treasury {
     error HaircutOutOfRange(uint256 bps);
     error NotAReserveAsset();
     error OracleAskerMissing();
+    error NativeTransferFailed();
 
     // --- the register ---------------------------------------------------------------------------
 
@@ -291,6 +301,50 @@ contract Treasury {
     function withdraw(IERC20 token, address to, uint256 amount) external {
         if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
         _withdraw(token, to, amount);
+    }
+
+    // --- native ETH -----------------------------------------------------------------------------
+
+    /// @notice Accept ETH from anyone. Deliberately empty: a payer forwarding only a stipend still
+    /// succeeds, and ETH that arrives without calling this at all (a forced send) is recorded the
+    /// same way, by `syncNative`.
+    receive() external payable {}
+
+    /// @notice Record any ETH that has arrived since the last call. Callable by anyone.
+    /// @return credited The amount added to the native running total.
+    function syncNative() external returns (uint256 credited) {
+        uint256 balance = address(this).balance;
+        uint256 counted = lastSynced[NATIVE];
+        if (balance <= counted) {
+            lastSynced[NATIVE] = balance;
+            return 0;
+        }
+        credited = balance - counted;
+        lastSynced[NATIVE] = balance;
+        totalReceived[NATIVE] += credited;
+        emit Received(NATIVE, credited, totalReceived[NATIVE]);
+    }
+
+    /// @notice Move ETH out, to a destination the operator names. The same authority and the same
+    /// accounting order as `withdraw`: credit the unsynced arrival, move the baseline, then transfer,
+    /// so a recipient re-entering `syncNative` during the call credits nothing twice.
+    function withdrawNative(address payable to, uint256 amount) external {
+        if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
+        if (to == address(0) || to == address(this)) revert InvalidRecipient();
+        if (amount == 0) revert ZeroAmount();
+        uint256 before = address(this).balance;
+        uint256 counted = lastSynced[NATIVE];
+        if (before > counted) {
+            uint256 credited = before - counted;
+            totalReceived[NATIVE] += credited;
+            emit Received(NATIVE, credited, totalReceived[NATIVE]);
+        }
+        lastSynced[NATIVE] = before > amount ? before - amount : 0;
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) revert NativeTransferFailed();
+        uint256 remaining = address(this).balance;
+        if (remaining < lastSynced[NATIVE]) lastSynced[NATIVE] = remaining;
+        emit Withdrawn(NATIVE, to, amount);
     }
 
     /// @notice Release reserve IMD for a redemption priced and burned by this Treasury's vault.

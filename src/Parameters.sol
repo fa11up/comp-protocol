@@ -279,7 +279,7 @@ contract Parameters is Governed {
     }
 
     function _treasury() private view returns (Treasury) {
-        return Treasury(vault.treasury());
+        return Treasury(payable(vault.treasury()));
     }
 
     function _validate(bytes memory payload) internal view override {
