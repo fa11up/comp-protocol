@@ -212,13 +212,18 @@ function pixelMark(c, cx, cy, size, col) {
 function lettering(c) {
   const IN = 172;
   c.save(); c.textBaseline = "middle"; c.fillStyle = PAL.ink;
-  // banner: imd + bold USD, centred in the banner frame
-  const by = IN - 6 + 63, bx = NW / 2, size = 104;
-  c.font = `400 ${size}px ${MONO}`; const w1 = c.measureText("imd").width;
-  c.font = `700 ${size}px ${MONO}`; const w2 = c.measureText("USD").width;
-  const x0 = bx - (w1 + w2) / 2;
-  c.font = `400 ${size}px ${MONO}`; c.textAlign = "left"; c.fillText("imd", x0, by + 10);
-  c.font = `700 ${size}px ${MONO}`; c.fillText("USD", x0 + w1, by + 10);
+  // banner: imd + bold USD, centred on the glyphs' measured ink (not the font's nominal box) with clear
+  // space above and below inside the frame's inner field
+  const bannerY = IN - 6, bannerH = 126, by = bannerY + bannerH / 2, bx = NW / 2, size = 74;
+  c.textBaseline = "alphabetic";
+  c.font = `400 ${size}px ${MONO}`; const m1 = c.measureText("imd"), w1 = m1.width;
+  c.font = `700 ${size}px ${MONO}`; const m2 = c.measureText("USD"), w2 = m2.width;
+  const asc = Math.max(m1.actualBoundingBoxAscent, m2.actualBoundingBoxAscent);
+  const desc = Math.max(m1.actualBoundingBoxDescent, m2.actualBoundingBoxDescent);
+  const base = by + (asc - desc) / 2, x0 = bx - (w1 + w2) / 2;
+  c.font = `400 ${size}px ${MONO}`; c.textAlign = "left"; c.fillText("imd", x0, base);
+  c.font = `700 ${size}px ${MONO}`; c.fillText("USD", x0 + w1, base);
+  c.textBaseline = "middle";
   // denominations
   c.textAlign = "center"; c.font = `700 150px ${MONO}`;
   const cw = 330, ch = 250;
