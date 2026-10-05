@@ -24,3 +24,5 @@ web/.vite/
 # points CLI output
 /points.json
 /dist-public/
+deploy/mainnet/out/*.json
+deploy/mainnet/out/bodies/*.json

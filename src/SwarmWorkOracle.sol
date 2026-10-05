@@ -9,8 +9,7 @@ import {
     ATTESTATION_CHAIN_ID,
     ATTESTATION_ANSWER_TYPE,
     ERC8004_ADAPTER,
-    WAGE_WAD,
-    WORK_ORACLE_FACTORY
+    WAGE_WAD
 } from "./DeploymentConfig.sol";
 
 interface IAdapter8004 {
@@ -90,12 +89,19 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
 
     /// @param vault_ The only consumer. Three ways to be a legitimate one: a vault that already has
     /// code; the vault creating this from its own constructor, which has no code yet and is
-    /// recognised as the creator; or a vault mid-construction that arrived through
-    /// `WorkOracleFactory`, which passes its OWN caller and so vouches for it.
+    /// recognised as the creator; or a vault mid-construction that arrived through a CONTRACT —
+    /// `WorkOracleFactory`, which passes its own caller. Only an account with no code is refused for
+    /// naming a codeless vault.
+    /// @dev This used to require that contract to BE `WORK_ORACLE_FACTORY`. That made the factory's
+    /// initcode (which embeds this constructor) contain the factory's own address, so no CREATE2
+    /// address could ever satisfy it and the mainnet plan could not converge (found 2026-10-05). The
+    /// comparison guarded nothing the vault does not already check: CDPVault._validateOracle refuses
+    /// any oracle whose `vault()` is not the vault itself, so an oracle created elsewhere for a
+    /// not-yet-deployed address can never be consumed by anyone but whatever lands there.
     constructor(address vault_, uint256 maxAge_)
         SwarmFeed(ORACLE_ATTESTER, ATTESTATION_RELAYER, ATTESTATION_CHAIN_ID, ATTESTATION_ANSWER_TYPE, maxAge_, 10_000)
     {
-        if (vault_ != msg.sender && vault_.code.length == 0 && msg.sender != WORK_ORACLE_FACTORY) {
+        if (vault_ != msg.sender && vault_.code.length == 0 && msg.sender.code.length == 0) {
             revert InvalidVault();
         }
         vault = vault_;

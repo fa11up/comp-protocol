@@ -39,9 +39,9 @@ Each step assumes the previous one is merged and green. Steps 2 and 3 are indepe
 | 2 | sIMD as the collateral token (wrap on deposit) — **built** | decides what collateral *is*. Deploy the vault with `StakedIMD` `0x9Efa934D9fAd4AE28c998a40195646b965a97247` as its collateral token: it then prices collateral through a `SharePriceFeed` it creates, and `lockIMD` wraps plain IMD on deposit. Fork-tested against the live vault (`test/ShareCollateralFork.t.sol`). |
 | 2b | Oracle paid from the Treasury (`OracleAsker` + `Treasury.fundOracle`) — **built, waits on upstream** | without it every price update is bought by hand in a browser. `OracleAsker` buys through the IdentityMD Intake only when the chain shows a need (a feed 75% of the way to stale, or IMD's v4 pool armed-and-still >half the deviation cap away) and delivers through SwarmRelay inside the Intake's 200k-gas callback stipend (measured 76,807). `fundOracle` streams at most `Parameters.oracleBudget` IMD per UTC day to it — keyless, unwrapping sIMD on the way. **Blocked on Intake PR #66 merging and deploying:** `INTAKE` and `ORACLE_ASKER` are placeholders (`0x…F06`/`0x…f07`) and the asker's constructor refuses an `INTAKE` with no code. |
 | 3 | **Delete the reporter fallback** | a single key can otherwise re-anchor the price — see §4 |
-| 4 | CREATE2 deployment script with address assertions | removes the silent-misconfiguration failure mode — see §6 |
+| 4 | CREATE2 deployment script with address assertions — **built** (`script/DeployMainnet.s.sol`, `deploy/mainnet/`), rehearsed on a fork | removes the silent-misconfiguration failure mode — see §6 |
 | 5 | Independent audit of this configuration — **done** (three panels + adversarial + gas, `docs/AUDIT-*-2026-10-05.md`, fixes through `9dd2149`). **Still owed, by decision (2026-10-05): one scoped `adversarial-review` of everything after `03e8d0c`, sent right before the deploy commit is frozen** | the phase-2 fixes (notably the always-lagged redemption cap) have had no outside review |
-| 6 | Keeper / watcher daemon | the protocol is not operable without it — see §7 |
+| 6 | Keeper / watcher daemon — **mainnet-ready** (`fa11up/imd-keeper@c9b8eaa`), rehearsed bark → bite → Treasury-paid ask on a fork | the protocol is not operable without it — see §7 |
 
 ---
 
@@ -214,6 +214,37 @@ prior transaction. The canonical deterministic deployer
 **`0x4e59b44847b379578588920cA78FbF26c0B4956C`** is live on mainnet and Sepolia with identical
 bytecode (verified 2026-10-04), so the same salts give the same addresses on both, and later on Base
 and Robinhood Chain.
+
+### As built (2026-10-05): `script/DeployMainnet.s.sol`
+
+```bash
+node deploy/mainnet/check-bodies.mjs                     # the 3 Intake bodies: prefixes match, relative windows, no guards
+git switch -c release/mainnet                            # plan.py rewrites constants the Sepolia fork tests use
+python3 deploy/mainnet/plan.py --write --operator <cold governance> --intake <the swarm's Intake>
+#   sets APPROVED_OPERATOR, FEE_RECIPIENT, INTAKE, then converges ATTESTATION_RELAYER, WORK_ORACLE_FACTORY,
+#   ORACLE_ASKER, TREASURY_FACTORY and CHAINLINK_ETH_USD on the CREATE2 plan (4 passes from the Sepolia config)
+forge test && <suites> ; git commit                      # THIS commit is what the scoped review and the broadcast use
+KEEPER_DIR=../imd-keeper deploy/mainnet/rehearse-fork.sh # full rehearsal on an anvil fork (does not touch the tree)
+OPERATOR=<cold governance> forge script script/DeployMainnet.s.sol --rpc-url $MAINNET_RPC_URL \
+    --broadcast --slow --account <throwaway deployer>
+```
+
+`run()` refuses unless: chain id 1; Chainlink is mainnet's and fresh; every planned address equals its
+source constant; `INTAKE` has code; `OPERATOR` equals `APPROVED_OPERATOR`; the broadcaster is NOT the
+operator; StakedIMD wraps IMD; the wage and the stream ship off. It is resumable (an address that already
+has code is skipped) and it reads the whole stack back off chain before writing
+`deploy/mainnet/out/deployment.json` + `bodies/`, which is what the keeper runs from.
+
+Choices fixed in the script, part of the deploy commit: salts `infer-protocol/mainnet/v1/<Contract>`; feed
+`maxDeviationBps` **2000** (the asker asks on drift at 10%); the asker treats price and spot as
+pool-tracked and keeps only NHI alive on the Treasury.
+
+Rehearsed on a mainnet fork: 8 transactions, **26.2M gas** in total, the largest the vault at **12.7M**
+(block limit 60M) — about 0.026 ETH at 1 gwei.
+
+FOUND WHILE BUILDING IT: `SwarmWorkOracle`'s constructor compared its creator to `WORK_ORACLE_FACTORY`, so
+the factory's initcode contained the factory's own address and no CREATE2 address could ever satisfy it.
+It now accepts any contract creator; `CDPVault._validateOracle` is what binds the oracle to the vault.
 
 ### The sequence
 

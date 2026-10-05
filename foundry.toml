@@ -8,6 +8,10 @@ evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
 bytecode_hash = "none"
+# DeployMainnet reads the Intake body templates and writes the deployment record. bytecode_hash "none" is
+# load-bearing there: with a metadata hash, editing any DeploymentConfig constant would move every
+# CREATE2 address that imports it, and the planned addresses would never converge.
+fs_permissions = [{ access = "read", path = "./deploy/mainnet/bodies" }, { access = "read-write", path = "./deploy/mainnet/out" }]
 
 # Each top-level call is its own transaction, which is what clears transient storage between them.
 # ParameterizedVault.backedDebt() reads the debt a transaction STARTED at, held in transient storage,

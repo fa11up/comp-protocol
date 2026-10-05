@@ -19,6 +19,12 @@ abstract contract DeployPreflight {
     function _preflight() internal view {
         require(ATTESTATION_RELAYER.code.length != 0, "preflight: ATTESTATION_RELAYER has no code on this chain");
         require(TREASURY_FACTORY.code.length != 0, "preflight: TREASURY_FACTORY has no code on this chain");
+        _preflightPriceLeg();
+    }
+
+    /// @dev The external price authority alone. DeployMainnet deploys the relay and the factories itself
+    /// (at planned CREATE2 addresses it checks separately), so it cannot require them to exist already.
+    function _preflightPriceLeg() internal view {
         require(CHAINLINK_ETH_USD.code.length != 0, "preflight: CHAINLINK_ETH_USD has no code on this chain");
         (, int256 answer,, uint256 updatedAt,) = IAggregatorV3(CHAINLINK_ETH_USD).latestRoundData();
         require(answer > 0, "preflight: CHAINLINK_ETH_USD answers no price");
