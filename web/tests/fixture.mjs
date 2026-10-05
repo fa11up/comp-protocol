@@ -164,6 +164,12 @@ function call(s, params) {
   }
   const { functionName: f, args = [] } = decoded;
   s.calls.push({ name, fn: f, args });
+  if (
+    s.collateralFeedFail &&
+    name === "ParameterizedVault" &&
+    f === "collateralPriceFeed"
+  )
+    throw Error("execution reverted");
   // Plain-IMD collateral answers none of the share members.
   if (
     !s.share &&

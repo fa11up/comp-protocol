@@ -1325,6 +1325,21 @@ try {
     await expectText(page.locator(".pane-redemption"), "sIMD");
     passed("The redemption desk speaks sIMD for the reserve and the payout");
   }
+  {
+    // sIMD is priced from IMD: with the vault's collateral feed unreadable, the terminal derives the same
+    // figure from IMD / USD and the exchange rate, so the position still reads the same.
+    const { page } = await setup({
+      state: { share: true, collateralFeedFail: true },
+    });
+    await connect(page);
+    await tab(page, "position");
+    const pos = page.locator(".pane-position");
+    await expectText(pos, "$1.5 / IMD");
+    await expectText(pos, "800 sIMD ≈ 1,000 IMD");
+    passed(
+      "An unreadable collateral feed falls back to IMD / USD times the exchange rate",
+    );
+  }
   assert.deepEqual(errors, []);
   passed(
     "No browser console errors or uncaught exceptions in mocked workflows",

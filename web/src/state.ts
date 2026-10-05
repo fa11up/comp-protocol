@@ -317,7 +317,7 @@ export async function snapshot(
       underlying.toLowerCase() !== targets.gem.address.toLowerCase()
     ) {
       targets.underlying = { address: underlying, abi: r.abis.MockIMD };
-      const [rate, uSymbol, uDecimals, priceFeed] = await Promise.all([
+      const [rate, uSymbol, uDecimals] = await Promise.all([
         r.client.readContract({
           address: targets.gem.address,
           abi: shareAbi,
@@ -327,23 +327,33 @@ export async function snapshot(
         }),
         read(r, targets.underlying, "symbol", [], bn),
         read(r, targets.underlying, "decimals", [], bn),
-        r.client.readContract({
+      ]);
+      // sIMD is priced from IMD: IMD/USD times the exchange rate, per 1e18 raw units. The vault's own
+      // collateralPriceFeed computes exactly that; if it cannot be read, derive the same figure here.
+      try {
+        const priceFeed = (await r.client.readContract({
           address: vault.address,
           abi: vaultShareAbi,
           functionName: "collateralPriceFeed",
           blockNumber: bn,
-        }),
-      ]);
-      targets.collateralPriceFeed = {
-        address: priceFeed as Address,
-        abi: r.abis.UsdPriceFeed,
-      };
-      const [data, stale, maxAge] = await Promise.all([
-        read(r, targets.collateralPriceFeed, "latestValue", [], bn),
-        read(r, targets.collateralPriceFeed, "isStale", [], bn),
-        read(r, targets.collateralPriceFeed, "maxAge", [], bn),
-      ]);
-      feeds.Collateral = { value: data[0], updated: data[1], stale, maxAge };
+        })) as Address;
+        targets.collateralPriceFeed = {
+          address: priceFeed,
+          abi: r.abis.UsdPriceFeed,
+        };
+        const [data, stale, maxAge] = await Promise.all([
+          read(r, targets.collateralPriceFeed, "latestValue", [], bn),
+          read(r, targets.collateralPriceFeed, "isStale", [], bn),
+          read(r, targets.collateralPriceFeed, "maxAge", [], bn),
+        ]);
+        feeds.Collateral = { value: data[0], updated: data[1], stale, maxAge };
+      } catch {
+        if (feeds.USD)
+          feeds.Collateral = {
+            ...feeds.USD,
+            value: (feeds.USD.value * (rate as bigint)) / 10n ** 18n,
+          };
+      }
       setCollateral({
         symbol: v.gemSymbol,
         decimals: Number(v.gemDecimals),
@@ -371,8 +381,8 @@ export async function snapshot(
       }
     }
   } catch {
-    // A share whose rate or price cannot be read must not fall back to the IMD price: that would
-    // misvalue every position by the exchange rate. The collateral price reads as unavailable.
+    // A share whose exchange rate cannot be read has no IMD equivalent: a raw sIMD amount is not an IMD
+    // amount (one sIMD is several IMD), and the vault's own share price halts in this case too.
     if (targets.underlying) {
       share = true;
       errors.push("Collateral");
