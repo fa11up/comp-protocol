@@ -42,6 +42,7 @@ export const LEGACY_NAMES: Readonly<Record<string, string>> = {
   wage: "compPerTaskWad",
   stablecoin: "compToken",
   backingPerUnit: "backingPerComp",
+  gem: "imdToken",
   // governance
   pendingGap: "pendingRedemptionSpread",
   pendingEarnMat: "pendingWorkRatio",

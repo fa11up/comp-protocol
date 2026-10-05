@@ -41,6 +41,25 @@ const optional = parseAbi([
 ]);
 for (const n of ["ParameterizedVault", "PriceFeed", "NhiFeed", "SpotFeed"])
   abi[n] = [...abi[n], ...optional];
+// sIMD collateral (share mode): the collateral token is an ERC-4626 share of IMD with 24 decimals,
+// and the vault prices it through its own collateralPriceFeed. Off by default (launch 688 is plain IMD).
+abi.ShareToken = [
+  ...abi.MockIMD,
+  ...parseAbi([
+    "function asset() view returns (address)",
+    "function convertToAssets(uint256 shares) view returns (uint256)",
+    "function redeem(uint256 shares, address receiver, address owner) returns (uint256)",
+  ]),
+];
+abi.ParameterizedVault = [
+  ...abi.ParameterizedVault,
+  ...parseAbi([
+    "function collateralPriceFeed() view returns (address)",
+    "function lockIMD(uint256 assets)",
+  ]),
+];
+/** IMD raw units per 1e18 raw sIMD units: one whole sIMD (1e24) is worth 1.25 IMD. */
+export const RATE = 125n * 10n ** 10n;
 export const account = "0x0000000000000000000000000000000000000a11";
 export const candidate = "0x0000000000000000000000000000000000000b22";
 export const addresses = {
@@ -51,6 +70,8 @@ export const addresses = {
   treasury: "0x0000000000000000000000000000000000000014",
   usdPriceFeed: "0x0000000000000000000000000000000000000015",
   oracle: "0x0000000000000000000000000000000000000016",
+  underlying: "0x0000000000000000000000000000000000000017",
+  collateralPriceFeed: "0x0000000000000000000000000000000000000018",
 };
 const W = 10n ** 18n;
 export const txHash = "0x" + "ab".repeat(32);
@@ -89,6 +110,8 @@ export const fixture = () => ({
   now: BigInt(Math.floor(Date.now() / 1000)),
   pendingKind: 5,
   pendingEta: 1n,
+  share: false,
+  underlyingAllowance: 0n,
 });
 export const block = (s) => ({
   number: "0x100",
@@ -116,7 +139,9 @@ const byAddr = Object.fromEntries(
   Object.entries(addresses).map(([k, v]) => [v.toLowerCase(), k]),
 );
 const abiName = {
-  imdToken: "MockIMD",
+  imdToken: "ShareToken",
+  underlying: "MockIMD",
+  collateralPriceFeed: "UsdPriceFeed",
   compToken: "CompToken",
   parameters: "Parameters",
   treasury: "Treasury",
@@ -139,6 +164,17 @@ function call(s, params) {
   }
   const { functionName: f, args = [] } = decoded;
   s.calls.push({ name, fn: f, args });
+  // Plain-IMD collateral answers none of the share members.
+  if (
+    !s.share &&
+    ((name === "imdToken" &&
+      ["asset", "convertToAssets", "redeem"].includes(f)) ||
+      (name === "ParameterizedVault" &&
+        ["collateralPriceFeed", "lockIMD"].includes(f)) ||
+      name === "underlying" ||
+      name === "collateralPriceFeed")
+  )
+    throw Error("execution reverted");
   const fn = a.find((x) => x.type === "function" && x.name === f);
   if (
     name === "oracle" &&
@@ -238,17 +274,24 @@ function call(s, params) {
         ? [s.now - 22000n, 21600n, true, account]
         : [0n, 0n, false, zeroAddress];
     else value = scalar[f];
-  } else if (["imdToken", "compToken"].includes(name)) {
+    // Share mode: collateral amounts are raw sIMD, worth RATE IMD per 1e18.
+    if (s.share && f === "positions") value = [(value[0] * W) / RATE, value[1]];
+    if (s.share && ["redemptionReserve", "securedCollateral"].includes(f))
+      value = (value * W) / RATE;
+  } else if (["imdToken", "compToken", "underlying"].includes(name)) {
+    const shareToken = s.share && name === "imdToken";
     value = {
       deployer: account,
-      decimals: 18,
+      decimals: shareToken ? 24 : 18,
       // The deployed Sepolia token still carries the testnet symbol; the terminal reads it.
-      symbol: name === "compToken" ? "COMP" : "IMD",
-      balanceOf: 10000n * W,
-      allowance: s.allowance,
+      symbol: name === "compToken" ? "COMP" : shareToken ? "sIMD" : "IMD",
+      balanceOf: shareToken ? 8000n * 10n ** 24n : 10000n * W,
+      allowance: name === "underlying" ? s.underlyingAllowance : s.allowance,
       totalSupply: s.supply,
       vault: addresses.ParameterizedVault,
+      asset: addresses.underlying,
     }[f];
+    if (f === "convertToAssets") value = (args[0] * RATE) / W;
   } else if (name === "parameters") {
     const current = {
       debtCeiling: 1000000n * W,
@@ -297,11 +340,13 @@ function call(s, params) {
       latestValue: [
         name === "usdPriceFeed"
           ? 2n * W
-          : name === "NhiFeed"
-            ? (85n * W) / 100n
-            : name === "SpotFeed"
-              ? BigInt(Math.round(1e15 * s.spotMultiplier))
-              : W / 1000n,
+          : name === "collateralPriceFeed"
+            ? (2n * W * RATE) / W
+            : name === "NhiFeed"
+              ? (85n * W) / 100n
+              : name === "SpotFeed"
+                ? BigInt(Math.round(1e15 * s.spotMultiplier))
+                : W / 1000n,
         s.now - 120n,
       ],
       isStale: s.stale,
@@ -399,7 +444,10 @@ export function sent(s, tx) {
   const a = abi[abiName[name] || name];
   const d = decodeFunctionData({ abi: a, data: tx.data });
   s.sent.push({ name, ...d });
-  if (d.functionName === "approve") s.allowance = d.args[1];
+  if (d.functionName === "approve") {
+    if (name === "underlying") s.underlyingAllowance = d.args[1];
+    else s.allowance = d.args[1];
+  }
   return txHash;
 }
 export async function installWallet(

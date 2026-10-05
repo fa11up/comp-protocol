@@ -1,4 +1,5 @@
 import { unit } from "./unit";
+import { gemUnit, fmtGem, exactGem, perImd } from "./collateral";
 import { Ticker } from "./motion";
 import { useEffect, useRef, useState } from "react";
 import { zeroAddress, type Address } from "viem";
@@ -115,7 +116,7 @@ export function Redemption({
           label="Reserve on hand"
           info="Redemptions are paid from the reserve first; a candidate position covers any shortfall."
         >
-          {fmt(v.redemptionReserve)} IMD
+          {fmtGem(v.redemptionReserve)} {gemUnit()}
         </Row>
         <Row
           label="Eligibility ceiling"
@@ -191,7 +192,7 @@ export function Redemption({
               const result = payout(
                 n,
                 fee,
-                s.feeds.USD.value,
+                s.feeds.Collateral.value,
                 s.v.redemptionReserve,
                 s.v.backingPerUnit,
               );
@@ -248,7 +249,7 @@ export function Redemption({
                     },
                     (f) =>
                       f.name === "MinimumOutNotMet"
-                        ? `The payout at block ${s.block} is below your minimum of ${exact(minimum)} IMD. Refresh the quote or widen slippage.`
+                        ? `The payout at block ${s.block} is below your minimum of ${exactGem(minimum)} ${gemUnit()}. Refresh the quote or widen slippage.`
                         : f.name === "IneligibleRedemptionPosition" &&
                             cr !== undefined
                           ? `The candidate sits at ${ratio(cr)}; only positions with debt below ${ratio(s.v.redemptionCeilingCR)} can be redeemed against.`
@@ -335,7 +336,7 @@ export function Redemption({
                 ? actions.reason
                 : !ready
                   ? "Fresh, agreeing primary, spot, NHI and USD feeds are required."
-                  : `Burn ${unit()} for IMD at the lesser of par and backing per ${unit()}, less the fee.`}
+                  : `Burn ${unit()} for ${gemUnit()} at the lesser of par and backing per ${unit()}, less the fee.`}
           </p>
         </form>
         <div id="redemption-feedback" role="status" aria-live="polite">
@@ -346,7 +347,9 @@ export function Redemption({
             <div className="section-label">
               Quote / block {q.block.toString()} · clears on any change
             </div>
-            <Row label="You receive">{exact(q.out)} IMD</Row>
+            <Row label="You receive">
+              {exactGem(q.out)} {gemUnit()}
+            </Row>
             <Row label="Your fee">
               {percent(q.fee)} ·{" "}
               {q.capped ? `$${fmt(q.paidAt)} (backing cap)` : "$1 (par)"}
@@ -354,7 +357,7 @@ export function Redemption({
             <Row label="Served by">{q.source}</Row>
             {q.reserveOut > 0n && q.positionOut > 0n && (
               <Row label="Reserve / position">
-                {fmt(q.reserveOut)} / {fmt(q.positionOut)} IMD
+                {fmtGem(q.reserveOut)} / {fmtGem(q.positionOut)} {gemUnit()}
               </Row>
             )}
             {q.cr !== undefined && (
@@ -365,7 +368,9 @@ export function Redemption({
                 {fmt(q.debtCancelled)} {unit()}
               </Row>
             )}
-            <Row label="Minimum received">{exact(q.minimum)} IMD</Row>
+            <Row label="Minimum received">
+              {exactGem(q.minimum)} {gemUnit()}
+            </Row>
             <Action
               id="cash"
               label="Review redemption"
@@ -374,7 +379,7 @@ export function Redemption({
                 target: s!.targets.ParameterizedVault,
                 fn: "cash",
                 args: [q.amount, q.minimum, q.candidate],
-                summary: `Burn ${exact(q.amount)} ${unit()}. Receive at least ${exact(q.minimum)} IMD; quoted ${exact(q.out)} IMD from ${q.source.toLowerCase()} at ${percent(q.fee)}${q.capped ? `, paid at $${fmt(q.paidAt)} per ${unit()} because backing is below par` : ""}. Candidate: ${q.candidate}. The fee is retained as backing.`,
+                summary: `Burn ${exact(q.amount)} ${unit()}. Receive at least ${exactGem(q.minimum)} ${gemUnit()}; quoted ${exactGem(q.out)} ${gemUnit()} from ${q.source.toLowerCase()} at ${percent(q.fee)}${q.capped ? `, paid at $${fmt(q.paidAt)} per ${unit()} because backing is below par` : ""}. Candidate: ${q.candidate}. The fee is retained as backing.`,
               })}
             />
           </div>

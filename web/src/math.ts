@@ -63,7 +63,8 @@ export function payout(
       `Backing per ${unit()} is zero. A redemption would pay nothing.`,
     );
   const out = (comp * scale) / price;
-  if (!out) throw Error("This amount rounds to zero IMD. Increase the amount.");
+  if (!out)
+    throw Error("This amount rounds to a zero payout. Increase the amount.");
   const reserveOut = out < reserve ? out : reserve;
   return {
     out,
@@ -101,6 +102,10 @@ export function message(e: unknown): string {
   if (err.code === 4001 || /rejected|denied/i.test(err.message || ""))
     return "Wallet request rejected. Nothing was sent. You can try again.";
   const known: Record<string, string> = {
+    SameBlockRedeem:
+      "This sIMD arrived in the current block and cannot be unstaked until the next one. Try again in a few seconds.",
+    CollateralNotWrappable:
+      "This vault's collateral is not a staked token, so it cannot stake IMD for you. Deposit the collateral token directly.",
     StaleFeed:
       "A required price feed is stale. Wait for a fresh attestation, then refresh.",
     PriceDivergence:

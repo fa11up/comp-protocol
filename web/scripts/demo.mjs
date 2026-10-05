@@ -53,6 +53,8 @@ const url = `http://127.0.0.1:${server.address().port}/`;
 // (so the redemption cap binds), question-pinned feeds and a pending governance change.
 const s = Object.assign(fixture(), {
   mode: "attested",
+  // Mainnet collateral: sIMD, a 24-decimal share of IMD's staking vault.
+  share: true,
   backing: (94n * 10n ** 18n) / 100n,
   pinned: true,
   reserve: 250n * 10n ** 18n,

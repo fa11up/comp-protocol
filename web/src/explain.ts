@@ -1,4 +1,5 @@
 import { unit } from "./unit.ts";
+import { gemUnit, fmtGem } from "./collateral.ts";
 import type { Address } from "viem";
 import type { Snapshot } from "./state.ts";
 import { ours } from "./names.ts";
@@ -36,7 +37,7 @@ const feedLabel: Record<string, string> = {
   SpotFeed: "IMD / ETH spot",
   USD: "IMD / USD",
 };
-const imd = (v: bigint) => `${fmt(v)} IMD`;
+const imd = (v: bigint) => `${fmtGem(v)} ${gemUnit()}`;
 const comp = (v: bigint) => `${fmt(v)} ${unit()}`;
 
 export function explain(f: Failure, c: Context): string | undefined {
@@ -44,7 +45,7 @@ export function explain(f: Failure, c: Context): string | undefined {
   const v = s?.v ?? {};
   const amount = c.args.find((a) => typeof a === "bigint") as
     bigint | undefined;
-  const price = s?.feeds.USD?.value;
+  const price = s?.feeds.Collateral?.value;
   const collateral = v.positions?.[0] as bigint | undefined;
   const debt = v.debtOf as bigint | undefined;
   const minCR = v.mat as bigint | undefined;
@@ -130,7 +131,7 @@ export function explain(f: Failure, c: Context): string | undefined {
     case "ERC20InsufficientAllowance": {
       const [, allowance, needed] = f.args as [unknown, bigint, bigint];
       if (typeof allowance === "bigint" && typeof needed === "bigint")
-        return `The vault may spend ${fmt(allowance)} IMD; this needs ${fmt(needed)}. Approve the amount first.`;
+        return `The vault may spend ${fmt(allowance)}; this needs ${fmt(needed)}. Approve the amount first.`;
       return;
     }
     case "WrongQuestion": {

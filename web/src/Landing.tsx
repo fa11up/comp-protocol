@@ -134,8 +134,8 @@ export function Landing() {
               A dollar the swarm <span>prices.</span>
             </h1>
             <p className="lede">
-              imdUSD is a dollar-denominated stablecoin borrowed against IMD.
-              Its price comes from panels of IdentityMD agents, signed and
+              imdUSD is a dollar-denominated stablecoin borrowed against staked
+              IMD. Its price comes from panels of IdentityMD agents, signed and
               checked on chain against the exact question each feed pins.
             </p>
             <div className="hero-actions">
@@ -156,9 +156,10 @@ export function Landing() {
             <article>
               <h3>Borrow</h3>
               <p>
-                Deposit IMD and mint imdUSD against it. A position must stay at
-                or above the minimum collateral ratio: 150% while the network is
-                healthy, rising toward 200% as network health falls.
+                Deposit IMD or sIMD and mint imdUSD against it; IMD is staked
+                for you. A position must stay at or above the minimum collateral
+                ratio: 150% while the network is healthy, rising toward 200% as
+                network health falls.
               </p>
               <p className="figure">
                 150–200% <span>minimum ratio</span>
@@ -167,7 +168,7 @@ export function Landing() {
             <article>
               <h3>Redeem</h3>
               <p>
-                Burn imdUSD for IMD at the lesser of $1 and the backing behind
+                Burn imdUSD for sIMD at the lesser of $1 and the backing behind
                 each imdUSD, less a fee that grows with the size of the
                 redemption and stays in the protocol as backing.
               </p>

@@ -1,6 +1,7 @@
 import { parseAbi, zeroAddress, type Address } from "viem";
 import { activeInterface, onChain } from "./names";
 import { setUnit } from "./unit";
+import { setCollateral, shareAbi, vaultShareAbi } from "./collateral";
 import type { Runtime, Target } from "./config";
 // Dynamic implementation-derived ABIs are loaded only after manifest verification.
 export const read = async (
@@ -64,7 +65,7 @@ export async function snapshot(
   if (!vault) throw Error("The handoff is missing ParameterizedVault.");
   await Promise.all(
     Object.entries({
-      imdToken: "MockIMD",
+      gem: "MockIMD",
       stablecoin: "ImdUSD",
       parameters: "Parameters",
       treasury: "Treasury",
@@ -136,8 +137,9 @@ export async function snapshot(
     ...jobs.map((fn) => safe(fn, () => read(r, vault, fn, [], bn))),
     safe("fee", () => read(r, vault, "redemptionFeeBps", [0n], bn)),
     safe("supply", () => read(r, targets.stablecoin, "totalSupply", [], bn)),
-    safe("imdDeployer", () => read(r, targets.imdToken, "deployer", [], bn)),
-    safe("imdDecimals", () => read(r, targets.imdToken, "decimals", [], bn)),
+    safe("imdDeployer", () => read(r, targets.gem, "deployer", [], bn)),
+    safe("gemDecimals", () => read(r, targets.gem, "decimals", [], bn)),
+    safe("gemSymbol", () => read(r, targets.gem, "symbol", [], bn)),
     safe("compDecimals", () => read(r, targets.stablecoin, "decimals", [], bn)),
     ...[
       "governor",
@@ -181,20 +183,14 @@ export async function snapshot(
             "collateralRatio",
             "badDebtOf",
           ].map((fn) => safe(fn, () => read(r, vault, fn, [account], bn))),
-          safe("imdBalance", () =>
-            read(r, targets.imdToken, "balanceOf", [account], bn),
+          safe("gemBalance", () =>
+            read(r, targets.gem, "balanceOf", [account], bn),
           ),
           safe("compBalance", () =>
             read(r, targets.stablecoin, "balanceOf", [account], bn),
           ),
           safe("allowance", () =>
-            read(
-              r,
-              targets.imdToken,
-              "allowance",
-              [account, vault.address],
-              bn,
-            ),
+            read(r, targets.gem, "allowance", [account, vault.address], bn),
           ),
           safe("rights", () =>
             read(r, targets.oracle, "mintingRights", [account], bn),
@@ -306,7 +302,102 @@ export async function snapshot(
       }
     }
   }
-  if (v.imdDecimals !== 18 || v.compDecimals !== 18)
+  // The collateral: a staking-vault share (sIMD) answers asset() with IMD, and the vault then prices
+  // it through its own collateralPriceFeed. Plain IMD answers neither, and keeps the USD feed.
+  let share = false;
+  try {
+    const underlying = (await r.client.readContract({
+      address: targets.gem.address,
+      abi: shareAbi,
+      functionName: "asset",
+      blockNumber: bn,
+    })) as Address;
+    if (
+      underlying !== zeroAddress &&
+      underlying.toLowerCase() !== targets.gem.address.toLowerCase()
+    ) {
+      targets.underlying = { address: underlying, abi: r.abis.MockIMD };
+      const [rate, uSymbol, uDecimals, priceFeed] = await Promise.all([
+        r.client.readContract({
+          address: targets.gem.address,
+          abi: shareAbi,
+          functionName: "convertToAssets",
+          args: [10n ** 18n],
+          blockNumber: bn,
+        }),
+        read(r, targets.underlying, "symbol", [], bn),
+        read(r, targets.underlying, "decimals", [], bn),
+        r.client.readContract({
+          address: vault.address,
+          abi: vaultShareAbi,
+          functionName: "collateralPriceFeed",
+          blockNumber: bn,
+        }),
+      ]);
+      targets.collateralPriceFeed = {
+        address: priceFeed as Address,
+        abi: r.abis.UsdPriceFeed,
+      };
+      const [data, stale, maxAge] = await Promise.all([
+        read(r, targets.collateralPriceFeed, "latestValue", [], bn),
+        read(r, targets.collateralPriceFeed, "isStale", [], bn),
+        read(r, targets.collateralPriceFeed, "maxAge", [], bn),
+      ]);
+      feeds.Collateral = { value: data[0], updated: data[1], stale, maxAge };
+      setCollateral({
+        symbol: v.gemSymbol,
+        decimals: Number(v.gemDecimals),
+        share: true,
+        rate: rate as bigint,
+        underlyingSymbol: uSymbol,
+        underlyingDecimals: Number(uDecimals),
+      });
+      share = true;
+      if (account) {
+        await Promise.all([
+          safe("underlyingBalance", () =>
+            read(r, targets.underlying, "balanceOf", [account], bn),
+          ),
+          safe("underlyingAllowance", () =>
+            read(
+              r,
+              targets.underlying,
+              "allowance",
+              [account, vault.address],
+              bn,
+            ),
+          ),
+        ]);
+      }
+    }
+  } catch {
+    // A share whose rate or price cannot be read must not fall back to the IMD price: that would
+    // misvalue every position by the exchange rate. The collateral price reads as unavailable.
+    if (targets.underlying) {
+      share = true;
+      errors.push("Collateral");
+      setCollateral({
+        symbol: v.gemSymbol,
+        decimals: Number(v.gemDecimals ?? 18),
+        share: true,
+        rate: 0n,
+      });
+    }
+  }
+  if (!share) {
+    setCollateral({
+      symbol: v.gemSymbol,
+      decimals: Number(v.gemDecimals ?? 18),
+    });
+    if (feeds.USD) feeds.Collateral = feeds.USD;
+  }
+  // The vault prices collateral per 1e18 raw units and never reads decimals, so any collateral scale
+  // is displayable. The stablecoin is fixed at 18.
+  if (
+    v.gemDecimals === undefined ||
+    Number(v.gemDecimals) > 36 ||
+    v.compDecimals !== 18
+  )
     throw Error(
       "Unexpected token decimals for this deployment. Transactions disabled.",
     );
@@ -325,7 +416,7 @@ export async function snapshot(
 }
 export function feedsReady(s: Snapshot | undefined) {
   if (!s) return false;
-  for (const key of ["PriceFeed", "NhiFeed", "SpotFeed", "USD"]) {
+  for (const key of ["PriceFeed", "NhiFeed", "SpotFeed", "USD", "Collateral"]) {
     const f = s.feeds[key];
     if (!f || f.stale || !f.updated || f.value <= 0n) return false;
   }

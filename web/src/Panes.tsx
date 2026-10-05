@@ -1,5 +1,14 @@
 import { activeInterface } from "./names";
 import { unit } from "./unit";
+import {
+  collateral,
+  gemUnit,
+  fmtGem,
+  asImd,
+  perImd,
+  shareAbi,
+  vaultShareAbi,
+} from "./collateral";
 import { useEffect, useRef, useState } from "react";
 import { isAddress } from "viem";
 import { WorkChart, SupplyChart, Sparkline, type ChartData } from "./Charts";
@@ -57,25 +66,34 @@ export function Position({
 }) {
   const [input, setInput] = useState("");
   const [act, setAct] = useState("deposit");
+  const g = collateral();
+  // With share collateral, a deposit can be IMD (the vault stakes it) or sIMD itself.
+  const [token, setToken] = useState<"imd" | "gem">("imd");
+  const viaImd = g.share && token === "imd";
   const v = s?.v || {};
+  const depositUnit = viaImd ? g.underlyingSymbol : gemUnit();
+  const depositDecimals = viaImd ? g.underlyingDecimals : g.decimals;
   let n = 0n;
   try {
-    n = amount(input);
+    n = amount(input, depositDecimals);
   } catch {
     /* Validation on action. */
   }
-  const needsApproval =
-    n > 0n && (v.allowance === undefined || v.allowance < n);
+  const allowance = viaImd ? v.underlyingAllowance : v.allowance;
+  const balance = viaImd ? v.underlyingBalance : v.gemBalance;
+  const needsApproval = n > 0n && (allowance === undefined || allowance < n);
   const t = s?.targets;
   const fresh = feedsReady(s);
-  const price = s?.feeds.USD?.value;
-  const collateral = v.positions?.[0] as bigint | undefined;
+  // The vault's own collateral price: USD per 1e18 raw collateral units.
+  const price = s?.feeds.Collateral?.value;
+  const imdUsd = s?.feeds.USD?.value;
+  const held = v.positions?.[0] as bigint | undefined;
   const debt = v.debtOf as bigint | undefined;
-  const sized =
-    collateral !== undefined && debt !== undefined && !!v.mat && !!price;
-  const liq = sized ? liquidationPrice(collateral, debt, v.mat) : undefined;
-  const most = sized ? maxDebt(collateral, v.mat, price) : undefined;
+  const sized = held !== undefined && debt !== undefined && !!v.mat && !!price;
+  const liq = sized ? perImd(liquidationPrice(held, debt, v.mat)) : undefined;
+  const most = sized ? maxDebt(held, v.mat, price) : undefined;
   const keep = sized ? requiredCollateral(debt, v.mat, price) : undefined;
+  const worth = g.share ? asImd(held) : undefined;
   return (
     <>
       <Col label="Your position">
@@ -88,7 +106,10 @@ export function Position({
             minCR <Ticker text={ratio(v.mat)} />
           </small>
         </div>
-        <Row label="Collateral">{fmt(collateral)} IMD</Row>
+        <Row label="Collateral">
+          {fmtGem(held)} {gemUnit()}
+          {worth !== undefined && ` ≈ ${fmt(worth)} ${g.underlyingSymbol}`}
+        </Row>
         <Row label="Accrued debt">
           {fmt(debt)} {unit()}
         </Row>
@@ -96,11 +117,17 @@ export function Position({
           {fmt(v.stabilityFeeOf)} {unit()}
         </Row>
         <Row label="Liquidation price">
-          {!sized ? "—" : liq === undefined ? "No debt" : `$${fmt(liq)} / IMD`}
+          {!sized
+            ? "—"
+            : debt === 0n || held === 0n
+              ? "No debt"
+              : liq === undefined
+                ? "—"
+                : `$${fmt(liq)} / ${g.underlyingSymbol}`}
         </Row>
         {liq !== undefined && (
           <p className="micro">
-            IMD is ${fmt(price)} now, {cushion(price, liq)}.
+            {g.underlyingSymbol} is ${fmt(imdUsd)} now, {cushion(imdUsd, liq)}.
           </p>
         )}
         <Row label="Can still borrow">
@@ -109,18 +136,22 @@ export function Position({
             : `${fmt(most > debt ? most - debt : 0n)} ${unit()}`}
         </Row>
         <Row label="Can withdraw">
-          {keep === undefined || collateral === undefined
+          {keep === undefined || held === undefined
             ? "—"
-            : `${fmt(collateral > keep ? collateral - keep : 0n)} IMD`}
+            : `${fmtGem(held > keep ? held - keep : 0n)} ${gemUnit()}`}
         </Row>
         <Row label="Wallet">
-          {fmt(v.imdBalance)} IMD / {fmt(v.compBalance)} {unit()}
+          {g.share && `${fmt(v.underlyingBalance)} ${g.underlyingSymbol} / `}
+          {fmtGem(v.gemBalance)} {gemUnit()} / {fmt(v.compBalance)} {unit()}
         </Row>
         <p className="micro">
-          {unit()} debt is USD-denominated. IMD / USD:{" "}
+          {unit()} debt is USD-denominated. {g.underlyingSymbol} / USD:{" "}
           {s?.feeds.USD && !s.feeds.USD.stale
             ? `$${fmt(s.feeds.USD.value)}`
             : "unavailable"}
+          {g.share &&
+            g.rate > 0n &&
+            `; 1 ${gemUnit()} = ${fmt(asImd(10n ** BigInt(g.decimals)))} ${g.underlyingSymbol}`}
           .
         </p>
       </Col>
@@ -134,13 +165,24 @@ export function Position({
             ["borrow", "Borrow"],
             ["repay", "Repay"],
             ["withdraw", "Withdraw"],
-            ["faucet", "Test IMD"],
+            g.share ? ["unstake", "Unstake"] : ["faucet", "Test IMD"],
           ]}
         />
         {act === "deposit" && (
           <>
+            {g.share && (
+              <Choice
+                label="Deposit token"
+                value={token}
+                onChange={(x) => setToken(x as "imd" | "gem")}
+                options={[
+                  ["imd", g.underlyingSymbol],
+                  ["gem", gemUnit()],
+                ]}
+              />
+            )}
             <label>
-              Deposit IMD
+              Deposit {depositUnit}
               <input
                 name="deposit-amount"
                 inputMode="decimal"
@@ -150,31 +192,45 @@ export function Position({
             </label>
             <Action
               id={needsApproval ? "approve" : "deposit"}
-              label={needsApproval ? "Approve IMD" : "Review deposit"}
+              label={
+                needsApproval ? `Approve ${depositUnit}` : "Review deposit"
+              }
               actions={actions}
               request={() => {
-                const n = amount(input);
-                if (n > v.imdBalance)
-                  throw Error("Deposit exceeds the IMD balance.");
+                const n = amount(input, depositDecimals);
+                if (balance !== undefined && n > balance)
+                  throw Error(`Deposit exceeds the ${depositUnit} balance.`);
                 if (!t) throw Error("Wait for contract verification.");
-                return needsApproval
+                if (needsApproval)
+                  return {
+                    target: viaImd ? t.underlying : t.gem,
+                    fn: "approve",
+                    args: [t.ParameterizedVault.address, n],
+                    summary: `Approve exactly ${exact(n, depositDecimals)} ${depositUnit} for the vault. Deposit is a separate transaction.`,
+                  };
+                return viaImd
                   ? {
-                      target: t.imdToken,
-                      fn: "approve",
-                      args: [t.ParameterizedVault.address, n],
-                      summary: `Approve exactly ${exact(n)} IMD for the vault. Deposit is a separate transaction.`,
+                      target: {
+                        address: t.ParameterizedVault.address,
+                        abi: vaultShareAbi,
+                      },
+                      fn: "lockIMD",
+                      args: [n],
+                      summary: `Deposit ${exact(n, depositDecimals)} ${depositUnit}. The vault stakes it and credits the ${gemUnit()} it receives as collateral.`,
                     }
                   : {
                       target: t.ParameterizedVault,
                       fn: "lock",
                       args: [n],
-                      summary: `Deposit ${exact(n)} IMD as collateral.`,
+                      summary: `Deposit ${exact(n, depositDecimals)} ${depositUnit} as collateral.`,
                     };
               }}
             />
             <p className="micro">
               Approval and deposit are two transactions. The approval is for
               exactly this amount.
+              {viaImd &&
+                ` Your collateral is held as ${gemUnit()}; withdrawals pay ${gemUnit()}.`}
             </p>
           </>
         )}
@@ -209,18 +265,40 @@ export function Position({
             actions={actions}
             target={t?.ParameterizedVault}
             fn="free"
-            fields={[amt("Withdraw IMD")]}
-            summary="Remove collateral if the remaining position meets minCR."
+            fields={[{ ...amt(`Withdraw ${gemUnit()}`), decimals: g.decimals }]}
+            summary={`Remove ${gemUnit()} collateral if the remaining position meets minCR.`}
             disabled={!fresh && v.debtOf !== 0n}
             reason="An indebted position needs fresh feeds to withdraw."
           />
         )}
-        {act === "faucet" && (
+        {act === "unstake" && g.share && (
+          <>
+            <ActionForm
+              id="unstake"
+              label="Review unstake"
+              actions={actions}
+              target={t && { address: t.gem.address, abi: shareAbi }}
+              fn="redeem"
+              fields={[
+                { ...amt(`Unstake ${gemUnit()}`), decimals: g.decimals },
+              ]}
+              mapArgs={(a) => [a[0], actions.account, actions.account]}
+              summary={`Unstake ${gemUnit()} in the staking vault and receive ${g.underlyingSymbol} in this wallet.`}
+            />
+            <p className="micro">
+              Withdrawals, liquidations and redemptions pay {gemUnit()}.
+              Unstaking is a call to the staking vault, not this protocol.{" "}
+              {gemUnit()} received in a block cannot be unstaked in that same
+              block.
+            </p>
+          </>
+        )}
+        {act === "faucet" && !g.share && (
           <ActionForm
             id="faucet"
             label="Review mint IMD"
             actions={actions}
-            target={t?.imdToken}
+            target={t?.gem}
             fn="mint"
             fields={[amt("Test IMD")]}
             mapArgs={(a) => [actions.account, ...a]}
@@ -626,7 +704,7 @@ export function Keeper({
   };
   const liq =
     position && s?.v.mat
-      ? liquidationPrice(position.collateral, position.debt, s.v.mat)
+      ? perImd(liquidationPrice(position.collateral, position.debt, s.v.mat))
       : undefined;
   const summary = position && (
     <>
@@ -638,14 +716,18 @@ export function Keeper({
       </p>
       <div className="row-grid">
         <Row label="Collateral ratio">{ratio(position.cr)}</Row>
-        <Row label="Collateral">{fmt(position.collateral)} IMD</Row>
+        <Row label="Collateral">
+          {fmtGem(position.collateral)} {gemUnit()}
+        </Row>
         <Row label="Accrued debt">
           {fmt(position.debt)} {unit()}
         </Row>
         <Row label="Bad debt estimate">
           {fmt(position.badDebt)} {unit()}
         </Row>
-        <Row label="Liquidation price">{liq ? `$${fmt(liq)} / IMD` : "—"}</Row>
+        <Row label="Liquidation price">
+          {liq ? `$${fmt(liq)} / ${collateral().underlyingSymbol}` : "—"}
+        </Row>
         <Row label="Cushion">
           {liq ? cushion(s?.feeds.USD?.value, liq) : "—"}
         </Row>
@@ -745,7 +827,7 @@ export function Keeper({
                 fn="bite"
                 fields={[amt(`Repay borrower ${unit()}`)]}
                 mapArgs={(a) => [address(owner), ...a]}
-                summary={`Burn your ${unit()} to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares.`}
+                summary={`Burn your ${unit()} to cancel borrower debt and receive ${gemUnit()}, including the liquidation bonus after protocol and marker shares.`}
                 explain={borrower}
                 disabled={
                   !feedsReady(s) ||
@@ -867,7 +949,7 @@ export function Backing({ r, s }: { r: Runtime; s?: Snapshot }) {
           label="Secured collateral"
           info="Collateral that stood behind debt, counted up to that debt at minCR. Surplus and debt-free deposits are excluded."
         >
-          {fmt(v.securedCollateral)} IMD
+          {fmtGem(v.securedCollateral)} {gemUnit()}
         </Row>
         <Row label="Total principal debt">
           {fmt(v.totalDebt)} {unit()}

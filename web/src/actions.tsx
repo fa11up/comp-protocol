@@ -77,6 +77,8 @@ export type Field = {
   name: string;
   kind: "amount" | "amount0" | "address" | "uint";
   default?: string;
+  /** Token decimals for an amount; 18 unless the token says otherwise (sIMD has 24). */
+  decimals?: number;
 };
 export function ActionForm({
   id,
@@ -121,7 +123,7 @@ export function ActionForm({
               return f.kind === "address"
                 ? address(t)
                 : f.kind === "amount"
-                  ? amount(t)
+                  ? amount(t, f.decimals ?? 18)
                   : f.kind === "amount0"
                     ? amount(t, 18, true)
                     : uint(t);

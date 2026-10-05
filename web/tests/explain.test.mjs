@@ -8,6 +8,8 @@ const s = {
   timestamp: 100000n,
   feeds: {
     USD: { value: 10n * WAD, updated: 99990n, stale: false, maxAge: 300n },
+    // Plain-IMD collateral: the collateral price is the IMD/USD price.
+    Collateral: { value: 10n * WAD, updated: 99990n, stale: false, maxAge: 300n },
     PriceFeed: { value: 1000n, updated: 10000n, stale: true, maxAge: 86400n },
     SpotFeed: { value: 1100n, updated: 99990n, stale: false, maxAge: 3600n },
   },

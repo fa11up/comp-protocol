@@ -1,4 +1,5 @@
 import { unit } from "./unit";
+import { perImd } from "./collateral";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits, maxUint256 } from "viem";
 import type { Runtime } from "./config";
@@ -76,7 +77,8 @@ export function useCharts(r: Runtime, s?: Snapshot) {
 export type ChartData = ReturnType<typeof useCharts>;
 const number = (v: bigint) => Number(formatUnits(v, 18));
 const liquidation = (p: { collateral: bigint; debt: bigint }, s?: Snapshot) => {
-  const at = s?.v.mat && liquidationPrice(p.collateral, p.debt, s.v.mat);
+  const at =
+    s?.v.mat && perImd(liquidationPrice(p.collateral, p.debt, s.v.mat));
   return at
     ? `liquidates at $${fmt(at, 18, 2)}, ${cushion(s!.feeds.USD?.value, at)}`
     : "liquidation price unavailable";
@@ -386,7 +388,7 @@ function LoanFeed({
       </div>
       <ul className="loan-feed" ref={list} aria-label="Open positions">
         {shown.map((p) => {
-          const at = liquidationPrice(p.collateral, p.debt, min);
+          const at = perImd(liquidationPrice(p.collateral, p.debt, min));
           const zoneOf = stateOf(p.cr, min, ceiling);
           return (
             <li
@@ -588,7 +590,8 @@ export function WorkChart({ s }: { s?: Snapshot }) {
 
 export function SupplyChart({ s }: { s?: Snapshot }) {
   const v = s?.v;
-  const usd = s?.feeds.USD;
+  // Secured collateral is in raw collateral units; the vault values it at its collateral price.
+  const usd = s?.feeds.Collateral;
   if (
     !v ||
     [

@@ -61,12 +61,12 @@ function passed(name, detail) {
   results.push({ name, status: "passed", detail });
   console.log("PASS", name);
 }
-async function setup({ wallet = true, chain = "0x1" } = {}) {
+async function setup({ wallet = true, chain = "0x1", state = {} } = {}) {
   if (context) await context.close();
   context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
   });
-  const s = fixture();
+  const s = Object.assign(fixture(), state);
   const page = await context.newPage();
   page.setDefaultTimeout(12000);
   page.on("pageerror", (e) => errors.push(e.message));
@@ -1232,6 +1232,99 @@ try {
   passed(
     "Reduced motion disables all chart transitions, line drawing and point entrances",
   );
+  // sIMD collateral: the mainnet shape. 24 decimals, IMD or sIMD deposits, payouts unstaked by hand.
+  {
+    const { page, s } = await setup({ state: { share: true } });
+    await connect(page);
+    await tab(page, "position");
+    const pos = page.locator(".pane-position");
+    await expectText(pos, "800 sIMD ≈ 1,000 IMD");
+    await expectText(pos, "10,000 IMD / 8,000 sIMD");
+    await expectText(pos, "$1.5 / IMD");
+    await expectText(pos, "1 sIMD = 1.25 IMD");
+    passed(
+      "sIMD collateral reads in its own 24 decimals, with its IMD value and a per-IMD liquidation price",
+    );
+    // Default deposit token is IMD: approve IMD, then lockIMD stakes it.
+    await pos.getByLabel("Deposit IMD", { exact: true }).fill("5");
+    await review(page, "Approve IMD");
+    await page
+      .locator("dialog")
+      .getByRole("button", { name: "Confirm in wallet" })
+      .click();
+    await expectText(page.locator("footer"), "Confirmed on chain.");
+    assert.equal(s.sent.at(-1).name, "underlying");
+    assert.equal(s.sent.at(-1).functionName, "approve");
+    assert.equal(s.sent.at(-1).args[1], 5n * 10n ** 18n);
+    await pos
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .waitFor();
+    await review(page, "Review deposit");
+    await page
+      .locator("dialog")
+      .getByRole("button", { name: "Confirm in wallet" })
+      .click();
+    await expectText(page.locator("footer"), "Confirmed on chain.");
+    assert.equal(s.sent.at(-1).functionName, "lockIMD");
+    assert.deepEqual(s.sent.at(-1).args, [5n * 10n ** 18n]);
+    passed(
+      "Depositing IMD approves IMD for exactly the amount, then stakes it through lockIMD",
+    );
+    // sIMD deposits go straight to lock, parsed at 24 decimals.
+    await pos.getByRole("button", { name: "sIMD", exact: true }).click();
+    await pos.getByLabel("Deposit sIMD", { exact: true }).fill("2");
+    await review(page, "Approve sIMD");
+    await page
+      .locator("dialog")
+      .getByRole("button", { name: "Confirm in wallet" })
+      .click();
+    await expectText(page.locator("footer"), "Confirmed on chain.");
+    assert.equal(s.sent.at(-1).name, "imdToken");
+    assert.equal(s.sent.at(-1).args[1], 2n * 10n ** 24n);
+    await pos
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .waitFor();
+    await review(page, "Review deposit");
+    await page
+      .locator("dialog")
+      .getByRole("button", { name: "Confirm in wallet" })
+      .click();
+    await expectText(page.locator("footer"), "Confirmed on chain.");
+    assert.equal(s.sent.at(-1).functionName, "depositCollateral");
+    assert.deepEqual(s.sent.at(-1).args, [2n * 10n ** 24n]);
+    passed("Depositing sIMD approves sIMD and locks it, at 24 decimals");
+    // Withdrawals are sIMD; unstaking is the staking vault's redeem, to and from this wallet.
+    await pos.getByRole("button", { name: "Withdraw", exact: true }).click();
+    await pos.getByLabel("Withdraw sIMD", { exact: true }).fill("1");
+    await review(page, "Review withdrawal");
+    await page
+      .locator("dialog")
+      .getByRole("button", { name: "Confirm in wallet" })
+      .click();
+    await expectText(page.locator("footer"), "Confirmed on chain.");
+    assert.deepEqual(s.sent.at(-1).args, [10n ** 24n]);
+    await pos.getByRole("button", { name: "Unstake", exact: true }).click();
+    assert.equal(
+      await pos.getByRole("button", { name: "Test IMD", exact: true }).count(),
+      0,
+    );
+    await pos.getByLabel("Unstake sIMD", { exact: true }).fill("1");
+    await review(page, "Review unstake");
+    await page
+      .locator("dialog")
+      .getByRole("button", { name: "Confirm in wallet" })
+      .click();
+    await expectText(page.locator("footer"), "Confirmed on chain.");
+    assert.equal(s.sent.at(-1).name, "imdToken");
+    assert.equal(s.sent.at(-1).functionName, "redeem");
+    assert.deepEqual(s.sent.at(-1).args, [10n ** 24n, account, account]);
+    passed(
+      "Withdrawals parse sIMD at 24 decimals; Unstake redeems on the staking vault to this wallet; no test faucet",
+    );
+    await tab(page, "redemption");
+    await expectText(page.locator(".pane-redemption"), "sIMD");
+    passed("The redemption desk speaks sIMD for the reserve and the payout");
+  }
   assert.deepEqual(errors, []);
   passed(
     "No browser console errors or uncaught exceptions in mocked workflows",
