@@ -51,7 +51,7 @@ contract Treasury {
     uint256 private constant BPS = 10_000;
 
     /// @notice The contract that created this treasury: for a deployment, the vault whose revenue
-    /// lands here, whose Parameters governs the register, and whose COMP may never be reserve.
+    /// lands here, whose Parameters governs the register, and whose imdUSD may never be reserve.
     address public immutable vault = msg.sender;
 
     /// @notice Everything this contract has ever been credited with, per token, as recorded by sync.
@@ -73,7 +73,7 @@ contract Treasury {
     error Unauthorized();
     error InvalidRecipient();
     error ZeroAmount();
-    /// @notice COMP can never be a reserve asset: the Treasury receives stability fees in COMP, and
+    /// @notice imdUSD can never be a reserve asset: the Treasury receives stability fees in imdUSD, and
     /// backing a liability with the same liability is not backing.
     error StablecoinIsNotReserve();
     error InvalidReserveAsset();

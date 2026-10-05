@@ -22,10 +22,12 @@ import {
     WORK_ORACLE_MAX_AGE
 } from "./DeploymentConfig.sol";
 
-/// @notice Price-aware COMP borrowing and independent work-credit minting on Sepolia.
-/// @dev Both tokens use 18 decimals; price is COMP per IMD scaled by 1e18.
-/// NHI alone determines collateral requirements and liquidation grace. There is no parameter admin.
-/// Zero COMP and oracle arguments create permanently bound contracts with no post-deployment setup.
+/// @notice Price-aware imdUSD borrowing and work-backed minting against IMD collateral.
+/// @dev Both tokens use 18 decimals; price is USD per IMD scaled by 1e18.
+/// NHI alone determines `mat` and `lull`. In this base vault the economic parameters are source
+/// constants and there is no parameter admin; ParameterizedVault overrides them from a governed
+/// Parameters contract behind a timelock.
+/// Zero imdUSD and oracle arguments create permanently bound contracts with no post-deployment setup.
 /// The requester has no initialization authority in this mode; the operator retains only the mock faucets.
 contract CDPVault is ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -164,13 +166,13 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @notice Where the protocol's revenue lands: its bonus share, in IMD, and paid stability fees,
-    /// in COMP. The FEE_RECIPIENT account here; ParameterizedVault overrides this with the Treasury
+    /// in imdUSD. The FEE_RECIPIENT account here; ParameterizedVault overrides this with the Treasury
     /// it creates in its own constructor, so no deployment can route protocol revenue to a wallet.
     function feeRecipient() public view virtual returns (address) {
         return FEE_RECIPIENT;
     }
 
-    /// @notice Maximum cumulative COMP the work channel may have minted, in COMP units.
+    /// @notice Maximum cumulative imdUSD the work channel may have minted, in imdUSD units.
     /// @dev Unlimited here, exactly as `line` is: this contract has no reserve to read and no
     /// governed ratio, so a bound would be a number pulled from the air. ParameterizedVault overrides
     /// it with reserveValueUsd + totalDebt * earnMat / 10000, the bound docs/COMPUTE-BACKING-
@@ -389,7 +391,7 @@ contract CDPVault is ReentrancyGuard {
         emit Draw(msg.sender, amount);
     }
 
-    /// @notice Mint earned COMP by consuming work rights, without collateral or a debt entry.
+    /// @notice Mint earned imdUSD by consuming work rights, without collateral or a debt entry.
     /// @dev With this vault as sole minter/burner, supply = outstanding minted principal + totalEarned
     /// - totalNonPrincipalRedeemed. Unpaid fees are claims, not supply. Burning against reserve or
     /// cancelling unminted fees explains the last term. Neither repayment nor redemption restores rights.
@@ -415,7 +417,7 @@ contract CDPVault is ReentrancyGuard {
         emit Earn(msg.sender, amount);
     }
 
-    /// @notice Repay the caller's debt by burning their COMP; no COMP approval is required.
+    /// @notice Repay the caller's debt by burning their imdUSD; no imdUSD approval is required.
     /// @dev Repayment does not restore consumed work credits.
     function wipe(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
@@ -426,7 +428,7 @@ contract CDPVault is ReentrancyGuard {
         emit Wipe(msg.sender, amount);
     }
 
-    /// @notice Burn exactly `amount` caller COMP for feed-priced IMD, less the capped fee.
+    /// @notice Burn exactly `amount` caller imdUSD for feed-priced IMD, less the capped fee.
     /// @dev Treasury IMD is spent first; only the shortfall cancels the named candidate's debt.
     /// No approval, partial fill or fee transfer. All checks and both payouts are atomic.
     function cash(uint256 amount, uint256 minImdOut, address candidate)
@@ -441,7 +443,7 @@ contract CDPVault is ReentrancyGuard {
         // REVISION (finding b8aa4a98): whole basis points, rounded against the party paying them.
         uint256 feeBps = REDEMPTION_FEE_FLOOR_BPS + Math.ceilDiv(base, 1e14);
         uint256 price = _price();
-        // THE PAYOUT IS CAPPED AT WHAT BACKS A COMP, and that is what keeps this channel open.
+        // THE PAYOUT IS CAPPED AT WHAT BACKS A imdUSD, and that is what keeps this channel open.
         //
         // It used to pay (1 - fee) of PAR unconditionally and then refuse the redemption if that
         // removed more than its share of backing (`RedemptionWorsensBacking`, the source revision
@@ -451,14 +453,14 @@ contract CDPVault is ReentrancyGuard {
         // exactly its sequence -- by paying 3.94 where par paid 9.85, rather than by refusing.
         // Round 5's review then raised the refusal itself three separate times (`3c1f49fc`,
         // `6a96e6da`, `d9c96fb5`), each time leaving the policy to the requester. The refusal engaged
-        // exactly when backing per COMP fell below 1 - fee, which is a price fall with work-issued
-        // COMP outstanding -- so redemption, the mechanism that defends the peg, halted precisely
+        // exactly when backing per imdUSD fell below 1 - fee, which is a price fall with work-issued
+        // imdUSD outstanding -- so redemption, the mechanism that defends the peg, halted precisely
         // when the peg was under stress, and it refused even burns against positions whose own ratio
         // the redemption would have RAISED. Round 5's review called it "a non-governable [halt] that
         // engages exactly during the stress the peg is meant to survive", quoting this protocol's own
         // objection to a governable cap back at it.
         //
-        // Paying pro-rata instead is exactly neutral on backing by construction: remove B per COMP
+        // Paying pro-rata instead is exactly neutral on backing by construction: remove B per imdUSD
         // from a pool backed at B and the ratio is unchanged, so there is nothing left to guard
         // against. With the fee applied on top it strictly IMPROVES backing, in every state.
         //
@@ -489,15 +491,15 @@ contract CDPVault is ReentrancyGuard {
         emit Cash(msg.sender, candidate, amount, imdOut, reserveOut, debtCancelled, feeBps);
     }
 
-    /// @notice Value backing one COMP, 1e18-scaled, never above par, at the latest accepted price.
+    /// @notice Value backing one imdUSD, 1e18-scaled, never above par, at the latest accepted price.
     /// @dev Public because it is the figure a redeemer is actually paid against and the one a reader
-    /// needs to judge the protocol: below 1e18 it says plainly that a COMP is not fully backed, and
+    /// needs to judge the protocol: below 1e18 it says plainly that a imdUSD is not fully backed, and
     /// the redemption payout falls with it instead of the channel closing.
     function backingPerUnit() external view returns (uint256) {
         return _backingPerUnit(_price());
     }
 
-    /// @notice Value backing one COMP, 1e18-scaled, never above par.
+    /// @notice Value backing one imdUSD, 1e18-scaled, never above par.
     /// @dev Reserve plus secured collateral over supply. Capped at 1e18 because a protocol backed
     /// above par does not pay a premium: the surplus is the borrowers' and the work ceiling's
     /// headroom, not a redeemer's windfall. Read pre-payout, so it is the state the burn found.
@@ -514,13 +516,13 @@ contract CDPVault is ReentrancyGuard {
     /// transaction, and no more than the debt that existed before it holds at mat.
     /// REVISION (finding 8936befa): the whole balance counted, including collateral posted against no
     /// debt and every borrower's surplus, which is withdrawable with no feed or health check and backs
-    /// no COMP. A redeemer deposited debt-free, redeemed and withdrew in one call, and the deposit
+    /// no imdUSD. A redeemer deposited debt-free, redeemed and withdrew in one call, and the deposit
     /// passed the guard for any amount. Secured collateral added in this transaction is excluded, as
     /// backedDebt excludes same-transaction debt; and the remainder counts only up to mat times the
     /// principal that existed before this transaction (less bad debt), the surplus every borrower must
     /// keep in place and the figure section 3 of docs/COMPUTE-BACKING-DESIGN.md backs work minting
     /// against. One-for-one with debt would be wrong the other way: it would refuse the brief's own
-    /// flow of redeeming work-issued COMP against an eligible position in a fully backed system.
+    /// flow of redeeming work-issued imdUSD against an eligible position in a fully backed system.
     /// REVISION (finding 7cd5035c): the balance is replaced by `securedCollateral`, which is bounded
     /// position by position, so the slow version of the same deposit no longer fills the gap the cap
     /// leaves open when indebted positions hold less than mat.
@@ -696,8 +698,8 @@ contract CDPVault is ReentrancyGuard {
         _clearMark(owner);
     }
 
-    /// @notice Burn caller COMP against a marked, still-underwater position after its snapshotted grace.
-    /// @dev Payout is floor(debtToRepay * 1.1e18 / price) IMD, i.e. collateral worth 110% of the COMP burned
+    /// @notice Burn caller imdUSD against a marked, still-underwater position after its snapshotted grace.
+    /// @dev Payout is floor(debtToRepay * 1.1e18 / price) IMD, i.e. collateral worth 110% of the imdUSD burned
     /// at the same accepted price the health check reads; collateral must cover the full payout.
     /// The mark must still be within its liquidation window (see bark).
     function bite(address owner, uint256 debtToRepay) external nonReentrant {
@@ -887,7 +889,7 @@ contract CDPVault is ReentrancyGuard {
         chiOf[owner] = chi();
     }
 
-    /// @dev Pay fees first, then principal. Only burning COMP can reduce either obligation.
+    /// @dev Pay fees first, then principal. Only burning imdUSD can reduce either obligation.
     function _reduceDebt(address owner, uint256 amount) private returns (uint256 feePaid) {
         Position storage position = _positions[owner];
         uint256 fees = _stabilityFees[owner];
@@ -972,8 +974,8 @@ contract CDPVault is ReentrancyGuard {
     /// @dev Virtual because the denomination is the subclass's choice, and every formula that reads it
     /// is a ratio: `collateralRatio` is collateral x price / debt and `bite` seizes debt / price,
     /// so neither cares what the unit is as long as it is the one debt is in. Here it is the unit the
-    /// primary feed quotes — wei of ETH per IMD — so one COMP of debt is one ETH-worth of collateral.
-    /// ParameterizedVault overrides it to price in USD, which is what makes a COMP a dollar.
+    /// primary feed quotes — wei of ETH per IMD — so one imdUSD of debt is one ETH-worth of collateral.
+    /// ParameterizedVault overrides it to price in USD, which is what makes a imdUSD a dollar.
     /// Not governable, and deliberately: `priceFeed` is immutable and this is chosen at compile time,
     /// so no key can change what a position is measured against.
     /// @dev AUDIT FIX (job da7d5b1c, medium): the VIRTUAL is now the non-reverting read, and `_price`

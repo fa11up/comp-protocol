@@ -1,7 +1,7 @@
-# COMP Protocol
+# imdUSD Protocol
 
 A compute-backed CDP stablecoin on Sepolia whose risk parameters come from IdentityMD swarm oracle
-attestations. IMD is the collateral, the vault mints COMP against it, and the swarm's answers decide
+attestations. IMD is the collateral, the vault mints imdUSD against it, and the swarm's answers decide
 what a position is worth and how harshly it is liquidated.
 
 Forked from `identity-md-launches/launch-519-mockimd-pricefeed-nhifeed-cdpvault`, so the history below
@@ -21,7 +21,7 @@ it is ours.
 | `Parameters` / `Governed` | the governed economics and the reserve register, behind a 48-hour delay |
 | `Treasury` | where the protocol's own revenue lands |
 | `Registry` | replaceable counterparties — **written, not yet wired to anything** |
-| `UsdPriceFeed` | the IMD/ETH feed × Chainlink ETH/USD, so one COMP of debt is one **dollar** of collateral |
+| `UsdPriceFeed` | the IMD/ETH feed × Chainlink ETH/USD, so one imdUSD of debt is one **dollar** of collateral |
 | `SharePriceFeed` | prices any ERC-4626 share from a feed for its asset, in USD per 1e18 raw units — built for sIMD |
 | `SwarmWorkOracle` | minting rights earned from an attested work tally; extends `SwarmFeed`, so it inherits question binding |
 | `WorkOracleFactory` | deploys the above, because its creation code will not fit in the vault's |
@@ -62,12 +62,12 @@ reverts** rather than silently leaving the vault on the faucet.
 
 | input | what it decides |
 |---|---|
-| **price** | `collateralRatio = collateral * price * 100 / (debt * 1e18)`, from a window median. On `ParameterizedVault` the price is `UsdPriceFeed`, so **one COMP of debt is one USD-worth of collateral**; the base vault prices in ETH |
+| **price** | `collateralRatio = collateral * price * 100 / (debt * 1e18)`, from a window median. On `ParameterizedVault` the price is `UsdPriceFeed`, so **one imdUSD of debt is one USD-worth of collateral**; the base vault prices in ETH |
 | **NHI** | `mat()` 150 at ≥0.85 rising to 200 at ≤0.60; `lull()` 6h falling to 0 |
-| **spot** | not a price — a sanity bound. A gap over `SKEW_BPS` (500) halts minting, marking and liquidation while still allowing withdrawal |
+| **spot** | not a price — a sanity bound. A gap over `SKEW_BPS` (500) halts borrowing, redemption, marking and liquidation, and any withdrawal while debt is open; deposits, repayments and withdrawals from a debt-free position stay open |
 
 Shipped economics: stability fee 200 bps, marker share 1000 bps of the liquidation bonus, protocol
-share 3333 bps of it, divergence bound 500 bps, work ratio 2500 bps, 0.01 COMP per accepted task.
+share 3333 bps of it, divergence bound 500 bps, work ratio 2500 bps, 0.01 imdUSD per accepted task.
 
 The divergence guard deliberately reads the **raw** primary feed rather than the denominated price:
 both legs quote IMD in ETH, so the ETH/USD factor cancels, and comparing a denominated price against
@@ -120,7 +120,7 @@ hashed.
 ## Governance
 
 `Parameters` holds seven numbers — debt ceiling, protocol bonus share, stability fee, divergence
-bound, marker share, the work ceiling's ratio term, and the COMP an accepted task earns — plus the
+bound, marker share, the work ceiling's ratio term, and the imdUSD an accepted task earns — plus the
 Treasury's reserve register, all behind a 48-hour delay. One proposal at a time, readable by anyone for the whole
 window, then applied by **anyone**: a governor who could also withhold application could hold a
 validated change over the protocol and choose its moment. Cancelling is the only instant action,
@@ -245,9 +245,9 @@ the written reproductions. Archive the record immediately.
 - `Registry` is written and governed but **nothing reads it**, so a rotation recorded there changes
   nothing. Wiring it means a feed resolving its relayer through a pinned registry instead of an
   immutable, which trades an immutable authority check for an external call on the attestation path.
-- **There is no redemption yet**, so "1 COMP = 1 USD" is a unit of account plus a hope that arbitrage
-  closes the gap. Nothing lets COMP be destroyed at a known price, which is what a peg actually is.
-  `docs/COMPUTE-BACKING-DESIGN.md` §5 specifies both channels; channel A is the next increment.
+- **Redemption is channel A only.** `cash` burns imdUSD for IMD at the lesser of $1 and
+  `backingPerUnit()`, less a size-dependent fee, paid from the Treasury reserve first and then from a
+  named under-collateralised position. Channel B in `docs/COMPUTE-BACKING-DESIGN.md` §5 is not built.
 - `SwarmWorkOracle` is built but **not yet answerable**. Its question reads the swarm's daily oracle
   receipts, and the control plane records no agent tally for this seat so far — historical days are
   deliberately not reconstructed — so a panel must report inability today. It costs nothing to wait:

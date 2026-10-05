@@ -64,12 +64,12 @@ contract Parameters is Governed {
     /// A constant, so governance can lower the ratio and can never raise it past here.
     uint256 public constant MAX_EARN_MAT_BPS = 2_500;
 
-    /// @notice Hard cap on the COMP one accepted task earns. One task can never be worth more than
-    /// one COMP, whatever a governor proposes.
+    /// @notice Hard cap on the imdUSD one accepted task earns. One task can never be worth more than
+    /// one imdUSD, whatever a governor proposes.
     /// @dev The binding constraint on work minting is the work ceiling, not this: the ceiling asks
     /// whether backing exists, and this only converts a count into an amount. The cap is here anyway
     /// because the two multiply — an unbounded rate would let a governor turn a modest task count
-    /// into a claim the ceiling then has to absorb — and because a rate above one COMP per task makes
+    /// into a claim the ceiling then has to absorb — and because a rate above one imdUSD per task makes
     /// no sense against a token meant to be worth a dollar.
     uint256 public constant MAX_WAGE_WAD = 1 ether;
 
@@ -97,7 +97,7 @@ contract Parameters is Governed {
     /// @notice The live ratio term of the vault's work ceiling, in basis points of totalDebt.
     uint256 private _earnMat;
 
-    /// @notice The live COMP-per-accepted-task rate, 1e18-scaled.
+    /// @notice The live imdUSD-per-accepted-task rate, 1e18-scaled.
     uint256 private _wage;
 
     /// @notice The vault these parameters govern: its creator, fixed at construction.
@@ -163,7 +163,7 @@ contract Parameters is Governed {
         _propose(abi.encode(Change.EarnMat, bps));
     }
 
-    /// @notice Queue a change to the COMP an accepted task earns. Refused above one COMP per task.
+    /// @notice Queue a change to the imdUSD an accepted task earns. Refused above one imdUSD per task.
     function proposeWage(uint256 wad) external {
         _propose(abi.encode(Change.Wage, wad));
     }
@@ -173,7 +173,7 @@ contract Parameters is Governed {
     }
 
     /// @notice Queue a listing, repricing or (with a zero price source) delisting of one of the
-    /// Treasury's reserve assets. The Treasury's own rules apply at proposal — COMP is refused with
+    /// Treasury's reserve assets. The Treasury's own rules apply at proposal — imdUSD is refused with
     /// `StablecoinIsNotReserve`, a haircut must be at most 10000 — so a change the register would refuse
     /// never occupies the slot. Applying it, like every other change, is anyone's to do after the delay.
     function proposeReserveAsset(IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps) external {

@@ -94,20 +94,20 @@ contract SwarmRelay is ReentrancyGuard {
     ) external nonReentrant {
         _relayMany(feeds, attestations, signatures);
 
-        IERC20 comp = IERC20(address(vault.stablecoin()));
+        IERC20 stable = IERC20(address(vault.stablecoin()));
         IERC20 collateral = vault.imdToken();
 
-        uint256 compBefore = comp.balanceOf(address(this));
+        uint256 stableBefore = stable.balanceOf(address(this));
         uint256 collateralBefore = collateral.balanceOf(address(this));
 
-        comp.safeTransferFrom(msg.sender, address(this), debtToRepay);
+        stable.safeTransferFrom(msg.sender, address(this), debtToRepay);
         vault.bite(borrower, debtToRepay);
 
         uint256 seized = collateral.balanceOf(address(this)) - collateralBefore;
         if (seized != 0) collateral.safeTransfer(msg.sender, seized);
 
         // The vault burns from this contract, so a correct liquidation consumes the pull exactly.
-        if (comp.balanceOf(address(this)) != compBefore) revert StablecoinRetained();
+        if (stable.balanceOf(address(this)) != stableBefore) revert StablecoinRetained();
         if (collateral.balanceOf(address(this)) != collateralBefore) revert CollateralRetained();
 
         emit RelayedLiquidation(msg.sender, address(vault), borrower, debtToRepay, seized);

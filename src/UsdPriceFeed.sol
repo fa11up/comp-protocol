@@ -54,9 +54,9 @@ contract UsdPriceFeed is ISwarmFeed {
 
     /// @notice The ETH/USD leg on its own: USD per ETH scaled by 1e18. Zero if the answer is missing,
     /// non-positive or older than ETH_USD_MAX_AGE.
-    /// @dev What converts a USD figure back into the unit the IMD/ETH leg prices in. The vault reads
-    /// it to bring the Treasury's USD reserve value into the unit its own debt is denominated in; a
-    /// zero means "no price", and the vault counts the reserve for nothing rather than dividing by it.
+    /// @dev Converts a USD figure back into the unit the IMD/ETH leg prices in. Nothing in the protocol
+    /// calls it: the vault's debt and the Treasury's reserve value are both already in USD. It is
+    /// exposed for readers; a zero means "no price".
     function ethUsdPrice() external view returns (uint256) {
         (uint256 ethUsd, uint64 ethAt, uint8 decimals) = _ethUsd();
         if (ethUsd == 0 || _tooOld(ethAt)) return 0;

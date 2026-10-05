@@ -84,7 +84,7 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
     /// consumed. Same defect as an accrual index recomputed from deployment; same shape of fix.
     mapping(address account => uint256 rights) public creditedRights;
 
-    /// @notice COMP already minted against work, per address.
+    /// @notice imdUSD already minted against work, per address.
     mapping(address account => uint256 amount) public consumedRights;
 
     /// @param vault_ The only consumer. Three ways to be a legitimate one: a vault that already has
@@ -174,10 +174,10 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
         emit RightsConsumed(account, amount);
     }
 
-    /// @notice COMP per accepted task, 1e18-scaled, from the vault's governed parameters if it has
+    /// @notice imdUSD per accepted task, 1e18-scaled, from the vault's governed parameters if it has
     /// any and from the shipped constant otherwise.
     /// @dev Probed rather than required, so one oracle serves a plain CDPVault and a ParameterizedVault
-    /// without a second artifact. The bound lives in Parameters, which refuses more than one COMP per
+    /// without a second artifact. The bound lives in Parameters, which refuses more than one imdUSD per
     /// task; a vault with no parameters cannot change the figure at all.
     function wage() public view returns (uint256) {
         (bool ok, bytes memory data) = vault.staticcall(abi.encodeWithSignature("parameters()"));

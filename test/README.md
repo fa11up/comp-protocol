@@ -7,7 +7,7 @@ FOUNDRY_OUT=test/scratch/out FOUNDRY_CACHE_PATH=test/scratch/cache forge build
 FOUNDRY_OUT=test/scratch/out FOUNDRY_CACHE_PATH=test/scratch/cache forge test
 ```
 
-Dependencies are already vendored. The submitted suite needs no network, RPC, environment setup, FFI, or files under `test/scratch/`. Constructor fixtures cover both separately authorized COMP and self-contained vault deployment with zero COMP/oracle arguments. No production source or configuration is changed.
+Dependencies are already vendored. The submitted suite needs no network, RPC, environment setup, FFI, or files under `test/scratch/`. Constructor fixtures cover both separately authorized imdUSD and self-contained vault deployment with zero imdUSD/oracle arguments. No production source or configuration is changed.
 
 | Area | Tests |
 | --- | --- |
@@ -29,22 +29,22 @@ The original protocol invariant campaign uses four tracked actors and 17 handler
 ```text
 DUTY_BPS == 0
 vault.totalFeesMinted == 0
-COMP.totalSupply == sum(all position debts) + vault.totalEarned + vault.totalFeesMinted
+imdUSD.totalSupply == sum(all position debts) + vault.totalEarned + vault.totalFeesMinted
 ```
 
-Additional properties reconcile COMP wallet balances, collateral custody including donations, each position's complete deposit/withdraw/debt/repayment/liquidation history, rights consumed only by work minting, and mark/grace snapshots throughout an active window. Expired re-marking records a new timestamp and current NHI grace; expiry failures and subsequent execution are exercised deterministically. Every successful randomized liquidation asserts the exact `floor(debtToRepay * 1.1e18 / price)` total seizure, the marker's bonus share, and the liquidator's remaining payout. Marker custody is reconciled separately with the complete collateral supply. The price set includes 0.5, 0.8, 1, 1.2 and 2; deterministic handler sequences prove successful liquidation at every generated price, recovery and both mint channels are reachable. Each random sequence ends by redistributing existing COMP, repaying every debt and withdrawing every position's collateral, including with stale feeds; remaining supply equals work issuance.
+Additional properties reconcile imdUSD wallet balances, collateral custody including donations, each position's complete deposit/withdraw/debt/repayment/liquidation history, rights consumed only by work minting, and mark/grace snapshots throughout an active window. Expired re-marking records a new timestamp and current NHI grace; expiry failures and subsequent execution are exercised deterministically. Every successful randomized liquidation asserts the exact `floor(debtToRepay * 1.1e18 / price)` total seizure, the marker's bonus share, and the liquidator's remaining payout. Marker custody is reconciled separately with the complete collateral supply. The price set includes 0.5, 0.8, 1, 1.2 and 2; deterministic handler sequences prove successful liquidation at every generated price, recovery and both mint channels are reachable. Each random sequence ends by redistributing existing imdUSD, repaying every debt and withdrawing every position's collateral, including with stale feeds; remaining supply equals work issuance.
 
 The additional self-contained deployment invariant runs 128 sequences of 64 calls across four borrowers and nine handler actions, also failing on unexpected reverts. It checks the same supply identity against independent debt/work histories, exact token and collateral balances, consumed rights and permanent constructor links. Random failure attempts cover initialization, privileged calls, invalid amounts, unsafe positions and independently expired feeds; the reporter refreshes feeds through `report`. Every sequence ends with full debt repayment and collateral withdrawal.
 
-Liquidation tests make positions underwater through price or NHI changes after valid borrowing. They do not inject vault storage or manufacture COMP. Tests cover one second before and exactly at grace expiry, the final actionable timestamp and one second afterward, zero grace, both NHI directions during an existing window, repeat marking, deposit/repayment recovery and keeper-observed feed recovery. Rounding and sequence properties use 1,000 fuzz cases through inline configuration.
+Liquidation tests make positions underwater through price or NHI changes after valid borrowing. They do not inject vault storage or manufacture imdUSD. Tests cover one second before and exactly at grace expiry, the final actionable timestamp and one second afterward, zero grace, both NHI directions during an existing window, repeat marking, deposit/repayment recovery and keeper-observed feed recovery. Rounding and sequence properties use 1,000 fuzz cases through inline configuration.
 
 The handler models the accepted implementation's upward rounding of the NHI-derived minimum ratio. A deterministic sequence covers marking, rejected actions, maximum borrowing, maximum withdrawal and liquidation after a one-wei NHI decline. A separate liquidation regression crosses from a 170% minimum to 171% with no price movement and verifies that the 12,959-second grace snapshot survives a later NHI update. These regressions prevent the former floor-rounded handler from misclassifying underwater positions or generating unsafe calls.
 
 ## Revision coverage
 
-The self-contained factory tests pass `stablecoin_ = oracle_ = address(0)` and assert reciprocal links immediately after construction. Real `PriceFeed` and `NhiFeed` instances receive their first values through the configured reporter before feed-dependent calls. Deterministic CREATE and CREATE2 round trips and 1,000 fuzz cases fund the borrower through MockIMD, borrow without work rights, mint earned work, repay without COMP allowance and recover all collateral without an initialization call. Both modes reject unsafe borrowing, excess repayment, unauthorized faucets and token/oracle consumption; `setVault` returns `AlreadyInitialized` for the operator, factory and unrelated callers from genesis. A seeded-feed expiry regression checks each stale feed independently and proves debt repayment and debt-free withdrawal remain possible.
+The self-contained factory tests pass `stablecoin_ = oracle_ = address(0)` and assert reciprocal links immediately after construction. Real `PriceFeed` and `NhiFeed` instances receive their first values through the configured reporter before feed-dependent calls. Deterministic CREATE and CREATE2 round trips and 1,000 fuzz cases fund the borrower through MockIMD, borrow without work rights, mint earned work, repay without imdUSD allowance and recover all collateral without an initialization call. Both modes reject unsafe borrowing, excess repayment, unauthorized faucets and token/oracle consumption; `setVault` returns `AlreadyInitialized` for the operator, factory and unrelated callers from genesis. A seeded-feed expiry regression checks each stale feed independently and proves debt repayment and debt-free withdrawal remain possible.
 
-The existing constructor-rejection test now uses code-less collateral with zero COMP: zero COMP itself is valid under the approved construction change. All existing test cases are retained. Historical findings about the removed `setOracle` API are outside this increment; the current vault binds its oracle in its constructor.
+The existing constructor-rejection test now uses code-less collateral with zero imdUSD: zero imdUSD itself is valid under the approved construction change. All existing test cases are retained. Historical findings about the removed `setOracle` API are outside this increment; the current vault binds its oracle in its constructor.
 
 The approved price-divided liquidation formula passes. The previous fixed-payout requirement at non-unit prices is withdrawn and is not a defect.
 
@@ -90,7 +90,7 @@ surplus as reserves grow. Strict backing greater than one requires positive debt
 reserve-only backing is exactly one and the empty balance sheet has no ratio.
 
 `ReserveValuation.t.sol` covers decimal scaling, aggregate valuation, governance,
-COMP exclusion, stale or unavailable USD legs, and a liquidation that sends both
+imdUSD exclusion, stale or unavailable USD legs, and a liquidation that sends both
 collateral revenue and minted stability fees to the vault-created Treasury.
 Haircut endpoint regressions require zero backing at 0 and full market value at
 10000, including rejection of work without valued backing and of one wei past
@@ -156,7 +156,7 @@ is worth one ETH: `reserveValueUsd` is asserted in dollars and `reserveValue`,
 - **Backing bound on chain.** In addition to the pure-arithmetic fuzz, a 1000-run
   fuzz opens the only position at exactly `mat` (collateral rounded up to the
   wei), funds any reserve size, governs any ratio up to 2500, mints the whole
-  ceiling and checks collateral-plus-reserve exceeds all COMP by at least
+  ceiling and checks collateral-plus-reserve exceeds all imdUSD by at least
   `(mat - 1 - r) x D`.
 - **Register validation.** A source with code that reverts on, or returns short
   words from, either `isStale` or `latestValue` is refused at proposal with
@@ -239,9 +239,9 @@ no additional profile, RPC, downloaded dependency or scratch source is needed.
   other. Exact cross-products avoid hiding ratio changes through rounding.
 - `Redemption.invariant.t.sol` runs 256 sequences of 96 calls through four actors
   and eleven operations: reserve funding, deposits, borrowing, work minting,
-  repayment, withdrawals, COMP transfers, time, NHI, redemption and slippage
+  repayment, withdrawals, imdUSD transfers, time, NHI, redemption and slippage
   rejection. Independent histories reconcile supply, minted principal, paid
-  stability fees, burned COMP, reserve spending and every unit of IMD custody.
+  stability fees, burned imdUSD, reserve spending and every unit of IMD custody.
   Every successful redemption checks one burn/one payout, reserve priority,
   collateral released only against retired debt, each affected position's ratio,
   fee bounds and work-ceiling contraction. Unexpected reverts fail the campaign;
@@ -250,7 +250,7 @@ no additional profile, RPC, downloaded dependency or scratch source is needed.
 
 **Resolved backing finding:** the accepted source now rejects redemptions that
 would worsen aggregate backing, including after repayment and collateral
-withdrawal leave work-issued COMP outstanding. The original 100-IMD/250-COMP
+withdrawal leave work-issued imdUSD outstanding. The original 100-IMD/250-imdUSD
 counterexample now expects `RedemptionWorsensBacking` and verifies full rollback.
 Additional regressions cover a safe underbacked redemption at exact equality,
 one wei below that boundary, borrower and mixed payouts whose position ratio
@@ -326,7 +326,7 @@ The whole-record re-dating reported in the previous round (one wei of new
 principal per half-day kept any amount of principal permanently excluded from
 the base) was accepted as finding `883fa030` and fixed in the source revision the
 next subsection covers. The guard closing channel A entirely when secured backing
-per COMP falls below one minus the fee remains a design consequence for the
+per imdUSD falls below one minus the fee remains a design consequence for the
 requester, answered by the source authors rather than changed.
 
 Previous-round verification: `forge build` passed; the full default `forge test`

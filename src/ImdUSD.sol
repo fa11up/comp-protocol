@@ -9,7 +9,7 @@ interface IStablecoinConsumer {
     function stablecoin() external view returns (address);
 }
 
-/// @notice Elastic-supply COMP; starts with zero supply and has no configured supply cap.
+/// @notice Elastic-supply imdUSD; starts with zero supply and has no configured supply cap.
 /// @dev Two ways to register the single minter/burner, both irreversible:
 /// - `ImdUSD(address(0))`: the workflow's approved operator later calls `setVault` once.
 /// - `ImdUSD(vault)`: the link is fixed at construction. A CDPVault creating this token in its own
@@ -25,7 +25,7 @@ contract ImdUSD is ERC20 {
     address public vault;
     address private _initializer;
 
-    /// @param vault_ Zero for deferred one-time setup, or the CDPVault that will mint and burn COMP.
+    /// @param vault_ Zero for deferred one-time setup, or the CDPVault that will mint and burn imdUSD.
     constructor(address vault_) ERC20("imdUSD", "imdUSD") {
         if (vault_ == address(0)) {
             _initializer = APPROVED_OPERATOR;

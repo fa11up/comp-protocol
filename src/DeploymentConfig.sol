@@ -107,8 +107,9 @@ uint256 constant CHIP_BPS = 1_000;
 /// unchanged at any setting: this divides the existing bonus rather than seizing more collateral.
 uint256 constant CUT_BPS = 3_333;
 
-/// @dev Annual stability fee on open debt, in basis points, accrued linearly from deployment.
-/// Ships at zero so this increment changes no existing behaviour; a later deployment turns it on.
+/// @dev Annual stability fee on open debt, in basis points. It accrues through the `chi` index from
+/// that index's last checkpoint (`indexCheckpointAt`), so a governed change in `duty` applies from the
+/// moment it lands. The base vault reads this constant; ParameterizedVault reads `duty()` instead.
 uint256 constant DUTY_BPS = 200;
 
 /// @dev The ratio term of the work-minting ceiling, in basis points of collateral-backed debt:
@@ -133,8 +134,8 @@ uint256 constant EARN_MAT_BPS = 2_500;
 // therefore inert on testnet, which is the honest state rather than a gap.
 address constant ERC8004_ADAPTER = 0xde152AfB7db5373F34876E1499fbD893A82dD336;
 
-// COMP earned per accepted task, 1e18-scaled. Governed through `Parameters`, hard-bounded there at one
-// COMP per task. Shipped at a hundredth of a COMP; the work ceiling binds on top, so a claim is
+// imdUSD earned per accepted task, 1e18-scaled. Governed through `Parameters`, hard-bounded there at one
+// imdUSD per task. Shipped at a hundredth of a imdUSD; the work ceiling binds on top, so a claim is
 // bounded twice -- by what was earned and by what backs the protocol.
 uint256 constant WAGE_WAD = 0.01 ether;
 

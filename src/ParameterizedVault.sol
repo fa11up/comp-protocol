@@ -27,7 +27,7 @@ contract ParameterizedVault is CDPVault {
     /// replace it would have unbounded authority through the replacement.
     Parameters public immutable parameters;
 
-    /// @notice Where this vault's protocol bonus share (IMD) and paid stability fees (COMP) land,
+    /// @notice Where this vault's protocol bonus share (IMD) and paid stability fees (imdUSD) land,
     /// and the reserve whose value is the first term of `earnLine`.
     Treasury public immutable treasury;
 
@@ -53,7 +53,7 @@ contract ParameterizedVault is CDPVault {
         // The same idiom for the other two, and for the same reasons: a Treasury passed in could be
         // anyone's wallet (which is what FEE_RECIPIENT is today), and a manifest has no fifth slot
         // to deploy one in. Created here, the Treasury's creator is this vault, so its register is
-        // governed by this vault's Parameters and refuses this vault's COMP, with nothing bound later.
+        // governed by this vault's Parameters and refuses this vault's imdUSD, with nothing bound later.
         treasury = new Treasury();
         usdPriceFeed = new UsdPriceFeed(ISwarmFeed(priceFeed_));
     }
@@ -98,7 +98,7 @@ contract ParameterizedVault is CDPVault {
     /// zero and the guard was vacuous for the asset the route actually pays; listed IMD whose source
     /// read stale, or carried a zero factor, did the same. One valuation for the IMD held and the IMD
     /// leaving is what makes the comparison mean something. Other listed assets still count at their
-    /// registered, discounted value: they back COMP but never leave through this route.
+    /// registered, discounted value: they back imdUSD but never leave through this route.
     function _redemptionReserveBacking(uint256 amount, uint256 price)
         internal
         view
@@ -139,8 +139,8 @@ contract ParameterizedVault is CDPVault {
         return treasury.reserveValueUsd();
     }
 
-    /// @notice One COMP of debt is one USD-worth of collateral.
-    /// @dev What makes COMP a dollar stablecoin rather than an ETH-denominated CDP token. The swarm
+    /// @notice One imdUSD of debt is one USD-worth of collateral.
+    /// @dev What makes imdUSD a dollar stablecoin rather than an ETH-denominated CDP token. The swarm
     /// feed quotes IMD in wei of ETH, so the base vault measures a position in ETH and a borrower's
     /// required collateral moved whenever ETH moved even with IMD/ETH flat. Pricing through
     /// `usdPriceFeed` — the same feed times Chainlink ETH/USD — denominates the ratio and the
@@ -169,7 +169,7 @@ contract ParameterizedVault is CDPVault {
     /// REVISION (finding 4d30331c): debt created in the current transaction does not count. Without
     /// that, a rights holder with transient capital raised totalDebt with their own position, minted
     /// work against a quarter of it, repaid (a zero-second fee is zero) and withdrew everything in one
-    /// call, leaving work-minted COMP with nothing behind it. The cap is the debt level at the start of
+    /// call, leaving work-minted imdUSD with nothing behind it. The cap is the debt level at the start of
     /// the transaction, remembered in transient storage, so the ratio term is only ever backed by
     /// positions that existed before the caller arrived. A position held across transactions counts
     /// in full, so the ceiling stays point-in-time for the slow version of the same round trip: that is
