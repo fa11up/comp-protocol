@@ -161,17 +161,28 @@ export function renderDocs({ outDir, contentDir, terminal }) {
   };
 
   const redact = !terminal;
-  // A vault function named in code is linked to its entry on the Vault functions page, on its first
-  // mention in a page's prose. Headings, tables and existing links are left alone.
-  const FN_FILE = "reference/vault-functions.md";
-  const fnPage = byFile.get(FN_FILE);
-  const VAULT_FNS = new Set(fnPage ? [...fnPage.body.matchAll(/^###\s+`(\w+)\(/gm)].map((m) => m[1]) : []);
-  const noLink = (t) => {
-    if (!t || typeof t !== "object") return;
-    if (t.type === "codespan") t.noLink = true;
-    for (const k of ["tokens", "items", "header"]) if (Array.isArray(t[k])) t[k].forEach(noLink);
-    if (Array.isArray(t.rows)) t.rows.forEach((r) => r.forEach(noLink));
+  // A vault function, event or error named in code links to its reference entry on its first mention
+  // in a page. Headings and existing links are left alone; function names in tables are too (they are
+  // dense there), but an error is mostly met in a "what can block it" table, so those do link.
+  const REF_PAGES = [
+    { file: "reference/vault-functions.md", inTables: false },
+    { file: "reference/events-and-errors.md", inTables: true },
+  ]
+    .map((r) => ({ ...r, page: byFile.get(r.file) }))
+    .filter((r) => r.page);
+  const refOf = new Map();
+  for (const r of REF_PAGES) for (const [, name] of r.page.body.matchAll(/^###\s+`(\w+)\(/gm)) refOf.set(name, r);
+  const markAll = (key) => {
+    const walk = (t) => {
+      if (!t || typeof t !== "object") return;
+      if (t.type === "codespan") t[key] = true;
+      for (const k of ["tokens", "items", "header"]) if (Array.isArray(t[k])) t[k].forEach(walk);
+      if (Array.isArray(t.rows)) t.rows.forEach((r) => r.forEach(walk));
+    };
+    return walk;
   };
+  const noLink = markAll("noLink");
+  const inTable = markAll("inTable");
   const render = (page) => {
     const linked = new Set();
     const whole = redact && REDACT_WHOLE.has(page.file);
@@ -180,7 +191,8 @@ export function renderDocs({ outDir, contentDir, terminal }) {
     const used = new Map();
     marked.use({
       walkTokens(token) {
-        if (token.type === "heading" || token.type === "table") noLink(token);
+        if (token.type === "heading") noLink(token);
+        if (token.type === "table") inTable(token);
         if (token.type !== "link") return;
         noLink(token);
         const [target, hash] = token.href.split("#");
@@ -228,9 +240,10 @@ export function renderDocs({ outDir, contentDir, terminal }) {
         },
         codespan(token) {
           const m = /^(\w+)(\(.*\))?$/.exec(token.text);
-          if (!fnPage || page === fnPage || token.noLink || !m || !VAULT_FNS.has(m[1]) || linked.has(m[1])) return false;
+          const ref = m && refOf.get(m[1]);
+          if (!ref || page === ref.page || token.noLink || (token.inTable && !ref.inTables) || linked.has(m[1])) return false;
           linked.add(m[1]);
-          return `<a class="fn-link" href="${linkBetween(page.dir, fnPage.dir)}#${m[1]}"><code>${token.text}</code></a>`;
+          return `<a class="fn-link" href="${linkBetween(page.dir, ref.page.dir)}#${m[1]}"><code>${token.text}</code></a>`;
         },
         heading(token) {
           const inner = whole && token.depth > 1
@@ -240,8 +253,8 @@ export function renderDocs({ outDir, contentDir, terminal }) {
               : this.parser.parseInline(token.tokens);
           // A redacted heading's id must not spell out what it hides.
           let id = whole || (redact && TERMINAL_RE.test(token.text)) ? "redacted" : slugify(token.text);
-          // Function entries get short anchors (#bark, not #barkaddress-owner) so other pages can link them.
-          const fn = page === fnPage && /^`(\w+)\(/.exec(token.text);
+          // Reference entries get short anchors (#bark, #Bark, not #barkaddress-owner) so other pages can link them.
+          const fn = REF_PAGES.some((r) => r.page === page) && /^`(\w+)\(/.exec(token.text);
           if (fn) id = fn[1];
           const n = used.get(id) ?? 0;
           used.set(id, n + 1);
