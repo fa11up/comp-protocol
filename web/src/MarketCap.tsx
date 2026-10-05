@@ -1,6 +1,6 @@
 import { formatUnits } from "viem";
 
-// COMP is USD-denominated, so its market cap at par is its supply in dollars.
+// imdUSD is USD-denominated, so its market cap at par is its supply in dollars.
 // Drawn as a monospace progress line, the way imd.fun tracks $IMD against its goal.
 export const GOAL = 1_000_000_000;
 const CELLS = 24;

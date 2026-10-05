@@ -29,6 +29,7 @@ const allowed = [
   "network",
   "walletAddChain",
   "poolKey",
+  "interface",
 ];
 if (Object.keys(base).some((k) => !allowed.includes(k)))
   throw Error("Unexpected deployment field");

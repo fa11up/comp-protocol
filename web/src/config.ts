@@ -1,4 +1,5 @@
 import { appRoot } from "./site";
+import { onChain, setInterface } from "./names";
 import {
   createPublicClient,
   createWalletClient,
@@ -33,6 +34,8 @@ export type Deployment = {
     nativeCurrency: { name: string; symbol: string; decimals: number };
   };
   walletAddChain?: object;
+  /** Which names the deployed contracts use; see names.ts. Absent means "maker". */
+  interface?: "maker" | "legacy";
 };
 export type Target = { address: Address; abi: Abi };
 function sort(v: unknown): unknown {
@@ -64,6 +67,7 @@ export async function loadConfig() {
     throw Error(
       "Deployment configuration is incomplete. Transactions are disabled.",
     );
+  setInterface(config.interface);
   const abis: Record<string, Abi> = {};
   const targets: Record<string, Target> = {};
   const loadAbi = async (path: string) => {
@@ -93,14 +97,14 @@ export async function loadConfig() {
   );
   await Promise.all(
     [
-      "CompToken",
+      "ImdUSD",
       "MockIMD",
       "Parameters",
       "Treasury",
       "UsdPriceFeed",
       "MockWorkOracle",
       "SwarmWorkOracle",
-    ].map(async (n) => (abis[n] = await loadAbi(`abi/${n}.json`))),
+    ].map(async (n) => (abis[n] = await loadAbi(`abi/${onChain(n)}.json`))),
   );
   const chain = defineChain({
     id: config.chainId,

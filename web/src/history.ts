@@ -5,6 +5,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
+import { ours } from "./names";
 import { historyConfig, type Runtime, type Target } from "./config";
 import { read, type Snapshot } from "./state";
 
@@ -262,7 +263,7 @@ export async function loanBook(r: Runtime, s: Snapshot): Promise<Book> {
   const owners = new Set<Address>();
   for (const log of h.logs) {
     const event = decode(t, log);
-    if (event?.eventName === "CollateralDeposited")
+    if (event?.eventName && ours(event.eventName) === "Lock")
       owners.add(
         getAddress((event.args as unknown as { account: Address }).account),
       );

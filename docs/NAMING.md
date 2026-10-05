@@ -64,5 +64,9 @@ Errors otherwise keep plain names (`DebtCeilingReached`, `GracePeriodNotElapsed`
 `UnsafeCollateralRatio`, …), because they are read as messages; only those that validate a renamed
 parameter took its name. `redeem` survives in prose only where it means sIMD's own ERC-4626 unwrap.
 
-**The deployed Sepolia contracts predate this rename**, so `web/` and its pinned ABIs keep the old
-names until the next deployment; the terminal must not call functions the chain does not have.
+**The terminal speaks these names and translates at the chain boundary.** `web/src/names.ts` maps
+each name above to its pre-rename spelling, and a deployment file declares `"interface": "maker"` or
+`"legacy"`; Sepolia launch 688 is legacy, every later deployment and mainnet are maker. Users see
+neither vocabulary: the terminal labels actions in plain words (Deposit, Borrow, Repay, Withdraw,
+Redeem, Mark, Liquidate, Clear mark, Mint from work), and amounts carry the token's own `symbol()`.
+`web/tests/names.test.mjs` checks every row against the current ABIs and the deployed ones.

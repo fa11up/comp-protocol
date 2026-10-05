@@ -1,3 +1,4 @@
+import { unit } from "./unit";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits, maxUint256 } from "viem";
 import type { Runtime } from "./config";
@@ -75,7 +76,7 @@ export function useCharts(r: Runtime, s?: Snapshot) {
 export type ChartData = ReturnType<typeof useCharts>;
 const number = (v: bigint) => Number(formatUnits(v, 18));
 const liquidation = (p: { collateral: bigint; debt: bigint }, s?: Snapshot) => {
-  const at = s?.v.minCR && liquidationPrice(p.collateral, p.debt, s.v.minCR);
+  const at = s?.v.mat && liquidationPrice(p.collateral, p.debt, s.v.mat);
   return at
     ? `liquidates at $${fmt(at, 18, 2)}, ${cushion(s!.feeds.USD?.value, at)}`
     : "liquidation price unavailable";
@@ -109,7 +110,7 @@ export function LoanBook({
   const s = book.snapshot;
   const positions = book.data?.positions ?? [];
   useEns(positions.map((p) => p.owner));
-  const min = s?.v.minCR as bigint | undefined;
+  const min = s?.v.mat as bigint | undefined;
   const ceiling = s?.v.redemptionCeilingCR as bigint | undefined;
   const valid =
     available && !!book.data && min !== undefined && ceiling !== undefined;
@@ -161,7 +162,7 @@ export function LoanBook({
           Collateral ratio
           <Info
             label="Loan book"
-            text="Every open position on a collateral-ratio axis. Circle area is accrued COMP debt. The bands move with the live minCR and redemption ceiling."
+            text={`Every open position on a collateral-ratio axis. Circle area is accrued ${unit()} debt. The bands move with the live minCR and redemption ceiling.`}
           />
         </p>
         <span className="muted">
@@ -243,8 +244,8 @@ export function LoanBook({
                   type="button"
                   className={`loan-mark ${p.cr < min! ? "is-danger" : "is-healthy"}`}
                   style={{ left: `${p.x}%`, top: p.lane * 48 + 4 }}
-                  title={`${displayName(p.owner)} · ${p.owner}\n${p.cr}% · ${fmt(p.debt)} COMP · ${stateOf(p.cr, min!, ceiling!)}\n${liquidation(p, s)}`}
-                  aria-label={`${displayName(p.owner)}, ${p.owner}, ${p.cr}% collateral ratio, ${fmt(p.debt)} COMP, ${stateOf(p.cr, min!, ceiling!)}, ${liquidation(p, s)}`}
+                  title={`${displayName(p.owner)} · ${p.owner}\n${p.cr}% · ${fmt(p.debt)} ${unit()} · ${stateOf(p.cr, min!, ceiling!)}\n${liquidation(p, s)}`}
+                  aria-label={`${displayName(p.owner)}, ${p.owner}, ${p.cr}% collateral ratio, ${fmt(p.debt)} ${unit()}, ${stateOf(p.cr, min!, ceiling!)}, ${liquidation(p, s)}`}
                   aria-pressed={selected === p.owner}
                   onClick={() =>
                     setSelected(selected === p.owner ? undefined : p.owner)
@@ -551,8 +552,8 @@ export function Sparkline({
 }
 
 export function WorkChart({ s }: { s?: Snapshot }) {
-  const minted = s?.v.totalWorkMinted as bigint | undefined,
-    ceiling = s?.v.workCeiling as bigint | undefined;
+  const minted = s?.v.totalEarned as bigint | undefined,
+    ceiling = s?.v.earnLine as bigint | undefined;
   if (minted === undefined || ceiling === undefined)
     return <Unavailable>Could not read work ceiling headroom.</Unavailable>;
   const max = minted > ceiling ? minted : ceiling;
@@ -564,7 +565,7 @@ export function WorkChart({ s }: { s?: Snapshot }) {
       <div
         className="bar"
         role="img"
-        aria-label={`${fmt(minted)} COMP minted against ${fmt(ceiling)} COMP ceiling`}
+        aria-label={`${fmt(minted)} ${unit()} minted against ${fmt(ceiling)} ${unit()} ceiling`}
       >
         <span
           className={`bar-fill ${minted > ceiling ? "over-limit" : ""}`}
@@ -576,8 +577,8 @@ export function WorkChart({ s }: { s?: Snapshot }) {
         <Ticker
           text={
             minted > ceiling
-              ? `${fmt(minted - ceiling)} COMP over ceiling`
-              : `${fmt(ceiling - minted)} COMP available`
+              ? `${fmt(minted - ceiling)} ${unit()} over ceiling`
+              : `${fmt(ceiling - minted)} ${unit()} available`
           }
         />
       </p>
@@ -593,11 +594,11 @@ export function SupplyChart({ s }: { s?: Snapshot }) {
     [
       v.supply,
       v.totalDebt,
-      v.totalWorkMinted,
+      v.totalEarned,
       v.totalNonPrincipalRedeemed,
       v.reserveValue,
       v.securedCollateral,
-      v.minCR,
+      v.mat,
       v.totalBadDebt,
     ].some((x) => x === undefined) ||
     !usd?.value
@@ -607,11 +608,11 @@ export function SupplyChart({ s }: { s?: Snapshot }) {
     );
   const supply = v.supply as bigint;
   const debt = v.totalDebt as bigint,
-    minted = v.totalWorkMinted as bigint,
+    minted = v.totalEarned as bigint,
     burns = v.totalNonPrincipalRedeemed as bigint;
   const collateral = v.securedCollateral as bigint,
     badDebt = v.totalBadDebt as bigint,
-    minCR = v.minCR as bigint;
+    minCR = v.mat as bigint;
   const reserveValue = v.reserveValue as bigint;
   if (debt + minted - burns !== supply)
     return (
@@ -630,16 +631,16 @@ export function SupplyChart({ s }: { s?: Snapshot }) {
   return (
     <figure className="mini-chart supply-chart">
       <figcaption className="figure-head">
-        Supply · <Ticker text={`${fmt(supply)} COMP`} />
+        Supply · <Ticker text={`${fmt(supply)} ${unit()}`} />
         <Info
           label="Supply composition"
-          text="■ collateral-backed principal (capped at supply) and ▨ net work-issued COMP. Solid marker = backing ratio, dashed = par."
+          text={`■ collateral-backed principal (capped at supply) and ▨ net work-issued ${unit()}. Solid marker = backing ratio, dashed = par.`}
         />
       </figcaption>
       <div
         className="bar composition"
         role="img"
-        aria-label={`${fmt(principal)} COMP collateral principal, ${fmt(work)} COMP net work. Backing ${supply ? (ratio * 100).toFixed(1) + "%" : "undefined: zero supply"}`}
+        aria-label={`${fmt(principal)} ${unit()} collateral principal, ${fmt(work)} ${unit()} net work. Backing ${supply ? (ratio * 100).toFixed(1) + "%" : "undefined: zero supply"}`}
       >
         <span
           className="collateral-fill"

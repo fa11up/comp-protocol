@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { explain, failure } from "../src/explain.ts";
+import { setUnit } from "../src/unit.ts";
 const WAD = 10n ** 18n;
 const s = {
   block: 1n,
@@ -13,26 +14,26 @@ const s = {
   v: {
     positions: [300n * WAD, 1000n * WAD],
     debtOf: 1000n * WAD,
-    minCR: 150n,
-    maxDivergenceBps: 500n,
+    mat: 150n,
+    skew: 500n,
     totalDebt: 900n * WAD,
-    debtCeiling: 1000n * WAD,
+    line: 1000n * WAD,
   },
 };
 const ctx = (fn, args) => ({ fn, args, s });
 test("a refused borrow names the collateral it needs and what is held", () => {
   const text = explain(
     { name: "UnsafeCollateralRatio", args: [] },
-    ctx("mintCOMP", [1500n * WAD]),
+    ctx("draw", [1500n * WAD]),
   );
   assert.match(text, /needs 375 IMD/);
   assert.match(text, /holds 300 IMD/);
-  assert.match(text, /borrow now is 1,000 COMP/);
+  assert.match(text, /borrow now is 1,000 imdUSD/);
 });
 test("a refused withdrawal names the floor and the withdrawable amount", () => {
   const text = explain(
     { name: "UnsafeCollateralRatio", args: [] },
-    ctx("withdrawCollateral", [200n * WAD]),
+    ctx("free", [200n * WAD]),
   );
   assert.match(text, /at least 150 IMD/);
   assert.match(text, /withdraw now is 150 IMD/);
@@ -41,26 +42,39 @@ test("ceiling, divergence and staleness carry their figures", () => {
   assert.match(
     explain(
       { name: "DebtCeilingReached", args: [] },
-      ctx("mintCOMP", [200n * WAD]),
+      ctx("draw", [200n * WAD]),
     ),
-    /Room left: 100 COMP/,
+    /Room left: 100 imdUSD/,
   );
   assert.match(
-    explain({ name: "PriceDivergence", args: [] }, ctx("mintCOMP", [1n])),
+    explain({ name: "PriceDivergence", args: [] }, ctx("draw", [1n])),
     /disagree by 10%; the vault allows 5%/,
   );
   assert.match(
-    explain({ name: "StaleFeed", args: [] }, ctx("mintCOMP", [1n])),
+    explain({ name: "StaleFeed", args: [] }, ctx("draw", [1n])),
     /primary last updated 25h 0m ago against a 86400s limit/,
   );
 });
 test("unknown reverts fall through to the dictionary", () => {
   assert.equal(
-    explain({ name: "Unauthorized", args: [] }, ctx("mintCOMP", [1n])),
+    explain({ name: "Unauthorized", args: [] }, ctx("draw", [1n])),
     undefined,
   );
   assert.deepEqual(
     failure({ cause: { data: { errorName: "X", args: [1n] } } }),
     { name: "X", args: [1n] },
+  );
+});
+test("figures carry the unit the deployed token reports", () => {
+  setUnit("COMP");
+  assert.match(
+    explain({ name: "DebtCeilingReached", args: [] }, ctx("draw", [200n * WAD])),
+    /Room left: 100 COMP/,
+  );
+  setUnit("imdUSD");
+  setUnit("<b>bad</b>"); // not a symbol: ignored
+  assert.match(
+    explain({ name: "DebtCeilingReached", args: [] }, ctx("draw", [200n * WAD])),
+    /Room left: 100 imdUSD/,
   );
 });

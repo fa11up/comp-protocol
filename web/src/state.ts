@@ -1,4 +1,6 @@
 import { parseAbi, zeroAddress, type Address } from "viem";
+import { activeInterface, onChain } from "./names";
+import { setUnit } from "./unit";
 import type { Runtime, Target } from "./config";
 // Dynamic implementation-derived ABIs are loaded only after manifest verification.
 export const read = async (
@@ -8,11 +10,12 @@ export const read = async (
   args: readonly unknown[] = [],
   blockNumber?: bigint,
 ): Promise<any> =>
-  r.client.readContract({ ...t, functionName: fn, args, blockNumber });
+  r.client.readContract({ ...t, functionName: onChain(fn), args, blockNumber });
 // Reads newer than the pinned ABIs. They are called through inline fragments rather than by
 // editing public/abi (which the manifest verifies against the deployment's source commit), and a
 // deployment that predates them reads as "unavailable" in its own field, never as a failed snapshot.
 const optionalAbi = parseAbi([
+  "function backingPerUnit() view returns (uint256)",
   "function backingPerComp() view returns (uint256)",
   "function expectedQuestionHash(uint64 fromBlock, uint64 toBlock) pure returns (bytes32)",
   "function lastToBlock() view returns (uint64)",
@@ -62,7 +65,7 @@ export async function snapshot(
   await Promise.all(
     Object.entries({
       imdToken: "MockIMD",
-      compToken: "CompToken",
+      stablecoin: "ImdUSD",
       parameters: "Parameters",
       treasury: "Treasury",
       usdPriceFeed: "UsdPriceFeed",
@@ -89,7 +92,7 @@ export async function snapshot(
     }),
   );
   await Promise.all(
-    ["compToken", "parameters", "treasury", "oracle"].map(async (name) => {
+    ["stablecoin", "parameters", "treasury", "oracle"].map(async (name) => {
       if (
         (await read(r, targets[name], "vault", [], bn)).toLowerCase() !==
         vault.address.toLowerCase()
@@ -101,26 +104,26 @@ export async function snapshot(
   const v: Record<string, any> = {};
   const feeds: Snapshot["feeds"] = {};
   const jobs: string[] = [
-    "minCR",
+    "mat",
     "redemptionCeilingCR",
-    "redemptionSpread",
+    "gap",
     "redemptionReserve",
     "REDEMPTION_FEE_FLOOR_BPS",
     "REDEMPTION_FEE_CAP_BPS",
     "totalDebt",
     "backedDebt",
     "totalBadDebt",
-    "totalWorkMinted",
+    "totalEarned",
     "totalNonPrincipalRedeemed",
-    "workCeiling",
-    "workRatioBps",
+    "earnLine",
+    "earnMat",
     "reserveValue",
     "securedCollateral",
-    "debtCeiling",
-    "stabilityFeeBps",
-    "maxDivergenceBps",
-    "gracePeriod",
-    "liquidationWindow",
+    "line",
+    "duty",
+    "skew",
+    "lull",
+    "tail",
   ];
   const safe = async (key: string, fn: () => Promise<any>) => {
     try {
@@ -132,18 +135,18 @@ export async function snapshot(
   await Promise.all([
     ...jobs.map((fn) => safe(fn, () => read(r, vault, fn, [], bn))),
     safe("fee", () => read(r, vault, "redemptionFeeBps", [0n], bn)),
-    safe("supply", () => read(r, targets.compToken, "totalSupply", [], bn)),
+    safe("supply", () => read(r, targets.stablecoin, "totalSupply", [], bn)),
     safe("imdDeployer", () => read(r, targets.imdToken, "deployer", [], bn)),
     safe("imdDecimals", () => read(r, targets.imdToken, "decimals", [], bn)),
-    safe("compDecimals", () => read(r, targets.compToken, "decimals", [], bn)),
+    safe("compDecimals", () => read(r, targets.stablecoin, "decimals", [], bn)),
     ...[
       "governor",
       "TIMELOCK",
       "pendingChange",
       "current",
-      "compPerTaskWad",
-      "pendingRedemptionSpread",
-      "pendingWorkRatio",
+      "wage",
+      "pendingGap",
+      "pendingEarnMat",
       "pendingReserveAsset",
       "pendingSet",
       "pending",
@@ -182,7 +185,7 @@ export async function snapshot(
             read(r, targets.imdToken, "balanceOf", [account], bn),
           ),
           safe("compBalance", () =>
-            read(r, targets.compToken, "balanceOf", [account], bn),
+            read(r, targets.stablecoin, "balanceOf", [account], bn),
           ),
           safe("allowance", () =>
             read(
@@ -207,14 +210,19 @@ export async function snapshot(
     r.client.readContract({
       address,
       abi: optionalAbi,
-      functionName: functionName as never,
+      functionName: onChain(functionName) as never,
       args: args as never,
       blockNumber: bn,
     }) as Promise<any>;
   try {
-    v.backingPerComp = await optional(vault.address, "backingPerComp");
+    v.backingPerUnit = await optional(vault.address, "backingPerUnit");
   } catch {
-    v.backingPerComp = undefined;
+    v.backingPerUnit = undefined;
+  }
+  try {
+    setUnit(await read(r, targets.stablecoin, "symbol", [], bn));
+  } catch {
+    /* Label only: the default unit stands. */
   }
   const questions: Record<string, Question> = {};
   await Promise.all(
@@ -247,13 +255,18 @@ export async function snapshot(
     }),
   );
   const work: Record<string, any> = { mode: "unknown" };
+  // Three work oracles exist. The single-agent one ("attested") predates the rename and survives only
+  // on legacy deployments. The swarm-wide one ("swarm") credits any agent from the swarm's daily tally
+  // and is what deploys from now on. A test faucet ("faucet") grants credits by hand.
   try {
+    if (activeInterface() !== "legacy")
+      throw Error("single-agent oracle is legacy only");
     const keys = [
       "attestedTasks",
       "creditedTasks",
       "earnedRights",
       "consumedRights",
-      "compPerTaskWad",
+      "wage",
       "CLAIMANT",
       "AGENT_ID",
       "latestValue",
@@ -267,12 +280,30 @@ export async function snapshot(
     work.mode = "attested";
   } catch {
     try {
-      const t = { address: targets.oracle.address, abi: r.abis.MockWorkOracle };
-      work.deployer = await read(r, t, "deployer", [], bn);
-      targets.oracle = t;
-      work.mode = "faucet";
+      const keys = ["wage", "latestValue", "isStale", "maxAge"];
+      const values = await Promise.all(
+        keys.map((k) => read(r, targets.oracle, k, [], bn)),
+      );
+      keys.forEach((k, i) => (work[k] = values[i]));
+      if (account) {
+        [work.creditedRights, work.consumedRights] = await Promise.all([
+          read(r, targets.oracle, "creditedRights", [account], bn),
+          read(r, targets.oracle, "consumedRights", [account], bn),
+        ]);
+      }
+      work.mode = "swarm";
     } catch {
-      work.mode = "unknown";
+      try {
+        const t = {
+          address: targets.oracle.address,
+          abi: r.abis.MockWorkOracle,
+        };
+        work.deployer = await read(r, t, "deployer", [], bn);
+        targets.oracle = t;
+        work.mode = "faucet";
+      } catch {
+        work.mode = "unknown";
+      }
     }
   }
   if (v.imdDecimals !== 18 || v.compDecimals !== 18)
@@ -301,8 +332,5 @@ export function feedsReady(s: Snapshot | undefined) {
   const a = s.feeds.PriceFeed.value,
     b = s.feeds.SpotFeed.value;
   const d = a > b ? a - b : b - a;
-  return (
-    s.v.maxDivergenceBps !== undefined &&
-    d <= (a * s.v.maxDivergenceBps) / 10000n
-  );
+  return s.v.skew !== undefined && d <= (a * s.v.skew) / 10000n;
 }

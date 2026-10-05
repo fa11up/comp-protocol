@@ -242,6 +242,8 @@ function call(s, params) {
     value = {
       deployer: account,
       decimals: 18,
+      // The deployed Sepolia token still carries the testnet symbol; the terminal reads it.
+      symbol: name === "compToken" ? "COMP" : "IMD",
       balanceOf: 10000n * W,
       allowance: s.allowance,
       totalSupply: s.supply,

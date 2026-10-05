@@ -1,3 +1,4 @@
+import { unit } from "./unit.ts";
 import {
   formatUnits,
   parseUnits,
@@ -5,6 +6,7 @@ import {
   getAddress,
   maxUint256,
 } from "viem";
+import { ours } from "./names.ts";
 export const WAD = 10n ** 18n;
 export const fmt = (v: bigint | undefined, d = 18, places = 4): string => {
   if (v === undefined) return "—";
@@ -43,8 +45,8 @@ export function uint(text: string) {
   if (n > maxUint256) throw Error("Number is too large.");
   return n;
 }
-// Mirrors the vault: payoutScale = mulDiv(backingPerComp, 10000 - fee, 10000), where
-// backingPerComp never exceeds par. A deployment without backingPerComp() pays par.
+// Mirrors the vault: payoutScale = mulDiv(backingPerUnit, 10000 - fee, 10000), where
+// backingPerUnit never exceeds par. A deployment without backingPerUnit() pays par.
 export function payout(
   comp: bigint,
   fee: bigint,
@@ -57,7 +59,9 @@ export function payout(
   const paidAt = backing < WAD ? backing : WAD;
   const scale = (paidAt * (10000n - fee)) / 10000n;
   if (scale === 0n)
-    throw Error("Backing per COMP is zero. A redemption would pay nothing.");
+    throw Error(
+      `Backing per ${unit()} is zero. A redemption would pay nothing.`,
+    );
   const out = (comp * scale) / price;
   if (!out) throw Error("This amount rounds to zero IMD. Increase the amount.");
   const reserveOut = out < reserve ? out : reserve;
@@ -123,7 +127,7 @@ export function message(e: unknown): string {
   let x: unknown = e;
   for (let i = 0; i < 8 && x; i++) {
     const c = x as typeof err;
-    const name = c.data?.errorName;
+    const name = c.data?.errorName && ours(c.data.errorName);
     if (name && known[name]) return known[name];
     x = c.cause;
   }
@@ -142,27 +146,27 @@ export function message(e: unknown): string {
 }
 
 // Position arithmetic, mirroring CDPVault._collateralRatio: CR% = collateral * price / (debt * 1e16),
-// healthy when CR >= minCR. Price is the 1e18-scaled USD price per IMD the vault reads.
+// healthy when CR >= mat. Price is the 1e18-scaled USD price per IMD the vault reads.
 const ceilDiv = (a: bigint, b: bigint) => (a === 0n ? 0n : (a - 1n) / b + 1n);
 export const CR_SCALE = 10n ** 16n;
-/** Smallest collateral (IMD wei) that keeps `debt` at or above `minCR`. */
-export function requiredCollateral(debt: bigint, minCR: bigint, price: bigint) {
+/** Smallest collateral (IMD wei) that keeps `debt` at or above `mat`. */
+export function requiredCollateral(debt: bigint, mat: bigint, price: bigint) {
   if (price <= 0n) throw Error("A valid USD price is required.");
-  return ceilDiv(debt * minCR * CR_SCALE, price);
+  return ceilDiv(debt * mat * CR_SCALE, price);
 }
-/** Most COMP a position can owe in total at `minCR`, given its collateral. */
-export function maxDebt(collateral: bigint, minCR: bigint, price: bigint) {
-  if (minCR <= 0n) throw Error("A valid minCR is required.");
-  return (collateral * price) / (minCR * CR_SCALE);
+/** Most imdUSD a position can owe in total at `mat`, given its collateral. */
+export function maxDebt(collateral: bigint, mat: bigint, price: bigint) {
+  if (mat <= 0n) throw Error("A valid mat is required.");
+  return (collateral * price) / (mat * CR_SCALE);
 }
-/** USD price per IMD (1e18-scaled) at which the position reaches minCR. */
+/** USD price per IMD (1e18-scaled) at which the position reaches mat. */
 export function liquidationPrice(
   collateral: bigint,
   debt: bigint,
-  minCR: bigint,
+  mat: bigint,
 ): bigint | undefined {
   if (debt === 0n || collateral === 0n) return undefined;
-  return ceilDiv(debt * minCR * CR_SCALE, collateral);
+  return ceilDiv(debt * mat * CR_SCALE, collateral);
 }
 /** Signed basis points the price can fall before liquidation; negative means already below. */
 export function cushionBps(price: bigint, liquidation: bigint) {
@@ -193,13 +197,13 @@ export function span(seconds: bigint) {
  */
 export function nextStep(
   p: { cr: bigint; mark: readonly [bigint, bigint, boolean, ...unknown[]] },
-  minCR: bigint,
+  mat: bigint,
   now: bigint,
   window: bigint,
   name: string,
 ) {
   const [markedAt, grace, active] = p.mark;
-  const healthy = p.cr >= minCR;
+  const healthy = p.cr >= mat;
   // A recovered position cannot be liquidated, so its leftover mark is housekeeping, not the next step.
   if (active && healthy) return "View actions →";
   if (active) {

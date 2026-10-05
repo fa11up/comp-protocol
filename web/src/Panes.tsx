@@ -1,3 +1,5 @@
+import { activeInterface } from "./names";
+import { unit } from "./unit";
 import { useEffect, useRef, useState } from "react";
 import { isAddress } from "viem";
 import { WorkChart, SupplyChart, Sparkline, type ChartData } from "./Charts";
@@ -38,7 +40,11 @@ const addr = (name: string) => ({ name, kind: "address" as const });
 const num = (name: string) => ({ name, kind: "uint" as const });
 // A debt ceiling set to the uint256 range is "none", not a 78-digit number.
 const ceilingText = (v?: bigint) =>
-  v === undefined ? "—" : v >= 10n ** 36n ? "No ceiling" : `${fmt(v)} COMP`;
+  v === undefined
+    ? "—"
+    : v >= 10n ** 36n
+      ? "No ceiling"
+      : `${fmt(v)} ${unit()}`;
 
 export function Position({
   r,
@@ -66,10 +72,10 @@ export function Position({
   const collateral = v.positions?.[0] as bigint | undefined;
   const debt = v.debtOf as bigint | undefined;
   const sized =
-    collateral !== undefined && debt !== undefined && !!v.minCR && !!price;
-  const liq = sized ? liquidationPrice(collateral, debt, v.minCR) : undefined;
-  const most = sized ? maxDebt(collateral, v.minCR, price) : undefined;
-  const keep = sized ? requiredCollateral(debt, v.minCR, price) : undefined;
+    collateral !== undefined && debt !== undefined && !!v.mat && !!price;
+  const liq = sized ? liquidationPrice(collateral, debt, v.mat) : undefined;
+  const most = sized ? maxDebt(collateral, v.mat, price) : undefined;
+  const keep = sized ? requiredCollateral(debt, v.mat, price) : undefined;
   return (
     <>
       <Col label="Your position">
@@ -79,12 +85,16 @@ export function Position({
             <Ticker text={ratio(v.collateralRatio)} />
           </strong>
           <small>
-            minCR <Ticker text={ratio(v.minCR)} />
+            minCR <Ticker text={ratio(v.mat)} />
           </small>
         </div>
         <Row label="Collateral">{fmt(collateral)} IMD</Row>
-        <Row label="Accrued debt">{fmt(debt)} COMP</Row>
-        <Row label="Unpaid stability fee">{fmt(v.stabilityFeeOf)} COMP</Row>
+        <Row label="Accrued debt">
+          {fmt(debt)} {unit()}
+        </Row>
+        <Row label="Unpaid stability fee">
+          {fmt(v.stabilityFeeOf)} {unit()}
+        </Row>
         <Row label="Liquidation price">
           {!sized ? "—" : liq === undefined ? "No debt" : `$${fmt(liq)} / IMD`}
         </Row>
@@ -96,7 +106,7 @@ export function Position({
         <Row label="Can still borrow">
           {most === undefined || debt === undefined
             ? "—"
-            : `${fmt(most > debt ? most - debt : 0n)} COMP`}
+            : `${fmt(most > debt ? most - debt : 0n)} ${unit()}`}
         </Row>
         <Row label="Can withdraw">
           {keep === undefined || collateral === undefined
@@ -104,10 +114,10 @@ export function Position({
             : `${fmt(collateral > keep ? collateral - keep : 0n)} IMD`}
         </Row>
         <Row label="Wallet">
-          {fmt(v.imdBalance)} IMD / {fmt(v.compBalance)} COMP
+          {fmt(v.imdBalance)} IMD / {fmt(v.compBalance)} {unit()}
         </Row>
         <p className="micro">
-          COMP debt is USD-denominated. IMD / USD:{" "}
+          {unit()} debt is USD-denominated. IMD / USD:{" "}
           {s?.feeds.USD && !s.feeds.USD.stale
             ? `$${fmt(s.feeds.USD.value)}`
             : "unavailable"}
@@ -156,7 +166,7 @@ export function Position({
                     }
                   : {
                       target: t.ParameterizedVault,
-                      fn: "depositCollateral",
+                      fn: "lock",
                       args: [n],
                       summary: `Deposit ${exact(n)} IMD as collateral.`,
                     };
@@ -174,9 +184,9 @@ export function Position({
             label="Review borrow"
             actions={actions}
             target={t?.ParameterizedVault}
-            fn="mintCOMP"
-            fields={[amt("Borrow COMP")]}
-            summary="Add COMP debt to your position."
+            fn="draw"
+            fields={[amt(`Borrow ${unit()}`)]}
+            summary={`Add ${unit()} debt to your position.`}
             disabled={!fresh}
             reason="Fresh, agreeing price feeds are required."
           />
@@ -187,9 +197,9 @@ export function Position({
             label="Review repayment"
             actions={actions}
             target={t?.ParameterizedVault}
-            fn="repayCOMP"
-            fields={[amt("Repay COMP")]}
-            summary="Burn COMP to repay fees first, then principal. No approval required."
+            fn="wipe"
+            fields={[amt(`Repay ${unit()}`)]}
+            summary={`Burn ${unit()} to repay fees first, then principal. No approval required.`}
           />
         )}
         {act === "withdraw" && (
@@ -198,7 +208,7 @@ export function Position({
             label="Review withdrawal"
             actions={actions}
             target={t?.ParameterizedVault}
-            fn="withdrawCollateral"
+            fn="free"
             fields={[amt("Withdraw IMD")]}
             summary="Remove collateral if the remaining position meets minCR."
             disabled={!fresh && v.debtOf !== 0n}
@@ -222,9 +232,9 @@ export function Position({
           />
         )}
         <AddressLink
-          value={t?.compToken.address}
+          value={t?.stablecoin.address}
           explorer={r.config.network.explorer}
-          label="COMP"
+          label={unit()}
         />
       </Col>
     </>
@@ -248,6 +258,8 @@ export function Work({
   const v = s?.v || {};
   const attested = w?.mode === "attested";
   const faucet = w?.mode === "faucet";
+  // The swarm-wide oracle credits any agent's controller from the swarm's daily tally.
+  const swarm = w?.mode === "swarm";
   const remaining = attested
     ? w.earnedRights > w.consumedRights
       ? BigInt(w.earnedRights) - BigInt(w.consumedRights)
@@ -257,15 +269,23 @@ export function Work({
     <>
       <Col label="Swarm tally">
         <div className="hero-stat">
-          <span>Attested cumulative tasks</span>
+          <span>
+            {swarm ? "Work rights you can use" : "Attested cumulative tasks"}
+          </span>
           <strong>
             <Ticker
-              text={attested ? w.attestedTasks.toLocaleString("en-US") : "—"}
+              text={
+                swarm
+                  ? `${fmt(v.rights)} ${unit()}`
+                  : attested
+                    ? w.attestedTasks.toLocaleString("en-US")
+                    : "—"
+              }
             />
           </strong>
           <small>
-            {attested
-              ? `${w.isStale ? "Stale" : "Fresh"} · ${age(w.latestValue?.[1], now)}`
+            {attested || swarm
+              ? `Tally ${w.isStale ? "stale" : "fresh"} · ${age(w.latestValue?.[1], now)}`
               : faucet
                 ? "Faucet mode"
                 : "Awaiting linked oracle"}
@@ -287,6 +307,21 @@ export function Work({
             now={now}
             label="Work tally"
           />
+        )}
+        {swarm && (
+          <>
+            <Row label="Credited to this wallet">
+              {fmt(w.creditedRights)} {unit()}
+            </Row>
+            <Row label="Already used">
+              {fmt(w.consumedRights)} {unit()}
+            </Row>
+            <Row label="Tally freshness limit">{w.maxAge.toString()}s</Row>
+            <p className="micro">
+              Rights are credited when an agent's controller claims its tasks
+              from the swarm's daily tally. Claiming is not in the terminal yet.
+            </p>
+          </>
         )}
         {faucet && (
           <p className="notice">
@@ -315,15 +350,19 @@ export function Work({
       </Col>
       <Col label="Rights">
         <WorkChart s={s} />
-        <Row label="COMP per task">
-          {fmt(attested ? w.compPerTaskWad : v.compPerTaskWad)}
+        <Row label={`${unit()} per task`}>
+          {fmt(attested ? w.wage : v.wage)}
         </Row>
         <Row label="Rights earned / consumed">
           {fmt(attested ? w.earnedRights : undefined)} /{" "}
           {fmt(attested ? w.consumedRights : undefined)}
         </Row>
-        <Row label="Rights remaining">{fmt(remaining)} COMP</Row>
-        <Row label="This wallet can claim">{fmt(v.rights)} COMP</Row>
+        <Row label="Rights remaining">
+          {fmt(remaining)} {unit()}
+        </Row>
+        <Row label="This wallet can claim">
+          {fmt(v.rights)} {unit()}
+        </Row>
         {faucet && (
           <Choice
             label="Work action"
@@ -341,8 +380,8 @@ export function Work({
             label="Review work mint"
             actions={actions}
             target={s?.targets.ParameterizedVault}
-            fn="mintFromWork"
-            fields={[amt("Mint earned COMP")]}
+            fn="earn"
+            fields={[amt(`Mint earned ${unit()}`)]}
             summary="Consume work rights permanently. Redemption does not restore them."
             disabled={!feedsReady(s) || !v.rights || w?.mode === "unknown"}
             reason="Fresh feeds, available rights and backing headroom are required."
@@ -355,7 +394,7 @@ export function Work({
             actions={actions}
             target={s?.targets.oracle}
             fn="grantRights"
-            fields={[addr("Recipient"), amt("Rights in COMP")]}
+            fields={[addr("Recipient"), amt(`Rights in ${unit()}`)]}
             summary="Grant test credits; this does not attest work."
             disabled={
               actions.account?.toLowerCase() !== w.deployer?.toLowerCase()
@@ -404,7 +443,7 @@ export function Oracle({
     primary && spot !== undefined
       ? ((primary > spot ? primary - spot : spot - primary) * 10000n) / primary
       : undefined;
-  const allowed = s?.v.maxDivergenceBps as bigint | undefined;
+  const allowed = s?.v.skew as bigint | undefined;
   const stale = !!(f.PriceFeed?.stale || f.SpotFeed?.stale);
   const contract = (n: string) =>
     r.config.contracts.find((c) => c.name === n)?.address ??
@@ -576,18 +615,18 @@ export function Keeper({
     if (!position || !s) return undefined;
     const graceEnds = position.mark[0] + position.mark[1];
     if (f.name === "HealthyPosition")
-      return `${position.owner} sits at ${ratio(position.cr)}, at or above minCR ${ratio(s.v.minCR)}. It cannot be marked or liquidated until it falls below.`;
+      return `${position.owner} sits at ${ratio(position.cr)}, at or above minCR ${ratio(s.v.mat)}. It cannot be marked or liquidated until it falls below.`;
     if (f.name === "GracePeriodNotElapsed")
       return `The grace period ends in ${graceEnds > now ? graceEnds - now : 0n}s, at ${new Date(Number(graceEnds) * 1000).toISOString()}.`;
     if (f.name === "MarkExpired")
-      return `The mark's execution window closed at ${new Date(Number(graceEnds + (s.v.liquidationWindow ?? 0n)) * 1000).toISOString()}. Mark the position again.`;
+      return `The mark's execution window closed at ${new Date(Number(graceEnds + (s.v.tail ?? 0n)) * 1000).toISOString()}. Mark the position again.`;
     if (f.name === "ExcessRepayment")
-      return `${position.owner} owes ${fmt(position.debt)} COMP including fees; repay no more than that.`;
+      return `${position.owner} owes ${fmt(position.debt)} ${unit()} including fees; repay no more than that.`;
     return undefined;
   };
   const liq =
-    position && s?.v.minCR
-      ? liquidationPrice(position.collateral, position.debt, s.v.minCR)
+    position && s?.v.mat
+      ? liquidationPrice(position.collateral, position.debt, s.v.mat)
       : undefined;
   const summary = position && (
     <>
@@ -600,8 +639,12 @@ export function Keeper({
       <div className="row-grid">
         <Row label="Collateral ratio">{ratio(position.cr)}</Row>
         <Row label="Collateral">{fmt(position.collateral)} IMD</Row>
-        <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
-        <Row label="Bad debt estimate">{fmt(position.badDebt)} COMP</Row>
+        <Row label="Accrued debt">
+          {fmt(position.debt)} {unit()}
+        </Row>
+        <Row label="Bad debt estimate">
+          {fmt(position.badDebt)} {unit()}
+        </Row>
         <Row label="Liquidation price">{liq ? `$${fmt(liq)} / IMD` : "—"}</Row>
         <Row label="Cushion">
           {liq ? cushion(s?.feeds.USD?.value, liq) : "—"}
@@ -610,7 +653,7 @@ export function Keeper({
           label="Mark"
           info="A mark clears itself when the borrower next deposits, repays, borrows or withdraws. A recovery caused only by the price leaves it in place until anyone clears it; it cannot be used to liquidate a healthy position."
         >
-          {position.mark[2] && position.cr >= (s?.v.minCR ?? 0n)
+          {position.mark[2] && position.cr >= (s?.v.mat ?? 0n)
             ? "Recovered · clearable"
             : position.mark[2]
               ? now < position.mark[0] + position.mark[1]
@@ -668,9 +711,9 @@ export function Keeper({
                   : inspected
                     ? nextStep(
                         position,
-                        s?.v.minCR ?? 0n,
+                        s?.v.mat ?? 0n,
                         now,
-                        s?.v.liquidationWindow ?? 0n,
+                        s?.v.tail ?? 0n,
                         displayName(position.owner),
                       )
                     : "Inspect position"}
@@ -682,7 +725,7 @@ export function Keeper({
               // QA-05: success is announced, not shown twice; the summary below already shows it.
               <span className="sr-only">
                 {inspected && position && !loading
-                  ? `Inspected ${displayName(position.owner)}: ${ratio(position.cr)} collateral ratio. ${nextStep(position, s?.v.minCR ?? 0n, now, s?.v.liquidationWindow ?? 0n, displayName(position.owner)).replace(" →", "")} is next.`
+                  ? `Inspected ${displayName(position.owner)}: ${ratio(position.cr)} collateral ratio. ${nextStep(position, s?.v.mat ?? 0n, now, s?.v.tail ?? 0n, displayName(position.owner)).replace(" →", "")} is next.`
                   : ""}
               </span>
             )}
@@ -695,23 +738,20 @@ export function Keeper({
           <div className="keeper-actions">
             <div>
               <ActionForm
-                id="liquidate"
+                id="bite"
                 label="Review liquidation"
                 actions={actions}
                 target={s?.targets.ParameterizedVault}
-                fn="liquidate"
-                fields={[amt("Repay borrower COMP")]}
+                fn="bite"
+                fields={[amt(`Repay borrower ${unit()}`)]}
                 mapArgs={(a) => [address(owner), ...a]}
-                summary="Burn your COMP to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares."
+                summary={`Burn your ${unit()} to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares.`}
                 explain={borrower}
                 disabled={
                   !feedsReady(s) ||
                   !position?.mark[2] ||
                   now < position.mark[0] + position.mark[1] ||
-                  now >
-                    position.mark[0] +
-                      position.mark[1] +
-                      (s?.v.liquidationWindow ?? 0n)
+                  now > position.mark[0] + position.mark[1] + (s?.v.tail ?? 0n)
                 }
                 reason="An active mark, elapsed grace, open execution window and fresh feeds are required."
               />
@@ -723,12 +763,12 @@ export function Keeper({
                   label="Review mark"
                   actions={actions}
                   disabled={
-                    !feedsReady(s) || !position || position.cr >= s?.v.minCR
+                    !feedsReady(s) || !position || position.cr >= s?.v.mat
                   }
                   reason="Inspect an unhealthy borrower with fresh feeds."
                   request={() => ({
                     target: s!.targets.ParameterizedVault,
-                    fn: "markUnderwater",
+                    fn: "bark",
                     args: [address(owner)],
                     summary: `Mark ${address(owner)} as underwater. The on-chain grace snapshot governs liquidation.`,
                     explain: borrower,
@@ -742,12 +782,12 @@ export function Keeper({
                   reason="Inspect a marked position."
                   request={() => ({
                     target: s!.targets.ParameterizedVault,
-                    fn: "clearRecoveredMark",
+                    fn: "heel",
                     args: [address(owner)],
                     summary: `Clear the mark only if ${address(owner)} has recovered.`,
                     explain: (f) =>
                       f.name === "UnderwaterPosition" && position
-                        ? `${position.owner} is still at ${ratio(position.cr)}, below minCR ${ratio(s?.v.minCR)}. A mark clears only once the position recovers.`
+                        ? `${position.owner} is still at ${ratio(position.cr)}, below minCR ${ratio(s?.v.mat)}. A mark clears only once the position recovers.`
                         : undefined,
                   })}
                 />
@@ -757,7 +797,7 @@ export function Keeper({
                 label="Review beneficiary mark"
                 actions={actions}
                 target={s?.targets.ParameterizedVault}
-                fn="markUnderwaterFor"
+                fn="barkFor"
                 fields={[addr("Marker beneficiary")]}
                 mapArgs={(a) => [address(owner), ...a]}
                 summary="Mark for another beneficiary of the marker reward."
@@ -780,25 +820,25 @@ export function Backing({ r, s }: { r: Runtime; s?: Snapshot }) {
       <div className="desk-col">
         <div className="hero-stat">
           <span>
-            Backing per COMP
+            Backing per {unit()}
             <Info
-              label="Backing per COMP"
-              text="Reserve plus secured collateral, over COMP supply, never above $1. A redemption pays the lesser of $1 and this figure, less the fee."
+              label={`Backing per ${unit()}`}
+              text={`Reserve plus secured collateral, over ${unit()} supply, never above $1. A redemption pays the lesser of $1 and this figure, less the fee.`}
             />
           </span>
           <strong>
             <Ticker
               text={
-                v.backingPerComp === undefined
+                v.backingPerUnit === undefined
                   ? "Not reported"
-                  : `$${fmt(v.backingPerComp)}`
+                  : `$${fmt(v.backingPerUnit)}`
               }
             />
           </strong>
           <small>
-            {v.backingPerComp === undefined
+            {v.backingPerUnit === undefined
               ? "—"
-              : v.backingPerComp < WAD
+              : v.backingPerUnit < WAD
                 ? "Cap binds"
                 : "At par"}
           </small>
@@ -821,7 +861,7 @@ export function Backing({ r, s }: { r: Runtime; s?: Snapshot }) {
           label="Collateral-backed debt"
           info="Principal debt still standing behind collateral, net of recorded bad debt."
         >
-          {fmt(v.backedDebt)} COMP
+          {fmt(v.backedDebt)} {unit()}
         </Row>
         <Row
           label="Secured collateral"
@@ -829,26 +869,30 @@ export function Backing({ r, s }: { r: Runtime; s?: Snapshot }) {
         >
           {fmt(v.securedCollateral)} IMD
         </Row>
-        <Row label="Total principal debt">{fmt(v.totalDebt)} COMP</Row>
+        <Row label="Total principal debt">
+          {fmt(v.totalDebt)} {unit()}
+        </Row>
         <Row
           label="Recorded bad debt"
           info="Debt left after a liquidation exhausted a position's collateral."
         >
-          {fmt(v.totalBadDebt)} COMP
+          {fmt(v.totalBadDebt)} {unit()}
         </Row>
-        <Row label="Work minted">{fmt(v.totalWorkMinted)} COMP</Row>
+        <Row label="Work minted">
+          {fmt(v.totalEarned)} {unit()}
+        </Row>
         <Row
           label="Non-principal burns"
-          info="Redemptions that retired COMP without cancelling borrower principal."
+          info={`Redemptions that retired ${unit()} without cancelling borrower principal.`}
         >
-          {fmt(v.totalNonPrincipalRedeemed)} COMP
+          {fmt(v.totalNonPrincipalRedeemed)} {unit()}
         </Row>
-        <Row label="Work ratio">{percent(v.workRatioBps)}</Row>
+        <Row label="Work ratio">{percent(v.earnMat)}</Row>
         <Row
           label="Work ceiling"
           info="Reserve value + backed debt × work ratio. A repayment or redemption can lower it and pause new work issuance."
         >
-          {fmt(v.workCeiling)} COMP
+          {fmt(v.earnLine)} {unit()}
         </Row>
         <Row label="Reserve assets">{v.reserveAssets?.length ?? "—"}</Row>
         {v.reserveAssets?.map((a: any) => (
@@ -866,7 +910,7 @@ export function Backing({ r, s }: { r: Runtime; s?: Snapshot }) {
 const operations = [
   ["spread", "Propose redemption spread"],
   ["work-ratio", "Propose work ratio"],
-  ["per-task", "Propose COMP per task"],
+  ["per-task", "Propose pay per task"],
   ["economics", "Propose economics"],
   ["reserve-proposal", "Propose reserve asset"],
   ["cancel", "Cancel the pending proposal"],
@@ -906,7 +950,7 @@ export function Governance({
         "Economics",
         "Work ratio",
         "Reserve asset",
-        "COMP per task",
+        "Pay per task",
         "Redemption spread",
       ][Number(pending[0])] ?? String(pending[0]))
     : "—";
@@ -935,16 +979,14 @@ export function Governance({
   return (
     <>
       <Col label="Parameters">
-        <Row label="Stability fee / year">{percent(v.stabilityFeeBps)}</Row>
-        <Row label="Debt ceiling">{ceilingText(v.debtCeiling)}</Row>
+        <Row label="Stability fee / year">{percent(v.duty)}</Row>
+        <Row label="Debt ceiling">{ceilingText(v.line)}</Row>
         <Row label="Governance delay">
           {v.TIMELOCK === undefined ? "—" : `${v.TIMELOCK / 3600n} hours`}
         </Row>
-        <Row label="Max divergence">{percent(v.maxDivergenceBps)}</Row>
+        <Row label="Max divergence">{percent(v.skew)}</Row>
         <Row label="Redemption spread">
-          {v.redemptionSpread === undefined
-            ? "—"
-            : `${v.redemptionSpread} ratio points`}
+          {v.gap === undefined ? "—" : `${v.gap} ratio points`}
         </Row>
         {isGov && pendingBlock}
         <AddressLink
@@ -968,14 +1010,17 @@ export function Governance({
             label="Operation"
             value={op}
             onChange={setOp}
-            options={operations}
+            // The reporter fallback was deleted before mainnet; only a legacy deployment has it.
+            options={operations.filter(
+              ([id]) => id !== "report" || activeInterface() === "legacy",
+            )}
           />
           {op === "spread" && (
             <ActionForm
               {...common}
               id="spread"
               label="Review spread proposal"
-              fn="proposeRedemptionSpread"
+              fn="proposeGap"
               fields={[num("Spread (25–100 ratio points)")]}
               summary="Set the spread above minCR after the governance delay."
             />
@@ -985,7 +1030,7 @@ export function Governance({
               {...common}
               id="work-ratio"
               label="Review work ratio proposal"
-              fn="proposeWorkRatio"
+              fn="proposeEarnMat"
               fields={[num("Work ratio (0–2500 bps)")]}
               summary="Change the backing fraction available to work issuance."
             />
@@ -994,10 +1039,10 @@ export function Governance({
             <ActionForm
               {...common}
               id="per-task"
-              label="Review COMP per task"
-              fn="proposeCompPerTask"
-              fields={[{ name: "COMP per task (max 1)", kind: "amount0" }]}
-              summary="Change the COMP earned per task after the delay."
+              label="Review pay per task"
+              fn="proposeWage"
+              fields={[{ name: `${unit()} per task`, kind: "amount0" }]}
+              summary={`Change the ${unit()} earned per task after the delay.`}
             />
           )}
           {op === "economics" && (
@@ -1007,7 +1052,7 @@ export function Governance({
               label="Review economics proposal"
               fn="propose"
               fields={[
-                { name: "Debt ceiling COMP", kind: "amount0" },
+                { name: `Debt ceiling ${unit()}`, kind: "amount0" },
                 num("Protocol bonus share bps"),
                 num("Annual stability fee bps"),
                 num("Max divergence bps"),
@@ -1015,11 +1060,11 @@ export function Governance({
               ]}
               mapArgs={(a) => [
                 {
-                  debtCeiling: a[0],
-                  protocolBonusShareBps: a[1],
-                  stabilityFeeBps: a[2],
-                  maxDivergenceBps: a[3],
-                  markerShareBps: a[4],
+                  line: a[0],
+                  cut: a[1],
+                  duty: a[2],
+                  skew: a[3],
+                  chip: a[4],
                 },
               ]}
               summary="Replace all five economic parameters. Simulation enforces their bounds."
@@ -1036,7 +1081,7 @@ export function Governance({
                 addr("USD price feed (zero to delist)"),
                 num("Retained value (0–10000 bps)"),
               ]}
-              summary="List, reprice or delist a reserve asset after the delay. COMP cannot be a reserve."
+              summary={`List, reprice or delist a reserve asset after the delay. ${unit()} cannot be a reserve.`}
             />
           )}
           {op === "cancel" && (
@@ -1054,7 +1099,7 @@ export function Governance({
               label="Review checkpoint"
               actions={actions}
               target={s?.targets.ParameterizedVault}
-              fn="pokeIndex"
+              fn="drip"
               summary="Checkpoint the accrued stability fee index. Anyone may call it."
             />
           )}

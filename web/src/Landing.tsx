@@ -61,9 +61,9 @@ function LivePanel({ s, error }: { s?: Snapshot; error: string }) {
     ? [
         [
           "Backing per imdUSD",
-          v.backingPerComp === undefined
+          v.backingPerUnit === undefined
             ? "not reported"
-            : `$${fmt(v.backingPerComp < WAD ? v.backingPerComp : WAD)}`,
+            : `$${fmt(v.backingPerUnit < WAD ? v.backingPerUnit : WAD)}`,
         ],
         ["Reserves", usd(v.reserveValue)],
         [
@@ -73,7 +73,7 @@ function LivePanel({ s, error }: { s?: Snapshot; error: string }) {
             : "—",
           price?.stale ? "danger" : undefined,
         ],
-        ["Minimum collateral ratio", ratio(v.minCR)],
+        ["Minimum collateral ratio", ratio(v.mat)],
         [
           "Price actions",
           feedsReady(s) ? "open" : "paused",

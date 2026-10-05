@@ -19,6 +19,7 @@ import { Redemption } from "./Redemption";
 import { Position, Work, Oracle, Keeper, Backing, Governance } from "./Panes";
 import { message, fmt } from "./math";
 import { explained } from "./explain";
+import { onChain, onChainArgs } from "./names";
 import { ThemeToggle } from "./theme";
 import { SiteHeader } from "./site";
 import { Who } from "./ens";
@@ -266,8 +267,8 @@ function Terminal({ r }: { r: Runtime }) {
         await r.client
           .simulateContract({
             ...request.target,
-            functionName: request.fn,
-            args: request.args,
+            functionName: onChain(request.fn),
+            args: onChainArgs(request.args),
             account,
           })
           .catch((e) =>
@@ -306,8 +307,8 @@ function Terminal({ r }: { r: Runtime }) {
       const simulation = await r.client
         .simulateContract({
           ...request.target,
-          functionName: request.fn,
-          args: request.args,
+          functionName: onChain(request.fn),
+          args: onChainArgs(request.args),
           account,
         })
         .catch((e) =>

@@ -1,3 +1,4 @@
+import { unit } from "./unit";
 import { Ticker } from "./motion";
 import { useEffect, useRef, useState } from "react";
 import { zeroAddress, type Address } from "viem";
@@ -17,6 +18,7 @@ import {
   WAD,
 } from "./math";
 import { explained } from "./explain";
+import { onChain } from "./names";
 type Quote = ReturnType<typeof payout> & {
   amount: bigint;
   fee: bigint;
@@ -100,13 +102,13 @@ export function Redemption({
           {percent(v.REDEMPTION_FEE_CAP_BPS)}
         </Row>
         <Row
-          label="Paid at, per COMP"
-          info="A redemption pays the lesser of $1 and backing per COMP, less the fee."
+          label={`Paid at, per ${unit()}`}
+          info={`A redemption pays the lesser of $1 and backing per ${unit()}, less the fee.`}
         >
-          {v.backingPerComp === undefined
+          {v.backingPerUnit === undefined
             ? "Par (backing unavailable)"
-            : v.backingPerComp < WAD
-              ? `$${fmt(v.backingPerComp)} · cap binds`
+            : v.backingPerUnit < WAD
+              ? `$${fmt(v.backingPerUnit)} · cap binds`
               : "$1 · par"}
         </Row>
         <Row
@@ -117,7 +119,7 @@ export function Redemption({
         </Row>
         <Row
           label="Eligibility ceiling"
-          info={`minCR ${ratio(v.minCR)} + ${v.redemptionSpread?.toString() ?? "—"} ratio points. A candidate must have debt and sit strictly below the ceiling.`}
+          info={`minCR ${ratio(v.mat)} + ${v.gap?.toString() ?? "—"} ratio points. A candidate must have debt and sit strictly below the ceiling.`}
         >
           {ratio(v.redemptionCeilingCR)}
         </Row>
@@ -126,7 +128,9 @@ export function Redemption({
           {curve.length ? (
             curve.map((p) => (
               <div className="curve-row" key={p.pct}>
-                <span title={`${exact(p.size)} COMP`}>{p.pct}% of supply</span>
+                <span title={`${exact(p.size)} ${unit()}`}>
+                  {p.pct}% of supply
+                </span>
                 <meter
                   min={0}
                   max={Number(v.REDEMPTION_FEE_CAP_BPS)}
@@ -168,7 +172,7 @@ export function Redemption({
               const n = validate("redeem-amount", () => {
                 const n = amount(input);
                 if (n > s.v.compBalance)
-                  throw Error("The amount exceeds your COMP balance.");
+                  throw Error(`The amount exceeds your ${unit()} balance.`);
                 return n;
               });
               const tolerance = validate("redemption-slippage", () => {
@@ -189,7 +193,7 @@ export function Redemption({
                 fee,
                 s.feeds.USD.value,
                 s.v.redemptionReserve,
-                s.v.backingPerComp,
+                s.v.backingPerUnit,
               );
               const c = validate("redemption-candidate", () =>
                 candidate.trim() ? address(candidate) : zeroAddress,
@@ -228,7 +232,7 @@ export function Redemption({
               await r.client
                 .simulateContract({
                   ...s.targets.ParameterizedVault,
-                  functionName: "redeem",
+                  functionName: onChain("cash"),
                   args: [n, minimum, c],
                   account: actions.account,
                   blockNumber: s.block,
@@ -237,7 +241,7 @@ export function Redemption({
                   explained(
                     e,
                     {
-                      fn: "redeem",
+                      fn: "cash",
                       args: [n, minimum, c],
                       s,
                       account: actions.account,
@@ -269,7 +273,7 @@ export function Redemption({
           }}
         >
           <label>
-            Redeem COMP
+            Redeem {unit()}
             <input
               name="redeem-amount"
               aria-invalid={invalidField === "redeem-amount" || undefined}
@@ -299,7 +303,7 @@ export function Redemption({
             <div className="field-info">
               50 bps = 0.5%
               <br />
-              No COMP approval
+              No {unit()} approval
             </div>
           </div>
           <label>
@@ -331,7 +335,7 @@ export function Redemption({
                 ? actions.reason
                 : !ready
                   ? "Fresh, agreeing primary, spot, NHI and USD feeds are required."
-                  : "Burn COMP for IMD at the lesser of par and backing per COMP, less the fee."}
+                  : `Burn ${unit()} for IMD at the lesser of par and backing per ${unit()}, less the fee.`}
           </p>
         </form>
         <div id="redemption-feedback" role="status" aria-live="polite">
@@ -357,18 +361,20 @@ export function Redemption({
               <Row label="Candidate ratio">{ratio(q.cr)}</Row>
             )}
             {q.debtCancelled > 0n && (
-              <Row label="Debt cancelled">{fmt(q.debtCancelled)} COMP</Row>
+              <Row label="Debt cancelled">
+                {fmt(q.debtCancelled)} {unit()}
+              </Row>
             )}
             <Row label="Minimum received">{exact(q.minimum)} IMD</Row>
             <Action
-              id="redeem"
+              id="cash"
               label="Review redemption"
               actions={actions}
               request={() => ({
                 target: s!.targets.ParameterizedVault,
-                fn: "redeem",
+                fn: "cash",
                 args: [q.amount, q.minimum, q.candidate],
-                summary: `Burn ${exact(q.amount)} COMP. Receive at least ${exact(q.minimum)} IMD; quoted ${exact(q.out)} IMD from ${q.source.toLowerCase()} at ${percent(q.fee)}${q.capped ? `, paid at $${fmt(q.paidAt)} per COMP because backing is below par` : ""}. Candidate: ${q.candidate}. The fee is retained as backing.`,
+                summary: `Burn ${exact(q.amount)} ${unit()}. Receive at least ${exact(q.minimum)} IMD; quoted ${exact(q.out)} IMD from ${q.source.toLowerCase()} at ${percent(q.fee)}${q.capped ? `, paid at $${fmt(q.paidAt)} per ${unit()} because backing is below par` : ""}. Candidate: ${q.candidate}. The fee is retained as backing.`,
               })}
             />
           </div>
