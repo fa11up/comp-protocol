@@ -1988,6 +1988,10 @@ html.app-page body {
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
 }
+/* A pending figure's dash: a <b>, so the label rule below (spans) cannot shrink it. */
+.mechanics-grid .figure .figure-dash {
+  font-weight: inherit;
+}
 .mechanics-grid .figure span {
   display: block;
   font-size: 10px;

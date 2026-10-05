@@ -48,6 +48,23 @@ function LaunchPanel() {
   );
 }
 
+/**
+ * A mechanics figure: the value, or a dash while it is still pending. The dash is drawn for sight and
+ * the word is kept for screen readers, which would otherwise announce "em dash".
+ */
+function Figure({ value }: { value: string }) {
+  return value === "Pending" ? (
+    <>
+      <b className="figure-dash" aria-hidden="true">
+        —
+      </b>
+      <span className="sr-only">Pending</span>
+    </>
+  ) : (
+    <>{value}</>
+  );
+}
+
 export function Landing() {
   return TERMINAL ? <LiveLanding /> : <PublicLanding />;
 }
@@ -131,7 +148,7 @@ export function Page({
                 ratio, which rises as network health falls.
               </p>
               <p className="figure">
-                {LAUNCH.minRatio} <span>minimum ratio</span>
+                <Figure value={LAUNCH.minRatio} /> <span>minimum ratio</span>
               </p>
             </article>
             <article>
@@ -142,7 +159,8 @@ export function Page({
                 redemption and stays in the protocol as backing.
               </p>
               <p className="figure">
-                {LAUNCH.redemptionFee} <span>redemption fee</span>
+                <Figure value={LAUNCH.redemptionFee} />{" "}
+                <span>redemption fee</span>
               </p>
             </article>
             <article>
@@ -166,7 +184,8 @@ export function Page({
                 which is shared with whoever marked it.
               </p>
               <p className="figure">
-                {LAUNCH.grace} <span>grace, set by network health</span>
+                <Figure value={LAUNCH.grace} />{" "}
+                <span>grace, set by network health</span>
               </p>
             </article>
           </div>
