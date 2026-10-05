@@ -77,6 +77,10 @@ export const fixture = () => ({
   pinned: false,
   governor: account,
   candidateCR: 180n,
+  // Only marked owners carry an active liquidation mark; ratio overrides by address.
+  marked: [candidate],
+  crs: {},
+  consistent: false,
   rpcFail: false,
   codeMissing: false,
   chainMismatch: false,
@@ -208,27 +212,31 @@ function call(s, params) {
     else if (f === "nhiFeed") value = addresses.NhiFeed;
     else if (f === "spotFeed") value = addresses.SpotFeed;
     else if (f === "redemptionFeeBps") value = fee(s, args[0]);
-    else if (f === "collateralRatio")
-      value =
-        args[0].toLowerCase() === candidate.toLowerCase()
-          ? s.candidateCR
-          : args[0].toLowerCase() === extraOwner.toLowerCase()
-            ? BigInt(Math.round(260 * s.priceMultiplier))
-            : BigInt(Math.round(175 * s.priceMultiplier));
+    else if (f === "collateralRatio") value = crOf(s, args[0]);
     else if (f === "positions") {
       if (s.ownerReadFail && args[0].toLowerCase() === extraOwner.toLowerCase())
         throw Error("Position read unavailable");
-      value =
+      const debt =
         args[0].toLowerCase() === closedOwner.toLowerCase()
+          ? 0n
+          : args[0].toLowerCase() === extraOwner.toLowerCase()
+            ? 250n * W
+            : 1000n * W;
+      // The demo derives collateral from the ratio, so ratio, collateral and liquidation price agree.
+      // The tests keep the fixed 1,000 IMD their arithmetic was written against.
+      value =
+        debt === 0n
           ? [100n * W, 0n]
           : [
-              1000n * W,
-              args[0].toLowerCase() === extraOwner.toLowerCase()
-                ? 250n * W
+              s.consistent
+                ? (debt * crOf(s, args[0]) * 10n ** 16n) / (2n * W)
                 : 1000n * W,
+              debt,
             ];
     } else if (f === "liquidationMarks")
-      value = [s.now - 22000n, 21600n, true, account];
+      value = s.marked.some((a) => a.toLowerCase() === args[0].toLowerCase())
+        ? [s.now - 22000n, 21600n, true, account]
+        : [0n, 0n, false, zeroAddress];
     else value = scalar[f];
   } else if (["imdToken", "compToken"].includes(name)) {
     value = {
@@ -306,6 +314,16 @@ function fee(s, amount) {
   const base = (amount * W) / s.supply / 4n;
   const capped = base > 450n * 10n ** 14n ? 450n * 10n ** 14n : base;
   return 50n + (capped + 10n ** 14n - 1n) / 10n ** 14n;
+}
+function crOf(s, owner) {
+  const o = owner.toLowerCase();
+  if (s.crs[o] !== undefined) return s.crs[o];
+  if (o === candidate.toLowerCase()) return s.candidateCR;
+  return BigInt(
+    Math.round(
+      (o === extraOwner.toLowerCase() ? 260 : 175) * s.priceMultiplier,
+    ),
+  );
 }
 export function rpc(s, body) {
   try {

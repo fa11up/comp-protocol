@@ -200,7 +200,8 @@ export function nextStep(
 ) {
   const [markedAt, grace, active] = p.mark;
   const healthy = p.cr >= minCR;
-  if (active && healthy) return "Clear mark →";
+  // A recovered position cannot be liquidated, so its leftover mark is housekeeping, not the next step.
+  if (active && healthy) return "View actions →";
   if (active) {
     const graceEnds = markedAt + grace;
     if (now < graceEnds) return `Grace ${span(graceEnds - now)} · View →`;

@@ -117,5 +117,5 @@ test("the keeper's Act button names the next step for the position's state", () 
   assert.equal(at(140n, [10_000n, 8_040n, true]), "Grace 2h 14m · View →");
   assert.equal(at(140n, [1_000n, 6_000n, true]), "Liquidate keeper.eth →");
   assert.equal(at(140n, [0n, 1_000n, true]), "Mark keeper.eth again →");
-  assert.equal(at(160n, [1_000n, 6_000n, true]), "Clear mark →");
+  assert.equal(at(160n, [1_000n, 6_000n, true]), "View actions →");
 });

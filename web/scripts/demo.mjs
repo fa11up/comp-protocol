@@ -13,6 +13,8 @@ import {
   installWallet,
   config,
   blockscout,
+  candidate,
+  extraOwner,
   ensRpc,
   ensRpcUrls,
 } from "../tests/fixture.mjs";
@@ -54,6 +56,11 @@ const s = Object.assign(fixture(), {
   reserve: 250n * 10n ** 18n,
   allowance: 10n ** 30n,
   pendingEta: BigInt(Math.floor(Date.now() / 1000)) + 7n * 3600n,
+  // Three loans in three states: healthy (your own), underwater and unmarked, marked past grace.
+  candidateCR: 140n,
+  crs: { [extraOwner.toLowerCase()]: 130n },
+  marked: [candidate],
+  consistent: true,
 });
 
 const browser = await chromium.launch({ headless: false });

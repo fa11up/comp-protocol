@@ -606,12 +606,17 @@ export function Keeper({
         <Row label="Cushion">
           {liq ? cushion(s?.feeds.USD?.value, liq) : "—"}
         </Row>
-        <Row label="Mark">
-          {position.mark[2]
-            ? now < position.mark[0] + position.mark[1]
-              ? `Grace ${(position.mark[0] + position.mark[1] - now).toString()}s`
-              : "Active · liquidatable"
-            : "None"}
+        <Row
+          label="Mark"
+          info="A mark clears itself when the borrower next deposits, repays, borrows or withdraws. A recovery caused only by the price leaves it in place until anyone clears it; it cannot be used to liquidate a healthy position."
+        >
+          {position.mark[2] && position.cr >= (s?.v.minCR ?? 0n)
+            ? "Recovered · clearable"
+            : position.mark[2]
+              ? now < position.mark[0] + position.mark[1]
+                ? `Grace ${(position.mark[0] + position.mark[1] - now).toString()}s`
+                : "Active · liquidatable"
+              : "None"}
         </Row>
       </div>
     </>
