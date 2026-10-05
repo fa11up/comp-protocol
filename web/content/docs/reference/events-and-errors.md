@@ -30,9 +30,9 @@ Emitted when `bark` or `barkFor` creates or replaces an expired mark. `markedAt`
 
 Emitted after successful liquidation. `debtRepaid` is the total imdUSD burned, including fees. `collateralSeized` is total sIMD removed, including the marker and Treasury shares and any dust sweep; it is not the liquidator net receipt. Requires all `bite` guards.
 
-### `Cash(address indexed redeemer, address indexed candidate, uint256 burned, uint256 imdOut, uint256 reserveOut, uint256 debtCancelled, uint256 feeBps)`
+### `Cash(address indexed redeemer, address indexed candidate, uint256 burned, uint256 gemOut, uint256 reserveOut, uint256 debtCancelled, uint256 feeBps)`
 
-Emitted after successful redemption. `burned` is imdUSD raw units burned. `imdOut` is total collateral (sIMD) payout, `reserveOut` its Treasury portion, `debtCancelled` the candidate accrued debt cancelled, and `feeBps` the charged fee in basis points. Candidate can be unused when reserve covers the payout. Requires all `cash` guards.
+Emitted after successful redemption. `burned` is imdUSD raw units burned. `gemOut` is total collateral (sIMD) payout, `reserveOut` its Treasury portion, `debtCancelled` the candidate accrued debt cancelled, and `feeBps` the charged fee in basis points. Candidate can be unused when reserve covers the payout. Requires all `cash` guards.
 
 ### `Draw(address indexed account, uint256 amount)`
 
@@ -148,7 +148,7 @@ Full-precision multiplication/division cannot fit its result in `uint256`. Check
 
 ### `MinimumOutNotMet()`
 
-`cash` computed less sIMD than `minImdOut`. Obtain a new quote; change the minimum only if the new payout is acceptable.
+`cash` computed less sIMD than `minGemOut`. Obtain a new quote; change the minimum only if the new payout is acceptable.
 
 ### `NotInitialized()`
 

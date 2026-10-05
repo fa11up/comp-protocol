@@ -95,7 +95,7 @@ contract SwarmRelay is ReentrancyGuard {
         _relayMany(feeds, attestations, signatures);
 
         IERC20 stable = IERC20(address(vault.stablecoin()));
-        IERC20 collateral = vault.imdToken();
+        IERC20 collateral = vault.gem();
 
         uint256 stableBefore = stable.balanceOf(address(this));
         uint256 collateralBefore = collateral.balanceOf(address(this));

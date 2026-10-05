@@ -19,7 +19,7 @@ contract AtomicWorkBorrower {
 
     constructor(ParameterizedVault vault_) {
         vault = vault_;
-        vault_.imdToken().approve(address(vault_), type(uint256).max);
+        vault_.gem().approve(address(vault_), type(uint256).max);
     }
 
     function borrowThenMintWork(uint256 collateral, uint256 debt, uint256 work) external {

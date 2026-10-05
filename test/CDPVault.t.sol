@@ -20,7 +20,7 @@ contract PlainOracle is IWorkOracle {
 
 contract CDPVaultTest is ProtocolFixture {
     function test_configuration() public view {
-        assertEq(address(vault.imdToken()), address(imd));
+        assertEq(address(vault.gem()), address(imd));
         assertEq(address(vault.stablecoin()), address(comp));
         assertEq(address(vault.oracle()), address(oracle));
         assertEq(vault.mat(), 150);
@@ -98,7 +98,7 @@ contract CDPVaultTest is ProtocolFixture {
         assertEq(generatedOracle.vault(), address(generated));
         assertEq(generatedOracle.deployer(), OPERATOR);
         assertEq(address(generated.stablecoin()), address(comp));
-        assertEq(address(generated.imdToken()), address(imd));
+        assertEq(address(generated.gem()), address(imd));
         assertEq(address(generated.priceFeed()), address(priceFeed));
         assertEq(address(generated.nhiFeed()), address(nhiFeed));
     }

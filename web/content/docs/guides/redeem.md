@@ -45,9 +45,9 @@ A candidate must have debt, and its collateral ratio must be below `mat` plus th
 2. Enter the imdUSD amount. Leave slippage at its default or set your own tolerance in basis points (1 basis point is 0.01%).
 3. If the reserve is short, paste a candidate address.
 4. Press Quote redemption. Read **You receive**, **Your fee**, **Served by**, **Debt cancelled** and **Minimum received**.
-5. Press Review redemption and confirm. This sends Redeem (`cash(amount, minImdOut, candidate)`).
+5. Press Review redemption and confirm. This sends Redeem (`cash(amount, minGemOut, candidate)`).
 
-`minImdOut` protects you: the call reverts if the payout falls below it, for example because someone redeemed first and raised the fee. With no candidate, pass the zero address.
+`minGemOut` protects you: the call reverts if the payout falls below it, for example because someone redeemed first and raised the fee. With no candidate, pass the zero address.
 
 ## What can block it
 
@@ -56,7 +56,7 @@ A candidate must have debt, and its collateral ratio must be below `mat` plus th
 | `ZeroAmount` | Amount is zero, or it rounds to zero sIMD out | Increase the amount |
 | `StaleFeed`, `PriceDivergence`, `InvalidPrice` | Feeds unusable | Wait for fresh agreeing attestations |
 | `ExcessRepayment` | Amount exceeds total imdUSD supply, or the shortfall exceeds the candidate's debt | Reduce the amount |
-| `MinimumOutNotMet` | Payout fell below `minImdOut` | Get a new quote; widen slippage |
+| `MinimumOutNotMet` | Payout fell below `minGemOut` | Get a new quote; widen slippage |
 | `IneligibleRedemptionPosition` | The candidate has no debt, is at or above `mat` plus `gap`, or none was given when needed | Choose another candidate from the redeemable band |
 | `RedemptionWorsensRatio` | The sIMD taken would exceed the candidate's collateral share of the debt cancelled; typical for a position that is already deeply short | Choose another candidate or a smaller amount |
 | ERC-20 balance error | You hold less imdUSD than the amount | Reduce the amount |

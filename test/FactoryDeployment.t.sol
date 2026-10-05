@@ -77,7 +77,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
     function _exerciseWorkflow() private {
         assertEq(imd.deployer(), OPERATOR);
         assertEq(oracle.deployer(), OPERATOR);
-        assertEq(address(vault.imdToken()), address(imd));
+        assertEq(address(vault.gem()), address(imd));
         assertEq(address(vault.stablecoin()), address(comp));
         assertEq(address(vault.priceFeed()), address(priceFeed));
         assertEq(address(vault.nhiFeed()), address(nhiFeed));
@@ -219,7 +219,7 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         assertGt(address(oracle).code.length, 0);
         assertEq(comp.vault(), address(vault));
         assertEq(oracle.vault(), address(vault));
-        assertEq(address(vault.imdToken()), address(imd));
+        assertEq(address(vault.gem()), address(imd));
         assertEq(address(vault.priceFeed()), address(priceFeed));
         assertEq(address(vault.nhiFeed()), address(nhiFeed));
         assertEq(imd.deployer(), OPERATOR);

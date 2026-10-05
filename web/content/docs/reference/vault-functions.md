@@ -40,11 +40,11 @@ Liquidate. Positive `debtToRepay`, fresh agreeing prices, an unsafe owner, a mar
 
 Accrues owner fees, reduces fees then principal, burns caller imdUSD and remints paid fees to Treasury. Seizes collateral; pays marker, Treasury and caller; may sweep unseizable dust to caller. Updates secured collateral and records residual debt if collateral is exhausted. Clears a recovered mark. Emits `Bite`, possibly `Heel`. Returns no value.
 
-### `cash(uint256 amount, uint256 minImdOut, address candidate)`
+### `cash(uint256 amount, uint256 minGemOut, address candidate)`
 
-Redeem. Positive `amount` within supply, enough caller imdUSD, fresh agreeing prices, nonzero calculated output and output at least `minImdOut` are required. If reserve is insufficient, `candidate` must have debt and ratio strictly below `mat()+gap()`, enough debt to cancel, and a non-worsening exact collateral/debt fraction.
+Redeem. Positive `amount` within supply, enough caller imdUSD, fresh agreeing prices, nonzero calculated output and output at least `minGemOut` are required. If reserve is insufficient, `candidate` must have debt and ratio strictly below `mat()+gap()`, enough debt to cancel, and a non-worsening exact collateral/debt fraction.
 
-Burns all `amount`, pays Treasury sIMD first and candidate collateral for the shortfall. Cancels candidate fees before principal without reminting fees. Updates secured collateral, loss/mark state, `totalNonPrincipalRedeemed`, base rate and redemption timestamp. Emits `Cash`, possibly `Heel`. Returns collateral (sIMD) raw units `imdOut`. Atomic; no partial fill or approval.
+Burns all `amount`, pays Treasury sIMD first and candidate collateral for the shortfall. Cancels candidate fees before principal without reminting fees. Updates secured collateral, loss/mark state, `totalNonPrincipalRedeemed`, base rate and redemption timestamp. Emits `Cash`, possibly `Heel`. Returns collateral (sIMD) raw units `gemOut`. Atomic; no partial fill or approval.
 
 ### `draw(uint256 amount)`
 
@@ -178,7 +178,7 @@ Returns `address`. Vault-created Treasury address: (waiting for mainnet launch).
 
 Returns `uint256`. Governed redemption-eligibility spread above `mat()`, in whole percentage points: (under consideration).
 
-### `imdToken()`
+### `gem()`
 
 Returns `address`. Immutable collateral-token address: (waiting for mainnet launch).
 

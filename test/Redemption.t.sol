@@ -20,7 +20,7 @@ contract RedemptionTest is WorkBackingFixture {
         address indexed redeemer,
         address indexed candidate,
         uint256 burned,
-        uint256 imdOut,
+        uint256 gemOut,
         uint256 reserveOut,
         uint256 debtCancelled,
         uint256 feeBps

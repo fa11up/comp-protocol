@@ -47,7 +47,7 @@ The inventory follows the runbook's section 6. An address placeholder is not dep
 
 ## Collateral is sIMD
 
-The vault's collateral token is sIMD (Staked IMD), the 24-decimal share token of IdentityMD's staking vault, which holds IMD. `imdToken()` returns the sIMD address. Because it is a share, the vault's constructor creates a `SharePriceFeed` and prices collateral through it: `convertToAssets(1e18)` from the staking vault times the IMD/USD price from `UsdPriceFeed`, per 1e18 raw sIMD units. The vault's arithmetic never reads `decimals()`, so expressing the price per raw unit is what keeps 24-decimal shares correctly valued.
+The vault's collateral token is sIMD (Staked IMD), the 24-decimal share token of IdentityMD's staking vault, which holds IMD. `gem()` returns the sIMD address. Because it is a share, the vault's constructor creates a `SharePriceFeed` and prices collateral through it: `convertToAssets(1e18)` from the staking vault times the IMD/USD price from `UsdPriceFeed`, per 1e18 raw sIMD units. The vault's arithmetic never reads `decimals()`, so expressing the price per raw unit is what keeps 24-decimal shares correctly valued.
 
 `lock` takes sIMD. `lockIMD` takes IMD, stakes it in the staking vault on the depositor's behalf and credits the sIMD received. The vault never unstakes: `free`, `bite` and `cash` pay sIMD, and the staking vault's one-block hold applies to whoever unstakes it.
 

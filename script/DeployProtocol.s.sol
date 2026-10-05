@@ -106,7 +106,7 @@ contract DeployProtocol is Script {
         address operator
     ) internal view {
         require(MockIMD(imd).deployer() == APPROVED_OPERATOR, "imd: faucet authority is not the pinned operator");
-        require(address(vault.imdToken()) == imd, "vault: wrong collateral");
+        require(address(vault.gem()) == imd, "vault: wrong collateral");
         require(address(vault.priceFeed()) == address(priceFeed), "vault: wrong price feed");
         require(address(vault.nhiFeed()) == address(nhiFeed), "vault: wrong nhi feed");
         require(address(vault.spotFeed()) == address(spotFeed), "vault: wrong spot feed");

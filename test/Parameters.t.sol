@@ -136,7 +136,7 @@ contract ParametersTest is Test {
         assertEq(address(vault.priceFeed()), address(price));
         assertEq(address(vault.spotFeed()), address(spot));
         assertEq(address(vault.nhiFeed()), address(nhi));
-        assertEq(address(vault.imdToken()), address(imd));
+        assertEq(address(vault.gem()), address(imd));
         assertEq(address(vault.parameters()), address(params));
     }
 

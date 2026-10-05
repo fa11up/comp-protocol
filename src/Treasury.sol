@@ -163,7 +163,7 @@ contract Treasury {
             return;
         }
         if (!isReserveAsset(asset)) _reserveAssets.push(asset);
-        uint8 places = address(asset) == _linked(abi.encodeWithSignature("imdToken()"))
+        uint8 places = address(asset) == _linked(abi.encodeWithSignature("gem()"))
             ? 18
             : IERC20Metadata(address(asset)).decimals();
         _reserve[asset] = ReserveAsset(priceFeed, haircutBps, places);
@@ -312,7 +312,7 @@ contract Treasury {
     /// @return sent IMD sent to the asker by this call; zero once today's budget is spent.
     function fundOracle() external returns (uint256 sent) {
         if (ORACLE_ASKER.code.length == 0) revert OracleAskerMissing();
-        address token = _linked(abi.encodeWithSignature("imdToken()"));
+        address token = _linked(abi.encodeWithSignature("gem()"));
         if (token == address(0)) revert InvalidReserveAsset();
         uint256 day = block.timestamp / 1 days;
         if (day != oracleDay) {
@@ -369,7 +369,7 @@ contract Treasury {
 
     function redeemIMD(address to, uint256 amount) external {
         if (msg.sender != vault) revert Unauthorized();
-        address token = _linked(abi.encodeWithSignature("imdToken()"));
+        address token = _linked(abi.encodeWithSignature("gem()"));
         if (token == address(0)) revert InvalidReserveAsset();
         _withdraw(IERC20(token), to, amount);
     }

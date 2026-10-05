@@ -42,13 +42,13 @@ contract ParameterizedVault is CDPVault {
     ISwarmFeed public immutable collateralPriceFeed;
 
     constructor(
-        address imdToken_,
+        address gem_,
         address stablecoin_,
         address oracle_,
         address priceFeed_,
         address nhiFeed_,
         address spotFeed_
-    ) CDPVault(imdToken_, stablecoin_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {
+    ) CDPVault(gem_, stablecoin_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {
         // AUDIT FIX (job c71449d1): there is deliberately no way to pass a Parameters in. Accepting
         // one allowed an attacker to bind an impostor ahead of the deployer, and allowed a second
         // vault to borrow a Parameters already bound elsewhere and read a rate it is never
@@ -64,8 +64,8 @@ contract ParameterizedVault is CDPVault {
         usdPriceFeed = new UsdPriceFeed(ISwarmFeed(priceFeed_));
         // A share collateral is priced as its exchange rate times the underlying's USD price. The
         // adapter works per 1e18 RAW units, so sIMD's 24 decimals against IMD's 18 cannot misvalue it.
-        collateralPriceFeed = _isShareVault(imdToken_)
-            ? ISwarmFeed(address(new SharePriceFeed(imdToken_, ISwarmFeed(address(usdPriceFeed)))))
+        collateralPriceFeed = _isShareVault(gem_)
+            ? ISwarmFeed(address(new SharePriceFeed(gem_, ISwarmFeed(address(usdPriceFeed)))))
             : ISwarmFeed(address(usdPriceFeed));
     }
 
@@ -104,7 +104,7 @@ contract ParameterizedVault is CDPVault {
 
     /// @notice All idle IMD is usable, whether or not governance has listed it for reserve valuation.
     function redemptionReserve() public view override returns (uint256) {
-        return imdToken.balanceOf(address(treasury));
+        return gem.balanceOf(address(treasury));
     }
 
     function _payRedemptionReserve(uint256 amount) internal override {
@@ -125,9 +125,9 @@ contract ParameterizedVault is CDPVault {
         override
         returns (uint256, uint256)
     {
-        uint256 others = reserveValue() - treasury.reserveValueOf(imdToken);
+        uint256 others = reserveValue() - treasury.reserveValueOf(gem);
         return (
-            others + Math.mulDiv(imdToken.balanceOf(address(treasury)), price, 1e18),
+            others + Math.mulDiv(gem.balanceOf(address(treasury)), price, 1e18),
             Math.mulDiv(amount, price, 1e18, Math.Rounding.Ceil)
         );
     }

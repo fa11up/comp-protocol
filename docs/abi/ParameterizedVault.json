@@ -3,7 +3,7 @@
     "type": "constructor",
     "inputs": [
       {
-        "name": "imdToken_",
+        "name": "gem_",
         "type": "address",
         "internalType": "address"
       },
@@ -178,7 +178,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "minImdOut",
+        "name": "minGemOut",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -190,7 +190,7 @@
     ],
     "outputs": [
       {
-        "name": "imdOut",
+        "name": "gemOut",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -445,6 +445,19 @@
   },
   {
     "type": "function",
+    "name": "gem",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "heel",
     "inputs": [
       {
@@ -455,19 +468,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "imdToken",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IERC20"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1021,7 +1021,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "imdOut",
+        "name": "gemOut",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

@@ -28,7 +28,7 @@ contract SeedAndSmoke is Script {
         // Spot defaults to the primary: zero divergence, which is the only state that lets the
         // vault price at all. SPOT exists so a run can deliberately put the two out of band.
         uint256 spot = vm.envOr("SPOT", price); // read for the divergence smoke check below
-        MockIMD imd = MockIMD(address(vault.imdToken()));
+        MockIMD imd = MockIMD(address(vault.gem()));
         ImdUSD comp = vault.stablecoin();
 
         vm.startBroadcast();

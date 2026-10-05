@@ -177,7 +177,7 @@ contract DeployGoverned is Script {
         require(address(vault.spotFeed()) == address(spotFeed), "vault: wrong spot feed");
         require(priceFeed.isStale() && nhiFeed.isStale() && spotFeed.isStale(), "feeds: must open unseeded");
         require(
-            MockIMD(address(vault.imdToken())).deployer() == APPROVED_OPERATOR,
+            MockIMD(address(vault.gem())).deployer() == APPROVED_OPERATOR,
             "imd: faucet authority is not the pinned operator"
         );
         require(

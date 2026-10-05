@@ -323,7 +323,7 @@ contract ReenteringVault {
         return comp;
     }
 
-    function imdToken() external view returns (IERC20) {
+    function gem() external view returns (IERC20) {
         return IERC20(address(imd));
     }
 

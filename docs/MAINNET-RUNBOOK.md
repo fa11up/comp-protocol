@@ -238,7 +238,7 @@ and Robinhood Chain.
    * each feed's `attester`, `relayer`, `attestationChainId`, `attestationAnswerType`, `maxAge`,
      `maxDeviationBps`
    * each feed's `expectedQuestionHash(from, to)` against the JavaScript hash for the same window
-   * the vault's `imdToken`, `stablecoin`, `oracle`, `priceFeed`, `nhiFeed`, `spotFeed`,
+   * the vault's `gem`, `stablecoin`, `oracle`, `priceFeed`, `nhiFeed`, `spotFeed`,
      `parameters`, `treasury`, `usdPriceFeed`, `feeRecipient`
    * `treasury.vault() == vault` and `parameters.vault() == vault`
    * `vault.earnLine() == 0` — correct on an empty stack, and proof the ceiling is live

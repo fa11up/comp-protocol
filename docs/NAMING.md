@@ -15,14 +15,14 @@ spirit: short, physical, and of a piece with the rest (`heel` calls the dog off 
 
 | Now | Was | Maker origin | What it does |
 |---|---|---|---|
-| `lock(amount)` | `depositCollateral` | SCD `lock` | Deposit IMD collateral into your position. |
+| `lock(amount)` | `depositCollateral` | SCD `lock` | Deposit sIMD collateral into your position (`lockIMD` takes IMD and stakes it). |
 | `free(amount)` | `withdrawCollateral` | SCD `free` | Withdraw collateral, if the position stays at or above `mat`. |
 | `draw(amount)` | `mintCOMP` | SCD `draw` | Mint imdUSD against your collateral. |
 | `wipe(amount)` | `repayCOMP` | SCD `wipe` | Burn imdUSD to repay fees first, then principal. |
 | `bark(owner)` / `barkFor(owner, beneficiary)` | `markUnderwater` / `markUnderwaterFor` | MCD `Dog.bark` | Mark a position below `mat`; starts its grace period. |
 | `bite(owner, amount)` | `liquidate` | SCD/MCD `bite` | Repay a marked position's debt after grace and take its collateral plus the bonus. |
 | `drip()` | `pokeIndex` | MCD `Jug.drip` | Checkpoint the stability-fee index. |
-| `cash(amount, minImdOut, candidate)` | `redeem` | MCD `End.cash` | Burn imdUSD for IMD at the lesser of $1 and backing per unit, less the fee. |
+| `cash(amount, minGemOut, candidate)` | `redeem` | MCD `End.cash` | Burn imdUSD for sIMD at the lesser of $1 and backing per unit, less the fee. |
 | `heel(owner)` | `clearRecoveredMark` | coined | Clear the mark on a position that has recovered above `mat`. |
 | `earn(amount)` | `mintFromWork` | coined | Mint imdUSD against attested swarm work, within `earnLine`. |
 | `SwarmRelay.relayAndBark` / `relayAndBite` | `relayAndMark` / `relayAndLiquidate` | — | Relay an attestation and act on the fresh price in one transaction. |
@@ -36,6 +36,7 @@ Events follow the verbs, as Maker's own `Cat` and `Dog` emitted `Bite` and `Bark
 
 | Now | Was | Maker origin | Meaning |
 |---|---|---|---|
+| `gem()` | `imdToken()` | `Vat.gem` / `GemJoin.gem` | The collateral token (sIMD). Also `gemOut` (was `imdOut`) in `Cash` and the return of `cash`, and the `cash` argument `minGemOut` (was `minImdOut`). |
 | `mat()` | `minCR()` | `Spotter.mat` | Minimum collateral ratio, set by network health. |
 | `duty()` | `stabilityFeeBps()` | `Jug.duty` | Annual stability fee. `DUTY_BPS`, `MAX_DUTY_BPS` likewise. |
 | `line()` | `debtCeiling()` | `Vat.line` | Debt ceiling. |

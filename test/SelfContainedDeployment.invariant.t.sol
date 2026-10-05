@@ -337,7 +337,7 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
         assertEq(comp.totalSupply(), walletCOMP, "COMP custody");
         assertEq(handler.imd().balanceOf(address(vault)), collateral, "vault IMD custody");
         assertEq(handler.imd().totalSupply(), walletIMD + collateral, "all IMD accounted for");
-        assertEq(address(vault.imdToken()), address(handler.imd()));
+        assertEq(address(vault.gem()), address(handler.imd()));
         assertEq(address(vault.stablecoin()), address(comp));
         assertEq(comp.vault(), address(vault), "token remains bound");
         assertEq(address(vault.oracle()), address(handler.oracle()), "oracle remains bound");

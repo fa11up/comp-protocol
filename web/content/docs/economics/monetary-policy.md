@@ -50,11 +50,11 @@ Unpaid fees are obligations but are not issued tokens. `totalFeesMinted` is a cu
 
 ## `cash`: payout and fee shape
 
-`cash(amount, minImdOut, candidate)` pays:
+`cash(amount, minGemOut, candidate)` pays:
 
 > sIMD out = imdUSD burned × `backingPerUnit` × (one minus the fee fraction) ÷ USD price per sIMD.
 
-`backingPerUnit` is already capped at $1 per imdUSD. The payout rounds down to sIMD raw units and must be nonzero and at least `minImdOut`. The fee is charged on this redemption, not just the next one.
+`backingPerUnit` is already capped at $1 per imdUSD. The payout rounds down to sIMD raw units and must be nonzero and at least `minGemOut`. The fee is charged on this redemption, not just the next one.
 
 `REDEMPTION_FEE_FLOOR_BPS` and `REDEMPTION_FEE_CAP_BPS` are fixed bounds, both (under consideration). The base rate decays per second, then rises with the burn's fraction of supply before the transaction's new principal mints. Burn sensitivity, decay factor and half-life are (under consideration). The stored base is capped at the space between fee floor and cap; conversion to whole basis points rounds against the redeemer.
 

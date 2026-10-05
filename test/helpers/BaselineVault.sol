@@ -15,13 +15,13 @@ import {CDPVault} from "src/CDPVault.sol";
 /// source and rewriting the constant outside the build.
 contract BaselineVault is CDPVault {
     constructor(
-        address imdToken_,
+        address gem_,
         address stablecoin_,
         address oracle_,
         address priceFeed_,
         address nhiFeed_,
         address spotFeed_
-    ) CDPVault(imdToken_, stablecoin_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
+    ) CDPVault(gem_, stablecoin_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
 
     function duty() public pure override returns (uint256) {
         return 0;
@@ -42,13 +42,13 @@ contract BaselineVault is CDPVault {
 /// deployment currently ships and losing the exactness that makes them worth having.
 contract TenPercentFeeVault is CDPVault {
     constructor(
-        address imdToken_,
+        address gem_,
         address stablecoin_,
         address oracle_,
         address priceFeed_,
         address nhiFeed_,
         address spotFeed_
-    ) CDPVault(imdToken_, stablecoin_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
+    ) CDPVault(gem_, stablecoin_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
 
     function duty() public pure override returns (uint256) {
         return 1_000;

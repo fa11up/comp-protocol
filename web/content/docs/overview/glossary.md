@@ -26,7 +26,7 @@ Each entry gives the plain meaning first, then the identifier where one exists. 
 
 **bonus.** The extra collateral a liquidator receives on top of the debt repaid, set by `CHOP_PERCENT`. Split into `chip`, `cut` and the biter's remainder.
 
-**cash.** Redeem: burn imdUSD for sIMD. The terminal button is Redeem. Function `cash(amount, minImdOut, candidate)`.
+**cash.** Redeem: burn imdUSD for sIMD. The terminal button is Redeem. Function `cash(amount, minGemOut, candidate)`.
 
 **chi.** The stability-fee index. It starts at 1 and only rises, linearly with time at the rate `duty`. A position's own checkpoint is `chiOf(owner)`. `drip()` records the current value; anyone may call it.
 

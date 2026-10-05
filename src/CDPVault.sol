@@ -96,7 +96,7 @@ contract CDPVault is ReentrancyGuard {
         address indexed redeemer,
         address indexed candidate,
         uint256 burned,
-        uint256 imdOut,
+        uint256 gemOut,
         uint256 reserveOut,
         uint256 debtCancelled,
         uint256 feeBps
@@ -245,7 +245,7 @@ contract CDPVault is ReentrancyGuard {
     /// @dev Accrued, unpaid stability fees are additional obligations returned by debtOf/positions.
     uint256 public totalDebt;
 
-    IERC20 public immutable imdToken;
+    IERC20 public immutable gem;
     ImdUSD public immutable stablecoin;
     IWorkOracle public immutable oracle;
     ISwarmFeed public immutable priceFeed;
@@ -263,7 +263,7 @@ contract CDPVault is ReentrancyGuard {
     mapping(address account => uint256 debt) private _recordedBadDebt;
     mapping(address account => LiquidationMark mark) public liquidationMarks;
 
-    /// @param imdToken_ Deployed, nonrebasing, fee-free MockIMD collateral (18 decimals).
+    /// @param gem_ Deployed, nonrebasing, fee-free MockIMD collateral (18 decimals).
     /// @param stablecoin_ Zero creates a fresh ImdUSD bound to this vault; otherwise an existing token
     /// to be authorized separately through its reciprocal setVault check.
     /// @param oracle_ Zero creates a fresh MockWorkOracle (the testnet faucet) bound to this vault
@@ -274,7 +274,7 @@ contract CDPVault is ReentrancyGuard {
     /// @param nhiFeed_ Immutable network health feed, scaled by 1e18.
     /// @param spotFeed_ Immutable spot price feed, used only to bound divergence from the primary average.
     constructor(
-        address imdToken_,
+        address gem_,
         address stablecoin_,
         address oracle_,
         address priceFeed_,
@@ -293,12 +293,12 @@ contract CDPVault is ReentrancyGuard {
         // like, and a mainnet vault that quietly took a MOCK token as its collateral would accept a
         // worthless asset against real debt. The existing guard refuses zero deliberately and still
         // does; this is an unmistakable opt-in that nobody passes by accident.
-        if (imdToken_ == COLLATERAL_FAUCET) {
-            imdToken_ = address(new MockIMD());
+        if (gem_ == COLLATERAL_FAUCET) {
+            gem_ = address(new MockIMD());
         }
         if (
-            imdToken_.code.length == 0 || (stablecoin_ != address(0) && stablecoin_.code.length == 0)
-                || imdToken_ == stablecoin_
+            gem_.code.length == 0 || (stablecoin_ != address(0) && stablecoin_.code.length == 0)
+                || gem_ == stablecoin_
         ) {
             revert InvalidToken();
         }
@@ -306,7 +306,7 @@ contract CDPVault is ReentrancyGuard {
             priceFeed_.code.length == 0 || nhiFeed_.code.length == 0 || spotFeed_.code.length == 0
                 || priceFeed_ == nhiFeed_ || spotFeed_ == nhiFeed_ || spotFeed_ == priceFeed_
         ) revert InvalidFeed();
-        imdToken = IERC20(imdToken_);
+        gem = IERC20(gem_);
         stablecoin = stablecoin_ == address(0) ? new ImdUSD(address(this)) : ImdUSD(stablecoin_);
         priceFeed = ISwarmFeed(priceFeed_);
         nhiFeed = ISwarmFeed(nhiFeed_);
@@ -331,12 +331,12 @@ contract CDPVault is ReentrancyGuard {
 
     function lock(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
-        uint256 beforeBalance = imdToken.balanceOf(address(this));
+        uint256 beforeBalance = gem.balanceOf(address(this));
         Position storage position = _positions[msg.sender];
         position.collateral += amount;
         _resecure(position, _priceOrZero());
-        imdToken.safeTransferFrom(msg.sender, address(this), amount);
-        if (imdToken.balanceOf(address(this)) - beforeBalance != amount) revert UnexpectedCollateralReceived();
+        gem.safeTransferFrom(msg.sender, address(this), amount);
+        if (gem.balanceOf(address(this)) - beforeBalance != amount) revert UnexpectedCollateralReceived();
         _clearIfRecovered(msg.sender);
         emit Lock(msg.sender, amount);
     }
@@ -350,12 +350,12 @@ contract CDPVault is ReentrancyGuard {
     function lockIMD(uint256 assets) external nonReentrant {
         if (assets == 0) revert ZeroAmount();
         IERC20 underlying = IERC20(_shareAsset());
-        uint256 beforeShares = imdToken.balanceOf(address(this));
+        uint256 beforeShares = gem.balanceOf(address(this));
         underlying.safeTransferFrom(msg.sender, address(this), assets);
-        underlying.forceApprove(address(imdToken), assets);
-        IShareVault(address(imdToken)).deposit(assets, address(this));
-        underlying.forceApprove(address(imdToken), 0);
-        uint256 shares = imdToken.balanceOf(address(this)) - beforeShares;
+        underlying.forceApprove(address(gem), assets);
+        IShareVault(address(gem)).deposit(assets, address(this));
+        underlying.forceApprove(address(gem), 0);
+        uint256 shares = gem.balanceOf(address(this)) - beforeShares;
         if (shares == 0) revert ZeroAmount();
         Position storage position = _positions[msg.sender];
         position.collateral += shares;
@@ -367,10 +367,10 @@ contract CDPVault is ReentrancyGuard {
     /// @dev The share vault's underlying asset, or `CollateralNotWrappable` if the collateral is not a
     /// share vault. A raw staticcall, so a token without `asset()` reverts with our error, not its own.
     function _shareAsset() private view returns (address asset) {
-        (bool ok, bytes memory data) = address(imdToken).staticcall(abi.encodeCall(IShareVault.asset, ()));
+        (bool ok, bytes memory data) = address(gem).staticcall(abi.encodeCall(IShareVault.asset, ()));
         if (!ok || data.length < 32) revert CollateralNotWrappable();
         asset = abi.decode(data, (address));
-        if (asset == address(0) || asset == address(imdToken)) revert CollateralNotWrappable();
+        if (asset == address(0) || asset == address(gem)) revert CollateralNotWrappable();
     }
 
     function free(uint256 amount) external nonReentrant {
@@ -389,7 +389,7 @@ contract CDPVault is ReentrancyGuard {
         position.collateral = remaining;
         _resecure(position, _priceOrZero());
         _clearMark(msg.sender);
-        imdToken.safeTransfer(msg.sender, amount);
+        gem.safeTransfer(msg.sender, amount);
         emit Free(msg.sender, amount);
     }
 
@@ -465,10 +465,10 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Burn exactly `amount` caller imdUSD for feed-priced IMD, less the capped fee.
     /// @dev Treasury IMD is spent first; only the shortfall cancels the named candidate's debt.
     /// No approval, partial fill or fee transfer. All checks and both payouts are atomic.
-    function cash(uint256 amount, uint256 minImdOut, address candidate)
+    function cash(uint256 amount, uint256 minGemOut, address candidate)
         external
         nonReentrant
-        returns (uint256 imdOut)
+        returns (uint256 gemOut)
     {
         if (amount == 0) revert ZeroAmount();
         _requireFreshFeeds();
@@ -502,18 +502,18 @@ contract CDPVault is ReentrancyGuard {
         // min(1 - fee, backing). A protocol backed at 0.96 cannot promise 0.995, and the previous
         // design's answer to that was to stop redeeming rather than to stop overpaying.
         uint256 payoutScale = Math.mulDiv(_backingPerUnit(price), 10_000 - feeBps, 10_000);
-        imdOut = Math.mulDiv(amount, payoutScale, price);
-        if (imdOut == 0) revert ZeroAmount();
-        if (imdOut < minImdOut) revert MinimumOutNotMet();
-        uint256 reserveOut = Math.min(imdOut, redemptionReserve());
+        gemOut = Math.mulDiv(amount, payoutScale, price);
+        if (gemOut == 0) revert ZeroAmount();
+        if (gemOut < minGemOut) revert MinimumOutNotMet();
+        uint256 reserveOut = Math.min(gemOut, redemptionReserve());
         uint256 debtCancelled;
         uint256 principalCancelled;
         uint256 freshCancelled;
-        if (reserveOut < imdOut) {
+        if (reserveOut < gemOut) {
             // Round reserve-funded debt down, so every wei released by a borrower is covered by
             // cancelled debt. Compute the payout ONCE: its price never depends on the candidate.
             debtCancelled = amount - Math.mulDiv(reserveOut, price, payoutScale);
-            (principalCancelled, freshCancelled) = _redeemPosition(candidate, debtCancelled, imdOut - reserveOut, price);
+            (principalCancelled, freshCancelled) = _redeemPosition(candidate, debtCancelled, gemOut - reserveOut, price);
         }
         totalNonPrincipalRedeemed += amount - principalCancelled;
         // The fresh part of the burn is charged in full but does not move the rate everyone else pays.
@@ -521,8 +521,8 @@ contract CDPVault is ReentrancyGuard {
         lastRedemptionAt = block.timestamp;
         stablecoin.burn(msg.sender, amount);
         if (reserveOut != 0) _payRedemptionReserve(reserveOut);
-        if (reserveOut < imdOut) imdToken.safeTransfer(msg.sender, imdOut - reserveOut);
-        emit Cash(msg.sender, candidate, amount, imdOut, reserveOut, debtCancelled, feeBps);
+        if (reserveOut < gemOut) gem.safeTransfer(msg.sender, gemOut - reserveOut);
+        emit Cash(msg.sender, candidate, amount, gemOut, reserveOut, debtCancelled, feeBps);
     }
 
     /// @notice Value backing one imdUSD, 1e18-scaled, never above par, at the latest accepted price.
@@ -582,7 +582,7 @@ contract CDPVault is ReentrancyGuard {
     /// puts it, no rule can tell a seasoned self-redemption from an honest one.
     /// @return principalCancelled Minted principal retired, as opposed to accrued fees.
     /// @return freshCancelled The part of the burn that cancelled principal minted within the window.
-    function _redeemPosition(address candidate, uint256 amount, uint256 imdOut, uint256 price)
+    function _redeemPosition(address candidate, uint256 amount, uint256 gemOut, uint256 price)
         private
         returns (uint256 principalCancelled, uint256 freshCancelled)
     {
@@ -595,13 +595,13 @@ contract CDPVault is ReentrancyGuard {
         if (amount > debt) revert ExcessRepayment();
         // Compare the exact collateral/debt fractions, not rounded whole-percent ratios. Deeply
         // underwater positions cannot fund a fixed-price payout that would worsen their ratio.
-        if (imdOut > Math.mulDiv(position.collateral, amount, debt)) revert RedemptionWorsensRatio();
+        if (gemOut > Math.mulDiv(position.collateral, amount, debt)) revert RedemptionWorsensRatio();
         uint256 fresh = _recentlyMinted(position);
         uint256 feesCancelled = _reduceDebt(candidate, amount);
         principalCancelled = amount - feesCancelled;
         // Only principal can be fresh: cancelled fees move the rate like any other part of the burn.
         freshCancelled = Math.min(principalCancelled, fresh);
-        position.collateral -= imdOut;
+        position.collateral -= gemOut;
         _resecure(position, price);
         _recordBadDebt(candidate);
         _clearIfRecovered(candidate);
@@ -781,12 +781,12 @@ contract CDPVault is ReentrancyGuard {
         _clearIfRecovered(owner);
         _payDebt(debtToRepay, feePaid);
         if (marker == msg.sender) {
-            imdToken.safeTransfer(msg.sender, collateralSeized - protocolCut);
+            gem.safeTransfer(msg.sender, collateralSeized - protocolCut);
         } else {
-            imdToken.safeTransfer(msg.sender, collateralSeized - protocolCut - markerCut);
-            if (markerCut != 0) imdToken.safeTransfer(marker, markerCut);
+            gem.safeTransfer(msg.sender, collateralSeized - protocolCut - markerCut);
+            if (markerCut != 0) gem.safeTransfer(marker, markerCut);
         }
-        if (protocolCut != 0) imdToken.safeTransfer(feeRecipient(), protocolCut);
+        if (protocolCut != 0) gem.safeTransfer(feeRecipient(), protocolCut);
         emit Bite(owner, msg.sender, debtToRepay, collateralSeized);
     }
 

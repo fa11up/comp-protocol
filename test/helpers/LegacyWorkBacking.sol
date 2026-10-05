@@ -23,7 +23,7 @@ abstract contract LegacyWorkBacking is Test {
             uint256 extra = needed - debt;
             (uint256 price,) = target.priceFeed().latestValue();
             uint256 deposit = Math.mulDiv(extra, 3 ether, price, Math.Rounding.Ceil);
-            IERC20 token = target.imdToken();
+            IERC20 token = target.gem();
             deal(address(token), WORK_BACKER, token.balanceOf(WORK_BACKER) + deposit, true);
             vm.startPrank(WORK_BACKER);
             token.approve(address(target), deposit);

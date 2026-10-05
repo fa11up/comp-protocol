@@ -48,9 +48,9 @@ contract ManifestConstructibleTest is Test {
         (address p, address n, address s) = _feeds();
         ParameterizedVault vault = new ParameterizedVault(FAUCET, address(0), address(0), p, n, s);
 
-        assertGt(address(vault.imdToken()).code.length, 0, "the vault deployed its own collateral");
+        assertGt(address(vault.gem()).code.length, 0, "the vault deployed its own collateral");
         // The faucet's authority is a source constant, so a fresh one is as usable as the reused one.
-        assertEq(MockIMD(address(vault.imdToken())).deployer(), APPROVED_OPERATOR);
+        assertEq(MockIMD(address(vault.gem())).deployer(), APPROVED_OPERATOR);
         // Everything else the vault creates is wired to it, with nothing sent after construction.
         assertEq(vault.stablecoin().vault(), address(vault));
         assertEq(address(vault.parameters().vault()), address(vault));
@@ -71,8 +71,8 @@ contract ManifestConstructibleTest is Test {
         (address p, address n, address s) = _feeds();
         ParameterizedVault vault = new ParameterizedVault(address(collateral), address(0), address(0), p, n, s);
 
-        assertEq(address(vault.imdToken()), address(collateral), "the vault took the named token");
-        assertEq(vault.imdToken().balanceOf(address(vault)), 0, "and holds none of it yet");
+        assertEq(address(vault.gem()), address(collateral), "the vault took the named token");
+        assertEq(vault.gem().balanceOf(address(vault)), 0, "and holds none of it yet");
         assertEq(collateral.deployer(), APPROVED_OPERATOR, "whose faucet is the approved operator's");
         assertTrue(address(vault.stablecoin()) != address(0), "stablecoin created in-constructor");
         assertTrue(address(vault.parameters()) != address(0), "parameters too");
@@ -85,7 +85,7 @@ contract ManifestConstructibleTest is Test {
     function test_theSentinelDeploysAFaucetSoTheProjectConstructsAnywhere() public {
         (address p, address n, address s) = _feeds();
         ParameterizedVault vault = new ParameterizedVault(FAUCET, address(0), address(0), p, n, s);
-        assertTrue(address(vault.imdToken()) != FAUCET, "the sentinel is replaced, never used as a token");
-        assertTrue(address(vault.imdToken()).code.length > 0, "by a faucet the vault deployed");
+        assertTrue(address(vault.gem()) != FAUCET, "the sentinel is replaced, never used as a token");
+        assertTrue(address(vault.gem()).code.length > 0, "by a faucet the vault deployed");
     }
 }
