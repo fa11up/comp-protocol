@@ -92,6 +92,12 @@ contract CDPVault is ReentrancyGuard {
     event Bark(address indexed owner, uint256 markedAt, uint256 grace);
     event Heel(address indexed owner);
     event IndexCheckpointed(uint256 index, uint256 at);
+    /// @notice A position's principal after it changed, from any path: draw, repay, liquidation or
+    /// redemption. Stability fees are paid before principal and the other events do not say how a
+    /// repayment split, so this is what lets a log reader know each position's principal exactly,
+    /// at every moment, with no historical state reads. Off-chain genesis points are computed from
+    /// it: principal x seconds, per account.
+    event Principal(address indexed owner, uint256 debt);
     event Cash(
         address indexed redeemer,
         address indexed candidate,
@@ -407,6 +413,7 @@ contract CDPVault is ReentrancyGuard {
         totalDebt = resultingTotal;
         _debtChanged(resultingTotal - amount);
         position.debt += amount;
+        emit Principal(msg.sender, position.debt);
         _resecure(position, _priceOrZero());
         _transientAdd(MINTED_THIS_TX_SLOT, amount);
         // REVISION (finding 883fa030): a top-up re-dated the whole record, so one wei every twelve
@@ -932,6 +939,7 @@ contract CDPVault is ReentrancyGuard {
         _stabilityFees[owner] = fees - feePaid;
         uint256 principalPaid = amount - feePaid;
         position.debt -= principalPaid;
+        if (principalPaid != 0) emit Principal(owner, position.debt);
         _resecure(position, _priceOrZero());
         // Retired debt is no longer fresh, whichever path retired it.
         // REVISION (finding 5ee3f2bc): the record's amount-weighted date did not move when principal
