@@ -163,7 +163,7 @@ abstract contract WorkBackingFixture is Test {
 
     function _setRatio(uint256 ratio) internal {
         vm.prank(APPROVED_OPERATOR);
-        parameters.proposeWorkRatio(ratio);
+        parameters.proposeEarnMat(ratio);
         _apply();
     }
 
@@ -187,6 +187,6 @@ abstract contract WorkBackingFixture is Test {
 
     function _mintWork(address worker, uint256 amount) internal {
         vm.prank(worker);
-        backedVault.mintFromWork(amount);
+        backedVault.earn(amount);
     }
 }

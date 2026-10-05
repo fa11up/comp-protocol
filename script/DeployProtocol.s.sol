@@ -33,7 +33,7 @@ contract DeployProtocol is Script {
     // pinned in src/DeploymentConfig.sol. This script cannot get them wrong, and neither can a
     // launch manifest — there is no argument to substitute. verify() reads them back off chain.
 
-    uint256 constant MAX_AGE = 86_400; // also bounds CDPVault.liquidationWindow()
+    uint256 constant MAX_AGE = 86_400; // also bounds CDPVault.tail()
     // The cap and the update frequency are one knob, not two. A tight cap only works if updates are
     // frequent enough that the market never moves further than it between them; a feed updated
     // rarely needs a loose one or it simply cannot follow. At 2000 this feed could not absorb a
@@ -122,8 +122,8 @@ contract DeployProtocol is Script {
         // The plain vault keeps the compiled-in economics: revenue to the pinned account, and the work
         // channel unbounded. The governed stack (DeployGoverned) is the one with a Treasury and a ceiling.
         require(vault.feeRecipient() == FEE_RECIPIENT, "vault: fee recipient is not the pinned one");
-        require(vault.workCeiling() == type(uint256).max, "vault: a plain vault has no work ceiling to enforce");
-        require(vault.redemptionSpread() == 50, "vault: redemption spread is not the shipped default");
+        require(vault.earnLine() == type(uint256).max, "vault: a plain vault has no work ceiling to enforce");
+        require(vault.gap() == 50, "vault: redemption spread is not the shipped default");
         require(vault.redemptionCeilingCR() == vault.mat() + 50, "vault: redemption ceiling is not derived");
         require(vault.REDEMPTION_FEE_FLOOR_BPS() == 50, "vault: redemption fee floor changed");
         require(vault.REDEMPTION_FEE_CAP_BPS() == 500, "vault: redemption fee cap changed");

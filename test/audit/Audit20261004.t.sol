@@ -196,7 +196,7 @@ contract Audit20261004Test is WorkBackingFixture {
         assertTrue(marked, "a price move alone does not clear a mark");
 
         vm.prank(address(0xA11CE));
-        backedVault.clearRecoveredMark(BORROWER);
+        backedVault.heel(BORROWER);
         (marked,,) = _mark(BORROWER);
         assertFalse(marked, "the explicit path clears it");
     }
@@ -240,12 +240,12 @@ contract Audit20261004Test is WorkBackingFixture {
 
         feed.setShortValue(true);
         assertEq(reserve.reserveValueUsd(), 0, "a one-word tuple counts for nothing");
-        assertEq(backedVault.workCeiling(), 0, "and does not brick the ceiling");
+        assertEq(backedVault.earnLine(), 0, "and does not brick the ceiling");
 
         feed.setShortValue(false);
         feed.setStaleWord(type(uint256).max);
         assertEq(reserve.reserveValueUsd(), 0, "nor does a non-boolean staleness answer");
-        backedVault.workCeiling();
+        backedVault.earnLine();
     }
 
     /// @dev Finding 2's third shape: a declared uint64 that cannot hold the returned word.
@@ -272,7 +272,7 @@ contract Audit20261004Test is WorkBackingFixture {
 
         broken.setPaused(true);
         assertEq(reserve.reserveValueUsd(), 1000 ether, "the healthy asset still backs the protocol");
-        assertEq(backedVault.workCeiling(), _inVaultUnit(1000 ether), "and the ceiling is still readable");
+        assertEq(backedVault.earnLine(), _inVaultUnit(1000 ether), "and the ceiling is still readable");
         _mintWork(WORKER, 100 ether);
         assertEq(stable.balanceOf(WORKER), 100 ether, "work minting survives one broken entry");
     }
@@ -337,12 +337,12 @@ contract Audit20261004Test is WorkBackingFixture {
         _register(IERC20(address(collateral)), ISwarmFeed(address(backedVault.usdPriceFeed())), 10_000);
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(address(reserve), 1000 ether);
-        assertGt(backedVault.workCeiling(), 0, "backed while the leg answers");
+        assertGt(backedVault.earnLine(), 0, "backed while the leg answers");
 
         vm.warp(vm.getBlockTimestamp() + ETH_USD_MAX_AGE + 1);
         assertTrue(backedVault.usdPriceFeed().isStale(), "the leg is past its maximum age");
         assertEq(reserve.reserveValueUsd(), 0, "an unpriceable asset counts for nothing");
-        assertEq(backedVault.workCeiling(), 0, "and the ceiling reads zero rather than reverting");
+        assertEq(backedVault.earnLine(), 0, "and the ceiling reads zero rather than reverting");
     }
 
     // --- helpers --------------------------------------------------------------------------------

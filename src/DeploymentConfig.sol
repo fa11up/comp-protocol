@@ -92,32 +92,32 @@ uint256 constant ATTESTATION_CHAIN_ID = 1;
 
 /// @dev Maximum tolerated gap between the primary average price and the spot price, in basis points
 /// of the primary. Beyond this the two feeds disagree and every price-dependent action is refused.
-uint256 constant MAX_DIVERGENCE_BPS = 500;
+uint256 constant SKEW_BPS = 500;
 
 /// @dev Share of the liquidation bonus paid to whoever marked the position underwater, in basis
 /// points of the bonus. Never taken from principal: the borrower's loss is identical at zero.
-uint256 constant MARKER_SHARE_BPS = 1_000;
+uint256 constant CHIP_BPS = 1_000;
 
 /// @dev The protocol's own share of the same bonus, in basis points of it, paid to FEE_RECIPIENT.
 /// This is revenue WITHOUT the protocol supplying capital or becoming the liquidator: the keeper
 /// still brings the stablecoin, takes the inventory risk on seized collateral and pays the gas.
 /// At 3333 a keeper keeps roughly 70% more than the protocol takes, which leaves liquidation worth
 /// doing on smaller positions — and liquidation happening is a solvency property, not a nicety.
-/// The vault refuses any value above 10_000 minus MARKER_SHARE_BPS. The borrower's loss is
+/// The vault refuses any value above 10_000 minus CHIP_BPS. The borrower's loss is
 /// unchanged at any setting: this divides the existing bonus rather than seizing more collateral.
-uint256 constant PROTOCOL_BONUS_SHARE_BPS = 3_333;
+uint256 constant CUT_BPS = 3_333;
 
 /// @dev Annual stability fee on open debt, in basis points, accrued linearly from deployment.
 /// Ships at zero so this increment changes no existing behaviour; a later deployment turns it on.
 uint256 constant DUTY_BPS = 200;
 
 /// @dev The ratio term of the work-minting ceiling, in basis points of collateral-backed debt:
-/// workCeiling = reserveValueUsd + totalDebt * WORK_RATIO_BPS / 10000. Section 3 of
+/// earnLine = reserveValueUsd + totalDebt * EARN_MAT_BPS / 10000. Section 3 of
 /// docs/COMPUTE-BACKING-DESIGN.md derives the bound: backing stays above one for every reserve size
 /// exactly when this ratio is below mat - 1, which is 5000 at the loosest NHI. 2500 is half that
 /// cliff, 120% worst-case backing with an empty reserve. Parameters refuses any proposal above
-/// MAX_WORK_RATIO_BPS, which is also 2500, so governance can lower it and never raise it past here.
-uint256 constant WORK_RATIO_BPS = 2_500;
+/// MAX_EARN_MAT_BPS, which is also 2500, so governance can lower it and never raise it past here.
+uint256 constant EARN_MAT_BPS = 2_500;
 
 // The ERC-8004 adapter that answers who controls an agent. IdentityRegistry.ownerOf resolves to it,
 // and isController(agentId, account) answers control by ownership of the identity NFT.
@@ -136,7 +136,7 @@ address constant ERC8004_ADAPTER = 0xde152AfB7db5373F34876E1499fbD893A82dD336;
 // COMP earned per accepted task, 1e18-scaled. Governed through `Parameters`, hard-bounded there at one
 // COMP per task. Shipped at a hundredth of a COMP; the work ceiling binds on top, so a claim is
 // bounded twice -- by what was earned and by what backs the protocol.
-uint256 constant UNITS_PER_TASK_WAD = 0.01 ether;
+uint256 constant WAGE_WAD = 0.01 ether;
 
 // The pre-deployed WorkOracleFactory, and the sentinel a vault passes as its oracle to ask for a real
 // attested work oracle from it.

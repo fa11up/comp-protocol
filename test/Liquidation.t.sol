@@ -49,7 +49,7 @@ contract LiquidationTest is ProtocolFixture {
         _assertDefaultSplit(imd.balanceOf(bob) - liquidatorBalance, 55 ether, 50 ether);
         assertEq(imd.balanceOf(address(vault)), 75 ether);
         assertEq(comp.balanceOf(bob), 50 ether);
-        assertEq(comp.totalSupply(), 50 ether + vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), 50 ether + vault.totalEarned());
         assertEq(oracle.mintingRights(alice), 1000 ether, "borrowing and liquidation do not consume work rights");
         vm.prank(bob);
         vm.expectRevert(CDPVault.HealthyPosition.selector);
@@ -117,7 +117,7 @@ contract LiquidationTest is ProtocolFixture {
         assertEq(imd.balanceOf(address(vault)), 340 ether);
         assertEq(imd.balanceOf(bob), 800 ether);
         assertEq(comp.balanceOf(bob), 100 ether);
-        assertEq(comp.totalSupply(), 100 ether + vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), 100 ether + vault.totalEarned());
     }
 
     function test_liquidationRequiresMarkAndElapsedGrace() public {
@@ -149,7 +149,7 @@ contract LiquidationTest is ProtocolFixture {
     function test_liquidationExecutesAtExactEndOfMarkWindow() public {
         _priceDrivenPosition(140 ether);
         (uint256 markedAt, uint256 grace) = _markAndWait(alice);
-        vm.warp(markedAt + grace + vault.liquidationWindow());
+        vm.warp(markedAt + grace + vault.tail());
         // A mark remains actionable at equality, including after repeated marking.
         vault.bark(alice);
         _assertMark(alice, markedAt, grace, true);
@@ -165,7 +165,7 @@ contract LiquidationTest is ProtocolFixture {
     function test_expiredMarkRevertsAtomicallyAndRemarkTakesNewGraceSnapshot() public {
         _priceDrivenPosition(140 ether);
         (uint256 markedAt, uint256 grace) = _markAndWait(alice);
-        vm.warp(markedAt + grace + vault.liquidationWindow() + 1);
+        vm.warp(markedAt + grace + vault.tail() + 1);
         vm.prank(bob);
         vm.expectRevert(CDPVault.MarkExpired.selector);
         vault.bite(alice, 100 ether);
@@ -245,8 +245,8 @@ contract LiquidationTest is ProtocolFixture {
         priceFeed.setValue(2 ether);
         vm.prank(bob);
         vm.expectEmit(true, false, false, true, address(vault));
-        emit CDPVault.UnderwaterMarkCleared(alice);
-        vault.clearRecoveredMark(alice);
+        emit CDPVault.Heel(alice);
+        vault.heel(alice);
         _assertMark(alice, 0, 0, false);
         vm.prank(bob);
         vm.expectRevert(CDPVault.HealthyPosition.selector);
@@ -264,7 +264,7 @@ contract LiquidationTest is ProtocolFixture {
         uint256 markedAt = block.timestamp;
         vm.prank(bob);
         vm.expectRevert(CDPVault.UnderwaterPosition.selector);
-        vault.clearRecoveredMark(alice);
+        vault.heel(alice);
         _assertMark(alice, markedAt, 6 hours, true);
     }
 
@@ -280,7 +280,7 @@ contract LiquidationTest is ProtocolFixture {
         nhiFeed.setValue(0.7 ether);
         assertEq(vault.collateralRatio(alice), ratioBefore);
         assertEq(vault.mat(), 180);
-        assertEq(vault.gracePeriod(), 8640);
+        assertEq(vault.lull(), 8640);
         vault.bark(alice);
         uint256 markedAt = block.timestamp;
         _assertMark(alice, markedAt, 8640, true);
@@ -346,7 +346,7 @@ contract LiquidationTest is ProtocolFixture {
         assertEq(price, 1 ether, "only NHI moved");
         _assertPosition(alice, 60 ether, 0);
         _assertMark(alice, 0, 0, false);
-        assertEq(comp.totalSupply(), vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), vault.totalEarned());
     }
 
     function test_nhiRecoveryDuringGraceClearsMarkWithoutPriceMovement() public {
@@ -357,7 +357,7 @@ contract LiquidationTest is ProtocolFixture {
         vault.bark(alice);
         vm.warp(block.timestamp + 1 hours);
         nhiFeed.setValue(0.85 ether);
-        vault.clearRecoveredMark(alice);
+        vault.heel(alice);
         _assertMark(alice, 0, 0, false);
         assertEq(vault.collateralRatio(alice), 170);
         vm.prank(bob);
@@ -371,7 +371,7 @@ contract LiquidationTest is ProtocolFixture {
         uint256 markedAt = block.timestamp;
         vm.warp(markedAt + 1 hours);
         nhiFeed.setValue(0.6 ether);
-        assertEq(vault.gracePeriod(), 0);
+        assertEq(vault.lull(), 0);
         vm.prank(bob);
         vault.bark(alice);
         _assertMark(alice, markedAt, 6 hours, true);
@@ -396,7 +396,7 @@ contract LiquidationTest is ProtocolFixture {
         _assertMark(alice, markedAt, 8640, true);
         vm.warp(markedAt + 1 hours);
         nhiFeed.setValue(0.85 ether);
-        assertEq(vault.gracePeriod(), 6 hours);
+        assertEq(vault.lull(), 6 hours);
         assertLt(vault.collateralRatio(alice), vault.mat());
         vault.bark(alice);
         _assertMark(alice, markedAt, 8640, true);
@@ -535,7 +535,7 @@ contract LiquidationTest is ProtocolFixture {
         _open(alice, 140 ether, 100 ether);
         _establishWorkBacking(vault, 100 ether);
         vm.prank(bob);
-        vault.mintFromWork(100 ether);
+        vault.earn(100 ether);
         priceFeed.setValue(1 ether);
         _markAndWait(alice);
         vm.prank(bob);
@@ -545,8 +545,8 @@ contract LiquidationTest is ProtocolFixture {
         assertEq(comp.balanceOf(alice), 100 ether);
         assertEq(comp.balanceOf(bob), 0);
         _assertDefaultSplit(imd.balanceOf(bob) - 1000 ether, 110 ether, 100 ether);
-        assertEq(vault.totalWorkMinted(), 100 ether);
-        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted());
+        assertEq(vault.totalEarned(), 100 ether);
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalEarned());
         assertEq(oracle.mintingRights(bob), 900 ether);
         assertEq(oracle.mintingRights(alice), 1000 ether);
     }
@@ -632,8 +632,8 @@ contract LiquidationTest is ProtocolFixture {
         view
         returns (uint256 formulaPayout)
     {
-        uint256 expectedMarker = (payout - principalCollateral) * vault.markerShareBps() / 10_000;
-        assertEq(vault.protocolBonusShareBps(), 0);
+        uint256 expectedMarker = (payout - principalCollateral) * vault.chip() / 10_000;
+        assertEq(vault.cut(), 0);
         assertEq(imd.balanceOf(address(this)), expectedMarker, "distinct marker receives its bonus share");
         assertEq(
             liquidatorReceived,
@@ -707,7 +707,7 @@ contract LiquidationTest is ProtocolFixture {
         assertEq(imd.balanceOf(address(vault)), collateral - seized + 300 ether);
         assertEq(comp.balanceOf(bob), debt + 100 ether - repayment);
         assertEq(comp.balanceOf(alice), 0);
-        assertEq(comp.totalSupply(), debt - repayment + 100 ether + vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), debt - repayment + 100 ether + vault.totalEarned());
         assertEq(oracle.mintingRights(alice), 1000 ether);
         assertEq(oracle.mintingRights(bob), 1000 ether);
     }

@@ -27,7 +27,7 @@ import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 ///
 /// FAILURE DIRECTION, learned from an audit. Both reads are raw staticcalls with explicit decoding
 /// rather than typed calls, because a typed call to a vault that stops answering REVERTS, and a
-/// reverting price source takes down `reserveValueUsd`, `workCeiling` and every mint that depends on
+/// reverting price source takes down `reserveValueUsd`, `earnLine` and every mint that depends on
 /// them. `try/catch` is not a fix either: it catches a revert inside the callee, while the returned
 /// bytes are decoded in THIS frame where no catch clause can see a malformed encoding. That exact gap
 /// was two MEDIUM findings in job da7d5b1c. Here anything unreadable reads as zero, which reports as

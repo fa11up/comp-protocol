@@ -20,7 +20,7 @@ import {
 } from "../src/DeploymentConfig.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {SwarmFeed} from "../src/SwarmFeed.sol";
-import {FEE_RECIPIENT, MARKER_SHARE_BPS} from "../src/DeploymentConfig.sol";
+import {FEE_RECIPIENT, CHIP_BPS} from "../src/DeploymentConfig.sol";
 import {SeedablePriceFeed, SeedableNhiFeed, SeedableSpotFeed} from "./helpers/SeedableFeeds.sol";
 
 /// A vault with both knobs switched on, so the ceiling and the fee split are actually exercised.
@@ -45,7 +45,7 @@ contract CappedFeeVault is CDPVault {
         return _ceiling;
     }
 
-    function protocolBonusShareBps() public view override returns (uint256) {
+    function cut() public view override returns (uint256) {
         return _shareBps;
     }
 
@@ -156,7 +156,7 @@ contract InHouseTest is LegacyWorkBacking {
     function test_seedThenBorrowRepayAtLivePrice() public {
         _seed(PRICE, 0.9e18);
         assertEq(vault.mat(), 150, "NHI 0.9 should give mat 150");
-        assertEq(vault.gracePeriod(), 6 hours);
+        assertEq(vault.lull(), 6 hours);
 
         uint256 debt = 1e18;
         uint256 collateral = (debt * 1e18 * 300) / (PRICE * 100); // 300% of minimum
@@ -171,8 +171,8 @@ contract InHouseTest is LegacyWorkBacking {
         vm.stopPrank();
         _establishWorkBacking(vault, debt);
         vm.startPrank(OPERATOR);
-        vault.mintFromWork(debt);
-        assertEq(vault.totalWorkMinted(), debt, "work mint not recorded");
+        vault.earn(debt);
+        assertEq(vault.totalEarned(), debt, "work mint not recorded");
         (, uint256 d1) = vault.positions(OPERATOR);
         assertEq(d1, debt, "work mint must not add debt");
 
@@ -181,7 +181,7 @@ contract InHouseTest is LegacyWorkBacking {
         assertEq(d2, 0, "debt not cleared");
         vm.stopPrank();
         assertEq(
-            comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted(), "supply invariant broken"
+            comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalEarned(), "supply invariant broken"
         );
     }
 
@@ -208,7 +208,7 @@ contract InHouseTest is LegacyWorkBacking {
         uint256 expected = (repay * 11e17) / fallen; // floor(debtToRepay * 1.1e18 / price)
         assertTrue(expected != repay * 110 / 100, "at a non-unit price the two formulas must differ");
 
-        uint256 markerCut = (expected - repay * 1e18 / fallen) * MARKER_SHARE_BPS / 10_000;
+        uint256 markerCut = (expected - repay * 1e18 / fallen) * CHIP_BPS / 10_000;
         uint256 markerBefore = imd.balanceOf(address(this));
         uint256 before = imd.balanceOf(OPERATOR);
         vm.prank(OPERATOR);
@@ -441,7 +441,7 @@ contract InHouseTest is LegacyWorkBacking {
         uint256 seized = (debt * 11e17) / fallen;
         uint256 principal = (debt * 1e18) / fallen;
         uint256 expectedCut = ((seized - principal) * shareBps) / 10_000;
-        uint256 markerCut = ((seized - principal) * MARKER_SHARE_BPS) / 10_000;
+        uint256 markerCut = ((seized - principal) * CHIP_BPS) / 10_000;
         assertGt(expectedCut, 0, "the split must actually move value");
 
         // FEE_RECIPIENT is miyagod.eth, which is also OPERATOR here, so the liquidator has to be a

@@ -88,7 +88,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         _apply();
         assertEq(reserve.reserveValueUsd(), 50 ether);
         assertEq(backedVault.reserveValue(), 50 ether);
-        assertEq(backedVault.workCeiling(), 50 ether);
+        assertEq(backedVault.earnLine(), 50 ether);
     }
 
     function test_compExplicitlyRejectedAndUnlistedBalancesNeverBackWork() public {
@@ -160,26 +160,26 @@ contract ReserveValuationTest is WorkBackingFixture {
         _openDebt(100 ether);
         assertEq(reserve.reserveValueOf(second), 5 ether);
         assertEq(reserve.reserveValueUsd(), 15 ether);
-        assertEq(backedVault.workCeiling(), 40 ether);
+        assertEq(backedVault.earnLine(), 40 ether);
 
         flaky.setBroken(true, false);
         assertEq(reserve.reserveValueOf(second), 0, "a source that cannot say whether it is stale is stale");
         assertEq(reserve.reserveValueUsd(), 10 ether, "the other asset still counts");
-        assertEq(backedVault.workCeiling(), 35 ether);
+        assertEq(backedVault.earnLine(), 35 ether);
         flaky.setBroken(false, true);
         assertEq(reserve.reserveValueOf(second), 0, "a source with no price prices nothing");
-        assertEq(backedVault.workCeiling(), 35 ether);
+        assertEq(backedVault.earnLine(), 35 ether);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        backedVault.mintFromWork(35 ether + 1);
+        backedVault.earn(35 ether + 1);
         _mintWork(WORKER, 35 ether);
 
         flaky.setBroken(false, false);
-        assertEq(backedVault.workCeiling(), 40 ether);
+        assertEq(backedVault.earnLine(), 40 ether);
         _mintWork(WORKER, 5 ether);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        backedVault.mintFromWork(1);
+        backedVault.earn(1);
         // And the dead source could still have been delisted had it stayed dead: removal reads nothing.
         flaky.setBroken(true, true);
         _register(second, ISwarmFeed(address(0)), 0);
@@ -213,12 +213,12 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(reserve.reserveValueOf(asset), 0);
         assertEq(reserve.reserveValueUsd(), 0);
         assertEq(backedVault.totalDebt(), 0);
-        assertEq(backedVault.workCeiling(), 0);
+        assertEq(backedVault.earnLine(), 0);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        backedVault.mintFromWork(1);
+        backedVault.earn(1);
         assertEq(workOracle.mintingRights(WORKER), type(uint128).max);
-        assertEq(backedVault.totalWorkMinted(), 0);
+        assertEq(backedVault.totalEarned(), 0);
         assertEq(stable.totalSupply(), 0);
     }
 
@@ -233,13 +233,13 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(reserve.reserveValueUsd(), expectedUsd);
         assertEq(backedVault.reserveValue(), expected, "every unit of a one-dollar token, in dollars");
         assertEq(backedVault.totalDebt(), 0);
-        assertEq(backedVault.workCeiling(), expected);
+        assertEq(backedVault.earnLine(), expected);
         _mintWork(WORKER, expected);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        backedVault.mintFromWork(1);
+        backedVault.earn(1);
         assertEq(workOracle.mintingRights(WORKER), type(uint128).max - expected);
-        assertEq(backedVault.totalWorkMinted(), expected);
+        assertEq(backedVault.totalEarned(), expected);
         assertEq(stable.balanceOf(WORKER), expected);
         assertEq(stable.totalSupply(), expected);
     }
@@ -264,7 +264,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(reserve.reserveValueOf(token), expected);
         assertEq(reserve.reserveValueUsd(), expected);
         assertEq(backedVault.reserveValue(), _inVaultUnit(expected));
-        assertEq(backedVault.workCeiling(), _inVaultUnit(expected));
+        assertEq(backedVault.earnLine(), _inVaultUnit(expected));
         assertLe(expected, marked);
         assertEq(_inVaultUnit(expected), expected, "no conversion: the register and the vault share a unit");
     }
@@ -327,10 +327,10 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertTrue(backedVault.usdPriceFeed().isStale());
         assertEq(reserve.reserveValueUsd(), 0, "never use the stale composite quote");
         assertEq(backedVault.reserveValue(), 0);
-        assertEq(backedVault.workCeiling(), 0);
+        assertEq(backedVault.earnLine(), 0);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        backedVault.mintFromWork(1);
+        backedVault.earn(1);
         primary.setStale(false);
         assertEq(reserve.reserveValueUsd(), 1 ether);
         assertEq(backedVault.reserveValue(), 1 ether);
@@ -350,22 +350,22 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), 0);
         assertEq(reserve.reserveValueUsd(), 0);
         assertEq(backedVault.reserveValue(), 0);
-        assertEq(backedVault.workCeiling(), 0);
+        assertEq(backedVault.earnLine(), 0);
         // StaleFeed rather than WorkCeilingReached: the vault denominates in USD, so it refuses to act
         // at all on a price it cannot read, before it ever consults the ceiling. Still cannot authorise
         // new work, by a stricter route.
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        backedVault.mintFromWork(1);
+        backedVault.earn(1);
         assertEq(workOracle.mintingRights(WORKER), type(uint128).max);
         _refreshEthUsd();
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        backedVault.mintFromWork(2000 ether);
+        backedVault.earn(2000 ether);
         _mintWork(WORKER, 1 ether);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        backedVault.mintFromWork(1);
+        backedVault.earn(1);
     }
 
     function test_missingNonpositiveAndUndatedUsdAnswersCannotBackWork() public {
@@ -402,8 +402,8 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(backedVault.reserveValue(), 12 ether, "assets priced without the dead leg still count");
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        backedVault.mintFromWork(1);
-        assertEq(backedVault.workCeiling(), 12 ether, "the surviving asset still backs work once the leg returns");
+        backedVault.earn(1);
+        assertEq(backedVault.earnLine(), 12 ether, "the surviving asset still backs work once the leg returns");
         reservePrice.setValue(0);
         assertEq(reserve.reserveValueUsd(), 0);
         _refreshEthUsd();
@@ -445,8 +445,8 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertLt(fee, 50 ether);
         uint256 seized = 50 ether * 1.1 ether / uint256(0.6 ether);
         uint256 principalCollateral = 50 ether * 1 ether / uint256(0.6 ether);
-        uint256 cut = (seized - principalCollateral) * backedVault.protocolBonusShareBps() / 10_000;
-        uint256 markerCut = (seized - principalCollateral) * backedVault.markerShareBps() / 10_000;
+        uint256 cut = (seized - principalCollateral) * backedVault.cut() / 10_000;
+        uint256 markerCut = (seized - principalCollateral) * backedVault.chip() / 10_000;
         assertGt(cut, 0);
         uint256 oldRecipientCollateral = collateral.balanceOf(FEE_RECIPIENT);
         uint256 oldRecipientComp = stable.balanceOf(FEE_RECIPIENT);
@@ -480,6 +480,6 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), 0);
         assertEq(reserve.reserveValueUsd(), 0);
         assertEq(backedVault.reserveValue(), 0);
-        assertEq(backedVault.workCeiling(), 0);
+        assertEq(backedVault.earnLine(), 0);
     }
 }

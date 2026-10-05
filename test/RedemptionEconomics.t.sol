@@ -26,7 +26,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
 
     function _redeem(uint256 amount) private returns (uint256 payout) {
         vm.prank(BORROWER);
-        payout = backedVault.redeem(amount, 0, BORROWER);
+        payout = backedVault.cash(amount, 0, BORROWER);
     }
 
     function _advance(uint256 elapsed) private {
@@ -94,7 +94,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
             uint256 beforeReserve = backedVault.redemptionReserve();
             (uint256 beforeCollateral, uint256 beforeDebt) = backedVault.positions(BORROWER);
             uint256 beforeSupply = stable.totalSupply();
-            uint256 beforeCeiling = backedVault.workCeiling();
+            uint256 beforeCeiling = backedVault.earnLine();
             uint256 payout = _redeem(25 ether);
             (uint256 afterCollateral, uint256 afterDebt) = backedVault.positions(BORROWER);
             if (beforeReserve >= payout) {
@@ -115,7 +115,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
                 (afterCollateral + backedVault.redemptionReserve()) * beforeSupply,
                 (beforeCollateral + beforeReserve) * stable.totalSupply()
             );
-            assertLt(backedVault.workCeiling(), beforeCeiling);
+            assertLt(backedVault.earnLine(), beforeCeiling);
         }
         assertGt(reserveOnlyCalls, 1);
         assertEq(mixedCalls, 1);
@@ -126,7 +126,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         uint256 collateralBefore = collateral.balanceOf(address(backedVault));
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.IneligibleRedemptionPosition.selector);
-        backedVault.redeem(25 ether, 0, BORROWER);
+        backedVault.cash(25 ether, 0, BORROWER);
         assertEq(backedVault.totalDebt(), debt);
         assertEq(stable.totalSupply(), 1000 ether - burns);
         assertEq(collateral.balanceOf(address(backedVault)), collateralBefore);
@@ -360,7 +360,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         uint256 quoted = 10 ether * (10_000 - backedVault.redemptionFeeBps(10 ether)) / 10_000;
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.MinimumOutNotMet.selector);
-        backedVault.redeem(10 ether, quoted + 1, BORROWER);
+        backedVault.cash(10 ether, quoted + 1, BORROWER);
         assertEq(backedVault.redemptionBaseRate(), rate);
         assertEq(backedVault.decayedRedemptionBaseRate(), decayed);
         assertEq(backedVault.lastRedemptionAt(), last);
@@ -382,13 +382,13 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
     }
 
     function test_reserveBurnTightensWorkMintingWithoutGovernanceAndDoesNotRestoreRights() public {
-        assertEq(backedVault.workCeiling(), 1250 ether);
+        assertEq(backedVault.earnLine(), 1250 ether);
         _mintWork(WORKER, 1250 ether);
         uint256 rights = workOracle.mintingRights(WORKER);
         uint256 payout = _redeem(100 ether);
         assertEq(backedVault.reserveValue(), 1000 ether - payout);
         assertEq(backedVault.totalDebt(), 1000 ether);
-        assertEq(backedVault.workCeiling(), 1250 ether - payout);
+        assertEq(backedVault.earnLine(), 1250 ether - payout);
         _assertWorkBlocked(rights);
     }
 
@@ -397,11 +397,11 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         uint256 first = _redeem(900 ether);
         assertEq(first, 855 ether);
         assertEq(backedVault.redemptionReserve(), 145 ether);
-        _mintWork(WORKER, backedVault.workCeiling());
+        _mintWork(WORKER, backedVault.earnLine());
         vm.prank(WORKER);
         stable.transfer(BORROWER, 200 ether);
         uint256 rights = workOracle.mintingRights(WORKER);
-        uint256 ceilingBefore = backedVault.workCeiling();
+        uint256 ceilingBefore = backedVault.earnLine();
         uint256 debtBefore = backedVault.totalDebt();
         uint256 amount = 200 ether;
         uint256 fee = backedVault.redemptionFeeBps(amount);
@@ -409,8 +409,8 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         assertEq(_redeem(amount), 190 ether);
         assertEq(backedVault.redemptionReserve(), 0);
         assertEq(backedVault.totalDebt(), debtBefore - debtRetired);
-        assertEq(backedVault.workCeiling(), (debtBefore - debtRetired) / 4);
-        assertLt(backedVault.workCeiling(), ceilingBefore - 145 ether, "both terms contract");
+        assertEq(backedVault.earnLine(), (debtBefore - debtRetired) / 4);
+        assertLt(backedVault.earnLine(), ceilingBefore - 145 ether, "both terms contract");
         _assertWorkBlocked(rights);
     }
 
@@ -422,30 +422,30 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         uint256 rights = workOracle.mintingRights(WORKER);
         _redeem(100 ether);
         assertEq(backedVault.totalDebt(), 900 ether);
-        assertEq(backedVault.workCeiling(), 225 ether);
+        assertEq(backedVault.earnLine(), 225 ether);
         assertEq(backedVault.reserveValue(), 0);
         _assertWorkBlocked(rights);
     }
 
     function _assertWorkBlocked(uint256 rights) private {
-        uint256 issued = backedVault.totalWorkMinted();
-        assertGt(issued, backedVault.workCeiling());
+        uint256 issued = backedVault.totalEarned();
+        assertGt(issued, backedVault.earnLine());
         assertEq(workOracle.mintingRights(WORKER), rights, "redemption never restores consumed work rights");
         assertEq(parameters.pendingEta(), 0, "no pending governance action");
-        assertEq(backedVault.workRatioBps(), 2500);
+        assertEq(backedVault.earnMat(), 2500);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        backedVault.mintFromWork(1);
-        assertEq(backedVault.totalWorkMinted(), issued);
+        backedVault.earn(1);
+        assertEq(backedVault.totalEarned(), issued);
         assertEq(workOracle.mintingRights(WORKER), rights);
     }
 
     function test_spreadRequiresGovernorAndFortyEightHoursAndTracksLiveMinCR() public {
-        assertEq(backedVault.redemptionSpread(), 50);
+        assertEq(backedVault.gap(), 50);
         vm.expectRevert(Governed.NotGovernor.selector);
-        parameters.proposeRedemptionSpread(25);
+        parameters.proposeGap(25);
         vm.prank(APPROVED_OPERATOR);
-        parameters.proposeRedemptionSpread(25);
+        parameters.proposeGap(25);
         uint256 eta = parameters.pendingEta();
         assertEq(eta, vm.getBlockTimestamp() + 48 hours);
         vm.warp(eta - 1);
@@ -457,7 +457,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         health.setValue(0.6 ether);
         assertEq(backedVault.redemptionCeilingCR(), 225);
         vm.prank(APPROVED_OPERATOR);
-        parameters.proposeRedemptionSpread(100);
+        parameters.proposeGap(100);
         _apply();
         assertEq(backedVault.redemptionCeilingCR(), 300);
         assertEq(backedVault.REDEMPTION_FEE_FLOOR_BPS(), FLOOR);
@@ -466,10 +466,10 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
 
     function test_spreadBoundsRejectOnePointOutsideEitherLimit() public {
         vm.startPrank(APPROVED_OPERATOR);
-        vm.expectRevert(abi.encodeWithSelector(Parameters.RedemptionSpreadOutOfRange.selector, 24));
-        parameters.proposeRedemptionSpread(24);
-        vm.expectRevert(abi.encodeWithSelector(Parameters.RedemptionSpreadOutOfRange.selector, 101));
-        parameters.proposeRedemptionSpread(101);
+        vm.expectRevert(abi.encodeWithSelector(Parameters.GapOutOfRange.selector, 24));
+        parameters.proposeGap(24);
+        vm.expectRevert(abi.encodeWithSelector(Parameters.GapOutOfRange.selector, 101));
+        parameters.proposeGap(101);
         vm.stopPrank();
         assertEq(parameters.pendingEta(), 0);
         assertGt(backedVault.redemptionCeilingCR(), backedVault.mat());

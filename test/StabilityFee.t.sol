@@ -61,7 +61,7 @@ abstract contract StabilityFeeFixture is Test {
 
     function _assertZeroFeeAccounting(uint256 expectedDebt, uint256 expectedWork) internal view {
         assertEq(vault.totalDebt(), expectedDebt, "outstanding principal");
-        assertEq(vault.totalWorkMinted(), expectedWork, "work minting is independent of debt");
+        assertEq(vault.totalEarned(), expectedWork, "work minting is independent of debt");
         assertEq(vault.totalFeesMinted(), 0, "zero annual rate never mints fees");
         assertEq(comp.balanceOf(FEE_RECIPIENT), 0, "no stablecoin fee reaches the recipient");
         assertEq(comp.totalSupply(), expectedDebt + expectedWork, "original supply invariant");
@@ -116,9 +116,9 @@ contract StabilityFeeTest is StabilityFeeFixture {
     function test_zeroRateTouchedAndUntouchedDebtPreserveSupplyWithWorkMinting() public {
         _open(BORROWER, 100 ether);
         _open(SECOND_BORROWER, 40 ether);
-        assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 7 ether);
+        assertGe(vault.totalDebt() / 4, vault.totalEarned() + 7 ether);
         vm.prank(SECOND_BORROWER);
-        vault.mintFromWork(7 ether);
+        vault.earn(7 ether);
         _assertZeroFeeAccounting(140 ether, 7 ether);
 
         vm.warp(vm.getBlockTimestamp() + 365 days);
@@ -328,9 +328,9 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
         assertEq(vault.totalFeesMinted(), 0);
         assertEq(comp.balanceOf(FEE_RECIPIENT), 0);
 
-        assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 10 ether);
+        assertGe(vault.totalDebt() / 4, vault.totalEarned() + 10 ether);
         vm.startPrank(SECOND_BORROWER);
-        vault.mintFromWork(10 ether);
+        vault.earn(10 ether);
         comp.transfer(BORROWER, 10 ether);
         vm.stopPrank();
         vm.prank(BORROWER);

@@ -12,8 +12,8 @@ import {ISwarmFeed} from "../../src/interfaces/ISwarmFeed.sol";
 import {
     APPROVED_OPERATOR,
     FEE_RECIPIENT,
-    MAX_DIVERGENCE_BPS,
-    MARKER_SHARE_BPS,
+    SKEW_BPS,
+    CHIP_BPS,
     DUTY_BPS
 } from "../../src/DeploymentConfig.sol";
 
@@ -53,7 +53,7 @@ contract IncrementShareVault is CDPVault {
         share = share_;
     }
 
-    function protocolBonusShareBps() public view override returns (uint256) {
+    function cut() public view override returns (uint256) {
         return share;
     }
 }
@@ -105,8 +105,8 @@ contract CDPVaultIncrementTest is Test {
     function test_constructorPinsOnlyTheNewSpotFeedAndConfigScalars() public view {
         assertEq(address(vault.priceFeed()), address(primary));
         assertEq(address(vault.spotFeed()), address(spot));
-        assertEq(vault.maxDivergenceBps(), MAX_DIVERGENCE_BPS);
-        assertEq(vault.markerShareBps(), MARKER_SHARE_BPS);
+        assertEq(vault.skew(), SKEW_BPS);
+        assertEq(vault.chip(), CHIP_BPS);
         assertEq(vault.duty(), DUTY_BPS);
         assertEq(comp.vault(), address(vault));
         assertEq(MockWorkOracle(address(vault.oracle())).vault(), address(vault));
@@ -119,7 +119,7 @@ contract CDPVaultIncrementTest is Test {
 
     function test_divergenceBoundaryUsesPrimaryDenominatorOnBothSides() public {
         _open(300 ether, 0);
-        uint256 tolerance = 1 ether * MAX_DIVERGENCE_BPS / 10_000;
+        uint256 tolerance = 1 ether * SKEW_BPS / 10_000;
         spot.set(1 ether + tolerance);
         vm.prank(ALICE);
         vault.draw(1 ether);
@@ -140,7 +140,7 @@ contract CDPVaultIncrementTest is Test {
     function test_divergenceComparisonHandlesFullWidthPrices() public {
         _open(300 ether, 0);
         uint256 price = type(uint256).max;
-        uint256 tolerance = Math.mulDiv(price, MAX_DIVERGENCE_BPS, 10_000);
+        uint256 tolerance = Math.mulDiv(price, SKEW_BPS, 10_000);
         primary.set(price);
         spot.set(price - tolerance);
         vm.prank(ALICE);
@@ -210,7 +210,7 @@ contract CDPVaultIncrementTest is Test {
         spot.set(0);
         spot.setStale(true);
         vm.prank(BOB);
-        vault.mintFromWork(5 ether);
+        vault.earn(5 ether);
         vm.expectRevert(CDPVault.StaleFeed.selector);
         vm.prank(ALICE);
         vault.free(1 ether);
@@ -252,7 +252,7 @@ contract CDPVaultIncrementTest is Test {
         assertEq(againMarker, MARKER);
         vm.expectRevert(CDPVault.GracePeriodNotElapsed.selector);
         vault.bite(ALICE, 1);
-        vm.warp(markedAt + grace + vault.liquidationWindow() + 1);
+        vm.warp(markedAt + grace + vault.tail() + 1);
         vm.expectRevert(CDPVault.MarkExpired.selector);
         vault.bite(ALICE, 1);
         vm.prank(OTHER_MARKER);
@@ -274,7 +274,7 @@ contract CDPVaultIncrementTest is Test {
         vm.prank(BOB);
         vault.bite(ALICE, 20 ether);
         uint256 payout = 55 ether;
-        uint256 markerCut = 5 ether * MARKER_SHARE_BPS / 10_000;
+        uint256 markerCut = 5 ether * CHIP_BPS / 10_000;
         assertEq(imd.balanceOf(MARKER), markerCut);
         assertEq(imd.balanceOf(BOB) - beforeBalance, payout - markerCut);
         _position(vault, 245 ether, 80 ether);
@@ -327,7 +327,7 @@ contract CDPVaultIncrementTest is Test {
         uint256 liquidatorBalance = imd.balanceOf(BOB);
         vm.prank(BOB);
         shared.bite(ALICE, 20 ether);
-        uint256 markerCut = 5 ether * MARKER_SHARE_BPS / 10_000;
+        uint256 markerCut = 5 ether * CHIP_BPS / 10_000;
         assertEq(imd.balanceOf(FEE_RECIPIENT) - protocolBalance, 1 ether);
         assertEq(imd.balanceOf(MARKER), markerCut);
         assertEq(imd.balanceOf(BOB) - liquidatorBalance, 54 ether - markerCut);
@@ -340,7 +340,7 @@ contract CDPVaultIncrementTest is Test {
 
     function test_bonusSharesCannotConsumeLiquidatorPrincipal() public {
         IncrementShareVault invalid = new IncrementShareVault(
-            address(imd), address(primary), address(nhi), address(spot), 10_001 - MARKER_SHARE_BPS
+            address(imd), address(primary), address(nhi), address(spot), 10_001 - CHIP_BPS
         );
         vm.startPrank(ALICE);
         imd.approve(address(invalid), type(uint256).max);
@@ -479,7 +479,7 @@ contract CDPVaultIncrementTest is Test {
         assertEq(vault.stabilityFeeOf(ALICE), 0);
         assertEq(vault.totalFeesMinted(), fee);
         assertEq(comp.balanceOf(FEE_RECIPIENT) - recipientBalance, fee);
-        assertEq(comp.totalSupply(), vault.totalDebt() + vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), vault.totalDebt() + vault.totalEarned());
         vm.warp(started + 2 * 365 days);
         assertEq(vault.debtOf(ALICE), 90 ether + 90 ether * DUTY_BPS / 10_000);
     }
@@ -541,7 +541,7 @@ contract CDPVaultIncrementTest is Test {
         assertGt(debt, 100 ether);
         assertGe(vault.stabilityFeeOf(ALICE), fee);
         vm.prank(BOB);
-        vault.mintFromWork(debt);
+        vault.earn(debt);
         uint256 recipientBalance = comp.balanceOf(FEE_RECIPIENT);
         uint256 owedFee = vault.stabilityFeeOf(ALICE);
         vm.prank(BOB);
@@ -550,7 +550,7 @@ contract CDPVaultIncrementTest is Test {
         assertEq(vault.totalDebt(), 0);
         assertEq(vault.totalFeesMinted(), owedFee);
         assertEq(comp.balanceOf(FEE_RECIPIENT) - recipientBalance, owedFee);
-        assertEq(comp.totalSupply(), vault.totalDebt() + vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), vault.totalDebt() + vault.totalEarned());
     }
 
     function test_nonzeroFeeOnlyRepaymentCannotEraseRecordedPrincipalShortfall() public {
@@ -568,7 +568,7 @@ contract CDPVaultIncrementTest is Test {
         vm.warp(block.timestamp + 365 days);
         uint256 fee = vault.stabilityFeeOf(ALICE);
         vm.startPrank(BOB);
-        vault.mintFromWork(fee);
+        vault.earn(fee);
         comp.transfer(ALICE, fee);
         vm.stopPrank();
         vm.prank(ALICE);

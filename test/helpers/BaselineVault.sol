@@ -10,7 +10,7 @@ import {CDPVault} from "src/CDPVault.sol";
 /// now, which would bury what each one is actually asserting. They use this instead, so zero-rate
 /// behaviour stays covered exactly as before and the shipped rate is covered where it belongs.
 ///
-/// This is why duty is virtual, as line and protocolBonusShareBps already were.
+/// This is why duty is virtual, as line and cut already were.
 /// It replaces test/check_stability_fee.py, which could only reach a non-zero rate by copying the
 /// source and rewriting the constant outside the build.
 contract BaselineVault is CDPVault {
@@ -30,7 +30,7 @@ contract BaselineVault is CDPVault {
     /// @dev Zero too, for the same reason: a protocol share changes every liquidation payout, and
     /// suites pinning those payouts longhand are testing the split arithmetic, not the share.
     /// ProtocolShare tests and the shipped-configuration tests cover the real value.
-    function protocolBonusShareBps() public pure override returns (uint256) {
+    function cut() public pure override returns (uint256) {
         return 0;
     }
 }

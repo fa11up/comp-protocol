@@ -48,7 +48,7 @@ contract RedemptionFeePinningTest is WorkBackingFixture {
         uint256 before = backedVault.redemptionBaseRate();
         uint256 out = _quote(100 ether);
         vm.prank(HOLDER);
-        backedVault.redeem(100 ether, out, BORROWER);
+        backedVault.cash(100 ether, out, BORROWER);
 
         // The brief requires the burned fraction of supply over four to reach the stored rate. If the
         // exclusion were still bypassable the rate would not move at all.
@@ -80,7 +80,7 @@ contract RedemptionFeePinningTest is WorkBackingFixture {
         uint256 before = backedVault.redemptionBaseRate();
         uint256 out = _quote(100 ether);
         vm.prank(HOLDER);
-        backedVault.redeem(100 ether, out, BORROWER);
+        backedVault.cash(100 ether, out, BORROWER);
 
         assertGt(backedVault.redemptionBaseRate(), before, "round trips must not keep the record fresh");
         assertGt(backedVault.redemptionFeeBps(0), backedVault.REDEMPTION_FEE_FLOOR_BPS(), "the next redeemer must pay more than the floor");
@@ -100,7 +100,7 @@ contract RedemptionFeePinningTest is WorkBackingFixture {
         uint256 feeBefore = backedVault.redemptionFeeBps(0);
         uint256 out = _quote(50 ether);
         vm.prank(BORROWER);
-        backedVault.redeem(50 ether, out, BORROWER);
+        backedVault.cash(50 ether, out, BORROWER);
 
         emit log_named_uint("base rate before", before);
         emit log_named_uint("base rate after ", backedVault.redemptionBaseRate());

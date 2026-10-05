@@ -116,18 +116,18 @@ is immutable and silent** — this is exactly how launch 519 shipped two dead fe
 
 ### Economic, carry over unchanged unless deliberately revised
 
-`MAX_DIVERGENCE_BPS` 500 · `MARKER_SHARE_BPS` 1000 · `PROTOCOL_BONUS_SHARE_BPS` 3333 ·
+`SKEW_BPS` 500 · `CHIP_BPS` 1000 · `CUT_BPS` 3333 ·
 `DUTY_BPS` 200 · `ETH_USD_MAX_AGE` 1 day.
 
 ### The compute channel does not ship in this deployment
 
-`WORK_RATIO_BPS`, `UNITS_PER_TASK_WAD`, `WORK_ORACLE_MAX_AGE` and the work oracle's own constants are
+`EARN_MAT_BPS`, `WAGE_WAD`, `WORK_ORACLE_MAX_AGE` and the work oracle's own constants are
 **out of scope for a mainnet launch**, and the reason is not readiness. `SwarmWorkOracle` as built
 credits **one** agent named in source, which is a private faucet wearing a protocol's clothes, not a
 compute-backed currency. A protocol that mints for its author's own seat cannot be launched as one
 that mints for work.
 
-Launch with the work ceiling in place and the channel unused — a vault whose `workCeiling()` binds and
+Launch with the work ceiling in place and the channel unused — a vault whose `earnLine()` binds and
 whose work oracle grants nothing is sound and honest. The channel opens when it can serve agents in
 general, which needs the per-day tally root rather than a pinned claimant (§5b of
 `docs/COMPUTE-BACKING-DESIGN.md`). Until then nothing about anyone's agent identity belongs in this
@@ -233,7 +233,7 @@ and Robinhood Chain.
    * the vault's `imdToken`, `stablecoin`, `oracle`, `priceFeed`, `nhiFeed`, `spotFeed`,
      `parameters`, `treasury`, `usdPriceFeed`, `feeRecipient`
    * `treasury.vault() == vault` and `parameters.vault() == vault`
-   * `vault.workCeiling() == 0` — correct on an empty stack, and proof the ceiling is live
+   * `vault.earnLine() == 0` — correct on an empty stack, and proof the ceiling is live
 
 ### Rollback position
 
@@ -258,10 +258,10 @@ deploy.** Deploy, verify, and only then announce.
    by a panel when IMD moved 44.6% in a day.
 2. **Verify on chain** that each feed's value is the attested figure and not a reporter value, that
    `usedRequests[requestId]` is true, and that divergence between primary and spot is inside
-   `MAX_DIVERGENCE_BPS`.
+   `SKEW_BPS`.
 3. **List the reserve assets** through `Parameters.proposeReserveAsset` — each needs a price source
    and a haircut, and each waits 48 hours. Until the register is non-empty, `reserveValueUsd()` is
-   zero and so is the first term of `workCeiling`.
+   zero and so is the first term of `earnLine`.
 4. **Start the keeper** before announcing. An unattended protocol with live positions and no
    liquidator accumulates bad debt.
 5. **Only then** open deposits.

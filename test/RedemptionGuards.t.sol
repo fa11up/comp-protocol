@@ -33,7 +33,7 @@ contract AtomicActor {
 
     function depositAndRedeem(uint256 depositAmount, uint256 burn, address candidate) external returns (uint256) {
         vault.lock(depositAmount);
-        return vault.redeem(burn, 0, candidate);
+        return vault.cash(burn, 0, candidate);
     }
 
     function depositAndMint(uint256 depositAmount, uint256 mint) external {
@@ -47,11 +47,11 @@ contract AtomicActor {
     {
         vault.lock(depositAmount);
         vault.draw(mint);
-        return vault.redeem(burn, 0, candidate);
+        return vault.cash(burn, 0, candidate);
     }
 
-    function redeem(uint256 burn, address candidate) external returns (uint256) {
-        return vault.redeem(burn, 0, candidate);
+    function cash(uint256 burn, address candidate) external returns (uint256) {
+        return vault.cash(burn, 0, candidate);
     }
 }
 
@@ -77,7 +77,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         _giveStable(0.39 ether);
         assertEq(backedVault.redemptionFeeBps(0.39 ether), 51);
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(0.39 ether, 0, address(0)), 0.39 ether * (10_000 - 51) / 10_000);
+        assertEq(backedVault.cash(0.39 ether, 0, address(0)), 0.39 ether * (10_000 - 51) / 10_000);
         assertEq(backedVault.redemptionBaseRate(), 0.0000975 ether, "the fraction survives in the stored base");
         assertEq(backedVault.redemptionFeeBps(0), 51, "a zero quote rounds the decayed fraction up too");
     }
@@ -95,7 +95,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         assertLt(fee * 1e14, 50 * 1e14 + increase + 1e14, "and never overcharge by a whole one");
         vm.recordLogs();
         vm.prank(REDEEMER);
-        uint256 out = backedVault.redeem(amount, 0, address(0));
+        uint256 out = backedVault.cash(amount, 0, address(0));
         assertEq(out, Math.mulDiv(amount, (10_000 - fee) * 1e14, 1e18));
         assertEq(_emittedFee(), fee, "the event reports the fee that was charged");
         assertEq(backedVault.redemptionBaseRate(), increase, "the stored base keeps the exact fraction");
@@ -131,7 +131,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         assertEq(out, Math.mulDiv(10 ether, Math.mulDiv(Math.mulDiv(25 ether, 1e18, 35 ether), 9500, 10_000), 1e18));
         uint256 backingBefore1 = _econBacking();
         vm.prank(WORKER);
-        assertEq(backedVault.redeem(10 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, BORROWER), out);
         assertGt(_econBacking(), backingBefore1, "and the fee leaves backing strictly better");
         // Once principal stands behind the collateral again a COMP is fully backed and the same burn
         // is paid par minus the fee: the cap stops binding, rather than a closed channel reopening.
@@ -141,7 +141,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         out = _quote(10 ether);
         assertEq(out, _parQuote(10 ether), "an unbound cap pays exactly par minus the fee");
         vm.prank(WORKER);
-        assertEq(backedVault.redeem(10 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, BORROWER), out);
     }
 
     /// @dev The cap is mat percent of principal, so it rises with stress: a surplus that is
@@ -178,7 +178,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         assertEq(backedVault.mat(), 150);
         uint256 backingBefore2 = _econBacking();
         vm.prank(WORKER);
-        assertEq(backedVault.redeem(10 ether, out, SECOND_BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, SECOND_BORROWER), out);
         assertGt(_econBacking(), backingBefore2, "a redemption must not worsen backing");
 
         // And the stressed reading reaches par again from the state the redemption left, so the
@@ -190,7 +190,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         assertEq(atPar, _parQuote(10 ether));
         assertGt(atPar, out, "the same burn is paid more once the bound stops biting");
         vm.prank(WORKER);
-        assertEq(backedVault.redeem(10 ether, atPar, SECOND_BORROWER), atPar);
+        assertEq(backedVault.cash(10 ether, atPar, SECOND_BORROWER), atPar);
     }
 
     /// @dev After a liquidation drains a position, its residual principal is still in totalDebt
@@ -242,7 +242,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         );
         uint256 backingBefore3 = _econBacking();
         vm.prank(WORKER);
-        assertEq(backedVault.redeem(10 ether, out, SECOND_BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, SECOND_BORROWER), out);
         assertGt(_econBacking(), backingBefore3, "a redemption must not worsen backing");
         // The reserve pays first and the candidate covers the rest, so what left in total is `out`.
         assertEq(
@@ -304,7 +304,7 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         assertGt(backedVault.backingPerUnit(), beforeDeposit, "principal behind collateral is what counts");
         uint256 out = _quote(10 ether);
         assertGt(out, withDeposit, "so the same burn is now paid more");
-        assertEq(actor.redeem(10 ether, BORROWER), out);
+        assertEq(actor.cash(10 ether, BORROWER), out);
     }
 
     function test_principalMintedInTheSameTransactionDoesNotDiluteTheFee() public {
@@ -365,20 +365,20 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         uint256 out = _quote(10 ether);
         assertEq(out, _parQuote(10 ether), "so the burn is paid par minus the fee");
         assertGt(out, inCall * 4, "four times what the same burn got inside one transaction");
-        assertEq(actor.redeem(10 ether, address(actor)), out);
+        assertEq(actor.cash(10 ether, address(actor)), out);
     }
 
     // --- helpers ---------------------------------------------------------------------------------
 
     function _emittedFee() private returns (uint256 fee) {
         VmSafe.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 topic = keccak256("Redeemed(address,address,uint256,uint256,uint256,uint256,uint256)");
+        bytes32 topic = keccak256("Cash(address,address,uint256,uint256,uint256,uint256,uint256)");
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(backedVault) || logs[i].topics[0] != topic) continue;
             (,,,, fee) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, uint256));
             return fee;
         }
-        revert("Redeemed not emitted");
+        revert("Cash not emitted");
     }
 
     function _open(address who, uint256 c, uint256 debt) private {

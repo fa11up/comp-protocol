@@ -123,7 +123,7 @@ contract Treasury {
         if (address(priceFeed).code.length == 0) revert InvalidPriceSource();
         // REVISION (finding 21a2b135): having code is not the same as answering. A source that
         // reverts on, or returns short words from, the two reads reserveValueOf makes would have
-        // made reserveValueUsd — and so the vault's work ceiling and every mintFromWork — revert
+        // made reserveValueUsd — and so the vault's work ceiling and every earn — revert
         // until a delisting matured 48 hours later. Probe both reads here, where the listing fails
         // instead, with the same leniency a typed call applies to the returned length.
         // AUDIT FIX (job da7d5b1c, medium): the length alone is not the encoding. This used to probe
@@ -194,7 +194,7 @@ contract Treasury {
         // inside the callee; the returned bytes are decoded in THIS frame, and a bad encoding panics
         // here where no catch clause can see it. A listed feed answering `abi.encode(uint256(2))` for
         // a bool, or one word for `(uint256,uint64)`, therefore reverted reserveValueUsd() — and with
-        // it workCeiling() and every mintFromWork — rather than counting for nothing. The third read
+        // it earnLine() and every earn — rather than counting for nothing. The third read
         // is balanceOf, which was never isolated at all: a token that stops answering balances took
         // the whole reserve sum down with it, including unrelated healthy assets.
         (bool stale, bool ok) = _readBool(entry.priceFeed, abi.encodeCall(ISwarmFeed.isStale, ()));

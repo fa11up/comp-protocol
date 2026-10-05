@@ -7,7 +7,7 @@ import {CDPVault} from "src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
-import {APPROVED_OPERATOR, FEE_RECIPIENT, MARKER_SHARE_BPS} from "src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, FEE_RECIPIENT, CHIP_BPS} from "src/DeploymentConfig.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
 /// @dev Exercises the existing immutable deployment hook without changing the marker policy.
@@ -20,7 +20,7 @@ contract MarkerProtocolShareVault is CDPVault {
         share = share_;
     }
 
-    function protocolBonusShareBps() public view override returns (uint256) {
+    function cut() public view override returns (uint256) {
         return share;
     }
     /// @dev Held at zero so this suite keeps asserting what it is about. The shipped rate is
@@ -117,7 +117,7 @@ contract MarkerBadDebtTest is Test {
     }
 
     function test_maximumCombinedBonusSharesPreserveLiquidatorPrincipal() public {
-        _deploy(10_000 - MARKER_SHARE_BPS);
+        _deploy(10_000 - CHIP_BPS);
         _open(BORROWER, 140 ether, 100 ether);
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
@@ -130,7 +130,7 @@ contract MarkerBadDebtTest is Test {
     }
 
     function test_oneBpsBeyondCombinedBonusLimitRevertsAtomically() public {
-        _deploy(10_001 - MARKER_SHARE_BPS);
+        _deploy(10_001 - CHIP_BPS);
         _open(BORROWER, 55 ether, 100 ether);
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
@@ -167,7 +167,7 @@ contract MarkerBadDebtTest is Test {
     ) public {
         uint256 repayment = bound(rawRepayment, 100, 1e30);
         uint256 price = bound(rawPrice, 1e15, 10 ether);
-        uint256 protocolShare = bound(rawProtocolShare, 0, 10_000 - MARKER_SHARE_BPS);
+        uint256 protocolShare = bound(rawProtocolShare, 0, 10_000 - CHIP_BPS);
         _deploy(protocolShare);
         uint256 debt = repayment * 2;
         uint256 collateral = (debt * 1 ether + price - 1) / price;
@@ -178,7 +178,7 @@ contract MarkerBadDebtTest is Test {
         uint256 seized = repayment * 1.1 ether / price;
         uint256 principalCollateral = repayment * 1 ether / price;
         uint256 bonus = seized - principalCollateral;
-        uint256 markerCut = bonus * MARKER_SHARE_BPS / 10_000;
+        uint256 markerCut = bonus * CHIP_BPS / 10_000;
         uint256 protocolCut = bonus * protocolShare / 10_000;
         vm.prank(LIQUIDATOR);
         vault.bite(BORROWER, repayment);
@@ -220,7 +220,7 @@ contract MarkerBadDebtTest is Test {
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         (uint256 markedAt, uint256 grace,,) = vault.liquidationMarks(BORROWER);
-        vm.warp(markedAt + grace + vault.liquidationWindow() + 1);
+        vm.warp(markedAt + grace + vault.tail() + 1);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.MarkExpired.selector);
         vault.bite(BORROWER, 100 ether);

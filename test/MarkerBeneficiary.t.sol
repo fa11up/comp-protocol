@@ -106,7 +106,7 @@ contract MarkerBeneficiaryTest is Test {
         uint256 px = 0.9 ether;
         uint256 repaid = 50 ether;
         uint256 bonus = repaid * 110 * 1e16 / px - repaid * 1e18 / px;
-        assertEq(imd.balanceOf(KEEPER), bonus * vault.markerShareBps() / 10_000, "exactly the marker share");
+        assertEq(imd.balanceOf(KEEPER), bonus * vault.chip() / 10_000, "exactly the marker share");
         assertEq(imd.balanceOf(address(forwarder)), 0, "and nothing is stranded in the forwarder");
     }
 }

@@ -47,7 +47,7 @@ contract SeedAndSmoke is Script {
             "feeds are stale and this script cannot seed them: buy an attestation per stale feed and relay it (keeper/watch.mjs reports which, oracle/relay-attestation.js sends it)"
         );
         console2.log("mat now         ", vault.mat());
-        console2.log("gracePeriod now   ", vault.gracePeriod());
+        console2.log("lull now   ", vault.lull());
 
         // A deposit large enough to clear mat at this price, plus headroom.
         // MockIMD's faucet is pinned to APPROVED_OPERATOR in source, so the broadcaster cannot
@@ -68,9 +68,9 @@ contract SeedAndSmoke is Script {
         // Exercised only when they are already there, which keeps this script re-runnable.
         MockWorkOracle workOracle = MockWorkOracle(address(vault.oracle()));
         if (workOracle.mintingRights(me) >= debt) {
-            uint256 beforeWork = vault.totalWorkMinted();
-            vault.mintFromWork(debt);
-            require(vault.totalWorkMinted() == beforeWork + debt, "work mint not recorded");
+            uint256 beforeWork = vault.totalEarned();
+            vault.earn(debt);
+            require(vault.totalEarned() == beforeWork + debt, "work mint not recorded");
             console2.log("work channel       exercised");
         } else {
             console2.log("work channel       SKIPPED - no rights; grantRights from the faucet operator");
@@ -82,7 +82,7 @@ contract SeedAndSmoke is Script {
         (uint256 c, uint256 d) = vault.positions(me);
         console2.log("after repay: collateral", c, "debt", d);
         require(d == 0, "debt not cleared");
-        require(comp.totalSupply() == vault.totalWorkMinted(), "supply invariant broken");
-        console2.log("\nSupply invariant holds: totalSupply == summed debt + totalWorkMinted");
+        require(comp.totalSupply() == vault.totalEarned(), "supply invariant broken");
+        console2.log("\nSupply invariant holds: totalSupply == summed debt + totalEarned");
     }
 }

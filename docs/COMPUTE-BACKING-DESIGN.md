@@ -47,7 +47,7 @@ decoding exactly. That probe was right.
 |---|---|---|
 | 1 | what work entitles you to | **revenue-capped mint** — work sets your *share*, backing sets the *size* |
 | 2 | what counts as work | **attested tally now, upstream leaf in parallel** |
-| 3 | bound on `totalWorkMinted` | **aggregate: reserve value + a ratio of collateral-backed debt** |
+| 3 | bound on `totalEarned` | **aggregate: reserve value + a ratio of collateral-backed debt** |
 | 4 | redemption | **in scope now, multi-asset, at a dollar of value minus a fee** |
 
 ## 2. The reserve is the Treasury
@@ -79,16 +79,16 @@ backing and is bounded in code to 0–10000; its governed value determines the d
 ## 3. The work ceiling
 
 ```
-workCeiling() = reserveValueUsd + totalDebt × workRatioBps / 10000
+earnLine() = reserveValueUsd + totalDebt × earnMat / 10000
 
-mintFromWork: require(totalWorkMinted + amount <= workCeiling())
+earn: require(totalEarned + amount <= earnLine())
 ```
 
 An aggregate rather than a minimum, because the two terms are backed by genuinely different things:
 the reserve term is backed 1:1 by assets the protocol owns, and the ratio term is backed by the
 surplus collateral every borrower posts above their debt.
 
-Let `D` = CDP principal, `W` = work-minted, `R` = reserve value, `r` = workRatioBps/10000, and take
+Let `D` = CDP principal, `W` = work-minted, `R` = reserve value, `r` = earnMat/10000, and take
 the worst case where every position sits exactly at `mat`:
 
 ```
@@ -107,11 +107,11 @@ NHI falls, so the binding case is `r < 0.50`.
 | 0.25 | 1.200 | 1.143 | 1.077 | → 1 from above |
 | 0.50 | 1.000 | 1.000 | 1.000 | 1.000 |
 
-Pin `workRatioBps = 2500` and hard-bound it at 2500 in the parameters contract: half the breaking
+Pin `earnMat = 2500` and hard-bound it at 2500 in the parameters contract: half the breaking
 point at the loosest NHI, 120% worst-case backing with an empty reserve. 5000 is the cliff, so it
 must not be reachable by governance.
 
-`workCeiling` and `workRatioBps` are new governed parameters, under the existing 48-hour delay.
+`earnLine` and `earnMat` are new governed parameters, under the existing 48-hour delay.
 
 ### 3a. What the independent review of the build changed (2026-10-03)
 
@@ -135,7 +135,7 @@ Three corrections to the formula as built, none to the bound it derives:
   saturating at zero; the record is accrued debt while `totalDebt` is principal, so the subtraction
   over-counts by unpaid fees, in the tightening direction.
 
-Because a finite ceiling is now priced off the primary feed, `mintFromWork` on the governed vault
+Because a finite ceiling is now priced off the primary feed, `earn` on the governed vault
 applies the same primary/spot agreement check as every other price-dependent action.
 
 ## 4. The work signal
@@ -248,7 +248,7 @@ absorbs ordinary arbitrage without a borrower ever noticing, and only sustained 
 positions at all. Combined with a rising fee (below), a run pays progressively more *before* it
 reaches anyone's collateral.
 
-**Channel A — eligible CDPs.** When reserve IMD is exhausted, `redeem` burns COMP, repays the debt of
+**Channel A — eligible CDPs.** When reserve IMD is exhausted, `cash` burns imdUSD, repays the debt of
 the **lowest-ratio position** and pays the redeemer that position's IMD at the feed price, minus the
 fee. Only positions **below `redemptionCeilingCR`** are eligible, so a borrower can price themselves
 out of redemption entirely by posting more collateral. The floor still holds, because some positions
@@ -280,7 +280,7 @@ borrowers' collateral. That is exactly the dilution §3 bounds, and the 120% wor
 guarantee that the collateral pool absorbs it.
 
 **Self-stabilising side effect, worth stating because it is load-bearing.** Redemption shrinks both
-terms of `workCeiling` — the reserve directly, and `totalDebt` through channel A. So COMP trading
+terms of `earnLine` — the reserve directly, and `totalDebt` through channel A. So COMP trading
 below peg automatically tightens new work-minting. Supply contracts exactly when it should, with no
 governance action and no oracle.
 
@@ -451,7 +451,7 @@ at 10000 for that reason alone, and the held remainder is a deliberate cost rath
 
 Held COMP is **never** counted in `reserveValueUsd`: `Treasury.validateReserveAsset` refuses the
 vault's own stablecoin outright (`StablecoinIsNotReserve`), because counting it would let reserve value raise
-`workCeiling`, which permits minting more COMP backed by COMP.
+`earnLine`, which permits minting more COMP backed by COMP.
 
 **What the held remainder is actually good for, and it is not a market.** `bite` burns the
 CALLER's COMP, so a keeper needs COMP as working capital — real inventory, not an expense. Treasury
@@ -485,7 +485,7 @@ our relay landing.
 
 **What is NOT at risk, and it is the larger half.** `bite` pays `protocolCut` to `feeRecipient()`
 and `markerCut` to the recorded marker, both independent of `msg.sender`; only the remainder goes to
-the caller. So the protocol is paid its `protocolBonusShareBps` share whoever liquidates. The
+the caller. So the protocol is paid its `cut` share whoever liquidates. The
 contestable amount is the liquidator's own margin plus the 0.5 IMD spent on an update somebody else
 monetised — a revenue question, not a solvency one. That is what makes this an optimisation rather
 than a blocker.
@@ -616,7 +616,7 @@ The page should expect that and retry rather than present it as a failure.
 
 ## 6. What to build, in order
 
-1. `workCeiling()` + `workRatioBps` as governed parameters, and the ceiling check in `mintFromWork`.
+1. `earnLine()` + `earnMat` as governed parameters, and the ceiling check in `earn`.
    Smallest change, removes the largest unbounded risk in the protocol, independent of everything
    else here.
 2. Reserve valuation on the Treasury: per-asset price source and haircut, `reserveValueUsd()`.
@@ -640,7 +640,7 @@ The page should expect that and retry rather than present it as a failure.
    rows are not reconstructed, so this seat's 1,200-odd historical tasks score zero and
    `/agents/51450/oracle-records` is empty today. The question is therefore not yet answerable and a
    panel must report inability; the contract is ready for the first receipt that carries a tally. And
-   **it costs nothing to wait**, because `workCeiling()` is zero on a fresh stack regardless of what
+   **it costs nothing to wait**, because `earnLine()` is zero on a fresh stack regardless of what
    the oracle says.
 
    **A note on the manifest cap, since it shaped this whole section.** It was four contracts; it is now
@@ -669,8 +669,8 @@ All under the existing 48-hour delay, all hard-bounded in the parameters contrac
 
 | parameter | purpose | proposed | hard bound |
 |---|---|---|---|
-| `workRatioBps` | ratio term of `workCeiling` | 2500 | ≤ 2500 (cliff is `mat − 1` = 5000) |
-| `unitsPerTaskWad` | COMP an accepted task earns | 0.01 | ≤ 1e18 — one task is never worth more than one COMP |
+| `earnMat` | ratio term of `earnLine` | 2500 | ≤ 2500 (cliff is `mat − 1` = 5000) |
+| `wage` | COMP an accepted task earns | 0.01 | ≤ 1e18 — one task is never worth more than one COMP |
 | `redemptionCeilingCR` | above this a position cannot be redeemed against | 200 | ≥ `mat`, ≤ 400 |
 | `feeBurnShareBps` | share of COMP fees burned on arrival | 10000 at first | no bound needed |
 | `haircutBps[asset]` | per-asset retained-value factor | near 10000 stables, lower for IMD | 0–10000 |

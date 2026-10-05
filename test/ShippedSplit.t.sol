@@ -6,7 +6,7 @@ import {CDPVault} from "../src/CDPVault.sol";
 import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
-import {APPROVED_OPERATOR, FEE_RECIPIENT, MARKER_SHARE_BPS, PROTOCOL_BONUS_SHARE_BPS} from "../src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, FEE_RECIPIENT, CHIP_BPS, CUT_BPS} from "../src/DeploymentConfig.sol";
 
 /// @notice The liquidation split at the values a deployment actually ships, through the real vault.
 /// @dev Most suites run on BaselineVault with the economics inert, so their payout arithmetic keeps
@@ -51,8 +51,8 @@ contract ShippedSplitTest is Test {
     }
 
     function test_theShippedSplitPaysMarkerProtocolAndLiquidatorExactly() public {
-        assertEq(vault.protocolBonusShareBps(), PROTOCOL_BONUS_SHARE_BPS, "the vault carries the shipped share");
-        assertEq(vault.markerShareBps(), MARKER_SHARE_BPS);
+        assertEq(vault.cut(), CUT_BPS, "the vault carries the shipped share");
+        assertEq(vault.chip(), CHIP_BPS);
 
         vm.prank(MARKER);
         vault.bark(BORROWER);
@@ -62,8 +62,8 @@ contract ShippedSplitTest is Test {
 
         uint256 seized = REPAID * 110 * 1e16 / PRICE;
         uint256 bonus = seized - REPAID * 1e18 / PRICE;
-        uint256 markerCut = bonus * MARKER_SHARE_BPS / 10_000;
-        uint256 protocolCut = bonus * PROTOCOL_BONUS_SHARE_BPS / 10_000;
+        uint256 markerCut = bonus * CHIP_BPS / 10_000;
+        uint256 protocolCut = bonus * CUT_BPS / 10_000;
 
         assertEq(imd.balanceOf(MARKER), markerCut, "marker");
         assertEq(imd.balanceOf(FEE_RECIPIENT), protocolCut, "protocol");
@@ -86,7 +86,7 @@ contract ShippedSplitTest is Test {
 
     /// @dev The cap the vault enforces, stated against the shipped values rather than assumed.
     function test_theShippedSharesLeaveTheLiquidatorAMajorityOfTheBonus() public view {
-        assertLe(PROTOCOL_BONUS_SHARE_BPS, 10_000 - MARKER_SHARE_BPS, "the vault would revert above this");
-        assertGt(10_000 - MARKER_SHARE_BPS - PROTOCOL_BONUS_SHARE_BPS, PROTOCOL_BONUS_SHARE_BPS, "keeper keeps more");
+        assertLe(CUT_BPS, 10_000 - CHIP_BPS, "the vault would revert above this");
+        assertGt(10_000 - CHIP_BPS - CUT_BPS, CUT_BPS, "keeper keeps more");
     }
 }

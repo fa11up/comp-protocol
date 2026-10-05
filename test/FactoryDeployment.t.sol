@@ -86,7 +86,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
         assertEq(comp.totalSupply(), 0);
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.NotInitialized.selector);
-        vault.mintFromWork(1);
+        vault.earn(1);
 
         // The existing COMP token is separately authorized after construction.
         vm.startPrank(OPERATOR);
@@ -103,10 +103,10 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
         vm.stopPrank();
         _establishWorkBacking(vault, 40 ether);
         vm.startPrank(BORROWER);
-        vault.mintFromWork(40 ether);
+        vault.earn(40 ether);
         assertEq(comp.balanceOf(BORROWER), 140 ether);
         assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 140 ether);
-        assertEq(vault.totalWorkMinted(), 40 ether);
+        assertEq(vault.totalEarned(), 40 ether);
         assertEq(oracle.mintingRights(BORROWER), 0);
         vault.wipe(100 ether);
         vault.free(150 ether);
@@ -115,7 +115,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
         assertEq(collateral, 0);
         assertEq(debt, 0);
         assertEq(
-            comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted() + vault.totalFeesMinted()
+            comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalEarned() + vault.totalFeesMinted()
         );
         assertEq(comp.balanceOf(BORROWER), 40 ether);
         assertEq(imd.balanceOf(BORROWER), 150 ether);
@@ -225,7 +225,7 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         assertEq(imd.deployer(), OPERATOR);
         assertEq(oracle.deployer(), OPERATOR);
         assertEq(comp.totalSupply(), 0);
-        assertEq(vault.totalWorkMinted(), 0);
+        assertEq(vault.totalEarned(), 0);
     }
 
     function _seedFeeds() private {
@@ -283,7 +283,7 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         vm.prank(OPERATOR);
         oracle.grantRights(BORROWER, work);
         vm.startPrank(BORROWER);
-        vault.mintFromWork(work);
+        vault.earn(work);
         _assertAccounting(collateral, debt, work);
         assertEq(comp.balanceOf(BORROWER), debt + work);
         assertEq(oracle.mintingRights(BORROWER), 0);
@@ -305,10 +305,10 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         assertEq(actualCollateral, collateral);
         assertEq(actualDebt - vault.stabilityFeeOf(BORROWER), debt, "principal, excluding accrued fee");
         assertEq(imd.balanceOf(address(vault)), backingCollateral[address(vault)] + collateral);
-        assertEq(vault.totalWorkMinted(), work);
+        assertEq(vault.totalEarned(), work);
         assertEq(
             comp.totalSupply(),
-            backingPrincipal[address(vault)] + actualDebt - vault.stabilityFeeOf(BORROWER) + vault.totalWorkMinted()
+            backingPrincipal[address(vault)] + actualDebt - vault.stabilityFeeOf(BORROWER) + vault.totalEarned()
                 + vault.totalFeesMinted()
         );
     }
@@ -378,7 +378,7 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
             vm.expectRevert(CDPVault.ExcessRepayment.selector);
             vault.wipe(100 ether + 1);
             vm.expectRevert(CDPVault.InsufficientRights.selector);
-            vault.mintFromWork(1);
+            vault.earn(1);
             _assertAccounting(150 ether, 100 ether, 0);
             assertEq(comp.balanceOf(BORROWER), 100 ether);
             vault.wipe(100 ether);
@@ -409,7 +409,7 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
             vm.expectRevert(CDPVault.StaleFeed.selector);
             vault.draw(1);
             vm.expectRevert(CDPVault.StaleFeed.selector);
-            vault.mintFromWork(1);
+            vault.earn(1);
             vm.expectRevert(CDPVault.StaleFeed.selector);
             vault.free(1);
             vm.stopPrank();

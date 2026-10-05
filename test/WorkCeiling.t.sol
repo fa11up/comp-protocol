@@ -25,13 +25,13 @@ contract AtomicWorkBorrower {
     function borrowThenMintWork(uint256 collateral, uint256 debt, uint256 work) external {
         vault.lock(collateral);
         vault.draw(debt);
-        vault.mintFromWork(work);
+        vault.earn(work);
     }
 
     function borrowMintWorkRepayAndLeave(uint256 collateral, uint256 debt, uint256 work) external {
         vault.lock(collateral);
         vault.draw(debt);
-        vault.mintFromWork(work);
+        vault.earn(work);
         vault.wipe(debt);
         vault.free(collateral);
     }
@@ -39,12 +39,12 @@ contract AtomicWorkBorrower {
     function borrowThenRead(uint256 collateral, uint256 debt) external returns (uint256 backed, uint256 ceiling) {
         vault.lock(collateral);
         vault.draw(debt);
-        return (vault.backedDebt(), vault.workCeiling());
+        return (vault.backedDebt(), vault.earnLine());
     }
 
     function repayThenMintWork(uint256 repay, uint256 work) external {
         vault.wipe(repay);
-        vault.mintFromWork(work);
+        vault.earn(work);
     }
 
     function open(uint256 collateral, uint256 debt) external {
@@ -59,7 +59,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertEq(backedVault.reserveValue(), 0);
         assertEq(backedVault.totalDebt(), 0);
         assertEq(backedVault.backedDebt(), 0);
-        assertEq(backedVault.workCeiling(), 0);
+        assertEq(backedVault.earnLine(), 0);
         _assertRejected(WORKER, 1);
         assertEq(workOracle.mintingRights(WORKER), type(uint128).max);
         assertEq(stable.totalSupply(), 0);
@@ -72,13 +72,13 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertEq(reserve.reserveValueUsd(), 71 ether + 1, "register is kept in USD, which is the vault's unit");
         assertEq(backedVault.reserveValue(), 71 ether + 1, "reserve term is the register, unconverted");
         assertEq(backedVault.backedDebt(), 100 ether + 3, "a position held across transactions counts in full");
-        assertEq(backedVault.workCeiling(), ceiling, "sum, with ratio rounded down");
+        assertEq(backedVault.earnLine(), ceiling, "sum, with ratio rounded down");
         _assertRejected(WORKER, ceiling + 1);
         _mintWork(WORKER, ceiling - 1);
-        assertEq(backedVault.totalWorkMinted(), ceiling - 1);
+        assertEq(backedVault.totalEarned(), ceiling - 1);
         _assertRejected(OTHER_WORKER, 2);
         _mintWork(OTHER_WORKER, 1);
-        assertEq(backedVault.totalWorkMinted(), ceiling);
+        assertEq(backedVault.totalEarned(), ceiling);
         _assertRejected(WORKER, 1);
         assertEq(stable.totalSupply(), backedVault.totalDebt() + ceiling);
         assertEq(workOracle.mintingRights(WORKER), type(uint128).max - ceiling + 1);
@@ -89,7 +89,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         uint256 debt = uint256(1) << 250;
         _openDebt(debt);
         uint256 ceiling = debt / 4;
-        assertEq(backedVault.workCeiling(), ceiling);
+        assertEq(backedVault.earnLine(), ceiling);
         vm.prank(APPROVED_OPERATOR);
         workOracle.grantRights(WORKER, ceiling);
         _mintWork(WORKER, ceiling);
@@ -111,12 +111,12 @@ contract WorkCeilingTest is WorkBackingFixture {
     function test_debtDustIsRoundedDownBeforeAddingReserve() public {
         _fundReserve(1);
         _openDebt(3);
-        assertEq(backedVault.workCeiling(), 1);
+        assertEq(backedVault.earnLine(), 1);
         _mintWork(WORKER, 1);
         _assertRejected(WORKER, 1);
         vm.prank(BORROWER);
         backedVault.draw(1);
-        assertEq(backedVault.workCeiling(), 2);
+        assertEq(backedVault.earnLine(), 2);
         _mintWork(OTHER_WORKER, 1);
     }
 
@@ -129,7 +129,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         _fundReserve(value);
         _openDebt(debt);
         uint256 expected = value + debt * ratio / 10_000;
-        assertEq(backedVault.workCeiling(), expected);
+        assertEq(backedVault.earnLine(), expected);
         _assertRejected(WORKER, expected + 1);
         if (expected != 0) _mintWork(WORKER, expected);
         _assertRejected(OTHER_WORKER, 1);
@@ -154,7 +154,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertGe(mat, 150);
         // Exact rational worst-case C = mat * D / 100, W = R + rD (before rounding).
         uint256 backingScaled = mat * debt * 100 + value * 10_000;
-        uint256 liabilitiesScaled = debt * 10_000 + value * 10_000 + debt * backedVault.workRatioBps();
+        uint256 liabilitiesScaled = debt * 10_000 + value * 10_000 + debt * backedVault.earnMat();
         assertGt(backingScaled, liabilitiesScaled);
         assertGe(backingScaled - liabilitiesScaled, debt * 2500);
         // The reserve cancels, proving the bound also for R beyond the fuzz range.
@@ -164,8 +164,8 @@ contract WorkCeilingTest is WorkBackingFixture {
     function test_bindingMinimumRatioGives120PercentAtEmptyReserveAnd5000IsTheCliff() public view {
         uint256 debt = 100 ether;
         uint256 assets = backedVault.mat() * debt / 100;
-        assertEq(backedVault.workRatioBps(), 2500);
-        assertEq(assets * 10_000 / (debt + debt * backedVault.workRatioBps() / 10_000), 12_000);
+        assertEq(backedVault.earnMat(), 2500);
+        assertEq(assets * 10_000 / (debt + debt * backedVault.earnMat() / 10_000), 12_000);
         for (uint256 i; i < 5; ++i) {
             uint256[5] memory reserves = [uint256(0), 1, 50 ether, 200 ether, uint256(type(uint128).max)];
             uint256 r = reserves[i];
@@ -175,24 +175,24 @@ contract WorkCeilingTest is WorkBackingFixture {
     }
 
     function test_ratioHardCapDelayAndPermissionlessApplication() public {
-        assertEq(parameters.MAX_WORK_RATIO_BPS(), 2500);
+        assertEq(parameters.MAX_EARN_MAT_BPS(), 2500);
         vm.expectRevert(Governed.NotGovernor.selector);
-        parameters.proposeWorkRatio(1);
+        parameters.proposeEarnMat(1);
         vm.prank(APPROVED_OPERATOR);
-        vm.expectRevert(abi.encodeWithSelector(Parameters.WorkRatioTooHigh.selector, 2501));
-        parameters.proposeWorkRatio(2501);
+        vm.expectRevert(abi.encodeWithSelector(Parameters.EarnMatTooHigh.selector, 2501));
+        parameters.proposeEarnMat(2501);
         assertEq(parameters.pendingEta(), 0);
         vm.prank(APPROVED_OPERATOR);
-        parameters.proposeWorkRatio(0);
+        parameters.proposeEarnMat(0);
         uint256 eta = parameters.pendingEta();
         vm.warp(eta - 1);
         vm.expectRevert(abi.encodeWithSelector(Governed.TooEarly.selector, eta));
         parameters.applyPending();
-        assertEq(backedVault.workRatioBps(), 2500);
+        assertEq(backedVault.earnMat(), 2500);
         _apply();
-        assertEq(backedVault.workRatioBps(), 0);
+        assertEq(backedVault.earnMat(), 0);
         _openDebt(100 ether);
-        assertEq(backedVault.workCeiling(), 0);
+        assertEq(backedVault.earnLine(), 0);
         _assertRejected(WORKER, 1);
         _setRatio(2500);
         _mintWork(WORKER, 25 ether);
@@ -202,8 +202,8 @@ contract WorkCeilingTest is WorkBackingFixture {
     function testFuzz_ratioAboveHardCapCannotBeQueued(uint256 rawRatio) public {
         uint256 ratio = bound(rawRatio, 2501, type(uint256).max);
         vm.prank(APPROVED_OPERATOR);
-        vm.expectRevert(abi.encodeWithSelector(Parameters.WorkRatioTooHigh.selector, ratio));
-        parameters.proposeWorkRatio(ratio);
+        vm.expectRevert(abi.encodeWithSelector(Parameters.EarnMatTooHigh.selector, ratio));
+        parameters.proposeEarnMat(ratio);
         assertEq(parameters.pendingEta(), 0);
     }
 
@@ -212,8 +212,8 @@ contract WorkCeilingTest is WorkBackingFixture {
         _mintWork(WORKER, 25 ether);
         vm.prank(BORROWER);
         backedVault.wipe(100 ether);
-        assertEq(backedVault.workCeiling(), 0);
-        assertEq(backedVault.totalWorkMinted(), 25 ether);
+        assertEq(backedVault.earnLine(), 0);
+        assertEq(backedVault.totalEarned(), 25 ether);
         _assertRejected(WORKER, 1);
         _openDebt(104 ether);
         _mintWork(WORKER, 1 ether);
@@ -225,7 +225,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         vm.warp(vm.getBlockTimestamp() + 365 days);
         assertGt(backedVault.stabilityFeeOf(BORROWER), 0);
         assertEq(backedVault.totalDebt(), 100 ether);
-        assertEq(backedVault.workCeiling(), 25 ether);
+        assertEq(backedVault.earnLine(), 25 ether);
     }
 
     function test_withdrawalAndRatioReductionBlockFurtherWorkWithoutBurningExistingSupply() public {
@@ -234,10 +234,10 @@ contract WorkCeilingTest is WorkBackingFixture {
         _mintWork(WORKER, 45 ether);
         vm.prank(APPROVED_OPERATOR);
         reserve.withdraw(asset, address(0xBEEF), 2 ether);
-        assertEq(backedVault.workCeiling(), 44 ether);
+        assertEq(backedVault.earnLine(), 44 ether);
         _assertRejected(OTHER_WORKER, 1);
         _setRatio(0);
-        assertEq(backedVault.workCeiling(), 19 ether);
+        assertEq(backedVault.earnLine(), 19 ether);
         _assertRejected(WORKER, 1);
         assertEq(stable.balanceOf(WORKER), 45 ether);
     }
@@ -255,21 +255,21 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertEq(reserve.reserveValueUsd(), 10 ether);
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), ETH_USD);
         assertEq(backedVault.reserveValue(), 10 ether);
-        assertEq(backedVault.workCeiling(), 10 ether);
+        assertEq(backedVault.earnLine(), 10 ether);
         _assertRejected(WORKER, 10 ether + 1);
 
         // Twice the ETH price. The same dollars of reserve back the same dollars of work.
         usd.set(4000e8, vm.getBlockTimestamp());
         assertEq(reserve.reserveValueUsd(), 10 ether);
         assertEq(backedVault.reserveValue(), 10 ether, "a conversion here would halve it");
-        assertEq(backedVault.workCeiling(), 10 ether);
+        assertEq(backedVault.earnLine(), 10 ether);
 
         // And half the ETH price does not double it either.
         usd.set(1000e8, vm.getBlockTimestamp());
         assertEq(backedVault.reserveValue(), 10 ether, "a conversion here would double it");
         _mintWork(WORKER, 10 ether);
         _assertRejected(OTHER_WORKER, 1);
-        assertEq(backedVault.totalWorkMinted(), 10 ether);
+        assertEq(backedVault.totalEarned(), 10 ether);
     }
 
     /// forge-config: default.fuzz.runs = 1000
@@ -285,7 +285,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertEq(reserve.reserveValueUsd(), usdValue);
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), ethUsd);
         assertEq(backedVault.reserveValue(), expected);
-        assertEq(backedVault.workCeiling(), expected);
+        assertEq(backedVault.earnLine(), expected);
         assertEq(reserve.reserveValueUsd(), expected, "no conversion: the register and the vault share a unit");
     }
 
@@ -297,22 +297,22 @@ contract WorkCeilingTest is WorkBackingFixture {
     function test_aStaleEthUsdLegHaltsTheVaultAndLeavesTheCeilingAlone() public {
         _fundReserve(10 ether);
         _openDebt(100 ether);
-        assertEq(backedVault.workCeiling(), 35 ether);
+        assertEq(backedVault.earnLine(), 35 ether);
 
         vm.warp(vm.getBlockTimestamp() + ETH_USD_MAX_AGE + 1);
         assertFalse(reservePrice.isStale(), "the asset's own USD source is still fresh");
         assertEq(reserve.reserveValueUsd(), 10 ether, "the register still values the asset in USD");
         assertEq(backedVault.usdPriceFeed().ethUsdPrice(), 0, "the leg the vault prices through is stale");
         assertEq(backedVault.reserveValue(), 10 ether, "which no longer converts anything");
-        assertEq(backedVault.workCeiling(), 35 ether, "so both terms survive");
+        assertEq(backedVault.earnLine(), 35 ether, "so both terms survive");
 
         // What does not survive is the ability to act on any of it.
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        backedVault.mintFromWork(1);
+        backedVault.earn(1);
 
         _refreshEthUsd();
-        assertEq(backedVault.workCeiling(), 35 ether);
+        assertEq(backedVault.earnLine(), 35 ether);
         _mintWork(WORKER, 35 ether);
         _assertRejected(WORKER, 1);
     }
@@ -336,7 +336,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         // The full round trip the finding describes: borrow, mint work, repay, withdraw, in one call.
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         atomic.borrowMintWorkRepayAndLeave(200 ether, 100 ether, 1);
-        assertEq(backedVault.totalWorkMinted(), 0);
+        assertEq(backedVault.totalEarned(), 0);
 
         // Inside the transaction the vault reports the cap; the next transaction sees the full debt.
         (uint256 backed, uint256 ceiling) = atomic.borrowThenRead(200 ether, 100 ether);
@@ -344,7 +344,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertEq(ceiling, 0);
         assertEq(backedVault.totalDebt(), 100 ether);
         assertEq(backedVault.backedDebt(), 100 ether, "held across a transaction boundary it counts in full");
-        assertEq(backedVault.workCeiling(), 25 ether);
+        assertEq(backedVault.earnLine(), 25 ether);
 
         // With 100 of pre-existing debt, a further 400 opened in the same call still backs nothing
         // beyond the 25 the pre-existing position already backed.
@@ -352,8 +352,8 @@ contract WorkCeilingTest is WorkBackingFixture {
         atomic.borrowThenMintWork(800 ether, 400 ether, 25 ether + 1);
         atomic.borrowThenMintWork(800 ether, 400 ether, 25 ether);
         assertEq(backedVault.totalDebt(), 500 ether);
-        assertEq(backedVault.totalWorkMinted(), 25 ether);
-        assertEq(backedVault.workCeiling(), 125 ether, "and the slow path counts it all next transaction");
+        assertEq(backedVault.totalEarned(), 25 ether);
+        assertEq(backedVault.earnLine(), 125 ether, "and the slow path counts it all next transaction");
     }
 
     function test_repaymentInTheSameTransactionTightensTheRatioTermAtOnce() public {
@@ -363,14 +363,14 @@ contract WorkCeilingTest is WorkBackingFixture {
         collateral.mint(address(atomic), 400 ether);
         vm.stopPrank();
         atomic.open(400 ether, 200 ether);
-        assertEq(backedVault.workCeiling(), 50 ether);
+        assertEq(backedVault.earnLine(), 50 ether);
         // The cap is the level the transaction began at, but the live total is lower after the
         // repayment, and the smaller of the two is what counts.
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         atomic.repayThenMintWork(100 ether, 25 ether + 1);
         atomic.repayThenMintWork(100 ether, 25 ether);
         assertEq(backedVault.totalDebt(), 100 ether);
-        assertEq(backedVault.totalWorkMinted(), 25 ether);
+        assertEq(backedVault.totalEarned(), 25 ether);
         _assertRejected(WORKER, 1);
     }
 
@@ -379,7 +379,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         _openDebt(100 ether);
         vm.prank(BORROWER);
         stable.transfer(WORKER, 91 ether);
-        assertEq(backedVault.workCeiling(), 25 ether);
+        assertEq(backedVault.earnLine(), 25 ether);
         _setVaultPrice(0.5 ether);
         vm.prank(OTHER_WORKER);
         backedVault.bark(BORROWER);
@@ -394,7 +394,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertEq(backedVault.totalDebt(), 100 ether - repaid);
         assertEq(backedVault.totalBadDebt(), 100 ether - repaid);
         assertEq(backedVault.backedDebt(), 0, "principal with no collateral behind it backs nothing");
-        assertEq(backedVault.workCeiling(), 0);
+        assertEq(backedVault.earnLine(), 0);
         _assertRejected(WORKER, 1);
 
         // Fees accrue on the drained residual, and a repayment re-records it as accrued debt, which
@@ -408,7 +408,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         backedVault.wipe(1);
         assertGt(backedVault.totalBadDebt(), backedVault.totalDebt());
         assertEq(backedVault.backedDebt(), 0);
-        assertEq(backedVault.workCeiling(), 0);
+        assertEq(backedVault.earnLine(), 0);
         _assertRejected(WORKER, 1);
 
         // A healthy position opened afterwards is counted, less the over-count by unpaid fees, which
@@ -426,7 +426,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertEq(backedVault.totalDebt(), 40 ether + 100 ether - repaid);
         assertEq(backedVault.backedDebt(), 40 ether - overcount);
         assertLt(backedVault.backedDebt(), 40 ether);
-        assertEq(backedVault.workCeiling(), (40 ether - overcount) / 4);
+        assertEq(backedVault.earnLine(), (40 ether - overcount) / 4);
         _assertRejected(WORKER, (40 ether - overcount) / 4 + 1);
         _mintWork(WORKER, (40 ether - overcount) / 4);
     }
@@ -449,35 +449,35 @@ contract WorkCeilingTest is WorkBackingFixture {
         vaultWithSpot.lock(200 ether);
         vaultWithSpot.draw(100 ether);
         vm.stopPrank();
-        assertEq(vaultWithSpot.workCeiling(), 25 ether);
+        assertEq(vaultWithSpot.earnLine(), 25 ether);
 
         // Scaled off the feed's own figure, not a hardcoded 1e18: the primary quotes IMD in wei of
         // ETH, so the band is a fraction of THAT, whatever the vault then denominates in.
-        uint256 tolerance = primaryValue * vaultWithSpot.maxDivergenceBps() / 10_000;
+        uint256 tolerance = primaryValue * vaultWithSpot.skew() / 10_000;
         spot.setValue(primaryValue + tolerance + 1);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
-        vaultWithSpot.mintFromWork(1);
+        vaultWithSpot.earn(1);
         spot.setValue(primaryValue - tolerance - 1);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
-        vaultWithSpot.mintFromWork(1);
+        vaultWithSpot.earn(1);
         spot.setValue(primaryValue);
         spot.setStale(true);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vaultWithSpot.mintFromWork(1);
-        assertEq(vaultWithSpot.totalWorkMinted(), 0);
+        vaultWithSpot.earn(1);
+        assertEq(vaultWithSpot.totalEarned(), 0);
         assertEq(rights.mintingRights(WORKER), type(uint128).max);
 
         spot.setStale(false);
         spot.setValue(primaryValue + tolerance);
         vm.prank(WORKER);
-        vaultWithSpot.mintFromWork(25 ether);
+        vaultWithSpot.earn(25 ether);
         vm.prank(WORKER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        vaultWithSpot.mintFromWork(1);
-        assertEq(vaultWithSpot.totalWorkMinted(), 25 ether);
+        vaultWithSpot.earn(1);
+        assertEq(vaultWithSpot.totalEarned(), 25 ether);
     }
 
     // --- the derivation, checked against the deployed vault rather than on paper -----------------
@@ -510,7 +510,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         assertGe(backedVault.collateralRatio(BORROWER), mat);
         assertLt(backedVault.collateralRatio(BORROWER), mat + 1);
 
-        uint256 ceiling = backedVault.workCeiling();
+        uint256 ceiling = backedVault.earnLine();
         assertEq(ceiling, reserveUnits + debt * ratio / 10_000);
         if (ceiling != 0) _mintWork(WORKER, ceiling);
         _assertRejected(OTHER_WORKER, 1);
@@ -525,14 +525,14 @@ contract WorkCeilingTest is WorkBackingFixture {
     function _assertRejected(address worker, uint256 amount) internal {
         uint256 rights = workOracle.mintingRights(worker);
         uint256 supply = stable.totalSupply();
-        uint256 minted = backedVault.totalWorkMinted();
+        uint256 minted = backedVault.totalEarned();
         uint256 balance = stable.balanceOf(worker);
         vm.prank(worker);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        backedVault.mintFromWork(amount);
+        backedVault.earn(amount);
         assertEq(workOracle.mintingRights(worker), rights);
         assertEq(stable.totalSupply(), supply);
-        assertEq(backedVault.totalWorkMinted(), minted);
+        assertEq(backedVault.totalEarned(), minted);
         assertEq(stable.balanceOf(worker), balance);
     }
 }

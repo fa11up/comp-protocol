@@ -29,7 +29,7 @@ The original protocol invariant campaign uses four tracked actors and 17 handler
 ```text
 DUTY_BPS == 0
 vault.totalFeesMinted == 0
-COMP.totalSupply == sum(all position debts) + vault.totalWorkMinted + vault.totalFeesMinted
+COMP.totalSupply == sum(all position debts) + vault.totalEarned + vault.totalFeesMinted
 ```
 
 Additional properties reconcile COMP wallet balances, collateral custody including donations, each position's complete deposit/withdraw/debt/repayment/liquidation history, rights consumed only by work minting, and mark/grace snapshots throughout an active window. Expired re-marking records a new timestamp and current NHI grace; expiry failures and subsequent execution are exercised deterministically. Every successful randomized liquidation asserts the exact `floor(debtToRepay * 1.1e18 / price)` total seizure, the marker's bonus share, and the liquidator's remaining payout. Marker custody is reconciled separately with the complete collateral supply. The price set includes 0.5, 0.8, 1, 1.2 and 2; deterministic handler sequences prove successful liquidation at every generated price, recovery and both mint channels are reachable. Each random sequence ends by redistributing existing COMP, repaying every debt and withdrawing every position's collateral, including with stale feeds; remaining supply equals work issuance.
@@ -127,7 +127,7 @@ The accepted revision changed three things the suites above now pin, and the
 fixture was re-based so the arithmetic still reads in whole units. The reserve
 asset is priced at 2000 USD, the fixture's Chainlink ETH/USD answer, so one token
 is worth one ETH: `reserveValueUsd` is asserted in dollars and `reserveValue`,
-`backedDebt` and `workCeiling` in the vault's unit.
+`backedDebt` and `earnLine` in the vault's unit.
 
 - **Unit conversion.** `reserveValue` must equal `reserveValueUsd x 1e18 / ethUsdPrice`,
   rounded down, for fuzzed balances and ETH/USD answers; the unconverted USD
@@ -140,7 +140,7 @@ is worth one ETH: `reserveValueUsd` is asserted in dollars and `reserveValue`,
 - **Same-transaction debt.** Every top-level test call is its own transaction, so
   the transient cap is reached through an `AtomicWorkBorrower` contract that
   chains the calls: borrow-then-mint, the full borrow/mint/repay/withdraw round
-  trip, and a read of `backedDebt`/`workCeiling` inside the transaction all see
+  trip, and a read of `backedDebt`/`earnLine` inside the transaction all see
   zero for debt opened in that transaction, while the same position counts in
   full one transaction later. A repayment in the same transaction tightens the
   term immediately (the smaller of the start-of-transaction and live totals).
@@ -171,7 +171,7 @@ and `backedDebt` equals outstanding principal between transactions.
 One defect was found and is reported in `.imd-findings.json` rather than tested
 around: `Treasury.reserveValueOf` wraps both feed reads but not the token's
 `balanceOf`, so a listed token that later reverts there makes `reserveValueUsd`,
-`reserveValue`, `workCeiling` and every `mintFromWork` revert until a delisting
+`reserveValue`, `earnLine` and every `earn` revert until a delisting
 matures, against the view's documented promise never to revert. Low: only a
 governance-listed token reaches it and the delisting path reads nothing from the
 token.
@@ -193,7 +193,7 @@ denomination; 33 expectations across four existing suites moved from ETH to USD 
 `test_regression_*` fails on the audited commit and passes on the fix; reverting `src/` fails 8 of 8.
 The important one was a mixed-unit path the denomination created — `_clearIfRecovered` compared an
 ETH-valued ratio against `mat` — and two more were `try/catch` not covering ABI **decoding** in
-`Treasury.reserveValueOf`, which made a malformed listed feed revert `workCeiling()` instead of
+`Treasury.reserveValueOf`, which made a malformed listed feed revert `earnLine()` instead of
 counting for nothing.
 
 **Attested work.** `SwarmWorkOracle` extends `SwarmFeed`, so verification, replay, panel floors,

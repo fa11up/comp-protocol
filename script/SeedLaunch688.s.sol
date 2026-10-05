@@ -28,7 +28,7 @@ interface IVaultLike {
 /// Seeding PriceFeed by hand first would instead force the attestation to come within 20% of a
 /// figure we invented, which is an avoidable way to lose 0.5 IMD.
 ///
-/// Spot is then set to the attested price EXACTLY, so `maxDivergenceBps` has nothing to object to.
+/// Spot is then set to the attested price EXACTLY, so `skew` has nothing to object to.
 /// NHI is set to 0.9e18, which the curve maps to mat 150 and a six-hour grace.
 ///
 /// TESTNET ONLY. This uses the reporter fallback, which is the mainnet hole this protocol is

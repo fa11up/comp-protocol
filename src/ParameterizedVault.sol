@@ -28,7 +28,7 @@ contract ParameterizedVault is CDPVault {
     Parameters public immutable parameters;
 
     /// @notice Where this vault's protocol bonus share (IMD) and paid stability fees (COMP) land,
-    /// and the reserve whose value is the first term of `workCeiling`.
+    /// and the reserve whose value is the first term of `earnLine`.
     Treasury public immutable treasury;
 
     /// @notice IMD in USD: this vault's primary IMD/ETH feed times Chainlink ETH/USD. The price
@@ -62,24 +62,24 @@ contract ParameterizedVault is CDPVault {
         return parameters.line();
     }
 
-    function protocolBonusShareBps() public view override returns (uint256) {
-        return parameters.protocolBonusShareBps();
+    function cut() public view override returns (uint256) {
+        return parameters.cut();
     }
 
     function duty() public view override returns (uint256) {
         return parameters.duty();
     }
 
-    function maxDivergenceBps() public view override returns (uint256) {
-        return parameters.maxDivergenceBps();
+    function skew() public view override returns (uint256) {
+        return parameters.skew();
     }
 
-    function markerShareBps() public view override returns (uint256) {
-        return parameters.markerShareBps();
+    function chip() public view override returns (uint256) {
+        return parameters.chip();
     }
 
-    function redemptionSpread() public view override returns (uint256) {
-        return parameters.redemptionSpread();
+    function gap() public view override returns (uint256) {
+        return parameters.gap();
     }
 
     /// @notice All idle IMD is usable, whether or not governance has listed it for reserve valuation.
@@ -118,13 +118,13 @@ contract ParameterizedVault is CDPVault {
     }
 
     /// @notice The ratio term of the work ceiling, in basis points of collateral-backed debt.
-    function workRatioBps() public view returns (uint256) {
-        return parameters.workRatioBps();
+    function earnMat() public view returns (uint256) {
+        return parameters.earnMat();
     }
 
     /// @notice The Treasury's reserve in this vault's unit of account, which is USD.
     /// @dev No conversion, because `_price()` denominates this vault in dollars and the register is
-    /// already kept in dollars. Both terms of `workCeiling` are therefore added in the same unit by
+    /// already kept in dollars. Both terms of `earnLine` are therefore added in the same unit by
     /// construction rather than by arithmetic.
     ///
     /// It used to divide by Chainlink ETH/USD, because the vault priced collateral in ETH while the
@@ -157,7 +157,7 @@ contract ParameterizedVault is CDPVault {
     /// @dev Adding a way to halt is the cost of denominating in a unit this protocol does not publish
     /// itself. It is the right direction — a position cannot be safely liquidated at a price nobody
     /// knows — but it is a real dependency: a dead Chainlink ETH/USD leg stops minting, marking and
-    /// liquidation here, where in `workCeiling` it only zeroes the reserve term. `ETH_USD_MAX_AGE`
+    /// liquidation here, where in `earnLine` it only zeroes the reserve term. `ETH_USD_MAX_AGE`
     /// bounds how long a dead leg takes to read as stale.
     function _pricingStale() internal view override returns (bool) {
         return super._pricingStale() || usdPriceFeed.isStale();
@@ -188,14 +188,14 @@ contract ParameterizedVault is CDPVault {
         return debt > bad ? debt - bad : 0;
     }
 
-    /// @notice reserveValue + backedDebt * workRatioBps / 10000, in this vault's unit of account.
+    /// @notice reserveValue + backedDebt * earnMat / 10000, in this vault's unit of account.
     /// @dev A sum, not a maximum, because the two terms are backed by different things: the reserve
     /// one-for-one by assets the protocol owns, the ratio term by the surplus collateral every
     /// borrower posts above their own debt. Section 3 of docs/COMPUTE-BACKING-DESIGN.md shows
     /// backing exceeds one for every reserve size exactly when the ratio is below mat - 1, and
     /// Parameters caps the ratio at half that cliff.
-    function workCeiling() public view override returns (uint256) {
-        return reserveValue() + Math.mulDiv(backedDebt(), parameters.workRatioBps(), 10_000);
+    function earnLine() public view override returns (uint256) {
+        return reserveValue() + Math.mulDiv(backedDebt(), parameters.earnMat(), 10_000);
     }
 
     /// @dev keccak256("comp.ParameterizedVault.debtAtTransactionStart"). Transient: it holds the

@@ -25,9 +25,9 @@ abstract contract ReentryProbe {
             abi.encodeCall(vault.draw, (1)),
             abi.encodeCall(vault.wipe, (1)),
             abi.encodeCall(vault.bite, (account, 1)),
-            abi.encodeCall(vault.mintFromWork, (1)),
+            abi.encodeCall(vault.earn, (1)),
             abi.encodeCall(vault.bark, (account)),
-            abi.encodeCall(vault.clearRecoveredMark, (account))
+            abi.encodeCall(vault.heel, (account))
         ];
         for (uint256 i; i < calls.length; ++i) {
             (bool ok, bytes memory reason) = address(vault).call(calls[i]);
@@ -136,14 +136,14 @@ contract AdversarialTest is LegacyWorkBacking {
         _establishWorkBacking(vault, 100 ether);
         vm.startPrank(alice);
         vault.lock(150 ether);
-        vault.mintFromWork(100 ether);
+        vault.earn(100 ether);
         vm.stopPrank();
         assertEq(oracle.blockedCallbacks(), 8);
         assertEq(oracle.mintingRights(alice), 0);
         assertEq(comp.balanceOf(alice), 100 ether);
         (, uint256 debt) = vault.positions(alice);
         assertEq(debt, 0);
-        assertEq(vault.totalWorkMinted(), 100 ether);
+        assertEq(vault.totalEarned(), 100 ether);
     }
 
     function test_revertingOracleRollsBackWorkRightsAndSupply() public {
@@ -152,12 +152,12 @@ contract AdversarialTest is LegacyWorkBacking {
         vm.startPrank(alice);
         vault.lock(150 ether);
         vm.expectRevert(AdversarialOracle.OracleOffline.selector);
-        vault.mintFromWork(100 ether);
+        vault.earn(100 ether);
         vm.stopPrank();
         (, uint256 debt) = vault.positions(alice);
         assertEq(debt, 0);
         assertEq(comp.totalSupply(), backingPrincipal[address(vault)]);
-        assertEq(vault.totalWorkMinted(), 0);
+        assertEq(vault.totalEarned(), 0);
         assertEq(oracle.mintingRights(alice), 100 ether);
         assertEq(oracle.blockedCallbacks(), 0);
     }

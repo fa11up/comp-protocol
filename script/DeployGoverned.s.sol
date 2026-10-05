@@ -19,11 +19,11 @@ import {
     ATTESTATION_ANSWER_TYPE,
     CHAINLINK_ETH_USD,
     ORACLE_ATTESTER,
-    MARKER_SHARE_BPS,
-    MAX_DIVERGENCE_BPS,
-    PROTOCOL_BONUS_SHARE_BPS,
+    CHIP_BPS,
+    SKEW_BPS,
+    CUT_BPS,
     DUTY_BPS,
-    WORK_RATIO_BPS
+    EARN_MAT_BPS
 } from "../src/DeploymentConfig.sol";
 
 /// @notice The governed variant of the stack: same feeds, same vault logic, economics in a contract.
@@ -113,13 +113,13 @@ contract DeployGoverned is Script {
         require(address(usd.imdEthFeed()) == address(priceFeed), "usd feed: IMD leg is not the primary feed");
         require(address(usd.ETH_USD()) == CHAINLINK_ETH_USD, "usd feed: ETH/USD leg drifted from source");
 
-        require(vault.workRatioBps() == WORK_RATIO_BPS, "params: work ratio drifted from source");
-        require(parameters.MAX_WORK_RATIO_BPS() == 2_500, "params: work ratio bound is not 2500");
-        require(vault.workRatioBps() <= parameters.MAX_WORK_RATIO_BPS(), "params: shipped ratio above its own bound");
+        require(vault.earnMat() == EARN_MAT_BPS, "params: work ratio drifted from source");
+        require(parameters.MAX_EARN_MAT_BPS() == 2_500, "params: work ratio bound is not 2500");
+        require(vault.earnMat() <= parameters.MAX_EARN_MAT_BPS(), "params: shipped ratio above its own bound");
         require(vault.reserveValue() == 0, "vault: values a reserve it does not hold");
         require(vault.backedDebt() == 0, "vault: counts debt nobody has minted");
-        require(vault.workCeiling() == 0, "vault: work ceiling opens nonzero with nothing backing it");
-        require(vault.totalWorkMinted() == 0, "vault: opens with work already minted");
+        require(vault.earnLine() == 0, "vault: work ceiling opens nonzero with nothing backing it");
+        require(vault.totalEarned() == 0, "vault: opens with work already minted");
     }
 
     /// @dev Read back off chain, not compared to a local copy of the same literal.
@@ -140,13 +140,13 @@ contract DeployGoverned is Script {
         // compiled in. A deployment that silently changed the economics would be caught here.
         require(vault.line() == type(uint256).max, "params: ceiling is not the shipped default");
         require(vault.duty() == DUTY_BPS, "params: fee drifted from source");
-        require(vault.protocolBonusShareBps() == PROTOCOL_BONUS_SHARE_BPS, "params: protocol share drifted");
-        require(vault.maxDivergenceBps() == MAX_DIVERGENCE_BPS, "params: divergence drifted");
-        require(vault.markerShareBps() == MARKER_SHARE_BPS, "params: marker share drifted");
-        require(parameters.redemptionSpread() == 50, "params: redemption spread is not the shipped default");
-        require(vault.redemptionSpread() == parameters.redemptionSpread(), "vault: wrong redemption spread");
-        require(parameters.MIN_REDEMPTION_SPREAD() == 25, "params: redemption spread floor changed");
-        require(parameters.MAX_REDEMPTION_SPREAD() == 100, "params: redemption spread cap changed");
+        require(vault.cut() == CUT_BPS, "params: protocol share drifted");
+        require(vault.skew() == SKEW_BPS, "params: divergence drifted");
+        require(vault.chip() == CHIP_BPS, "params: marker share drifted");
+        require(parameters.gap() == 50, "params: redemption spread is not the shipped default");
+        require(vault.gap() == parameters.gap(), "vault: wrong redemption spread");
+        require(parameters.MIN_GAP() == 25, "params: redemption spread floor changed");
+        require(parameters.MAX_GAP() == 100, "params: redemption spread cap changed");
         require(vault.redemptionCeilingCR() == vault.mat() + 50, "vault: redemption ceiling is not derived");
         require(vault.REDEMPTION_FEE_FLOOR_BPS() == 50, "vault: redemption fee floor changed");
         require(vault.REDEMPTION_FEE_CAP_BPS() == 500, "vault: redemption fee cap changed");

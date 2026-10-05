@@ -160,8 +160,8 @@ contract WorkBackingHandler is WorkBackingFixture {
         // vault is modelled by taking no action, not by reverting the campaign.
         if (ethUsdStale) return;
 
-        uint256 ceiling = backedVault.workCeiling();
-        uint256 minted = backedVault.totalWorkMinted();
+        uint256 ceiling = backedVault.earnLine();
+        uint256 minted = backedVault.totalEarned();
         uint256 remaining = ceiling > minted ? ceiling - minted : 0;
         uint256 amount = overCeiling || remaining == 0 ? remaining + 1 : bound(raw, 1, remaining);
         uint256 rights = workOracle.mintingRights(WORKER);
@@ -169,21 +169,21 @@ contract WorkBackingHandler is WorkBackingFixture {
         if (overCeiling || remaining == 0) {
             vm.prank(WORKER);
             vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-            backedVault.mintFromWork(amount);
+            backedVault.earn(amount);
             assertEq(stable.totalSupply(), supply);
             assertEq(workOracle.mintingRights(WORKER), rights);
-            assertEq(backedVault.totalWorkMinted(), minted);
+            assertEq(backedVault.totalEarned(), minted);
             ++rejectedWorkCalls;
         } else {
             _mintWork(WORKER, amount);
-            assertLe(backedVault.totalWorkMinted(), ceiling, "successful mint respects backing at execution");
+            assertLe(backedVault.totalEarned(), ceiling, "successful mint respects backing at execution");
             workMinted += amount;
             ++acceptedWorkCalls;
         }
     }
 
     function backedVaultCeiling() external view returns (uint256) {
-        return backedVault.workCeiling();
+        return backedVault.earnLine();
     }
 
     function checkAccounting() external view {
@@ -211,9 +211,9 @@ contract WorkBackingHandler is WorkBackingFixture {
         assertEq(backedVault.totalDebt(), principal);
         assertEq(backedVault.totalBadDebt(), 0, "a borrower kept at or above mat never leaves bad debt");
         assertEq(backedVault.backedDebt(), principal, "between transactions every open position counts");
-        assertEq(backedVault.workCeiling(), value + principal * backedVault.workRatioBps() / 10_000);
-        assertLe(backedVault.workRatioBps(), 2500);
-        assertEq(backedVault.totalWorkMinted(), workMinted);
+        assertEq(backedVault.earnLine(), value + principal * backedVault.earnMat() / 10_000);
+        assertLe(backedVault.earnMat(), 2500);
+        assertEq(backedVault.totalEarned(), workMinted);
         assertEq(workOracle.mintingRights(WORKER) + workMinted, type(uint128).max);
         assertEq(stable.balanceOf(WORKER), workMinted);
         assertEq(stable.balanceOf(address(reserve)), feePaid);

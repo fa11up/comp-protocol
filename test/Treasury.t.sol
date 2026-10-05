@@ -16,7 +16,7 @@ contract PayingVault is CDPVault {
         CDPVault(imd, address(0), address(0), price, nhi, spot)
     {}
 
-    function protocolBonusShareBps() public pure override returns (uint256) {
+    function cut() public pure override returns (uint256) {
         return 3_333;
     }
 

@@ -63,8 +63,8 @@ reverts** rather than silently leaving the vault on the faucet.
 | input | what it decides |
 |---|---|
 | **price** | `collateralRatio = collateral * price * 100 / (debt * 1e18)`, from a window median. On `ParameterizedVault` the price is `UsdPriceFeed`, so **one COMP of debt is one USD-worth of collateral**; the base vault prices in ETH |
-| **NHI** | `mat()` 150 at ≥0.85 rising to 200 at ≤0.60; `gracePeriod()` 6h falling to 0 |
-| **spot** | not a price — a sanity bound. A gap over `MAX_DIVERGENCE_BPS` (500) halts minting, marking and liquidation while still allowing withdrawal |
+| **NHI** | `mat()` 150 at ≥0.85 rising to 200 at ≤0.60; `lull()` 6h falling to 0 |
+| **spot** | not a price — a sanity bound. A gap over `SKEW_BPS` (500) halts minting, marking and liquidation while still allowing withdrawal |
 
 Shipped economics: stability fee 200 bps, marker share 1000 bps of the liquidation bonus, protocol
 share 3333 bps of it, divergence bound 500 bps, work ratio 2500 bps, 0.01 COMP per accepted task.
@@ -226,7 +226,7 @@ and compared an ETH-valued ratio against `mat`, so after denomination the ratio 
 the whole ETH/USD factor and a position restored to health **kept its liquidation mark**. Two mediums
 in `Treasury` shared one cause — `try/catch` does not cover **decoding**, so a listed feed returning
 `abi.encode(uint256(2))` for a bool panicked in the caller's frame where no catch clause could see it,
-reverting `workCeiling()` and every `mintFromWork`. And one low was a defect in the fix written for the
+reverting `earnLine()` and every `earn`. And one low was a defect in the fix written for the
 *previous* audit. Two audits running, a fix has needed its own review.
 
 A note on retrieval: a read-only job with `github: false` publishes no artifact. The findings live only
@@ -251,11 +251,11 @@ the written reproductions. Archive the record immediately.
 - `SwarmWorkOracle` is built but **not yet answerable**. Its question reads the swarm's daily oracle
   receipts, and the control plane records no agent tally for this seat so far — historical days are
   deliberately not reconstructed — so a panel must report inability today. It costs nothing to wait:
-  `workCeiling()` is zero on a fresh stack whatever the oracle says.
+  `earnLine()` is zero on a fresh stack whatever the oracle says.
 - `WORK_ORACLE_FACTORY` is a **placeholder with no code**, so a vault asking for a real work oracle
   cannot be deployed until `script/DeployPrereqs.s.sol` runs and that constant names the result. The
   launch manifest therefore still passes zero, which is the faucet, deliberately.
-- `protocolBonusShareBps` is bounded but the bound is economically empty at its top: at 10000 a
+- `cut` is bounded but the bound is economically empty at its top: at 10000 a
   liquidator who did not mark receives exactly the principal back, so liquidations stop.
 - There is no insurance and no write-off path. A liquidation can leave bad debt; `bite` sweeps an
   unreachable remainder so the position closes rather than freezing, but the loss is realised.

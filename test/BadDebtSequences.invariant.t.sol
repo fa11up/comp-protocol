@@ -7,7 +7,7 @@ import {CDPVault} from "src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
-import {APPROVED_OPERATOR, FEE_RECIPIENT, MARKER_SHARE_BPS} from "src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, FEE_RECIPIENT, CHIP_BPS} from "src/DeploymentConfig.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
 /// @dev At a price of 1.1 COMP/IMD, every repayment wei seizes exactly one collateral wei.
@@ -123,7 +123,7 @@ contract BadDebtSequenceHandler is Test {
             ++exhaustionCount;
         }
         uint256 bonus = amount - amount * 1 ether / 1.1 ether;
-        uint256 markerCut = bonus * MARKER_SHARE_BPS / 10_000;
+        uint256 markerCut = bonus * CHIP_BPS / 10_000;
         markerReceived += markerCut;
         liquidatorReceived += amount - markerCut;
     }

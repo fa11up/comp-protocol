@@ -66,8 +66,8 @@ contract ProtocolHandler is Test {
             vault.lock(150 ether);
             vault.draw(100 ether);
             // Both supply channels start nonzero, so the retired invariant fails immediately.
-            assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 25 ether);
-            vault.mintFromWork(25 ether);
+            assertGe(vault.totalDebt() / 4, vault.totalEarned() + 25 ether);
+            vault.earn(25 ether);
             vm.stopPrank();
             deposited[actor] = 150 ether;
             debtMinted[actor] = 100 ether;
@@ -103,13 +103,13 @@ contract ProtocolHandler is Test {
         address actor = actors[seed % 4];
         uint256 rights = oracle.mintingRights(actor);
         uint256 ceiling = vault.totalDebt() / 4;
-        if (ceiling <= vault.totalWorkMinted()) return;
-        rights = _min(rights, ceiling - vault.totalWorkMinted());
+        if (ceiling <= vault.totalEarned()) return;
+        rights = _min(rights, ceiling - vault.totalEarned());
         if (rights == 0) return;
         amount = bound(amount, 1, _min(rights, 1000 ether));
         vm.prank(actor);
-        vault.mintFromWork(amount);
-        assertLe(vault.totalWorkMinted(), ceiling, "work mint has backing");
+        vault.earn(amount);
+        assertLe(vault.totalEarned(), ceiling, "work mint has backing");
         workMinted[actor] += amount;
         ++successfulWorkMints;
     }
@@ -189,7 +189,7 @@ contract ProtocolHandler is Test {
         (uint256 timestamp, uint256 grace, bool marked,) = vault.liquidationMarks(actor);
         if (_healthy(actor)) {
             if (marked) {
-                vault.clearRecoveredMark(actor);
+                vault.heel(actor);
                 ++successfulRecoveries;
             } else {
                 vm.expectRevert(CDPVault.HealthyPosition.selector);
@@ -200,7 +200,7 @@ contract ProtocolHandler is Test {
         vault.bark(actor);
         (uint256 actualTimestamp, uint256 actualGrace, bool actualMarked,) = vault.liquidationMarks(actor);
         assertTrue(actualMarked);
-        if (marked && block.timestamp <= timestamp + grace + vault.liquidationWindow()) {
+        if (marked && block.timestamp <= timestamp + grace + vault.tail()) {
             assertEq(actualTimestamp, timestamp, "repeat marking preserves timestamp");
             assertEq(actualGrace, grace, "repeat marking preserves grace");
         } else {
@@ -219,7 +219,7 @@ contract ProtocolHandler is Test {
         (uint256 timestamp, uint256 grace, bool marked,) = vault.liquidationMarks(owner);
         if (
             !marked || block.timestamp < timestamp + grace
-                || block.timestamp > timestamp + grace + vault.liquidationWindow()
+                || block.timestamp > timestamp + grace + vault.tail()
         ) return;
         (uint256 collateral, uint256 debt) = vault.positions(owner);
         // Bound repayment by the collateral's value, including the liquidation bonus.
@@ -241,7 +241,7 @@ contract ProtocolHandler is Test {
         uint256 received = imd.balanceOf(caller) - beforeIMD;
         assertEq(comp.balanceOf(caller), beforeCOMP - amount, "liquidator pays its own COMP");
         assertEq(remainingDebt, debt - amount, "liquidation retires debt");
-        uint256 markerCut = (expectedPayout - amount * 1 ether / _price()) * vault.markerShareBps() / 10_000;
+        uint256 markerCut = (expectedPayout - amount * 1 ether / _price()) * vault.chip() / 10_000;
         assertEq(collateral - remainingCollateral, received + markerCut, "seized collateral reaches both keepers");
         // bite() folds a remainder no liquidation could ever take into the seizure, as extra
         // incentive for whoever closes the position. It sits outside the bonus, so the marker's cut
@@ -301,7 +301,7 @@ contract ProtocolHandler is Test {
         bytes4 reason = _fresh() ? CDPVault.InsufficientRights.selector : CDPVault.StaleFeed.selector;
         vm.prank(actor);
         vm.expectRevert(reason);
-        vault.mintFromWork(amount);
+        vault.earn(amount);
     }
 
     function attemptPrematureLiquidation(uint256 ownerSeed, uint256 callerSeed) external {
@@ -317,7 +317,7 @@ contract ProtocolHandler is Test {
                 expected = CDPVault.PositionNotMarked.selector;
             } else if (block.timestamp < timestamp + grace) {
                 expected = CDPVault.GracePeriodNotElapsed.selector;
-            } else if (block.timestamp > timestamp + grace + vault.liquidationWindow()) {
+            } else if (block.timestamp > timestamp + grace + vault.tail()) {
                 expected = CDPVault.MarkExpired.selector;
             } else {
                 return;
@@ -433,12 +433,12 @@ contract ProtocolInvariantTest is StdInvariant, Test {
                 assertEq(grace, 0, "cleared grace snapshot");
             }
         }
-        assertEq(vault.totalWorkMinted(), work, "work history");
+        assertEq(vault.totalEarned(), work, "work history");
         assertEq(vault.totalFeesMinted(), 0, "zero rate never mints fees");
         assertEq(vault.totalDebt(), debts, "zero-rate debt is minted principal");
         assertEq(
             handler.comp().totalSupply(),
-            debts + vault.totalWorkMinted() + vault.totalFeesMinted(),
+            debts + vault.totalEarned() + vault.totalFeesMinted(),
             "zero-rate supply invariant"
         );
         assertEq(handler.imd().balanceOf(address(handler)), handler.markerReceived(), "marker custody");
@@ -476,8 +476,8 @@ contract ProtocolInvariantTest is StdInvariant, Test {
             assertEq(remainingCollateral, 0, "all collateral redeemable");
             assertEq(remainingDebt, 0, "all debt repayable");
         }
-        assertEq(comp.totalSupply(), handler.vault().totalWorkMinted(), "closing debt preserves work supply");
-        assertEq(comp.balanceOf(collector), handler.vault().totalWorkMinted(), "work tokens remain spendable");
+        assertEq(comp.totalSupply(), handler.vault().totalEarned(), "closing debt preserves work supply");
+        assertEq(comp.balanceOf(collector), handler.vault().totalEarned(), "work tokens remain spendable");
         assertEq(handler.imd().balanceOf(address(handler.vault())), handler.donated());
         invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
     }
@@ -544,7 +544,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
             uint256 received = handler.imd().balanceOf(liquidator) - beforeCollateral;
             assertEq(remainingDebt, debt - debtToRepay, "liquidation retires debt at every price");
             uint256 seized = debtToRepay * 1.1 ether / price;
-            uint256 markerCut = (seized - debtToRepay * 1 ether / price) * handler.vault().markerShareBps() / 10_000;
+            uint256 markerCut = (seized - debtToRepay * 1 ether / price) * handler.vault().chip() / 10_000;
             assertEq(collateral - remainingCollateral, received + markerCut, "seized collateral reaches both keepers");
             assertEq(received, seized - markerCut, "exact liquidator payout at every market price");
             assertEq(handler.successfulLiquidations(), 1, "each market price reaches liquidation");

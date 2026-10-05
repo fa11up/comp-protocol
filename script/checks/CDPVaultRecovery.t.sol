@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "../../src/CDPVault.sol";
 import {ImdUSD} from "../../src/ImdUSD.sol";
 import {MockIMD} from "../../src/MockIMD.sol";
-import {APPROVED_OPERATOR, MAX_DIVERGENCE_BPS} from "../../src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, SKEW_BPS} from "../../src/DeploymentConfig.sol";
 import {IncrementFeed} from "./CDPVaultIncrement.t.sol";
 
 /// @notice FOUNDRY_TEST=script/checks forge test --offline --out test/scratch/recovery-out \
@@ -103,11 +103,11 @@ contract CDPVaultRecoveryTest is Test {
     }
 
     function test_recoveryAcceptsExactUpperPrimaryRelativeBoundary() public {
-        _checkValidRecovery(1 ether + 1 ether * MAX_DIVERGENCE_BPS / 10_000);
+        _checkValidRecovery(1 ether + 1 ether * SKEW_BPS / 10_000);
     }
 
     function test_recoveryAcceptsExactLowerPrimaryRelativeBoundary() public {
-        _checkValidRecovery(1 ether - 1 ether * MAX_DIVERGENCE_BPS / 10_000);
+        _checkValidRecovery(1 ether - 1 ether * SKEW_BPS / 10_000);
     }
 
     function _checkInvalidRecovery(InvalidObservation observation) private {
@@ -135,7 +135,7 @@ contract CDPVaultRecoveryTest is Test {
             if (route == 0) {
                 // Explicit clear may reject the observation or leave the mark alone.
                 (bool accepted, bytes memory reason) =
-                    address(vault).call(abi.encodeCall(vault.clearRecoveredMark, (ALICE)));
+                    address(vault).call(abi.encodeCall(vault.heel, (ALICE)));
                 if (!accepted) assertEq(reason, abi.encodeWithSelector(expectedError));
             } else {
                 _recover(route);
@@ -173,7 +173,7 @@ contract CDPVaultRecoveryTest is Test {
 
     function _recover(uint256 route) private {
         vm.startPrank(ALICE);
-        if (route == 0) vault.clearRecoveredMark(ALICE);
+        if (route == 0) vault.heel(ALICE);
         else if (route == 1) vault.lock(1);
         else vault.wipe(1);
         vm.stopPrank();

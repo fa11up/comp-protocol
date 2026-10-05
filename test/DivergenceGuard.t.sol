@@ -8,7 +8,7 @@ import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {MockWorkOracle} from "src/MockWorkOracle.sol";
-import {APPROVED_OPERATOR, FEE_RECIPIENT, MAX_DIVERGENCE_BPS} from "src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, FEE_RECIPIENT, SKEW_BPS} from "src/DeploymentConfig.sol";
 import {TestSwarmFeed} from "test/helpers/TestSwarmFeed.sol";
 
 /// @notice Independent primary and spot feeds exercise the guard without an RPC or attestation signer.
@@ -59,7 +59,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         vm.stopPrank();
         _establishWorkBacking(vault, 1000 ether);
         vm.prank(LIQUIDATOR);
-        vault.mintFromWork(1000 ether);
+        vault.earn(1000 ether);
     }
 
     function testFuzz_MintAcceptsExactlyMaximumDivergence(bool spotAbove) public {
@@ -115,7 +115,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_PrimaryDenominatorAndIntegerBoundary(uint256 priceSeed, bool spotAbove) public {
         uint256 price = bound(priceSeed, 20, type(uint256).max / 2);
-        assertEq(MAX_DIVERGENCE_BPS, 500);
+        assertEq(SKEW_BPS, 500);
         primary.setValue(price);
         // The approved 500 BPS bound is exactly 1/20 of the primary, independent of the spot price.
         uint256 allowedDifference = price / 20;
@@ -175,7 +175,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         _prepare(Action.ClearRecoveredMark);
         _setBoundary(1 ether, spotAbove, false);
         vm.prank(DEBT_FREE);
-        vault.clearRecoveredMark(BORROWER);
+        vault.heel(BORROWER);
         _assertMarkCleared();
         assertEq(vault.debtOf(BORROWER), 100 ether);
     }
@@ -238,7 +238,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         assertEq(debt, 0);
         assertEq(imd.balanceOf(BORROWER), 300 ether);
         assertEq(comp.balanceOf(BORROWER), 0);
-        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalEarned());
         (,, bool marked,) = vault.liquidationMarks(BORROWER);
         assertFalse(marked, "full repayment must clear the liquidation mark");
     }
@@ -280,7 +280,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         vm.stopPrank();
         assertEq(vault.debtOf(BORROWER), 0);
         assertEq(imd.balanceOf(BORROWER), 300 ether);
-        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalWorkMinted());
+        assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + vault.totalEarned());
     }
 
     function _prepare(Action action) private {
@@ -300,7 +300,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
     }
 
     function _setBoundary(uint256 price, bool spotAbove, bool beyond) private {
-        assertEq(MAX_DIVERGENCE_BPS, 500);
+        assertEq(SKEW_BPS, 500);
         uint256 difference = price / 20 + (beyond ? 1 : 0);
         spot.setValue(spotAbove ? price + difference : price - difference);
     }
@@ -313,7 +313,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         if (action == Action.Mint) vault.draw(1 ether);
         else if (action == Action.Mark) vault.bark(BORROWER);
         else if (action == Action.Liquidate) vault.bite(BORROWER, 10 ether);
-        else if (action == Action.ClearRecoveredMark) vault.clearRecoveredMark(BORROWER);
+        else if (action == Action.ClearRecoveredMark) vault.heel(BORROWER);
         else vault.free(1 ether);
         assertEq(_state(), beforeState, "failed price check changed debt, mark, collateral or balances");
     }
@@ -350,7 +350,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
             abi.encode(
                 comp.totalSupply(),
                 vault.totalDebt(),
-                vault.totalWorkMinted(),
+                vault.totalEarned(),
                 vault.totalFeesMinted(),
                 vault.totalBadDebt()
             )

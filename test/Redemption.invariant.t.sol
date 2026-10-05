@@ -76,7 +76,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         }
         _fundIMD(20 ether);
         vm.prank(actors[3]);
-        backedVault.mintFromWork(10 ether);
+        backedVault.earn(10 ether);
         workIssued = 10 ether;
     }
 
@@ -116,12 +116,12 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
 
     function mintWork(uint256 seed, uint256 rawAmount) external {
         address actor = actors[seed % 4];
-        uint256 ceiling = backedVault.workCeiling();
+        uint256 ceiling = backedVault.earnLine();
         if (ceiling <= workIssued) return;
         uint256 amount = bound(rawAmount, 1, Math.min(ceiling - workIssued, 100 ether));
         uint256 rights = workOracle.mintingRights(actor);
         vm.prank(actor);
-        backedVault.mintFromWork(amount);
+        backedVault.earn(amount);
         workIssued += amount;
         assertEq(workOracle.mintingRights(actor), rights - amount, "work consumes rights exactly once");
         assertLe(workIssued, ceiling, "only backed work may be newly minted");
@@ -171,7 +171,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         health.setValue(bound(rawNhi, 0.6 ether, 0.85 ether));
     }
 
-    function redeem(uint256 redeemerSeed, uint256 candidateSeed, uint256 rawAmount) external {
+    function cash(uint256 redeemerSeed, uint256 candidateSeed, uint256 rawAmount) external {
         uint256 available = stable.balanceOf(actors[redeemerSeed % 4]);
         if (available < 2) return;
         _redeem(redeemerSeed % 4, candidateSeed % 4, bound(rawAmount, 2, Math.min(available, 100 ether)), false);
@@ -224,7 +224,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         if (failure != bytes4(0)) {
             vm.expectRevert(failure);
             vm.prank(redeemer);
-            backedVault.redeem(amount, forceSlippage ? amounts.payout + 1 : amounts.payout, candidate);
+            backedVault.cash(amount, forceSlippage ? amounts.payout + 1 : amounts.payout, candidate);
             _assertUnchanged(beforeState, redeemer);
             ++rejectedCalls;
             return;
@@ -237,7 +237,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         uint256 freshCancelled = Math.min(amounts.principalCancelled, _freshNow(candidate));
         uint256 expectedBase = _curve(beforeState.decayedBase, amount - freshCancelled, beforeState.supply);
         vm.prank(redeemer);
-        uint256 paid = backedVault.redeem(amount, amounts.payout, candidate);
+        uint256 paid = backedVault.cash(amount, amounts.payout, candidate);
         assertEq(paid, amounts.payout, "exact feed-priced discounted payout");
         _assertRedeemed(beforeState, amounts, redeemer, candidateIndex);
         assertEq(backedVault.redemptionBaseRate(), expectedBase, "stored base follows the documented curve");
@@ -273,7 +273,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         assertEq(
             collateral.balanceOf(address(reserve)), beforeState.reserveIMD - amounts.reserveOut, "reserve spent first"
         );
-        assertLe(backedVault.workCeiling(), beforeState.ceiling, "redemption cannot loosen new work minting");
+        assertLe(backedVault.earnLine(), beforeState.ceiling, "redemption cannot loosen new work minting");
         uint256 backingAfter = collateral.balanceOf(address(backedVault)) + collateral.balanceOf(address(reserve));
         assertGe(
             backingAfter * beforeState.supply,
@@ -315,7 +315,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         // because `backing` above is deliberately conservative and is NOT monotone: cancelling a
         // borrower's debt disqualifies mat worth of collateral to retire one COMP of supply.
         state.econBacking = state.reserveIMD + collateral.balanceOf(address(backedVault));
-        state.ceiling = backedVault.workCeiling();
+        state.ceiling = backedVault.earnLine();
         state.base = backedVault.redemptionBaseRate();
         state.decayedBase = backedVault.decayedRedemptionBaseRate();
         state.lastAt = backedVault.lastRedemptionAt();
@@ -419,7 +419,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
             userCOMP += stable.balanceOf(actor);
         }
         assertEq(backedVault.totalDebt(), positionPrincipal, "total minted principal matches positions");
-        assertEq(backedVault.totalWorkMinted(), workIssued, "redemption never restores consumed work rights");
+        assertEq(backedVault.totalEarned(), workIssued, "redemption never restores consumed work rights");
         assertEq(backedVault.totalFeesMinted(), feesReminted, "redemption fees are never paid to a recipient");
         assertEq(
             backedVault.totalNonPrincipalRedeemed(), nonPrincipalBurns, "reserve and accrued-fee burns accounted once"
@@ -470,7 +470,7 @@ contract RedemptionInvariantTest is StdInvariant, Test {
         selectors[6] = handler.transferCOMP.selector;
         selectors[7] = handler.advanceTime.selector;
         selectors[8] = handler.setHealth.selector;
-        selectors[9] = handler.redeem.selector;
+        selectors[9] = handler.cash.selector;
         selectors[10] = handler.rejectSlippage.selector;
         targetContract(address(handler));
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
@@ -486,11 +486,11 @@ contract RedemptionInvariantTest is StdInvariant, Test {
     function test_handlerExecutesMixedRoutesAndRejectsWithoutMutating() public {
         handler.assertAccounting();
         handler.advanceTime(12 hours);
-        handler.redeem(1, 3, 1 ether);
+        handler.cash(1, 3, 1 ether);
         handler.fundReserve(10 ether);
-        handler.redeem(2, 2, 1 ether);
+        handler.cash(2, 2, 1 ether);
         handler.rejectSlippage(0, 0, 2 ether);
-        handler.redeem(0, 2, 20 ether);
+        handler.cash(0, 2, 20 ether);
         handler.deposit(0, 30 ether);
         handler.borrow(0, 10 ether);
         handler.mintWork(3, 1 ether);
@@ -498,7 +498,7 @@ contract RedemptionInvariantTest is StdInvariant, Test {
         handler.repay(1, 2 ether);
         handler.withdraw(0, 1 ether);
         handler.setHealth(0.6 ether);
-        handler.redeem(3, 0, 1 ether);
+        handler.cash(3, 0, 1 ether);
         handler.assertAccounting();
         assertGe(handler.reserveOnlyCalls(), 2);
         assertGe(handler.mixedCalls(), 2);
@@ -530,7 +530,7 @@ contract RedemptionInvariantTest is StdInvariant, Test {
         // payout to the wei, so "not rejected" here is backed by an exact expectation.
         uint256 backingBefore = handler.vaultBackingPerUnit();
         assertLt(backingBefore, 1e18, "work-issued COMP with no borrowers is underbacked");
-        handler.redeem(3, 0, 1 ether);
+        handler.cash(3, 0, 1 ether);
         assertEq(handler.rejectedCalls(), rejected, "a capped payout is not a rejection");
         // The handler asserts the capped payout to the wei inside `_redeem`, so this adds only what
         // it cannot: the reserve really paid, and it paid far below par for a 1 COMP burn.

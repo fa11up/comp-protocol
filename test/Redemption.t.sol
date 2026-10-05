@@ -16,7 +16,7 @@ contract RedemptionTest is WorkBackingFixture {
     address private constant REDEEMER = address(0xDEED);
     address private constant SECOND_BORROWER = address(0xBEE);
 
-    event Redeemed(
+    event Cash(
         address indexed redeemer,
         address indexed candidate,
         uint256 compBurned,
@@ -40,9 +40,9 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 out = _quote(10 ether);
 
         vm.expectEmit(true, true, false, true, address(backedVault));
-        emit Redeemed(REDEEMER, BORROWER, 10 ether, out, out, 0, 300);
+        emit Cash(REDEEMER, BORROWER, 10 ether, out, out, 0, 300);
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(10 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, BORROWER), out);
 
         assertEq(_positionState(BORROWER), beforePosition, "reserve redemption touched position accounting");
         assertEq(backedVault.totalDebt(), principal);
@@ -63,7 +63,7 @@ contract RedemptionTest is WorkBackingFixture {
         bytes32 beforePosition = _positionState(BORROWER);
 
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(10 ether, out, address(0)), out);
+        assertEq(backedVault.cash(10 ether, out, address(0)), out);
 
         assertEq(collateral.balanceOf(address(reserve)), 0);
         assertEq(_positionState(BORROWER), beforePosition);
@@ -79,9 +79,9 @@ contract RedemptionTest is WorkBackingFixture {
         bytes32 untouched = _positionState(SECOND_BORROWER);
         uint256 out = 19.4 ether;
         vm.expectEmit(true, true, false, true, address(backedVault));
-        emit Redeemed(REDEEMER, BORROWER, 20 ether, out, 9.7 ether, 10 ether, 300);
+        emit Cash(REDEEMER, BORROWER, 20 ether, out, 9.7 ether, 10 ether, 300);
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(20 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(20 ether, out, BORROWER), out);
 
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
         assertEq(c, 170.3 ether);
@@ -103,7 +103,7 @@ contract RedemptionTest is WorkBackingFixture {
         _reserveIMD(out - 1);
 
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(10 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, BORROWER), out);
 
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
         assertEq(c, 180 ether - 1);
@@ -122,7 +122,7 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 otherReserve = asset.balanceOf(address(reserve));
         uint256 out = _quote(10 ether);
         vm.prank(REDEEMER);
-        backedVault.redeem(10 ether, out, BORROWER);
+        backedVault.cash(10 ether, out, BORROWER);
         assertEq(asset.balanceOf(address(reserve)), otherReserve);
         assertEq(asset.balanceOf(REDEEMER), 0);
         assertEq(collateral.balanceOf(REDEEMER), out);
@@ -144,7 +144,7 @@ contract RedemptionTest is WorkBackingFixture {
         assertEq(backedVault.collateralRatio(BORROWER), backedVault.mat());
         uint256 healthyOut = _quote(1 ether);
         vm.prank(REDEEMER);
-        backedVault.redeem(1 ether, healthyOut, BORROWER);
+        backedVault.cash(1 ether, healthyOut, BORROWER);
         health.setValue(0.6 ether);
         _open(SECOND_BORROWER, 200 ether, 100 ether);
         vm.prank(SECOND_BORROWER);
@@ -154,7 +154,7 @@ contract RedemptionTest is WorkBackingFixture {
         assertEq(backedVault.collateralRatio(SECOND_BORROWER), 200);
         uint256 out = _quote(1 ether);
         vm.prank(REDEEMER);
-        backedVault.redeem(1 ether, out, SECOND_BORROWER);
+        backedVault.cash(1 ether, out, SECOND_BORROWER);
         assertEq(backedVault.debtOf(SECOND_BORROWER), 99 ether);
     }
 
@@ -162,7 +162,7 @@ contract RedemptionTest is WorkBackingFixture {
         _open(BORROWER, 150 ether, 100 ether);
         _giveStable(100 ether);
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(100 ether, 95 ether, BORROWER), 95 ether);
+        assertEq(backedVault.cash(100 ether, 95 ether, BORROWER), 95 ether);
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
         assertEq(c, 55 ether);
         assertEq(d, 0);
@@ -187,7 +187,7 @@ contract RedemptionTest is WorkBackingFixture {
         assertTrue(marked);
 
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(20 ether, 23.75 ether, BORROWER), 23.75 ether);
+        assertEq(backedVault.cash(20 ether, 23.75 ether, BORROWER), 23.75 ether);
 
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
         assertEq(c, 156.25 ether);
@@ -205,11 +205,11 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 expected = _quote(10 ether);
         uint256 snapshot = vm.snapshotState();
         vm.prank(REDEEMER);
-        uint256 firstOut = backedVault.redeem(10 ether, expected, BORROWER);
+        uint256 firstOut = backedVault.cash(10 ether, expected, BORROWER);
         assertEq(firstOut, expected);
         assertTrue(vm.revertToStateAndDelete(snapshot));
         vm.prank(REDEEMER);
-        uint256 secondOut = backedVault.redeem(10 ether, expected, SECOND_BORROWER);
+        uint256 secondOut = backedVault.cash(10 ether, expected, SECOND_BORROWER);
         assertEq(secondOut, expected);
         assertEq(secondOut, firstOut, "a higher-ratio candidate cannot pay the redeemer more");
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
@@ -227,7 +227,7 @@ contract RedemptionTest is WorkBackingFixture {
         assertEq(backedVault.debtOf(BORROWER), 102 ether);
         uint256 out = _quote(1 ether);
         vm.prank(WORKER);
-        backedVault.redeem(1 ether, out, BORROWER);
+        backedVault.cash(1 ether, out, BORROWER);
         assertEq(backedVault.stabilityFeeOf(BORROWER), 1 ether);
         assertEq(backedVault.debtOf(BORROWER), 101 ether);
         assertEq(backedVault.totalDebt(), 100 ether);
@@ -236,7 +236,7 @@ contract RedemptionTest is WorkBackingFixture {
         assertEq(stable.balanceOf(address(reserve)), 0);
         assertEq(stable.totalSupply(), 109 ether);
         assertEq(workOracle.mintingRights(WORKER), rights);
-        assertEq(backedVault.totalWorkMinted(), 10 ether);
+        assertEq(backedVault.totalEarned(), 10 ether);
     }
 
     function test_rejectsZeroAmountAndDustWithZeroPayout() public {
@@ -250,7 +250,7 @@ contract RedemptionTest is WorkBackingFixture {
         _open(BORROWER, 180 ether, 100 ether);
         _giveStable(2);
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(2, 1, BORROWER), 1);
+        assertEq(backedVault.cash(2, 1, BORROWER), 1);
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
         assertEq(c, 180 ether - 1);
         assertEq(d, 100 ether - 2);
@@ -268,7 +268,7 @@ contract RedemptionTest is WorkBackingFixture {
             10 ether, out + 1, BORROWER, REDEEMER, abi.encodeWithSelector(CDPVault.MinimumOutNotMet.selector)
         );
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(10 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, BORROWER), out);
     }
 
     function test_shortReserveWithNoCandidateDoesNotPartiallyPayOrBurn() public {
@@ -342,7 +342,7 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 out = _quote(10 ether);
         assertLt(out, _parQuote(10 ether), "a par payout is what used to worsen the ratio");
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(10 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, BORROWER), out);
         // The improvement is sub-whole-percent, so compare the exact fractions the guard compares
         // rather than the rounded ratio: 162.315/90 against 180/100.
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
@@ -371,7 +371,7 @@ contract RedemptionTest is WorkBackingFixture {
         // refused and not the burn.
         uint256 out = _quote(10 ether);
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(10 ether, out, SECOND_BORROWER), out);
+        assertEq(backedVault.cash(10 ether, out, SECOND_BORROWER), out);
     }
 
     function test_stalePrimaryAndNhiEachRefuseEvenReserveOnlyRedemption() public {
@@ -402,7 +402,7 @@ contract RedemptionTest is WorkBackingFixture {
         _expectUnchanged(10 ether, 0, BORROWER, REDEEMER, abi.encodeWithSelector(CDPVault.StaleFeed.selector));
         vm.clearMockedCalls();
         (uint256 primaryPrice,) = primary.latestValue();
-        uint256 justOutside = primaryPrice + primaryPrice * backedVault.maxDivergenceBps() / 10_000 + 1;
+        uint256 justOutside = primaryPrice + primaryPrice * backedVault.skew() / 10_000 + 1;
         vm.mockCall(
             spot, abi.encodeCall(ISwarmFeed.latestValue, ()), abi.encode(justOutside, uint64(vm.getBlockTimestamp()))
         );
@@ -422,7 +422,7 @@ contract RedemptionTest is WorkBackingFixture {
         _giveStable(10 ether);
         _reserveIMD(50 ether);
         vm.prank(REDEEMER);
-        backedVault.redeem(10 ether, 0, BORROWER);
+        backedVault.cash(10 ether, 0, BORROWER);
         _expectUnchanged(
             10 ether,
             0,
@@ -497,7 +497,7 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 second = _quote(10 ether);
         assertLt(second, 9.85 ether, "the cap binds at the boundary too");
         vm.prank(WORKER);
-        assertEq(backedVault.redeem(10 ether, second, address(0)), second);
+        assertEq(backedVault.cash(10 ether, second, address(0)), second);
         assertGt(
             backedVault.reserveValue() * 240 ether,
             beforeBacking * stable.totalSupply(),
@@ -561,7 +561,7 @@ contract RedemptionTest is WorkBackingFixture {
         uint256 out = _quote(10 ether);
         assertGt(out, first, "a recapitalized reserve pays more for the same burn");
         vm.prank(WORKER);
-        assertEq(backedVault.redeem(10 ether, out, address(0)), out);
+        assertEq(backedVault.cash(10 ether, out, address(0)), out);
         assertEq(backedVault.reserveValue(), (heldAfterFirst + 400 ether - out) / 2);
         assertGt(backedVault.reserveValue() * 240 ether, beforeBacking * stable.totalSupply());
         assertEq(stable.totalSupply(), 230 ether);
@@ -631,7 +631,7 @@ contract RedemptionTest is WorkBackingFixture {
         bytes32 positionBefore = _positionState(BORROWER);
 
         vm.prank(REDEEMER);
-        uint256 out = backedVault.redeem(amount, expectedOut, BORROWER);
+        uint256 out = backedVault.cash(amount, expectedOut, BORROWER);
 
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
         assertEq(out, expectedOut, "one feed-priced, rounded-down payout");
@@ -657,7 +657,7 @@ contract RedemptionTest is WorkBackingFixture {
     function _assertCeilingBoundary(uint256 nhi, uint256 minimum, uint256 ceiling) private {
         health.setValue(nhi);
         assertEq(backedVault.mat(), minimum);
-        assertEq(backedVault.redemptionSpread(), 50);
+        assertEq(backedVault.gap(), 50);
         assertEq(backedVault.redemptionCeilingCR(), ceiling);
         uint256 c = ceiling * 1 ether;
         _open(BORROWER, c, 100 ether);
@@ -671,7 +671,7 @@ contract RedemptionTest is WorkBackingFixture {
         assertEq(backedVault.collateralRatio(BORROWER), ceiling - 1);
         uint256 out = _quote(1 ether);
         vm.prank(REDEEMER);
-        assertEq(backedVault.redeem(1 ether, out, BORROWER), out);
+        assertEq(backedVault.cash(1 ether, out, BORROWER), out);
         (uint256 afterCollateral, uint256 afterDebt) = backedVault.positions(BORROWER);
         assertEq(afterCollateral, c - 1 - out);
         assertEq(afterDebt, 99 ether);
@@ -756,7 +756,7 @@ contract RedemptionTest is WorkBackingFixture {
     function _expectProRata(uint256 amount, uint256 minOut, address candidate, address payer) private {
         uint256 backingBefore1 = _econBacking();
         vm.prank(payer);
-        backedVault.redeem(amount, minOut, candidate);
+        backedVault.cash(amount, minOut, candidate);
         assertGe(_econBacking(), backingBefore1, "a redemption must not worsen backing");
     }
 
@@ -766,7 +766,7 @@ contract RedemptionTest is WorkBackingFixture {
         bytes32 beforeState = _state(candidate, payer);
         vm.prank(payer);
         vm.expectRevert(error);
-        backedVault.redeem(amount, minOut, candidate);
+        backedVault.cash(amount, minOut, candidate);
         assertEq(_state(candidate, payer), beforeState, "failed redemption left a partial state transition");
     }
 

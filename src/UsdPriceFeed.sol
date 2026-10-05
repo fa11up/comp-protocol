@@ -17,7 +17,7 @@ import {CHAINLINK_ETH_USD, ETH_USD_MAX_AGE} from "./DeploymentConfig.sol";
 ///
 /// The USD leg is read with a low-level staticcall rather than a typed call. A typed call to an
 /// aggregator that is missing, paused or returning a malformed answer reverts, and that revert would
-/// surface as `workCeiling()` reverting — which blocks every work mint and breaks the view the
+/// surface as `earnLine()` reverting — which blocks every work mint and breaks the view the
 /// frontend reads. Here such a leg reads as zero, which is reported as stale, which values whatever
 /// it priced at nothing. Degrading the ceiling is the safe direction; bricking the channel is not.
 contract UsdPriceFeed is ISwarmFeed {

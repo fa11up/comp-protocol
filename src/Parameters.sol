@@ -6,12 +6,12 @@ import {Governed} from "./Governed.sol";
 import {Treasury} from "./Treasury.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 import {
-    MARKER_SHARE_BPS,
-    MAX_DIVERGENCE_BPS,
-    PROTOCOL_BONUS_SHARE_BPS,
+    CHIP_BPS,
+    SKEW_BPS,
+    CUT_BPS,
     DUTY_BPS,
-    WORK_RATIO_BPS,
-    UNITS_PER_TASK_WAD
+    EARN_MAT_BPS,
+    WAGE_WAD
 } from "./DeploymentConfig.sol";
 
 /// @notice The vault's economic knobs, moved out of source constants into a governed contract.
@@ -37,10 +37,10 @@ interface ICheckpointedVault {
 contract Parameters is Governed {
     struct ParamSet {
         uint256 line;
-        uint256 protocolBonusShareBps;
+        uint256 cut;
         uint256 duty;
-        uint256 maxDivergenceBps;
-        uint256 markerShareBps;
+        uint256 skew;
+        uint256 chip;
     }
 
     /// @notice What a pending payload changes. One Governed slot, several shapes of change: the
@@ -51,10 +51,10 @@ contract Parameters is Governed {
     /// naming an asset — and so the set a borrower prices against keeps its shape.
     enum Change {
         Economics,
-        WorkRatio,
+        EarnMat,
         ReserveAsset,
-        UnitsPerTask,
-        RedemptionSpread
+        Wage,
+        Gap
     }
 
     uint256 private constant BPS = 10_000;
@@ -62,7 +62,7 @@ contract Parameters is Governed {
     /// @notice Hard cap on the work ceiling's ratio term. 5000 is the cliff where worst-case backing
     /// touches one at the loosest NHI (mat 150); this is half of it, 120% with an empty reserve.
     /// A constant, so governance can lower the ratio and can never raise it past here.
-    uint256 public constant MAX_WORK_RATIO_BPS = 2_500;
+    uint256 public constant MAX_EARN_MAT_BPS = 2_500;
 
     /// @notice Hard cap on the COMP one accepted task earns. One task can never be worth more than
     /// one COMP, whatever a governor proposes.
@@ -71,12 +71,12 @@ contract Parameters is Governed {
     /// because the two multiply — an unbounded rate would let a governor turn a modest task count
     /// into a claim the ceiling then has to absorb — and because a rate above one COMP per task makes
     /// no sense against a token meant to be worth a dollar.
-    uint256 public constant MAX_UNITS_PER_TASK_WAD = 1 ether;
+    uint256 public constant MAX_WAGE_WAD = 1 ether;
 
-    uint256 public constant MIN_REDEMPTION_SPREAD = 25;
-    uint256 public constant MAX_REDEMPTION_SPREAD = 100;
+    uint256 public constant MIN_GAP = 25;
+    uint256 public constant MAX_GAP = 100;
     /// @notice Ratio points above the NHI-derived mat, never an absolute ceiling.
-    uint256 public redemptionSpread = 50;
+    uint256 public gap = 50;
 
     /// @notice Hard cap on the annual stability fee. 10% is high for a fee this protocol charges on
     /// its own stablecoin; above it the fee stops being a cost of borrowing and becomes a way to
@@ -89,16 +89,16 @@ contract Parameters is Governed {
 
     /// @notice Ceiling on the divergence bound. The bound is the only thing standing between a bad
     /// attestation and the collateral; at 20% it is already permissive.
-    uint256 public constant MAX_DIVERGENCE_BPS_LIMIT = 2_000;
+    uint256 public constant MAX_SKEW_BPS = 2_000;
 
     /// @notice The live values.
     ParamSet private _current;
 
     /// @notice The live ratio term of the vault's work ceiling, in basis points of totalDebt.
-    uint256 private _workRatioBps;
+    uint256 private _earnMat;
 
     /// @notice The live COMP-per-accepted-task rate, 1e18-scaled.
-    uint256 private _unitsPerTaskWad;
+    uint256 private _wage;
 
     /// @notice The vault these parameters govern: its creator, fixed at construction.
     /// @dev Needed for two things that cannot be done without it: checking a proposed ceiling
@@ -112,9 +112,9 @@ contract Parameters is Governed {
     error DivergenceOutOfRange(uint256 bps);
     error SharesExceedBonus(uint256 markerBps, uint256 protocolBps);
     error ZeroCeiling();
-    error WorkRatioTooHigh(uint256 bps);
-    error UnitsPerTaskTooHigh(uint256 wad);
-    error RedemptionSpreadOutOfRange(uint256 spread);
+    error EarnMatTooHigh(uint256 bps);
+    error WageTooHigh(uint256 wad);
+    error GapOutOfRange(uint256 spread);
 
     /// @dev Seeded from the shipped constants, so a fresh Parameters is exactly the configuration
     /// the vault would have had with them compiled in — including the unlimited default ceiling,
@@ -137,19 +137,19 @@ contract Parameters is Governed {
         vault = vault_;
         _current = ParamSet({
             line: type(uint256).max,
-            protocolBonusShareBps: PROTOCOL_BONUS_SHARE_BPS,
+            cut: CUT_BPS,
             duty: DUTY_BPS,
-            maxDivergenceBps: MAX_DIVERGENCE_BPS,
-            markerShareBps: MARKER_SHARE_BPS
+            skew: SKEW_BPS,
+            chip: CHIP_BPS
         });
         // The shipped ratio is subject to the same bound as any proposal; a constant above the cap
         // is a misconfiguration this contract refuses to be deployed with.
-        if (WORK_RATIO_BPS > MAX_WORK_RATIO_BPS) revert WorkRatioTooHigh(WORK_RATIO_BPS);
-        _workRatioBps = WORK_RATIO_BPS;
+        if (EARN_MAT_BPS > MAX_EARN_MAT_BPS) revert EarnMatTooHigh(EARN_MAT_BPS);
+        _earnMat = EARN_MAT_BPS;
         // Same treatment as the ratio: a shipped constant above its own cap is a misconfiguration
         // this contract refuses to exist with, rather than one discovered at the first proposal.
-        if (UNITS_PER_TASK_WAD > MAX_UNITS_PER_TASK_WAD) revert UnitsPerTaskTooHigh(UNITS_PER_TASK_WAD);
-        _unitsPerTaskWad = UNITS_PER_TASK_WAD;
+        if (WAGE_WAD > MAX_WAGE_WAD) revert WageTooHigh(WAGE_WAD);
+        _wage = WAGE_WAD;
     }
 
     /// @notice Queue a complete replacement set. Always all five, so the pending payload is the whole
@@ -158,18 +158,18 @@ contract Parameters is Governed {
         _propose(abi.encode(Change.Economics, next));
     }
 
-    /// @notice Queue a change to the work ceiling's ratio term. Refused above MAX_WORK_RATIO_BPS.
-    function proposeWorkRatio(uint256 bps) external {
-        _propose(abi.encode(Change.WorkRatio, bps));
+    /// @notice Queue a change to the work ceiling's ratio term. Refused above MAX_EARN_MAT_BPS.
+    function proposeEarnMat(uint256 bps) external {
+        _propose(abi.encode(Change.EarnMat, bps));
     }
 
     /// @notice Queue a change to the COMP an accepted task earns. Refused above one COMP per task.
-    function proposeUnitsPerTask(uint256 wad) external {
-        _propose(abi.encode(Change.UnitsPerTask, wad));
+    function proposeWage(uint256 wad) external {
+        _propose(abi.encode(Change.Wage, wad));
     }
 
-    function proposeRedemptionSpread(uint256 spread) external {
-        _propose(abi.encode(Change.RedemptionSpread, spread));
+    function proposeGap(uint256 spread) external {
+        _propose(abi.encode(Change.Gap, spread));
     }
 
     /// @notice Queue a listing, repricing or (with a zero price source) delisting of one of the
@@ -184,33 +184,33 @@ contract Parameters is Governed {
         return _current;
     }
 
-    function workRatioBps() external view returns (uint256) {
-        return _workRatioBps;
+    function earnMat() external view returns (uint256) {
+        return _earnMat;
     }
 
     /// @notice What SwarmWorkOracle multiplies an attested task count by, 1e18-scaled.
-    function unitsPerTaskWad() external view returns (uint256) {
-        return _unitsPerTaskWad;
+    function wage() external view returns (uint256) {
+        return _wage;
     }
 
     function line() external view returns (uint256) {
         return _current.line;
     }
 
-    function protocolBonusShareBps() external view returns (uint256) {
-        return _current.protocolBonusShareBps;
+    function cut() external view returns (uint256) {
+        return _current.cut;
     }
 
     function duty() external view returns (uint256) {
         return _current.duty;
     }
 
-    function maxDivergenceBps() external view returns (uint256) {
-        return _current.maxDivergenceBps;
+    function skew() external view returns (uint256) {
+        return _current.skew;
     }
 
-    function markerShareBps() external view returns (uint256) {
-        return _current.markerShareBps;
+    function chip() external view returns (uint256) {
+        return _current.chip;
     }
 
     /// @notice What kind of change is waiting, and when it can be applied; eta is zero if nothing is.
@@ -228,16 +228,16 @@ contract Parameters is Governed {
         return (next, at);
     }
 
-    function pendingWorkRatio() external view returns (uint256 bps, uint256 eta) {
+    function pendingEarnMat() external view returns (uint256 bps, uint256 eta) {
         (Change kind, uint256 at) = pendingChange();
-        if (at == 0 || kind != Change.WorkRatio) return (0, 0);
+        if (at == 0 || kind != Change.EarnMat) return (0, 0);
         (, bps) = abi.decode(pending, (Change, uint256));
         return (bps, at);
     }
 
-    function pendingRedemptionSpread() external view returns (uint256 spread, uint256 eta) {
+    function pendingGap() external view returns (uint256 spread, uint256 eta) {
         (Change kind, uint256 at) = pendingChange();
-        if (at == 0 || kind != Change.RedemptionSpread) return (0, 0);
+        if (at == 0 || kind != Change.Gap) return (0, 0);
         (, spread) = abi.decode(pending, (Change, uint256));
         return (spread, at);
     }
@@ -263,21 +263,21 @@ contract Parameters is Governed {
 
     function _validate(bytes memory payload) internal view override {
         Change kind = _kind(payload);
-        if (kind == Change.RedemptionSpread) {
+        if (kind == Change.Gap) {
             (, uint256 spread) = abi.decode(payload, (Change, uint256));
-            if (spread < MIN_REDEMPTION_SPREAD || spread > MAX_REDEMPTION_SPREAD) {
-                revert RedemptionSpreadOutOfRange(spread);
+            if (spread < MIN_GAP || spread > MAX_GAP) {
+                revert GapOutOfRange(spread);
             }
             return;
         }
-        if (kind == Change.WorkRatio) {
+        if (kind == Change.EarnMat) {
             (, uint256 bps) = abi.decode(payload, (Change, uint256));
-            if (bps > MAX_WORK_RATIO_BPS) revert WorkRatioTooHigh(bps);
+            if (bps > MAX_EARN_MAT_BPS) revert EarnMatTooHigh(bps);
             return;
         }
-        if (kind == Change.UnitsPerTask) {
+        if (kind == Change.Wage) {
             (, uint256 wad) = abi.decode(payload, (Change, uint256));
-            if (wad > MAX_UNITS_PER_TASK_WAD) revert UnitsPerTaskTooHigh(wad);
+            if (wad > MAX_WAGE_WAD) revert WageTooHigh(wad);
             return;
         }
         if (kind == Change.ReserveAsset) {
@@ -290,20 +290,20 @@ contract Parameters is Governed {
         (, ParamSet memory next) = abi.decode(payload, (Change, ParamSet));
 
         if (next.duty > MAX_DUTY_BPS) revert FeeTooHigh(next.duty);
-        if (next.maxDivergenceBps < MIN_DIVERGENCE_BPS || next.maxDivergenceBps > MAX_DIVERGENCE_BPS_LIMIT) {
-            revert DivergenceOutOfRange(next.maxDivergenceBps);
+        if (next.skew < MIN_DIVERGENCE_BPS || next.skew > MAX_SKEW_BPS) {
+            revert DivergenceOutOfRange(next.skew);
         }
         // The vault pays the marker out of the liquidator's bonus and keeps the protocol's cut from
         // the same bonus; together they cannot exceed it, or a liquidation owes more than it earns.
         //
         // AUDIT NOTE (job c71449d1, info): this bound is economically empty at its top. At
-        // protocolBonusShareBps 10000 a liquidator who did not mark receives exactly the principal
+        // cut 10000 a liquidator who did not mark receives exactly the principal
         // back — no reward for the stablecoin, the inventory risk or the gas — so liquidations stop
         // and bad debt accumulates. It stays a bound rather than a tighter cap because the borrower's
         // loss is identical at every split and the change is visible for 48 hours, so this is a trust
         // assumption to state plainly, not a bypass to close.
-        if (next.markerShareBps + next.protocolBonusShareBps > BPS) {
-            revert SharesExceedBonus(next.markerShareBps, next.protocolBonusShareBps);
+        if (next.chip + next.cut > BPS) {
+            revert SharesExceedBonus(next.chip, next.cut);
         }
         if (next.line == 0) revert ZeroCeiling();
 
@@ -321,16 +321,16 @@ contract Parameters is Governed {
 
     function _apply(bytes memory payload) internal override {
         Change kind = _kind(payload);
-        if (kind == Change.RedemptionSpread) {
-            (, redemptionSpread) = abi.decode(payload, (Change, uint256));
+        if (kind == Change.Gap) {
+            (, gap) = abi.decode(payload, (Change, uint256));
             return;
         }
-        if (kind == Change.WorkRatio) {
-            (, _workRatioBps) = abi.decode(payload, (Change, uint256));
+        if (kind == Change.EarnMat) {
+            (, _earnMat) = abi.decode(payload, (Change, uint256));
             return;
         }
-        if (kind == Change.UnitsPerTask) {
-            (, _unitsPerTaskWad) = abi.decode(payload, (Change, uint256));
+        if (kind == Change.Wage) {
+            (, _wage) = abi.decode(payload, (Change, uint256));
             return;
         }
         if (kind == Change.ReserveAsset) {

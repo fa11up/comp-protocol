@@ -42,7 +42,7 @@ contract BadDebtSweepTest is Test {
         imd = new MockIMD();
         priceFeed = new TestSwarmFeed(1e18);
         spotFeed = new TestSwarmFeed(1e18);
-        // NHI 0.60 pins mat at 200 and gracePeriod at zero, so a mark is actionable at once.
+        // NHI 0.60 pins mat at 200 and lull at zero, so a mark is actionable at once.
         nhiFeed = new TestSwarmFeed(0.6e18);
         vault = new BaselineVault(
             address(imd), address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)

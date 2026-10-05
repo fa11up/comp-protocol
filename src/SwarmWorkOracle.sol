@@ -9,7 +9,7 @@ import {
     ATTESTATION_CHAIN_ID,
     ATTESTATION_ANSWER_TYPE,
     ERC8004_ADAPTER,
-    UNITS_PER_TASK_WAD,
+    WAGE_WAD,
     WORK_ORACLE_FACTORY
 } from "./DeploymentConfig.sol";
 
@@ -150,7 +150,7 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
 
         uint256 already = creditedTasks[agentId];
         if (cumulative <= already) revert NothingToClaim();
-        rights = (cumulative - already) * unitsPerTaskWad();
+        rights = (cumulative - already) * wage();
         creditedTasks[agentId] = cumulative;
         creditedRights[msg.sender] += rights;
         emit TallyClaimed(agentId, msg.sender, cumulative, rights);
@@ -179,13 +179,13 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
     /// @dev Probed rather than required, so one oracle serves a plain CDPVault and a ParameterizedVault
     /// without a second artifact. The bound lives in Parameters, which refuses more than one COMP per
     /// task; a vault with no parameters cannot change the figure at all.
-    function unitsPerTaskWad() public view returns (uint256) {
+    function wage() public view returns (uint256) {
         (bool ok, bytes memory data) = vault.staticcall(abi.encodeWithSignature("parameters()"));
-        if (!ok || data.length != 32) return UNITS_PER_TASK_WAD;
+        if (!ok || data.length != 32) return WAGE_WAD;
         address parameters = address(uint160(abi.decode(data, (uint256))));
-        if (parameters == address(0)) return UNITS_PER_TASK_WAD;
-        (ok, data) = parameters.staticcall(abi.encodeWithSignature("unitsPerTaskWad()"));
-        if (!ok || data.length != 32) return UNITS_PER_TASK_WAD;
+        if (parameters == address(0)) return WAGE_WAD;
+        (ok, data) = parameters.staticcall(abi.encodeWithSignature("wage()"));
+        if (!ok || data.length != 32) return WAGE_WAD;
         return abi.decode(data, (uint256));
     }
 

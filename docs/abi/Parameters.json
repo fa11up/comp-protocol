@@ -12,19 +12,6 @@
   },
   {
     "type": "function",
-    "name": "MAX_DIVERGENCE_BPS_LIMIT",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "MAX_DUTY_BPS",
     "inputs": [],
     "outputs": [
@@ -38,7 +25,7 @@
   },
   {
     "type": "function",
-    "name": "MAX_REDEMPTION_SPREAD",
+    "name": "MAX_EARN_MAT_BPS",
     "inputs": [],
     "outputs": [
       {
@@ -51,7 +38,7 @@
   },
   {
     "type": "function",
-    "name": "MAX_UNITS_PER_TASK_WAD",
+    "name": "MAX_GAP",
     "inputs": [],
     "outputs": [
       {
@@ -64,7 +51,20 @@
   },
   {
     "type": "function",
-    "name": "MAX_WORK_RATIO_BPS",
+    "name": "MAX_SKEW_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_WAGE_WAD",
     "inputs": [],
     "outputs": [
       {
@@ -90,7 +90,7 @@
   },
   {
     "type": "function",
-    "name": "MIN_REDEMPTION_SPREAD",
+    "name": "MIN_GAP",
     "inputs": [],
     "outputs": [
       {
@@ -130,6 +130,19 @@
   },
   {
     "type": "function",
+    "name": "chip",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "current",
     "inputs": [],
     "outputs": [
@@ -144,7 +157,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "protocolBonusShareBps",
+            "name": "cut",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -154,12 +167,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "maxDivergenceBps",
+            "name": "skew",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "markerShareBps",
+            "name": "chip",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -170,7 +183,46 @@
   },
   {
     "type": "function",
+    "name": "cut",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "duty",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "earnMat",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "gap",
     "inputs": [],
     "outputs": [
       {
@@ -197,32 +249,6 @@
   {
     "type": "function",
     "name": "line",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "markerShareBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "maxDivergenceBps",
     "inputs": [],
     "outputs": [
       {
@@ -266,6 +292,24 @@
   },
   {
     "type": "function",
+    "name": "pendingEarnMat",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "eta",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pendingEta",
     "inputs": [],
     "outputs": [
@@ -279,7 +323,7 @@
   },
   {
     "type": "function",
-    "name": "pendingRedemptionSpread",
+    "name": "pendingGap",
     "inputs": [],
     "outputs": [
       {
@@ -339,7 +383,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "protocolBonusShareBps",
+            "name": "cut",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -349,34 +393,16 @@
             "internalType": "uint256"
           },
           {
-            "name": "maxDivergenceBps",
+            "name": "skew",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "markerShareBps",
+            "name": "chip",
             "type": "uint256",
             "internalType": "uint256"
           }
         ]
-      },
-      {
-        "name": "eta",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pendingWorkRatio",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "bps",
-        "type": "uint256",
-        "internalType": "uint256"
       },
       {
         "name": "eta",
@@ -401,7 +427,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "protocolBonusShareBps",
+            "name": "cut",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -411,12 +437,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "maxDivergenceBps",
+            "name": "skew",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "markerShareBps",
+            "name": "chip",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -428,7 +454,20 @@
   },
   {
     "type": "function",
-    "name": "proposeRedemptionSpread",
+    "name": "proposeEarnMat",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeGap",
     "inputs": [
       {
         "name": "spread",
@@ -464,7 +503,7 @@
   },
   {
     "type": "function",
-    "name": "proposeUnitsPerTask",
+    "name": "proposeWage",
     "inputs": [
       {
         "name": "wad",
@@ -477,46 +516,7 @@
   },
   {
     "type": "function",
-    "name": "proposeWorkRatio",
-    "inputs": [
-      {
-        "name": "bps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "protocolBonusShareBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "redemptionSpread",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "unitsPerTaskWad",
+    "name": "skew",
     "inputs": [],
     "outputs": [
       {
@@ -542,7 +542,7 @@
   },
   {
     "type": "function",
-    "name": "workRatioBps",
+    "name": "wage",
     "inputs": [],
     "outputs": [
       {
@@ -611,10 +611,32 @@
   },
   {
     "type": "error",
+    "name": "EarnMatTooHigh",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "FeeTooHigh",
     "inputs": [
       {
         "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GapOutOfRange",
+    "inputs": [
+      {
+        "name": "spread",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -634,17 +656,6 @@
     "type": "error",
     "name": "ProposalPending",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RedemptionSpreadOutOfRange",
-    "inputs": [
-      {
-        "name": "spread",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -675,21 +686,10 @@
   },
   {
     "type": "error",
-    "name": "UnitsPerTaskTooHigh",
+    "name": "WageTooHigh",
     "inputs": [
       {
         "name": "wad",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "WorkRatioTooHigh",
-    "inputs": [
-      {
-        "name": "bps",
         "type": "uint256",
         "internalType": "uint256"
       }

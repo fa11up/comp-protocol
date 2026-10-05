@@ -13,9 +13,9 @@ import {FreshUsdAggregator} from "./helpers/WorkBackingFixture.sol";
 import {
     APPROVED_OPERATOR,
     CHAINLINK_ETH_USD,
-    MARKER_SHARE_BPS,
-    MAX_DIVERGENCE_BPS,
-    PROTOCOL_BONUS_SHARE_BPS,
+    CHIP_BPS,
+    SKEW_BPS,
+    CUT_BPS,
     DUTY_BPS
 } from "../src/DeploymentConfig.sol";
 
@@ -92,19 +92,19 @@ contract ParametersTest is Test {
     /// @dev A fresh Parameters is the shipped configuration, so binding it changes nothing.
     function test_governanceStartsFromTheShippedConfiguration() public view {
         assertEq(vault.line(), type(uint256).max);
-        assertEq(vault.protocolBonusShareBps(), PROTOCOL_BONUS_SHARE_BPS);
+        assertEq(vault.cut(), CUT_BPS);
         assertEq(vault.duty(), DUTY_BPS);
-        assertEq(vault.maxDivergenceBps(), MAX_DIVERGENCE_BPS);
-        assertEq(vault.markerShareBps(), MARKER_SHARE_BPS);
+        assertEq(vault.skew(), SKEW_BPS);
+        assertEq(vault.chip(), CHIP_BPS);
     }
 
     function test_everyEconomicKnobCanBeSourcedFromOutsideTheVault() public {
         _govern(_set(250 ether, 2_000, 400, 800, 1_500));
         assertEq(vault.line(), 250 ether, "ceiling follows the parameters contract");
-        assertEq(vault.protocolBonusShareBps(), 2_000);
+        assertEq(vault.cut(), 2_000);
         assertEq(vault.duty(), 400);
-        assertEq(vault.maxDivergenceBps(), 800);
-        assertEq(vault.markerShareBps(), 1_500);
+        assertEq(vault.skew(), 800);
+        assertEq(vault.chip(), 1_500);
     }
 
     /// @dev The knobs are not decorative: a tightened ceiling binds on the next mint.

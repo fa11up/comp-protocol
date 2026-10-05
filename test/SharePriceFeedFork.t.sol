@@ -141,7 +141,7 @@ contract SharePriceFeedForkTest is Test {
     }
 
     /// @dev A vault that stops answering must read as stale, never revert: a reverting price source
-    /// would take `reserveValueUsd`, `workCeiling` and every dependent mint down with it.
+    /// would take `reserveValueUsd`, `earnLine` and every dependent mint down with it.
     function test_aVaultThatStopsAnsweringReadsAsStaleNotAsARevert() public {
         vm.mockCallRevert(SIMD, abi.encodeWithSignature("convertToAssets(uint256)", uint256(1e18)), "dead");
         assertTrue(feed.isStale(), "unreadable is stale");

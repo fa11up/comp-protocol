@@ -78,7 +78,7 @@ contract AtomicRedeemer {
         vault.lock(deposit);
         if (mint != 0) vault.draw(mint);
         bytes memory result;
-        (ok, result) = address(vault).call(abi.encodeCall(vault.redeem, (amount, 0, candidate)));
+        (ok, result) = address(vault).call(abi.encodeCall(vault.cash, (amount, 0, candidate)));
         if (ok) out = abi.decode(result, (uint256));
         uint256 debt = vault.debtOf(address(this));
         uint256 held = vault.stablecoin().balanceOf(address(this));
@@ -138,7 +138,7 @@ contract RedemptionTest is Test {
         assertEq(vault.reserveValue(), 0, "unregistered IMD still spends first");
 
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(10 ether, payout, address(0)), payout);
+        assertEq(vault.cash(10 ether, payout, address(0)), payout);
 
         assertEq(comp.totalSupply(), supply - 10 ether);
         assertEq(comp.balanceOf(REDEEMER), 10 ether);
@@ -159,7 +159,7 @@ contract RedemptionTest is Test {
         uint256 ratioBefore = vault.collateralRatio(ALICE);
 
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, payout, ALICE);
+        vault.cash(10 ether, payout, ALICE);
 
         _assertPosition(ALICE, 180 ether - payout, 90 ether);
         assertGt(vault.collateralRatio(ALICE), ratioBefore);
@@ -181,7 +181,7 @@ contract RedemptionTest is Test {
         _fundReserve(reserveOut);
 
         vm.prank(REDEEMER);
-        vault.redeem(amount, payout, ALICE);
+        vault.cash(amount, payout, ALICE);
 
         assertEq(imd.balanceOf(address(treasury)), 0);
         assertEq(imd.balanceOf(REDEEMER), payout);
@@ -197,12 +197,12 @@ contract RedemptionTest is Test {
         uint256 payout = _quote(10 ether, 1 ether);
         _fundReserve(payout - 1);
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, payout, ALICE);
+        vault.cash(10 ether, payout, ALICE);
         assertEq(imd.balanceOf(address(treasury)), 0);
         assertEq(imd.balanceOf(REDEEMER), payout);
         _assertPosition(ALICE, 180 ether - 1, 100 ether - 2);
         assertEq(vault.totalNonPrincipalRedeemed(), 10 ether - 2);
-        assertEq(comp.totalSupply(), vault.totalDebt() + vault.totalWorkMinted() - vault.totalNonPrincipalRedeemed());
+        assertEq(comp.totalSupply(), vault.totalDebt() + vault.totalEarned() - vault.totalNonPrincipalRedeemed());
     }
 
     function test_payoutIsIndependentOfWhichEligiblePositionSuppliesIt() public {
@@ -211,10 +211,10 @@ contract RedemptionTest is Test {
         _giveStable(50 ether);
         uint256 snapshot = vm.snapshotState();
         vm.prank(REDEEMER);
-        uint256 first = vault.redeem(10 ether, 0, ALICE);
+        uint256 first = vault.cash(10 ether, 0, ALICE);
         assertTrue(vm.revertToState(snapshot));
         vm.prank(REDEEMER);
-        uint256 second = vault.redeem(10 ether, 0, BOB);
+        uint256 second = vault.cash(10 ether, 0, BOB);
         assertEq(first, second);
     }
 
@@ -225,7 +225,7 @@ contract RedemptionTest is Test {
         _giveStable(10 ether);
         assertEq(vault.collateralRatio(ALICE), 180);
         vm.prank(REDEEMER);
-        uint256 payout = vault.redeem(10 ether, 4.85 ether, ALICE);
+        uint256 payout = vault.cash(10 ether, 4.85 ether, ALICE);
         assertEq(payout, 4.85 ether);
         assertEq(imd.balanceOf(REDEEMER), payout);
         _assertPosition(ALICE, 90 ether - payout, 90 ether);
@@ -238,12 +238,12 @@ contract RedemptionTest is Test {
         assertEq(vault.redemptionCeilingCR(), 200);
         vm.expectRevert();
         vm.prank(REDEEMER);
-        vault.redeem(1 ether, 0, ALICE);
+        vault.cash(1 ether, 0, ALICE);
         nhi.setValue(0.6 ether);
         assertEq(vault.mat(), 200);
         assertEq(vault.redemptionCeilingCR(), 250);
         vm.prank(REDEEMER);
-        vault.redeem(1 ether, 0, ALICE);
+        vault.cash(1 ether, 0, ALICE);
         assertGt(vault.collateralRatio(ALICE), 200);
     }
 
@@ -251,7 +251,7 @@ contract RedemptionTest is Test {
         _open(ALICE, 200 ether - 1, 100 ether);
         _giveStable(1 ether);
         vm.prank(REDEEMER);
-        vault.redeem(1 ether, 0, ALICE);
+        vault.cash(1 ether, 0, ALICE);
         assertEq(vault.debtOf(ALICE), 99 ether);
     }
 
@@ -262,7 +262,7 @@ contract RedemptionTest is Test {
         bytes32 before = _state(ALICE);
         vm.expectRevert();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         assertEq(_state(ALICE), before);
     }
 
@@ -274,10 +274,10 @@ contract RedemptionTest is Test {
         bytes32 before = _state(ALICE);
         vm.expectRevert();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, payout + 1, ALICE);
+        vault.cash(10 ether, payout + 1, ALICE);
         assertEq(_state(ALICE), before);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(10 ether, payout, ALICE), payout);
+        assertEq(vault.cash(10 ether, payout, ALICE), payout);
     }
 
     function test_callerMustOwnTheWholeBurn() public {
@@ -287,7 +287,7 @@ contract RedemptionTest is Test {
         bytes32 before = _state(ALICE);
         vm.expectRevert();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         assertEq(_state(ALICE), before);
     }
 
@@ -297,10 +297,10 @@ contract RedemptionTest is Test {
         _giveStable(50 ether);
         vm.expectRevert();
         vm.prank(REDEEMER);
-        vault.redeem(1 ether, 0, address(0));
+        vault.cash(1 ether, 0, address(0));
         vm.expectRevert();
         vm.prank(REDEEMER);
-        vault.redeem(11 ether, 0, BOB);
+        vault.cash(11 ether, 0, BOB);
         _assertPosition(BOB, 18 ether, 10 ether);
         assertEq(comp.balanceOf(REDEEMER), 50 ether);
     }
@@ -337,7 +337,7 @@ contract RedemptionTest is Test {
         assertEq(initialRatio, roundedResult, "integer CR would hide deterioration");
         vm.expectRevert(CDPVault.RedemptionWorsensRatio.selector);
         vm.prank(REDEEMER);
-        vault.redeem(1 ether, 0, ALICE);
+        vault.cash(1 ether, 0, ALICE);
         _assertPosition(ALICE, 180 ether, 100 ether);
     }
 
@@ -346,7 +346,7 @@ contract RedemptionTest is Test {
         _giveStable(100 ether);
         uint256 payout = _quote(100 ether, 1 ether);
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, payout, ALICE);
+        vault.cash(100 ether, payout, ALICE);
         _assertPosition(ALICE, 180 ether - payout, 0);
         assertEq(comp.totalSupply(), 0);
         uint256 before = imd.balanceOf(ALICE);
@@ -365,7 +365,7 @@ contract RedemptionTest is Test {
         uint256 recipientComp = comp.balanceOf(address(treasury));
         uint256 mintedFees = vault.totalFeesMinted();
         vm.prank(REDEEMER);
-        vault.redeem(1 ether, 0, ALICE);
+        vault.cash(1 ether, 0, ALICE);
         assertEq(vault.debtOf(ALICE), debt - 1 ether);
         assertEq(vault.stabilityFeeOf(ALICE), fees - 1 ether);
         assertEq(vault.totalDebt(), 100 ether, "accrued fee canceled before principal");
@@ -383,13 +383,13 @@ contract RedemptionTest is Test {
         assertEq(vault.redemptionBaseRate(), 0);
         assertEq(vault.redemptionFeeBps(100 ether), 300);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(100 ether, 0, address(0)), 97 ether);
+        assertEq(vault.cash(100 ether, 0, address(0)), 97 ether);
         assertEq(vault.redemptionBaseRate(), 0.025 ether);
         assertEq(vault.lastRedemptionAt(), block.timestamp);
         assertEq(comp.totalSupply(), 900 ether);
         assertEq(vault.redemptionFeeBps(36 ether), 400);
         vm.prank(REDEEMER);
-        vault.redeem(36 ether, 0, address(0));
+        vault.cash(36 ether, 0, address(0));
         assertEq(vault.redemptionBaseRate(), 0.035 ether);
     }
 
@@ -398,7 +398,7 @@ contract RedemptionTest is Test {
         _giveStable(200 ether);
         _fundReserve(300 ether);
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, address(0));
+        vault.cash(100 ether, 0, address(0));
         uint256 base = vault.redemptionBaseRate();
         vm.warp(block.timestamp + 12 hours);
         assertApproxEqAbs(vault.decayedRedemptionBaseRate(), base / 2, base / 10_000);
@@ -415,7 +415,7 @@ contract RedemptionTest is Test {
         _fundReserve(200 ether);
         assertEq(vault.redemptionFeeBps(80 ether), 500);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(80 ether, 0, address(0)), 76 ether);
+        assertEq(vault.cash(80 ether, 0, address(0)), 76 ether);
         assertEq(vault.redemptionBaseRate(), 0.045 ether);
         assertEq(vault.redemptionFeeBps(20 ether), 500);
         vm.warp(block.timestamp + 12 hours);
@@ -427,25 +427,25 @@ contract RedemptionTest is Test {
         _giveStable(200 ether);
         _fundReserve(300 ether);
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, address(0));
+        vault.cash(100 ether, 0, address(0));
         vm.warp(block.timestamp + 12 hours);
         uint256 expectedBase = vault.decayedRedemptionBaseRate() + 0.025 ether;
         uint256 payout = _quote(90 ether, 1 ether);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(90 ether, payout, address(0)), payout);
+        assertEq(vault.cash(90 ether, payout, address(0)), payout);
         assertEq(vault.redemptionBaseRate(), expectedBase);
         assertEq(vault.lastRedemptionAt(), block.timestamp);
         assertApproxEqAbs(expectedBase, 0.0375 ether, 0.00001 ether);
     }
 
     function test_governedSpreadShipsAtFiftyAndHasSameDelayAndAuthority() public {
-        assertEq(parameters.redemptionSpread(), 50);
-        assertEq(vault.redemptionSpread(), 50);
+        assertEq(parameters.gap(), 50);
+        assertEq(vault.gap(), 50);
         vm.expectRevert(Governed.NotGovernor.selector);
-        parameters.proposeRedemptionSpread(25);
+        parameters.proposeGap(25);
         vm.prank(APPROVED_OPERATOR);
-        parameters.proposeRedemptionSpread(25);
-        (uint256 spread, uint256 eta) = parameters.pendingRedemptionSpread();
+        parameters.proposeGap(25);
+        (uint256 spread, uint256 eta) = parameters.pendingGap();
         assertEq(spread, 25);
         assertEq(eta, block.timestamp + 48 hours);
         assertEq(vault.redemptionCeilingCR(), 200);
@@ -455,11 +455,11 @@ contract RedemptionTest is Test {
         vm.warp(eta);
         vm.prank(REDEEMER);
         parameters.applyPending();
-        assertEq(vault.redemptionSpread(), 25);
+        assertEq(vault.gap(), 25);
         assertEq(vault.redemptionCeilingCR(), 175);
         nhi.setValue(0.6 ether);
         assertEq(vault.redemptionCeilingCR(), 225);
-        (spread, eta) = parameters.pendingRedemptionSpread();
+        (spread, eta) = parameters.pendingGap();
         assertEq(spread, 0);
         assertEq(eta, 0);
     }
@@ -467,12 +467,12 @@ contract RedemptionTest is Test {
     function test_spreadBoundsCannotBeWidenedByGovernor() public {
         vm.expectRevert();
         vm.prank(APPROVED_OPERATOR);
-        parameters.proposeRedemptionSpread(24);
+        parameters.proposeGap(24);
         vm.expectRevert();
         vm.prank(APPROVED_OPERATOR);
-        parameters.proposeRedemptionSpread(101);
+        parameters.proposeGap(101);
         vm.prank(APPROVED_OPERATOR);
-        parameters.proposeRedemptionSpread(100);
+        parameters.proposeGap(100);
         vm.warp(parameters.pendingEta());
         parameters.applyPending();
         assertEq(vault.redemptionCeilingCR(), 250);
@@ -491,17 +491,17 @@ contract RedemptionTest is Test {
 
     function test_workMintedCompConsumesDebtOnlyForCollateralItReceives() public {
         _open(ALICE, 180 ether, 100 ether);
-        uint256 ceiling = vault.workCeiling();
+        uint256 ceiling = vault.earnLine();
         vm.prank(REDEEMER);
-        vault.mintFromWork(10 ether);
+        vault.earn(10 ether);
         uint256 payout = _quote(10 ether, 1 ether);
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, payout, ALICE);
+        vault.cash(10 ether, payout, ALICE);
         _assertPosition(ALICE, 180 ether - payout, 90 ether);
         assertEq(comp.balanceOf(ALICE), 100 ether);
         assertEq(comp.balanceOf(REDEEMER), 0);
-        assertEq(vault.totalWorkMinted(), 10 ether);
-        assertEq(vault.workCeiling(), ceiling - 2.5 ether);
+        assertEq(vault.totalEarned(), 10 ether);
+        assertEq(vault.earnLine(), ceiling - 2.5 ether);
     }
 
     function test_reserveRedemptionCannotWorsenBackingAfterPermittedDebtUnwind() public {
@@ -578,7 +578,7 @@ contract RedemptionTest is Test {
         _fundReserve(9);
         _open(ALICE, 120, 16);
         vm.prank(REDEEMER);
-        vault.mintFromWork(4);
+        vault.earn(4);
         vm.startPrank(ALICE);
         vault.wipe(16);
         vault.free(120);
@@ -614,7 +614,7 @@ contract RedemptionTest is Test {
         uint256 payout = _quote(10 ether, 1 ether);
         assertEq(payout, _parQuote(10 ether, 1 ether), "the cap does not bind once the reserve is funded");
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(10 ether, payout, address(0)), payout);
+        assertEq(vault.cash(10 ether, payout, address(0)), payout);
         assertGt(vault.reserveValue() * supplyBefore, assetsBefore * comp.totalSupply());
     }
 
@@ -629,13 +629,13 @@ contract RedemptionTest is Test {
         _fundReserve(10 ether);
         uint256 reserveValue = vault.reserveValue();
         uint256 backedDebt = vault.backedDebt();
-        uint256 ceiling = vault.workCeiling();
+        uint256 ceiling = vault.earnLine();
         assertEq(reserveValue, 10 ether);
         vm.prank(REDEEMER);
-        vault.redeem(20 ether, 0, ALICE);
+        vault.cash(20 ether, 0, ALICE);
         assertEq(vault.reserveValue(), 0);
         assertLt(vault.backedDebt(), backedDebt);
-        assertLt(vault.workCeiling(), ceiling - reserveValue);
+        assertLt(vault.earnLine(), ceiling - reserveValue);
     }
 
     function test_staleAndDivergentPricesRefuseReserveAndBorrowerPayouts() public {
@@ -666,11 +666,11 @@ contract RedemptionTest is Test {
         _fundReserve(1 ether);
         vm.expectRevert();
         vm.prank(REDEEMER);
-        vault.redeem(0, 0, ALICE);
+        vault.cash(0, 0, ALICE);
         _price(100 ether);
         vm.expectRevert();
         vm.prank(REDEEMER);
-        vault.redeem(1, 0, address(0));
+        vault.cash(1, 0, address(0));
         assertEq(comp.balanceOf(REDEEMER), 50 ether);
     }
 
@@ -692,7 +692,7 @@ contract RedemptionTest is Test {
         _fundReserve(reserveOut);
 
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(amount, payout, ALICE), payout);
+        assertEq(vault.cash(amount, payout, ALICE), payout);
 
         (uint256 remainingCollateral, uint256 remainingDebt) = vault.positions(ALICE);
         assertEq(comp.totalSupply(), debt - amount);
@@ -701,7 +701,7 @@ contract RedemptionTest is Test {
         assertEq(imd.balanceOf(address(treasury)), 0);
         assertEq(remainingDebt, debt - canceled);
         assertEq(vault.totalDebt(), remainingDebt);
-        assertEq(comp.totalSupply(), vault.totalDebt() + vault.totalWorkMinted() - vault.totalNonPrincipalRedeemed());
+        assertEq(comp.totalSupply(), vault.totalDebt() + vault.totalEarned() - vault.totalNonPrincipalRedeemed());
         assertEq(remainingCollateral, collateral - (payout - reserveOut));
         assertEq(imd.balanceOf(address(vault)), remainingCollateral);
         assertGe(remainingCollateral * debt, collateral * remainingDebt, "exact ratio, before integer CR rounding");
@@ -758,12 +758,12 @@ contract RedemptionTest is Test {
         _open(BOB, 3000 ether, 1000 ether);
         uint256 snapshot = vm.snapshotState();
         vm.prank(REDEEMER);
-        uint256 first = vault.redeem(100 ether, 0, address(0));
+        uint256 first = vault.cash(100 ether, 0, address(0));
         assertTrue(vm.revertToState(snapshot));
         vm.prank(BOB);
         vault.free(1500 ether);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(100 ether, 0, address(0)), first);
+        assertEq(vault.cash(100 ether, 0, address(0)), first);
         // Supply 1250 against secured backing 1500 + 100: a burn of 100 may remove at most 128 of
         // value and removes about 97; a burn of 150 may remove 192 and removes about 145. The
         // uncounted 1500 of surplus never enters the comparison, which the ineligible 300% candidate
@@ -787,7 +787,7 @@ contract RedemptionTest is Test {
         uint256 payout = _quote(10 ether, 1 ether);
         assertGt(payout, firstPayout, "a larger reserve pays the same burn more");
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(10 ether, payout, address(0)), payout);
+        assertEq(vault.cash(10 ether, payout, address(0)), payout);
     }
 
     function test_registeredFactorDoesNotChangeHowTheGuardValuesIMD() public {
@@ -806,7 +806,7 @@ contract RedemptionTest is Test {
         _fundReserve(1);
         uint256 payout = _quote(10 ether, 1 ether);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(10 ether, payout, address(0)), payout);
+        assertEq(vault.cash(10 ether, payout, address(0)), payout);
     }
 
     function test_sameTransactionMintCannotDiluteTheFee() public {
@@ -854,7 +854,7 @@ contract RedemptionTest is Test {
         comp.transfer(REDEEMER, 100 ether);
         assertEq(vault.redemptionFeeBps(100 ether), 500, "a third of supply quotes the cap");
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(100 ether, 0, BOB), 95 ether, "and is charged it");
+        assertEq(vault.cash(100 ether, 0, BOB), 95 ether, "and is charged it");
         assertEq(vault.redemptionBaseRate(), 0, "but fresh principal moves nothing");
         assertEq(vault.redemptionFeeBps(0), 50);
         _assertPosition(BOB, 65 ether, 0);
@@ -864,13 +864,13 @@ contract RedemptionTest is Test {
         vm.warp(start + 12 hours - 1);
         uint256 fees = vault.stabilityFeeOf(ALICE);
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         // While the principal is fresh, only the cancelled stability fees move the rate.
         assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, 200 ether) / 4);
         vm.warp(start + 12 hours);
         uint256 decayed = vault.decayedRedemptionBaseRate();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, 190 ether) / 4);
     }
 
@@ -885,7 +885,7 @@ contract RedemptionTest is Test {
         _giveStable(100 ether);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
+        vault.cash(100 ether, 0, ALICE);
         // At most the few wei minted inside the window are excluded; the tenth of supply counts.
         assertApproxEqAbs(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4, 10);
         assertEq(vault.redemptionFeeBps(0), 300);
@@ -902,7 +902,7 @@ contract RedemptionTest is Test {
         vm.warp(start + 23 hours);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
+        vault.cash(100 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4);
     }
 
@@ -919,13 +919,13 @@ contract RedemptionTest is Test {
         uint256 fees = vault.stabilityFeeOf(ALICE);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4);
         vm.warp(start + 15 hours);
         uint256 decayed = vault.decayedRedemptionBaseRate();
         supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / 4);
     }
 
@@ -941,7 +941,7 @@ contract RedemptionTest is Test {
         uint256 supply = comp.totalSupply();
         // The burn cancels fees first, then fresh principal: only the fees move the rate.
         vm.prank(REDEEMER);
-        vault.redeem(50 ether, 0, ALICE);
+        vault.cash(50 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4);
     }
 
@@ -953,12 +953,12 @@ contract RedemptionTest is Test {
         _giveStable(200 ether);
         // 100 burned, 50 of it fresh: the rate rises by 50 / 1050 / 4, not 100 / 1050 / 4.
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
+        vault.cash(100 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), Math.mulDiv(50 ether, 1 ether, 1050 ether) / 4);
         // Retired fresh principal stays retired: a later burn against the same position counts whole.
         uint256 decayed = vault.decayedRedemptionBaseRate();
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
+        vault.cash(100 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(100 ether, 1 ether, 950 ether) / 4);
     }
 
@@ -978,7 +978,7 @@ contract RedemptionTest is Test {
         _giveStable(100 ether);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
+        vault.cash(100 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4);
     }
 
@@ -991,9 +991,9 @@ contract RedemptionTest is Test {
         _registerImdReserve(10_000);
         _fundReserve(550 ether);
         _open(ALICE, 1500 ether, 1000 ether);
-        assertEq(vault.workCeiling(), 800 ether);
+        assertEq(vault.earnLine(), 800 ether);
         vm.prank(REDEEMER);
-        vault.mintFromWork(800 ether);
+        vault.earn(800 ether);
         _price(0.5 ether);
         assertEq(vault.collateralRatio(ALICE), 75);
         _expectCapped(100 ether, ALICE);
@@ -1038,7 +1038,7 @@ contract RedemptionTest is Test {
         assertEq(parPayout, _parQuote(100 ether, 1 ether));
         uint256 backingWas = _econBacking();
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(100 ether, parPayout, ALICE), parPayout);
+        assertEq(vault.cash(100 ether, parPayout, ALICE), parPayout);
         assertGe(_econBacking(), backingWas, "a redemption must not worsen backing");
         // BOB's 1500 was never backing, so he can still take all of it back out.
         vm.prank(BOB);
@@ -1084,7 +1084,7 @@ contract RedemptionTest is Test {
         assertEq(vault.securedCollateral(), 36_000 ether);
         _giveStable(100 ether);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(100 ether, 0, ALICE), 1940 ether);
+        assertEq(vault.cash(100 ether, 0, ALICE), 1940 ether);
     }
 
     function test_mintRepayRoundTripsCannotKeepPrincipalFresh() public {
@@ -1104,7 +1104,7 @@ contract RedemptionTest is Test {
         uint256 supply = comp.totalSupply();
         assertEq(vault.redemptionFeeBps(100 ether), 300);
         vm.prank(REDEEMER);
-        vault.redeem(100 ether, 0, ALICE);
+        vault.cash(100 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), Math.mulDiv(100 ether, 1 ether, supply) / 4, "nothing is fresh");
         assertEq(vault.redemptionFeeBps(0), 300);
     }
@@ -1123,14 +1123,14 @@ contract RedemptionTest is Test {
         uint256 fees = vault.stabilityFeeOf(ALICE);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4);
         // ...and aged out exactly when it would have: the pair neither re-dated nor re-aged it.
         vm.warp(start + 12 hours);
         uint256 decayed = vault.decayedRedemptionBaseRate();
         supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / 4);
     }
 
@@ -1152,13 +1152,13 @@ contract RedemptionTest is Test {
         uint256 fees = vault.stabilityFeeOf(ALICE);
         uint256 supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), Math.mulDiv(fees, 1 ether, supply) / 4, "fresh at 13h12m - 1");
         vm.warp(start + 13 hours + 12 minutes);
         uint256 decayed = vault.decayedRedemptionBaseRate();
         supply = comp.totalSupply();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
         assertEq(vault.redemptionBaseRate(), decayed + Math.mulDiv(10 ether, 1 ether, supply) / 4, "aged out at 13h12m");
     }
 
@@ -1169,7 +1169,7 @@ contract RedemptionTest is Test {
         // 0.39 / 1000 / 4 is 0.975 of a basis point: charged as one, never as zero.
         assertEq(vault.redemptionFeeBps(0.39 ether), 51);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(0.39 ether, 0, ALICE), 0.388011 ether);
+        assertEq(vault.cash(0.39 ether, 0, ALICE), 0.388011 ether);
         assertEq(vault.redemptionBaseRate(), 9.75e13, "the exact fraction is still carried");
     }
 
@@ -1202,7 +1202,7 @@ contract RedemptionTest is Test {
         _open(ALICE, 1500 ether, 1000 ether);
         // isolate=true makes the work mint a later transaction, when the debt counts toward its ceiling.
         vm.prank(REDEEMER);
-        vault.mintFromWork(250 ether);
+        vault.earn(250 ether);
         vm.startPrank(ALICE);
         vault.wipe(1000 ether);
         vault.free(1500 ether);
@@ -1263,7 +1263,7 @@ contract RedemptionTest is Test {
         uint256 backingWas = _econBacking();
         bytes32 stateWas = _state(candidate);
         vm.prank(REDEEMER);
-        assertEq(vault.redeem(amount, payout, candidate), payout, "paid exactly the capped figure");
+        assertEq(vault.cash(amount, payout, candidate), payout, "paid exactly the capped figure");
         assertGe(_econBacking(), backingWas, "a redemption must not worsen backing");
         assertNotEq(_state(candidate), stateWas, "a successful burn moves the state");
     }
@@ -1299,7 +1299,7 @@ contract RedemptionTest is Test {
     function _expectPricingFailure() private {
         vm.expectRevert();
         vm.prank(REDEEMER);
-        vault.redeem(10 ether, 0, ALICE);
+        vault.cash(10 ether, 0, ALICE);
     }
 
     /// @notice Collateral plus reserve, per COMP, in the vault's unit — the ECONOMIC backing figure.

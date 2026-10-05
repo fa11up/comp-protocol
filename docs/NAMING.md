@@ -7,8 +7,9 @@ the internal audit) that describe the code as it was when they were written.
 The vault's actions and economic parameters take their names from MakerDAO, as an homage to the
 system that invented the collateralised stablecoin. The verbs come from Single-Collateral Dai (2017),
 `bark` from Multi-Collateral Dai's liquidation 2.0, and the parameter names from MCD's `Spotter`,
-`Jug`, `Vat` and `Dog`. Where Maker had no counterpart (redemption, clearing a mark, the work
-channel), the name stays plain English.
+`Jug`, `Vat`, `Dog`, `Clipper` and `End`. Where Maker had no counterpart, we coined a word in the same
+spirit: short, physical, and of a piece with the rest (`heel` calls the dog off after `bark` and
+`bite`; `earn`, `wage`, `lull`, `skew`, `cut`).
 
 ## Actions
 
@@ -21,13 +22,15 @@ channel), the name stays plain English.
 | `bark(owner)` / `barkFor(owner, beneficiary)` | `markUnderwater` / `markUnderwaterFor` | MCD `Dog.bark` | Mark a position below `mat`; starts its grace period. |
 | `bite(owner, amount)` | `liquidate` | SCD/MCD `bite` | Repay a marked position's debt after grace and take its collateral plus the bonus. |
 | `drip()` | `pokeIndex` | MCD `Jug.drip` | Checkpoint the stability-fee index. |
-| `redeem(...)` | unchanged | — | Burn imdUSD for IMD at the lesser of $1 and backing per unit, less the fee. |
-| `clearRecoveredMark`, `mintFromWork` | unchanged | — | |
+| `cash(amount, minImdOut, candidate)` | `redeem` | MCD `End.cash` | Burn imdUSD for IMD at the lesser of $1 and backing per unit, less the fee. |
+| `heel(owner)` | `clearRecoveredMark` | coined | Clear the mark on a position that has recovered above `mat`. |
+| `earn(amount)` | `mintFromWork` | coined | Mint imdUSD against attested swarm work, within `earnLine`. |
 | `SwarmRelay.relayAndBark` / `relayAndBite` | `relayAndMark` / `relayAndLiquidate` | — | Relay an attestation and act on the fresh price in one transaction. |
 
 Events follow the verbs, as Maker's own `Cat` and `Dog` emitted `Bite` and `Bark`:
-`Lock`, `Free`, `Draw`, `Wipe`, `Bark`, `Bite` (were `CollateralDeposited`, `CollateralWithdrawn`,
-`COMPMinted`, `COMPRepaid`, `UnderwaterMarked`, `Liquidated`).
+`Lock`, `Free`, `Draw`, `Wipe`, `Bark`, `Bite`, `Cash`, `Heel`, `Earn` (were `CollateralDeposited`,
+`CollateralWithdrawn`, `COMPMinted`, `COMPRepaid`, `UnderwaterMarked`, `Liquidated`, `Redeemed`,
+`UnderwaterMarkCleared`, `WorkMinted`).
 
 ## Parameters
 
@@ -38,6 +41,14 @@ Events follow the verbs, as Maker's own `Cat` and `Dog` emitted `Bite` and `Bark
 | `line()` | `debtCeiling()` | `Vat.line` | Debt ceiling. |
 | `CHOP_PERCENT` | `LIQUIDATION_BONUS_PERCENT` | `Dog.chop` | Liquidation bonus, in percent of debt repaid. |
 | `chi()` / `chiOf(owner)` | `debtIndex()` / `debtIndexOf` | `Pot.chi` / rate accumulator | Stability-fee index, and a position's checkpoint of it. |
+| `chip()` | `markerShareBps()` | `Clipper.chip` | Share of the bonus paid to whoever barked. `CHIP_BPS` likewise. |
+| `cut()` | `protocolBonusShareBps()` | coined | Share of the bonus kept by the protocol. `CUT_BPS` likewise. |
+| `tail()` | `liquidationWindow()` | `Clipper.tail` | How long after grace a mark stays biteable before it must be barked again. |
+| `gap()` | `redemptionSpread()` | SCD `gap` | Spread above `mat` that sets the redemption ceiling. `proposeGap`, `pendingGap`, `MIN_GAP`, `MAX_GAP`, `GapOutOfRange`. |
+| `lull()` | `gracePeriod()` | coined | Wait between `bark` and `bite`, set by network health. |
+| `skew()` | `maxDivergenceBps()` | coined | How far primary and spot may disagree before price actions pause. `SKEW_BPS`, `MAX_SKEW_BPS`. |
+| `wage()` | `unitsPerTaskWad()` | coined | imdUSD earned per attested task. `WAGE_WAD`, `MAX_WAGE_WAD`, `proposeWage`, `WageTooHigh`. |
+| `earnLine()` / `earnMat()` | `workCeiling()` / `workRatioBps()` | coined, after `line` and `mat` | Ceiling on work-backed issuance, and the ratio that sets it. `EARN_MAT_BPS`, `proposeEarnMat`, `EarnMatTooHigh`; `totalEarned` (was `totalWorkMinted`). |
 
 ## Other renames
 
@@ -45,13 +56,13 @@ Events follow the verbs, as Maker's own `Cat` and `Dog` emitted `Bite` and `Bark
 |---|---|
 | `stablecoin()` | `compToken()` |
 | `backingPerUnit()` | `backingPerComp()` |
-| `UNITS_PER_TASK_WAD`, `unitsPerTaskWad`, `proposeUnitsPerTask`, `UnitsPerTaskTooHigh` | `COMP_PER_TASK_WAD`, `compPerTaskWad`, `proposeCompPerTask`, `CompPerTaskTooHigh` |
 | `StablecoinIsNotReserve` | `CompIsNotReserve` |
 | `ImdUSDCreator`, `IStablecoinConsumer` | `CompTokenCreator`, `ICompTokenConsumer` |
 | `script/DeployProtocol.s.sol` | `script/DeployComp.s.sol` |
 
-Errors otherwise keep plain names (`DebtCeilingReached`, `UnsafeCollateralRatio`, …), because they are
-read as messages.
+Errors otherwise keep plain names (`DebtCeilingReached`, `GracePeriodNotElapsed`, `WorkCeilingReached`,
+`UnsafeCollateralRatio`, …), because they are read as messages; only those that validate a renamed
+parameter took its name. `redeem` survives in prose only where it means sIMD's own ERC-4626 unwrap.
 
 **The deployed Sepolia contracts predate this rename**, so `web/` and its pinned ABIs keep the old
 names until the next deployment; the terminal must not call functions the chain does not have.

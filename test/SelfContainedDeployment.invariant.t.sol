@@ -83,8 +83,8 @@ contract SelfContainedDeploymentHandler is Test {
             imd.approve(address(vault), type(uint256).max);
             vault.lock(300 ether);
             vault.draw(100 ether);
-            assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 25 ether);
-            vault.mintFromWork(25 ether);
+            assertGe(vault.totalDebt() / 4, vault.totalEarned() + 25 ether);
+            vault.earn(25 ether);
             vm.stopPrank();
             deposited[actor] = 300 ether;
             debtMinted[actor] = 100 ether;
@@ -117,13 +117,13 @@ contract SelfContainedDeploymentHandler is Test {
         address actor = actors[seed % 4];
         uint256 rights = oracle.mintingRights(actor);
         uint256 ceiling = vault.totalDebt() / 4;
-        if (ceiling <= vault.totalWorkMinted()) return;
-        rights = _min(rights, ceiling - vault.totalWorkMinted());
+        if (ceiling <= vault.totalEarned()) return;
+        rights = _min(rights, ceiling - vault.totalEarned());
         if (rights == 0) return;
         amount = bound(amount, 1, _min(rights, 1000 ether));
         vm.prank(actor);
-        vault.mintFromWork(amount);
-        assertLe(vault.totalWorkMinted(), ceiling, "work mint has backing");
+        vault.earn(amount);
+        assertLe(vault.totalEarned(), ceiling, "work mint has backing");
         workMinted[actor] += amount;
     }
 
@@ -175,7 +175,7 @@ contract SelfContainedDeploymentHandler is Test {
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
         vault.wipe(debt + 1);
         vm.expectRevert(CDPVault.InsufficientRights.selector);
-        vault.mintFromWork(rights + 1);
+        vault.earn(rights + 1);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vault.free(collateral + 1);
         if (debt != 0) {
@@ -187,7 +187,7 @@ contract SelfContainedDeploymentHandler is Test {
         vm.expectRevert(CDPVault.ZeroAmount.selector);
         vault.draw(0);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
-        vault.mintFromWork(0);
+        vault.earn(0);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
         vault.wipe(0);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
@@ -234,7 +234,7 @@ contract SelfContainedDeploymentHandler is Test {
         vm.expectRevert(CDPVault.StaleFeed.selector);
         vault.draw(1);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vault.mintFromWork(1);
+        vault.earn(1);
         if (debt != 0) {
             vm.expectRevert(CDPVault.StaleFeed.selector);
             vault.free(1);
@@ -253,7 +253,7 @@ contract SelfContainedDeploymentHandler is Test {
                 debt,
                 comp.totalSupply(),
                 comp.balanceOf(actor),
-                vault.totalWorkMinted(),
+                vault.totalEarned(),
                 oracle.mintingRights(actor),
                 imd.totalSupply(),
                 imd.balanceOf(actor),
@@ -328,10 +328,10 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
             assertLe(d * 3, c * 2, "all borrower positions stay collateralized");
         }
         assertGt(work, 0, "work issuance remains part of the supply identity");
-        assertEq(vault.totalWorkMinted(), work, "independent work history");
+        assertEq(vault.totalEarned(), work, "independent work history");
         assertEq(
             comp.totalSupply(),
-            debts + vault.totalWorkMinted() + vault.totalFeesMinted(),
+            debts + vault.totalEarned() + vault.totalFeesMinted(),
             "supply equals summed debt plus work plus fees minted"
         );
         assertEq(comp.totalSupply(), walletCOMP, "COMP custody");
@@ -363,8 +363,8 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
             assertEq(remainingCollateral, 0, "all deposits redeemable");
             assertEq(remainingDebt, 0, "all debt repayable");
         }
-        assertEq(handler.comp().totalSupply(), handler.vault().totalWorkMinted() + handler.vault().totalFeesMinted());
-        assertEq(handler.comp().balanceOf(handler.actors(0)), handler.vault().totalWorkMinted());
+        assertEq(handler.comp().totalSupply(), handler.vault().totalEarned() + handler.vault().totalFeesMinted());
+        assertEq(handler.comp().balanceOf(handler.actors(0)), handler.vault().totalEarned());
         assertEq(handler.imd().balanceOf(address(handler.vault())), 0);
         invariant_constructorLinksSupplyRightsAndCustodyRemainConsistent();
     }

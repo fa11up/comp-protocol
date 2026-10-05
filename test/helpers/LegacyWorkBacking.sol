@@ -17,7 +17,7 @@ abstract contract LegacyWorkBacking is Test {
     mapping(address => uint256) internal backingCollateral;
 
     function _establishWorkBacking(CDPVault target, uint256 amount) internal {
-        uint256 needed = (target.totalWorkMinted() + amount) * 4;
+        uint256 needed = (target.totalEarned() + amount) * 4;
         uint256 debt = target.totalDebt();
         if (debt < needed) {
             uint256 extra = needed - debt;
@@ -33,6 +33,6 @@ abstract contract LegacyWorkBacking is Test {
             backingPrincipal[address(target)] += extra;
             backingCollateral[address(target)] += deposit;
         }
-        assertGe(target.totalDebt() / 4, target.totalWorkMinted() + amount, "work backed before mint");
+        assertGe(target.totalDebt() / 4, target.totalEarned() + amount, "work backed before mint");
     }
 }
