@@ -2165,7 +2165,9 @@ html.app-page body {
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
-  max-width: 76ch;
+}
+.doc > :not(.table-wrap):not(.doc-pager) {
+  max-width: 72ch;
 }
 .docs > .docs-nav {
   grid-column: 1;
@@ -2298,7 +2300,8 @@ html.app-page body {
   border: 1px solid var(--rule);
   background: var(--surface);
   font-size: 0.92em;
-  overflow-wrap: anywhere;
+  /* Break an identifier only when it is wider than the whole line, never mid-word otherwise. */
+  overflow-wrap: break-word;
 }
 .doc pre {
   margin: 0 0 16px;
@@ -2322,25 +2325,89 @@ html.app-page body {
   color: var(--muted);
 }
 .table-wrap {
-  margin: 0 0 18px;
+  margin: 8px 0 24px;
   overflow-x: auto;
 }
 .doc table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 .doc th,
 .doc td {
-  padding: 7px 10px 7px 0;
+  padding: 12px 20px 12px 0;
   border-bottom: 1px solid var(--rule);
   text-align: left;
   vertical-align: top;
 }
-.doc th {
-  font-weight: 600;
+.doc th:last-child,
+.doc td:last-child {
+  padding-right: 0;
+}
+.doc thead th {
+  padding-block: 0 10px;
+  border-bottom-color: var(--text);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--muted);
+  white-space: nowrap;
+}
+/* Identifiers in tables never break mid-word; a long signature may still wrap at its spaces. */
+.doc td code,
+.doc th code {
+  overflow-wrap: normal;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.doc td.nowrap {
+  white-space: nowrap;
+}
+/* The first column names the row: keep it on one line where it is code. */
+.doc td:first-child {
+  min-width: 10ch;
+}
+/* On a phone, each row is a card: the cell's column name above its value. */
+@media (max-width: 700px) {
+  .doc table,
+  .doc tbody,
+  .doc tr,
+  .doc td {
+    display: block;
+  }
+  .doc thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .doc tr {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .doc tbody tr:first-child {
+    border-top: 1px solid var(--text);
+  }
+  .doc td {
+    padding: 3px 0;
+    border: 0;
+  }
+  .doc td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .doc td code,
+  .doc td.nowrap {
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
 }
 .doc-sources {
   margin-top: 40px;

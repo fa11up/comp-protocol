@@ -180,10 +180,23 @@ export function renderDocs({ outDir, contentDir, terminal }) {
           if (!hit(item.raw)) return false; // default rendering
           return `<li>${bar(item.text)}</li>\n`;
         },
-        tablecell(token) {
-          if (!hit(token.text)) return false;
-          const tag = token.header ? "th" : "td";
-          return `<${tag}>${bar(token.text)}</${tag}>\n`;
+        // Tables are built here so every body cell carries its column's name (data-label): on a phone
+        // each row becomes a stacked card, labelled from it. Redacted cells become bars.
+        table(token) {
+          const cell = (c) => (hit(c.text) ? bar(c.text) : this.parser.parseInline(c.tokens));
+          const align = (i) => (token.align[i] ? ` style="text-align:${token.align[i]}"` : "");
+          const labels = token.header.map((h) => (hit(h.text) ? "Redacted" : plainText(h.text)));
+          // A column whose every value is short never wraps; the long-prose columns take the squeeze.
+          const short = token.header.map((_, i) => token.rows.every((r) => plainText(r[i]?.text ?? "").length <= 30));
+          const cls = (i) => (short[i] ? ' class="nowrap"' : "");
+          const head = token.header.map((h, i) => `<th scope="col"${cls(i)}${align(i)}>${cell(h)}</th>`).join("");
+          const rows = token.rows
+            .map(
+              (row) =>
+                `<tr>${row.map((c, i) => `<td data-label="${escapeHtml(labels[i] ?? "")}"${cls(i)}${align(i)}>${cell(c)}</td>`).join("")}</tr>`,
+            )
+            .join("\n");
+          return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>\n${rows}\n</tbody></table></div>\n`;
         },
         blockquote(token) {
           return hit(token.raw) ? `<blockquote><p>${bar(token.raw)}</p></blockquote>\n` : false;
@@ -206,10 +219,7 @@ export function renderDocs({ outDir, contentDir, terminal }) {
         },
       },
     });
-    return marked
-      .parse(page.body)
-      .replace(/<table>/g, '<div class="table-wrap"><table>')
-      .replace(/<\/table>/g, "</table></div>");
+    return marked.parse(page.body);
   };
 
   // Check every #anchor link resolves to a heading on its target page.
