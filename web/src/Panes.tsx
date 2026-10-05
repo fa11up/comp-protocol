@@ -30,6 +30,7 @@ import {
   cushion,
   maxDebt,
   requiredCollateral,
+  nextStep,
 } from "./math";
 import { useEns, ensName, displayName } from "./ens";
 const amt = (name: string) => ({ name, kind: "amount" as const });
@@ -660,7 +661,13 @@ export function Keeper({
                 {loading
                   ? "Inspecting…"
                   : inspected
-                    ? `Act on ${displayName(position.owner)} →`
+                    ? nextStep(
+                        position,
+                        s?.v.minCR ?? 0n,
+                        now,
+                        s?.v.liquidationWindow ?? 0n,
+                        displayName(position.owner),
+                      )
                     : "Inspect position"}
               </button>
             </div>

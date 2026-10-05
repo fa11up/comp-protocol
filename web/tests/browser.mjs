@@ -412,7 +412,7 @@ try {
   // A complete address inspects itself; the button then carries the position to Act.
   await expectText(keeper, "140%");
   assert.equal(await keeper.getByText("Review mark").count(), 0);
-  await keeper.getByRole("button", { name: /^Act on keeper\.eth/ }).click();
+  await keeper.getByRole("button", { name: "Liquidate keeper.eth →" }).click();
   assert.equal(await keeper.getByLabel("Borrower address").count(), 0);
   await review(page, "Review mark");
   await cancel(page);

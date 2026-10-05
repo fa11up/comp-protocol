@@ -179,3 +179,33 @@ export function cushion(
     ? `${formatUnits(bps, 2)}% above it`
     : `${formatUnits(-bps, 2)}% below it`;
 }
+
+/** Seconds as the largest two units: "2h 14m", "14m 5s", "5s". */
+export function span(seconds: bigint) {
+  const s = seconds > 0n ? seconds : 0n;
+  if (s >= 3600n) return `${s / 3600n}h ${(s % 3600n) / 60n}m`;
+  if (s >= 60n) return `${s / 60n}m ${s % 60n}s`;
+  return `${s}s`;
+}
+/**
+ * What a keeper can do next with an inspected position, as the Act button's label.
+ * mark = [markedAt, grace, active] from liquidationMarks(owner).
+ */
+export function nextStep(
+  p: { cr: bigint; mark: readonly [bigint, bigint, boolean, ...unknown[]] },
+  minCR: bigint,
+  now: bigint,
+  window: bigint,
+  name: string,
+) {
+  const [markedAt, grace, active] = p.mark;
+  const healthy = p.cr >= minCR;
+  if (active && healthy) return "Clear mark →";
+  if (active) {
+    const graceEnds = markedAt + grace;
+    if (now < graceEnds) return `Grace ${span(graceEnds - now)} · View →`;
+    if (now > graceEnds + window) return `Mark ${name} again →`;
+    return `Liquidate ${name} →`;
+  }
+  return healthy ? "View actions →" : `Mark ${name} →`;
+}

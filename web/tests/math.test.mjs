@@ -12,6 +12,7 @@ import {
   requiredCollateral,
   maxDebt,
   CR_SCALE,
+  nextStep,
 } from "../src/math.ts";
 import { maxUint256 } from "viem";
 test("amount input rejects lossy, signed, exponent, zero and out of range values", () => {
@@ -107,4 +108,14 @@ test("position arithmetic agrees with the vault's ratio check", () => {
   assert.equal(maxDebt(collateral, minCR, price), 2000n * WAD);
   assert.equal(liquidationPrice(collateral, 0n, minCR), undefined);
   assert.equal(cushion(4n * WAD, liq), "25% below it");
+});
+test("the keeper's Act button names the next step for the position's state", () => {
+  const at = (cr, mark) =>
+    nextStep({ cr, mark }, 150n, 10_000n, 3_600n, "keeper.eth");
+  assert.equal(at(180n, [0n, 0n, false]), "View actions →");
+  assert.equal(at(140n, [0n, 0n, false]), "Mark keeper.eth →");
+  assert.equal(at(140n, [10_000n, 8_040n, true]), "Grace 2h 14m · View →");
+  assert.equal(at(140n, [1_000n, 6_000n, true]), "Liquidate keeper.eth →");
+  assert.equal(at(140n, [0n, 1_000n, true]), "Mark keeper.eth again →");
+  assert.equal(at(160n, [1_000n, 6_000n, true]), "Clear mark →");
 });
