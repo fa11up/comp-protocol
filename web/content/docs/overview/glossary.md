@@ -74,6 +74,8 @@ Each entry gives the plain meaning first, then the contract name where there is 
 
 **stability fee.** Interest on debt at the rate `duty`. It is paid first when you repay.
 
-**wage.** The imdUSD earned per accepted swarm task, set by governance within a hard limit.
+**wage.** The imdUSD earned per accepted swarm task, set by governance within a hard limit. At zero, minting from work is off.
+
+**work oracle.** The contract that turns the swarm's published task tally into minting rights. The vault creates one at deployment; governance may replace it, only while the wage is zero.
 
 **withdraw (`free`).** Take collateral back out. With debt open, it needs live prices and must leave you at or above `mat`.

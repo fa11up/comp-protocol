@@ -20,7 +20,7 @@ sources:
 
 # Parameters
 
-`Parameters` holds the economic settings governance may change for its vault, each inside a hard limit written into the contract. It cannot replace the vault, the collateral, the price and health feeds, the work oracle, the dollar-price adapter or the Treasury.
+`Parameters` holds the economic settings governance may change for its vault, each inside a hard limit written into the contract. It cannot replace the vault, the collateral, the price and health feeds, the dollar-price adapter or the Treasury.
 
 Every change goes through the same [proposal and delay](./timelock-and-proposals.md). A basis point is one hundredth of a percent; imdUSD amounts use 18 decimals.
 
@@ -39,6 +39,7 @@ Every change goes through the same [proposal and delay](./timelock-and-proposals
 | `redemptionDivisor` | How fast the redemption fee climbs: each redemption raises the base by redeemed ÷ supply ÷ divisor. | `proposeRedemptionDivisor(divisor)` | `MIN_REDEMPTION_DIVISOR` to `MAX_REDEMPTION_DIVISOR`. |
 | `streamPayee`, `streamPerDay` | Who the Treasury pays imdUSD to, and at most how much per UTC day. Off until proposed. | `proposeStream(payee, perDay)` | Zero up to `MAX_STREAM_PER_DAY`; a nonzero amount needs a payee. |
 | `oracleBudget` | IMD the Treasury may send `OracleAsker` per UTC day to buy price updates ([how updates are paid for](../reference/oracle-and-question-binding.md#how-updates-are-paid-for)). Zero stops it. | `proposeOracleBudget(imdPerDay)` | Zero up to `MAX_ORACLE_BUDGET_PER_DAY`. |
+| `workOracle` | The contract the vault reads work rights from; zero means the one the vault created at deployment. Exists so that a change in how swarm work is published never forces a new vault. | `proposeWorkOracle(address)` | Refused while `wage` is above zero, both when proposed and when applied (`WorkMintingOn`), so rights are never claimable in two oracles at once. The replacement must serve this vault (`InvalidWorkOracle`). Once anything has ever been minted from work, it must also name the current oracle as its `predecessor()`, so already-credited work is not credited twice; returning to the original is then refused. |
 | Reserve asset and its `priceFeed` | A token the Treasury counts as backing, and the dollar price source used to value it. sIMD is listed with the vault's own `collateralPriceFeed()`, so it counts at the vault's price. | `proposeReserveAsset(asset, priceFeed, haircutBps)` | The asset and feed must be contracts that answer sensibly; imdUSD itself cannot be listed. Proposing the zero address as the feed removes a listing. |
 | Reserve `haircutBps` | The share of a listed asset's market value that counts. Lower counts less. | Same proposal | From none of its value to all of it. |
 

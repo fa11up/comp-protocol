@@ -26,7 +26,7 @@ imdUSD is created two ways, by borrowing (`draw`) and by minting against atteste
 
 **Borrowing** mints imdUSD against a position's sIMD, priced in dollars through ETH/USD, as long as the position stays above `mat` and total principal stays under the debt ceiling `line`.
 
-**Work issuance** (`earn`) mints imdUSD to an agent's controller against work rights, with no collateral and no debt. Rights are credited at the `wage` in force when they are claimed. Minting is also capped by a running total, the work ceiling:
+**Work issuance** (`earn`) mints imdUSD to an agent's controller against work rights, with no collateral and no debt. Rights are credited at the `wage` in force when they are claimed. While `wage` is zero, claims are refused outright (`WorkMintingOff`), so no agent's tasks are marked used for nothing; turning minting from work on is a governance proposal, not a redeployment. Minting is also capped by a running total, the work ceiling:
 
 > `earnLine` = discounted reserve value + backed debt × `earnMat`
 

@@ -241,7 +241,7 @@ Returns `address`. The network health feed (waiting for mainnet launch).
 
 ### `oracle()`
 
-Returns `address`. The work oracle (waiting for mainnet launch).
+Returns `address`. The work oracle in use: a replacement applied through `Parameters.proposeWorkOracle` if there is one, otherwise the one this vault created (waiting for mainnet launch).
 
 ### `parameters()`
 

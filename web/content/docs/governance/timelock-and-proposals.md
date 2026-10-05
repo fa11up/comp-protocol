@@ -39,6 +39,7 @@ Every parameter change is proposed, waits out a fixed delay (`TIMELOCK`), and is
 | `proposeOracleBudget(uint256 imdPerDay)` | `(Change.OracleBudget, uint256)` | `pendingOracleBudget()` |
 | `proposeRedemptionDivisor(uint256 divisor)` | `(Change.RedemptionDivisor, uint256)` | `pendingRedemptionDivisor()` |
 | `proposeStream(address payee, uint256 perDay)` | `(Change.Stream, address, uint256)` | `pendingStream()` |
+| `proposeWorkOracle(address next)` | `(Change.WorkOracle, address)` | Decode `pending()`; there is no `pendingWorkOracle()`. |
 
 `pending()` is ABI-encoded bytes whose first word is the kind of change. `pendingChange()` returns the kind and ETA; an ETA of zero means nothing is pending. A kind-specific reader also returns zero when a different kind is pending.
 
@@ -48,4 +49,4 @@ Applying an economics change first calls `vault.drip()` under the old `duty`, so
 
 A proposal whose delay has passed never expires. The delay guarantees a minimum notice period, not that the change lands at ETA: watch pending changes until they are applied or cancelled, and note that nobody is obliged to pay the gas to apply one.
 
-There is no voting, delegation or way to rotate the governor. No proposal can replace the vault's feeds, the price signer, the collateral or the Treasury. The same operator can withdraw from the Treasury without a delay, but not sIMD, not a listed reserve asset, and not imdUSD that outstanding bad debt needs; removing backing takes a delisting proposal like any other change. See [Risks and open questions](../economics/risks-and-open-questions.md).
+There is no voting, delegation or way to rotate the governor. No proposal can replace the vault's feeds, the price signer, the collateral or the Treasury. The one replaceable dependency is the work oracle, and only while minting from work is off (see [Parameters](./parameters.md)). The same operator can withdraw from the Treasury without a delay, but not sIMD, not a listed reserve asset, and not imdUSD that outstanding bad debt needs; removing backing takes a delisting proposal like any other change. See [Risks and open questions](../economics/risks-and-open-questions.md).
