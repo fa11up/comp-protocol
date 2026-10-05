@@ -106,9 +106,10 @@ contract OracleAskerTest is Test {
         asker.arm(address(priceFeed)); // no drift to arm
     }
 
-    /// @dev Drift past half the feed's 20% cap must be armed, and still there ARM_DELAY_BLOCKS later.
+    /// @dev A fall past a quarter of the feed's 20% cap (5%) must be armed, and still there
+    /// ARM_DELAY_BLOCKS later.
     function test_driftMustBeArmedAndStillPresentBlocksLater() public {
-        _setPool(IMD_ETH * 115 / 100);
+        _setPool(IMD_ETH * 90 / 100);
         vm.expectRevert(OracleAsker.NotArmed.selector);
         asker.ask(address(priceFeed), PRICE_BODY);
 
@@ -123,7 +124,7 @@ contract OracleAskerTest is Test {
 
     /// @dev A pool pushed off-price to arm and then put back cannot be cashed in.
     function test_aDriftThatDoesNotPersistIsNotPaidFor() public {
-        _setPool(IMD_ETH * 115 / 100);
+        _setPool(IMD_ETH * 90 / 100);
         asker.arm(address(priceFeed));
         _setPool(IMD_ETH);
         vm.roll(block.number + ARM_DELAY_BLOCKS);
@@ -132,7 +133,7 @@ contract OracleAskerTest is Test {
     }
 
     function test_anArmLapsesAfterItsWindow() public {
-        _setPool(IMD_ETH * 115 / 100);
+        _setPool(IMD_ETH * 90 / 100);
         asker.arm(address(priceFeed));
         vm.roll(block.number + ARM_WINDOW_BLOCKS + 1);
         vm.expectRevert(OracleAsker.NotArmed.selector);
@@ -140,9 +141,25 @@ contract OracleAskerTest is Test {
     }
 
     function test_driftInsideTheBandDoesNotArm() public {
-        _setPool(IMD_ETH * 109 / 100); // 9%, under half of the 20% cap
+        _setPool(IMD_ETH * 96 / 100); // a 4% fall, under a quarter of the 20% cap
         vm.expectRevert(OracleAsker.NotNeeded.selector);
         asker.arm(address(priceFeed));
+    }
+
+    /// @dev Asymmetric by design (docs/oracle-guards/): a fall over-values collateral and is bought at a
+    /// quarter of the cap; a rise only under-values it, and the Treasury never pays for one however
+    /// large — whoever wants the borrowing room uses askPaid.
+    function test_theTreasuryPaysForFallsAndNeverForRises() public {
+        (uint256 fall, uint256 rise) = asker.triggerBps(address(priceFeed));
+        assertEq(fall, 500, "a quarter of the 20% cap");
+        assertEq(rise, 0, "rises are never paid for");
+        _setPool(IMD_ETH * 300 / 100); // tripled
+        vm.expectRevert(OracleAsker.NotNeeded.selector);
+        asker.arm(address(priceFeed));
+        _setPool(IMD_ETH * 9_490 / 10_000); // a 5.1% fall
+        asker.arm(address(priceFeed));
+        (,,,, uint64 armedAt,,) = asker.feeds(address(priceFeed));
+        assertEq(armedAt, block.number);
     }
 
     // --- what stops spam --------------------------------------------------------------------------

@@ -12,7 +12,7 @@ frozen, because the contracts are immutable. **After deploy** = first operationa
 | Adversarial review of the fixes + gas review | done, merged `9dd2149` | `AUDIT-ADVERSARIAL-2026-10-05.md`, `AUDIT-GAS-2026-10-05.md` |
 | Internal suites | green: forge 528/0; `script/checks` failure set unchanged by name (23/116, stale assertions); AUDIT_PROOFS 1 known demonstration (an unbound test feed — every shipped feed binds its question and `DeployMainnet.verify` checks it) | |
 | Redemption invariant, the 1-wei rounding note | **closed**: 40 fresh seeds, 0 failures, after the handler model was corrected to the vault's payout scale (`9dd2149`) | |
-| **Scoped pre-deploy review** (everything after `03e8d0c`: phase-2 fixes, the `SwarmWorkOracle` creator change, `DeployMainnet` + `plan.py`, and whatever §8 decides) | **owed — blocking**, sent when the deploy commit is frozen | payload built by `whitepaper/requests/audit/build_audits.py` |
+| **Scoped pre-deploy review** (everything after `03e8d0c`: phase-2 fixes, the `SwarmWorkOracle` creator change, `DeployMainnet` + `plan.py`, the asymmetric asker trigger and the governed work-oracle slot) | **owed — blocking**, sent when the deploy commit is frozen | payload built by `whitepaper/requests/audit/build_audits.py` |
 | Accepted residuals | D2 chunked-redemption fee, D3 non-monotone backing figure, D4 two-push drift arming, D5 sIMD same-block hold griefing, D6 self-mark 18% penalty, D9 recapitalised drained borrower | `AUDIT-FIX-PLAN-2026-10-05.md` |
 
 ## 2. Deployment
@@ -25,15 +25,15 @@ frozen, because the contracts are immutable. **After deploy** = first operationa
 | Intake bodies match the feeds' pinned questions | `node deploy/mainnet/check-bodies.mjs` passes |
 | **Intake deployed by the dev, address known** | **blocking** (upstream) |
 | Cold governance address, throwaway deployer (~0.05 ETH) | **blocking** — user |
-| Live attestation for NHI and SPOT with the frozen payloads (only PRICE has one, `e2c85027`) | **owed, ~1 IMD** — buy against the Sepolia launch-688 feeds (same prefixes, verified) and compare `questionHash` to `expectedQuestionHash`; closes runbook §5 step 4 |
+| Live attestations for NHI and SPOT with the frozen payloads | user: proven on testnet (request ids not in this repo's record; only PRICE `e2c85027` is archived) |
 
 ## 3. Oracle operations
 
 | item | status |
 |---|---|
 | Guard analysis on 50 days of IMD history | done: `oracle-guards/ORACLE-GUARDS-2026-10-05.md` |
-| Asymmetric trigger (5% on falls / 20% on rises): halves worst over-valuation at lower cost | **before freeze — decision** (small `OracleAsker` change) |
-| `ORACLE_BUDGET_PER_DAY` 10 → 15 IMD | **before freeze — decision** (the governed value opens at the constant; governance can move it later behind 48h) |
+| Asymmetric trigger: the Treasury pays on a 5% FALL, never on a rise (worst over-valuation 21% → 9.0%, cost 3.9 → 2.2 IMD/day) | **built** (`OracleAsker.triggerBps`), keeper reads it, rehearsed |
+| `ORACLE_BUDGET_PER_DAY` 15 IMD | **built** (governable later behind 48h) |
 | Feeds kept live at launch | ours: the keeper drives the Treasury-paid path (drift + NHI keep-alive) and pays itself (`askPaid`) when positions are at risk |
 | Sponsor points for anyone who pays for updates | no contract change needed: `AskedPaid(feed, requestId, payer, price)` is already emitted, so the points engine can credit payers off chain; a co-op hub can come later without touching the protocol |
 
@@ -80,9 +80,11 @@ upstream bricks every feed. That one is not ours to make governable (price autho
 a design rule), so it is handled upstream: the stability issue asks for additive versioning and a key
 rotation overlap.
 
-**Option, before freeze:** a governed work-oracle slot — `Parameters` may replace the vault's work oracle
+**BUILT (user's call, 2026-10-05):** a governed work-oracle slot — `Parameters` may replace the vault's work oracle
 behind the 48-hour timelock, **only while the wage is zero** (so no rights are ever outstanding in the old
 oracle, which makes double-claiming impossible by construction). Governance already sets the wage, so this
 adds no new trust: a governor who could mint through a malicious oracle can already raise the wage.
-Cost: one governed address in `Parameters`, one read in the vault (initcode margin 6,134 bytes), one
-proposal path and tests, all inside the scoped review. It removes the only known forced migration.
+`Parameters.proposeWorkOracle` (48h); `vault.oracle()` now returns the governed replacement or the created
+oracle. Refused while the wage is nonzero (at proposal and at application); once anything has been minted
+from work the replacement must name the current oracle as `predecessor()`. Vault initcode 44,210 / 49,152.
+`test/WorkOracleGovernance.t.sol` (7 tests). It removes the only known forced migration.

@@ -264,7 +264,7 @@ contract CDPVault is ReentrancyGuard {
 
     IERC20 public immutable gem;
     ImdUSD public immutable stablecoin;
-    IWorkOracle public immutable oracle;
+    IWorkOracle private immutable _createdOracle;
     ISwarmFeed public immutable priceFeed;
     ISwarmFeed public immutable nhiFeed;
     ISwarmFeed public immutable spotFeed;
@@ -362,7 +362,7 @@ contract CDPVault is ReentrancyGuard {
             oracle_ = address(WorkOracleFactory(WORK_ORACLE_FACTORY).create(WORK_ORACLE_MAX_AGE));
         }
         _validateOracle(oracle_);
-        oracle = IWorkOracle(oracle_);
+        _createdOracle = IWorkOracle(oracle_);
         emit OracleSet(oracle_);
     }
 
@@ -473,7 +473,8 @@ contract CDPVault is ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
         _requireFreshFeeds();
         if (stablecoin.vault() != address(this)) revert NotInitialized();
-        if (oracle.mintingRights(msg.sender) < amount) revert InsufficientRights();
+        IWorkOracle workOracle = oracle();
+        if (workOracle.mintingRights(msg.sender) < amount) revert InsufficientRights();
         uint256 resultingWork = totalEarned + amount;
         uint256 ceiling = earnLine();
         // REVISION (finding aba99865): a finite ceiling is priced off the primary feed —
@@ -484,7 +485,7 @@ contract CDPVault is ReentrancyGuard {
         if (ceiling != type(uint256).max) _requirePriceAgreement();
         if (resultingWork > ceiling) revert WorkCeilingReached();
         totalEarned = resultingWork;
-        oracle.consumeRights(msg.sender, amount);
+        workOracle.consumeRights(msg.sender, amount);
         _transientAdd(WORK_MINTED_THIS_TX_SLOT, amount);
         stablecoin.mint(msg.sender, amount);
         emit Earn(msg.sender, amount);
@@ -1075,6 +1076,12 @@ contract CDPVault is ReentrancyGuard {
     /// @dev Accepts only a deployed contract that answers `mintingRights(address)` as IWorkOracle requires.
     /// If the target additionally exposes `vault()` (as MockWorkOracle does), that consumer must be this vault;
     /// an oracle without that view is accepted so a drop-in IWorkOracle implementation remains compatible.
+    /// @notice The work oracle `earn` reads: the one this vault created, unless governance replaced it
+    /// (ParameterizedVault, `Parameters.workOracle`, only while minting from work is off).
+    function oracle() public view virtual returns (IWorkOracle) {
+        return _createdOracle;
+    }
+
     function _validateOracle(address oracle_) private view {
         if (oracle_.code.length == 0) revert InvalidOracle();
         (bool ok, bytes memory data) = oracle_.staticcall(abi.encodeCall(IWorkOracle.mintingRights, (address(this))));

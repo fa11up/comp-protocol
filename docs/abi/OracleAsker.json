@@ -342,6 +342,30 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "triggerBps",
+    "inputs": [
+      {
+        "name": "feed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fall",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rise",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "Armed",
     "inputs": [

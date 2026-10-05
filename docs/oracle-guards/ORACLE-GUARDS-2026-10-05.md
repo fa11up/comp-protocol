@@ -32,7 +32,8 @@ Up-moves are about three times as large and as frequent as down-moves at every h
 | setting | IMD/day (median / p95 / max) | usable | refused / 50 d | over, max | over, p99 |
 |---|---|---|---|---|---|
 | **current:** cap 20%, trigger 10% both ways, 1h, no clock | 3.0 / 11 / 12 | 5% | 5 | **21.0%** | 9.7% |
-| **recommended:** cap 20%, trigger **5% on falls / 20% on rises**, 1h, no clock | **2.0 / 11 / 15** | 5% | 17 | **11.3%** | 8.3% |
+| cap 20%, trigger 5% on falls / 20% on rises, 1h, no clock | 2.0 / 11 / 15 | 5% | 17 | 11.3% | 8.3% |
+| **BUILT:** cap 20%, trigger **5% on falls, never on rises**, 1h, no clock | **2.2 mean** | 3% | **6** | **9.0%** | 8.1% |
 | symmetric 5% both ways, 1h | 11.1 mean | 18% | 5 | 18.7% | 9.7% |
 | recommended + clock keep-alive, 4h maxAge | 10 / 32 / 33 | 75% | 160 | 15.6% | 8.6% |
 | recommended + clock keep-alive, 1h maxAge | ~33 mean | 86% | 24 | 12.8% | 7.5% |
@@ -63,7 +64,7 @@ What the table says:
 |---|---|---|
 | `maxDeviationBps` (deploy script) | **2000** | none |
 | Treasury trigger on a FALL (pool below feed) | **5%** (¼ of cap) | **OracleAsker: split `_triggerBps` into down/up** |
-| Treasury trigger on a RISE | **20%** (= cap), or none | same change |
+| Treasury trigger on a RISE | **none** — a rise past the cap on a fresh feed is refused anyway, so paying for rises bought only refusals (17 vs 6 in 50 days) and a worse worst case (11.3% vs 9.0%) | same change |
 | PRICE/SPOT `maxAge` | **1 h**, no clock keep-alive | none |
 | NHI | daily, kept alive by the Treasury (≈1 IMD/day) | none |
 | `ORACLE_BUDGET_PER_DAY` | **15 IMD** (worst simulated day; exceeding it only defers asks) | 10 → 15 |
@@ -72,3 +73,6 @@ What the table says:
 The asker change is small (two trigger constants instead of `maxDeviationBps / 2`) but it is a contract
 change, so it belongs in the scoped pre-deploy review. Revisit after a month of mainnet data: one
 uptrend regime is not a distribution, and a sustained drawdown would move every number here.
+
+**Decided and built (2026-10-05):** `DRIFT_FALL_TRIGGER_OF_CAP_BPS = 2500`, `DRIFT_RISE_TRIGGER_OF_CAP_BPS = 0`
+(never), `ORACLE_BUDGET_PER_DAY = 15 IMD`; `OracleAsker.triggerBps(feed)` exposes both, and the keeper reads it.

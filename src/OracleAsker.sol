@@ -18,7 +18,9 @@ import {
     ASK_MAX_PRICE,
     ARM_DELAY_BLOCKS,
     ARM_WINDOW_BLOCKS,
-    STALE_AT_BPS
+    STALE_AT_BPS,
+    DRIFT_FALL_TRIGGER_OF_CAP_BPS,
+    DRIFT_RISE_TRIGGER_OF_CAP_BPS
 } from "./DeploymentConfig.sol";
 
 interface IPoolManagerExtsload {
@@ -34,9 +36,10 @@ interface IPoolManagerExtsload {
 ///     STALE_AT_BPS of the way to its maxAge (or has none yet) may be asked for. This needs no arming:
 ///     nobody can make a feed age faster. Price feeds are NOT kept fresh on a clock; their one-hour
 ///     life would cost ~$37k a year per feed. Between updates price actions pause, never misprice.
-///   - DRIFT. A feed that quotes IMD/ETH may be asked for when IMD's own Uniswap v4 pool sits further
-///     from the feed than half the feed's deviation cap — the band the price-movement design calls
-///     for, narrower than the cap so the feed is never asked to make a jump it cannot take. Drift
+///   - DRIFT. A feed that quotes IMD/ETH may be asked for when IMD's own Uniswap v4 pool has FALLEN
+///     below the feed by more than a quarter of the feed's deviation cap (DRIFT_FALL_TRIGGER_OF_CAP_BPS):
+///     a fall over-values collateral, a rise only under-values it, so the Treasury pays for falls and
+///     not for rises (DRIFT_RISE_TRIGGER_OF_CAP_BPS is zero, which means never). Drift
 ///     must be ARMED and still present ARM_DELAY_BLOCKS later, so one push-and-restore inside a single
 ///     transaction cannot trigger a paid update. Two such pushes five blocks apart can (launch audit,
 ///     low): accepted, because each pays the pool's 1% fee both ways, the result is only an honest
@@ -132,7 +135,7 @@ contract OracleAsker {
         Feed storage f = _feed(feed);
         if (!f.tracksPool) revert NotNeeded();
         uint256 drift = driftBps(feed);
-        if (drift <= _triggerBps(feed)) revert NotNeeded();
+        if (!_drifted(feed, drift)) revert NotNeeded();
         if (f.armedAt != 0 && block.number <= f.armedAt + ARM_WINDOW_BLOCKS) return;
         f.armedAt = uint64(block.number);
         emit Armed(feed, block.number, drift);
@@ -156,7 +159,7 @@ contract OracleAsker {
             if (armedAt == 0 || block.number < armedAt + ARM_DELAY_BLOCKS || block.number > armedAt + ARM_WINDOW_BLOCKS) {
                 revert NotArmed();
             }
-            if (driftBps(feed) <= _triggerBps(feed)) revert NotNeeded();
+            if (!_drifted(feed, driftBps(feed))) revert NotNeeded();
         }
         uint256 price = _price(ASK_MAX_PRICE);
         // Effects before the external calls; the request id is only known after `request` returns.
@@ -279,8 +282,19 @@ contract OracleAsker {
         return Math.mulDiv(Math.mulDiv(1e18, 1 << 96, sqrtPriceX96), 1 << 96, sqrtPriceX96);
     }
 
-    function _triggerBps(address feed) private view returns (uint256) {
-        return SwarmFeed(feed).maxDeviationBps() / 2;
+    /// @notice The drift, in bps of the feed's value, past which the Treasury pays for an update, by
+    /// direction: `fall` when IMD's pool is below the feed (collateral over-valued), `rise` when above.
+    /// A zero `rise` means the Treasury never pays for a rise. See DRIFT_*_TRIGGER_OF_CAP_BPS.
+    function triggerBps(address feed) public view returns (uint256 fall, uint256 rise) {
+        uint256 cap = SwarmFeed(feed).maxDeviationBps();
+        return (cap * DRIFT_FALL_TRIGGER_OF_CAP_BPS / 10_000, cap * DRIFT_RISE_TRIGGER_OF_CAP_BPS / 10_000);
+    }
+
+    function _drifted(address feed, uint256 drift) private view returns (bool) {
+        (uint256 value,) = SwarmFeed(feed).latestValue();
+        (uint256 fall, uint256 rise) = triggerBps(feed);
+        if (poolPrice() < value) return drift > fall;
+        return rise != 0 && drift > rise;
     }
 
     function _feed(address feed) private view returns (Feed storage f) {

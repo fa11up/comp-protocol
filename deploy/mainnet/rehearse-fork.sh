@@ -102,9 +102,9 @@ say "keeper --execute: expect a bite"
 node positions.mjs --execute | sed 's/^/  /'
 GEM1=$(c call $(j gem) "balanceOf(address)(uint256)" $A0)
 echo; echo "keeper sIMD received: $(( GEM1 - GEM0 )) raw   position now $(c call $VAULT 'positions(address)(uint256,uint256)' $AB)"
-say "the pool moves 18% away from the feeds: the Treasury pays (fundOracle, arm, then ask 5 blocks later)"
+say "IMD falls ~11% below the feeds: the Treasury pays (fundOracle, arm, then ask 5 blocks later); a rise would not"
 cast send 0x0000000000000000000000000000000000000F06 "setPrice(bytes32,address,uint256)" 0x6f7261636c652e72657175657374406f7261636c652d31000000000000000000 $IMD 500000000000000000 --private-key $K0 --rpc-url $RPC >/dev/null
-LOW=$(python3 -c "print($POOLP*85//100)"); seed $PRICE $LOW; seed $SPOT $LOW
+HIGH=$(python3 -c "print($POOLP*112//100)"); seed $PRICE $HIGH; seed $SPOT $HIGH
 node watch.mjs --execute | sed 's/^/  /' || true
 for i in 1 2 3 4 5; do cast rpc evm_mine --rpc-url $RPC >/dev/null; done
 say "five blocks later"

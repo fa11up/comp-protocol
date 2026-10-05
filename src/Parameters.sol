@@ -25,6 +25,16 @@ interface ICheckpointedVault {
     function totalDebt() external view returns (uint256);
     function drip() external;
     function treasury() external view returns (address);
+    function oracle() external view returns (address);
+    function totalEarned() external view returns (uint256);
+}
+
+/// @dev What a replacement work oracle must answer. `predecessor` is required only once anything has
+/// ever been minted from work (see `proposeWorkOracle`).
+interface IWorkOracleSuccessor {
+    function vault() external view returns (address);
+    function mintingRights(address account) external view returns (uint256);
+    function predecessor() external view returns (address);
 }
 
 /// @notice The numbers that set the protocol's economics, and the reserve register that backs its
@@ -63,7 +73,8 @@ contract Parameters is Governed {
         Gap,
         OracleBudget,
         RedemptionDivisor,
-        Stream
+        Stream,
+        WorkOracle
     }
 
     uint256 private constant BPS = 10_000;
@@ -126,6 +137,10 @@ contract Parameters is Governed {
     /// @notice Who the Treasury's operator stream pays, and at most how much imdUSD per UTC day.
     address public streamPayee;
     uint256 public streamPerDay;
+    /// @notice A replacement for the vault's work oracle; zero means the one the vault created. Exists so
+    /// that integrating minting from work upstream never forces a new vault: the created oracle pins the
+    /// WorkRegistry, the receipt schema and its leaf encoding in bytecode, and any of those may change.
+    address public workOracle;
 
     /// @notice The vault these parameters govern: its creator, fixed at construction.
     /// @dev Needed for two things that cannot be done without it: checking a proposed ceiling
@@ -145,6 +160,8 @@ contract Parameters is Governed {
     error OracleBudgetTooHigh(uint256 imdPerDay);
     error RedemptionDivisorOutOfRange(uint256 divisor);
     error StreamTooHigh(uint256 perDay);
+    error WorkMintingOn();
+    error InvalidWorkOracle();
     error StreamPayeeMissing();
 
     /// @dev Seeded from the shipped constants, so a fresh Parameters is exactly the configuration
@@ -217,6 +234,17 @@ contract Parameters is Governed {
     /// @notice Propose the redemption fee divisor, within MIN_/MAX_REDEMPTION_DIVISOR.
     function proposeRedemptionDivisor(uint256 divisor) external {
         _propose(abi.encode(Change.RedemptionDivisor, divisor));
+    }
+
+    /// @notice Replace the vault's work oracle (zero: back to the one it created). Refused while minting
+    /// from work is ON — at proposal and again at application — so no rights are ever claimable in two
+    /// oracles at once. Once anything has ever been minted from work, the replacement must name the
+    /// current oracle as its `predecessor`, so it can start from the tallies already credited instead of
+    /// crediting them a second time; before that, there is nothing to carry over.
+    /// @dev Adds no trust: a governor who could mint through a hostile oracle can already raise the wage.
+    /// The 48-hour delay applies like every other change.
+    function proposeWorkOracle(address next) external {
+        _propose(abi.encode(Change.WorkOracle, next));
     }
 
     /// @notice Propose who the operator stream pays and its daily cap. A zero amount turns it off.
@@ -348,6 +376,20 @@ contract Parameters is Governed {
 
     function _validate(bytes memory payload) internal view override {
         Change kind = _kind(payload);
+        if (kind == Change.WorkOracle) {
+            (, address replacement) = abi.decode(payload, (Change, address));
+            if (_wage != 0) revert WorkMintingOn();
+            bool minted = vault.totalEarned() != 0;
+            if (replacement == address(0)) {
+                if (minted) revert InvalidWorkOracle();
+                return;
+            }
+            IWorkOracleSuccessor successor = IWorkOracleSuccessor(replacement);
+            if (replacement.code.length == 0 || successor.vault() != address(vault)) revert InvalidWorkOracle();
+            successor.mintingRights(address(vault));
+            if (minted && successor.predecessor() != vault.oracle()) revert InvalidWorkOracle();
+            return;
+        }
         if (kind == Change.RedemptionDivisor) {
             (, uint256 divisor) = abi.decode(payload, (Change, uint256));
             _checkDivisor(divisor);
@@ -421,6 +463,10 @@ contract Parameters is Governed {
 
     function _apply(bytes memory payload) internal override {
         Change kind = _kind(payload);
+        if (kind == Change.WorkOracle) {
+            (, workOracle) = abi.decode(payload, (Change, address));
+            return;
+        }
         if (kind == Change.RedemptionDivisor) {
             (, redemptionDivisor) = abi.decode(payload, (Change, uint256));
             return;

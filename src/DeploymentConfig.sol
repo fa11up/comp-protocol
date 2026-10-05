@@ -218,7 +218,9 @@ bytes32 constant ORACLE_ACTION = "oracle.request@oracle-1";
 address constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
 bytes32 constant IMD_POOL_ID = 0xb07d640fd9e2eb9dc81b953c8e4fd006bdfeaf276010fb5418eb763ca15abfb3;
 // IMD the Treasury may stream to the asker per UTC day, and the hard cap governance can never exceed.
-uint256 constant ORACLE_BUDGET_PER_DAY = 10 ether;
+// 15 IMD: the worst day in 50 days of simulated history under the launch trigger (median 2), see
+// docs/oracle-guards/ORACLE-GUARDS-2026-10-05.md. Exceeding it only defers asks to the next UTC day.
+uint256 constant ORACLE_BUDGET_PER_DAY = 15 ether;
 uint256 constant MAX_ORACLE_BUDGET_PER_DAY = 100 ether;
 // The asker's anti-spam policy. A feed may be paid for at most once per ASK_MIN_INTERVAL, never while
 // a request for it is in flight (until ASK_TIMEOUT), and never above ASK_MAX_PRICE IMD per request. A
@@ -232,3 +234,13 @@ uint256 constant ASK_MAX_PRICE = 1 ether;
 uint256 constant ARM_DELAY_BLOCKS = 5;
 uint256 constant ARM_WINDOW_BLOCKS = 100;
 uint256 constant STALE_AT_BPS = 7_500;
+// The drift that justifies a Treasury-paid update, as a share (bps) of the feed's own deviation cap, and
+// DIFFERENT BY DIRECTION. A fall (pool below the feed) over-values collateral — over-borrowing, late
+// liquidation — so it is bought early, at a quarter of the cap (5% at a 20% cap). A rise only
+// under-values collateral, which limits borrowing and endangers no one, so the Treasury NEVER pays for
+// one (zero = off): whoever wants the borrowing room buys the update (OracleAsker.askPaid). Measured on
+// 50 days of IMD history (docs/oracle-guards/): against the former symmetric half-cap trigger this cuts
+// the worst over-valuation from 21% to 9.0% and the cost from 3.9 to 2.2 IMD a day; paying for rises at
+// the full cap bought nothing but refusals (a rise past the cap on a fresh feed is refused).
+uint256 constant DRIFT_FALL_TRIGGER_OF_CAP_BPS = 2_500;
+uint256 constant DRIFT_RISE_TRIGGER_OF_CAP_BPS = 0;

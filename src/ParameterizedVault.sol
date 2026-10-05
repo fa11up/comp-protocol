@@ -9,6 +9,7 @@ import {TreasuryFactory} from "./TreasuryFactory.sol";
 import {UsdPriceFeed} from "./UsdPriceFeed.sol";
 import {SharePriceFeed} from "./SharePriceFeed.sol";
 import {IShareVault} from "./interfaces/IShareVault.sol";
+import {IWorkOracle} from "./interfaces/IWorkOracle.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 import {TREASURY_FACTORY} from "./DeploymentConfig.sol";
 
@@ -109,6 +110,13 @@ contract ParameterizedVault is CDPVault {
     /// lagged at every wage: adversarial review 2026-10-05, see CDPVault._backingPerUnit.)
     function _lagApplies() internal view override returns (bool) {
         return parameters.wage() != 0;
+    }
+
+    /// @notice The work oracle `earn` reads: a governed replacement if one was applied, else the oracle
+    /// this vault created. See Parameters.proposeWorkOracle.
+    function oracle() public view override returns (IWorkOracle) {
+        address replacement = parameters.workOracle();
+        return replacement == address(0) ? super.oracle() : IWorkOracle(replacement);
     }
 
     function _surplus() internal view override returns (address) {

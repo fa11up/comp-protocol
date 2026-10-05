@@ -671,6 +671,19 @@
   },
   {
     "type": "function",
+    "name": "proposeWorkOracle",
+    "inputs": [
+      {
+        "name": "next",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "redemptionDivisor",
     "inputs": [],
     "outputs": [
@@ -743,6 +756,19 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "workOracle",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -838,6 +864,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidWorkOracle",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotGovernor",
     "inputs": []
   },
@@ -926,6 +957,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "WorkMintingOn",
+    "inputs": []
   },
   {
     "type": "error",
