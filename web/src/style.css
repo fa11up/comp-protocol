@@ -2233,13 +2233,10 @@ html.app-page body {
 }
 /* Redacted text: the words are removed at build time; this bar stands in for them. */
 .redacted {
-  background: var(--text);
-  color: transparent;
-  white-space: break-spaces;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
+  color: var(--muted);
+  filter: blur(4px);
   user-select: none;
-  overflow-wrap: anywhere;
+  pointer-events: none;
 }
 .redaction-note {
   font-size: 11px;
@@ -2395,6 +2392,7 @@ html.app-page body {
     padding: 3px 0;
     border: 0;
   }
+  .doc td[data-label=""]::before { display: none; }
   .doc td[data-label]::before {
     content: attr(data-label);
     display: block;

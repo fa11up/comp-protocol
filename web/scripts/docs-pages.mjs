@@ -40,10 +40,18 @@ const plainText = (md) =>
     .replace(/[*_>#|-]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-/** A black bar standing in for `text`: whitespace of the same length (no glyphs to show
-// or measure), so lines wrap like the original. */
-const bar = (text) =>
-  `<span class="redacted" role="img" aria-label="Redacted">${" ".repeat(Math.max(4, Math.min(plainText(text).length, 400)))}</span>`;
+/** Blurred filler standing in for `text`: random letters in the original's word shapes, so lines
+ * wrap like the original while none of its words reach the page. Seeded from the text so builds are
+ * reproducible. */
+const bar = (text) => {
+  const src = plainText(text).slice(0, 400) || "xxxx";
+  let seed = 2166136261;
+  for (const ch of src) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const rnd = () => ((seed = Math.imul(seed ^ (seed >>> 15), 2246822507) >>> 0), seed / 4294967296);
+  const letters = "etaoinshrdlcumwfgypbvk";
+  const filler = src.replace(/\S/g, () => letters[Math.floor(rnd() * letters.length)]);
+  return `<span class="redacted" role="img" aria-label="Redacted"><span aria-hidden="true">${filler}</span></span>`;
+};
 /** A title with only the word "terminal" barred. */
 const titleHtml = (t, redact) => {
   const e = escapeHtml(t);
@@ -185,7 +193,7 @@ export function renderDocs({ outDir, contentDir, terminal }) {
         table(token) {
           const cell = (c) => (hit(c.text) ? bar(c.text) : this.parser.parseInline(c.tokens));
           const align = (i) => (token.align[i] ? ` style="text-align:${token.align[i]}"` : "");
-          const labels = token.header.map((h) => (hit(h.text) ? "Redacted" : plainText(h.text)));
+          const labels = token.header.map((h) => (hit(h.text) ? "" : plainText(h.text)));
           // A column whose every value is short never wraps; the long-prose columns take the squeeze.
           const short = token.header.map((_, i) => token.rows.every((r) => plainText(r[i]?.text ?? "").length <= 30));
           const cls = (i) => (short[i] ? ' class="nowrap"' : "");
