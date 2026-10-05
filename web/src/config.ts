@@ -180,6 +180,30 @@ declare global {
 }
 
 // Public history service and bounded browser read policy; no indexer is operated by this app.
+/**
+ * Genesis points (points/engine.ts). 1 point = 1 imdUSD held for 1 day (7,200 blocks); liquidity in the
+ * imdUSD/USDC pool earns `lpBps`/10000 x; liquidators earn debt repaid x `liquidationCreditDays`.
+ * `startBlock` / `endBlock` undefined = from the stablecoin's deployment / up to the latest block: the
+ * season ends at the swarm's mainnet launch and our token launch, when `endBlock` is pinned here.
+ * `lpLive` stays false until the pool exists and its LP reader is built: liquidity then earns nothing
+ * here and the pane says so rather than showing a boost nobody can get.
+ */
+export const pointsConfig = {
+  blocksPerDay: 7_200,
+  lpBps: 30_000,
+  liquidationCreditDays: 3,
+  startBlock: undefined as number | undefined,
+  endBlock: undefined as number | undefined,
+  lpLive: false,
+  /** Uniswap v4 PoolManager per chain: the pool's imdUSD is its LPs', never a holding of the manager. */
+  poolManagers: {
+    1: "0x000000000004444c5dc75cb358380d2e3de08a90",
+    11155111: "0xe03a1074c86cfedd5c142c4f04f1a1536e203543",
+  } as Record<number, string>,
+  /** Any other protocol contract that holds imdUSD. The vault and Treasury are added automatically. */
+  excluded: [] as string[],
+};
+
 export const historyConfig = {
   blockscoutApi: "https://eth-sepolia.blockscout.com/api/v2/",
   chainId: 11155111,

@@ -6,6 +6,8 @@ import { resolve } from "node:path";
 export default defineConfig({
   plugins: [react()],
   base: "./",
+  // The points engine lives at ../points/engine.ts so the CLI and the terminal share one file.
+  server: { fs: { allow: [".."] } },
   build: {
     outDir: "../dist",
     emptyOutDir: true,

@@ -24,6 +24,7 @@ import { ThemeToggle } from "./theme";
 import { SiteHeader } from "./site";
 import { Who } from "./ens";
 import { LoanBook, useCharts } from "./Charts";
+import { Points, usePoints } from "./Points";
 import { Ticker } from "./motion";
 import { MarketCap, compact } from "./MarketCap";
 export default function App() {
@@ -92,6 +93,7 @@ function Terminal({ r }: { r: Runtime }) {
     setMobilePane("keeper");
   };
   const charts = useCharts(r, s);
+  const points = usePoints(r, s);
   const dialog = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const restore = useRef(false);
@@ -352,6 +354,7 @@ function Terminal({ r }: { r: Runtime }) {
     ["loans", "Loan book"],
     ["oracle", "Oracle"],
     ["backing", "Backing"],
+    ["points", "Points"],
   ] as const;
   const deskTabs = [
     ["position", "Position"],
@@ -449,6 +452,16 @@ function Terminal({ r }: { r: Runtime }) {
             tag="Treasury"
           >
             <Backing r={r} s={s} />
+          </Pane>
+          <Pane
+            monitor
+            columns
+            id="points"
+            index="08"
+            title="Points"
+            tag="Genesis season"
+          >
+            <Points r={r} account={account} points={points} />
           </Pane>
         </div>
         <div className="desk">

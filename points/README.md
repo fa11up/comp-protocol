@@ -1,43 +1,49 @@
 # Genesis points
 
-Off-chain points for INFER's genesis season. No points are stored on chain; the vault only emits
-the one event needed to compute them exactly, and anyone can rerun this and get the same numbers.
+Off-chain points for INFER's genesis season. Nothing is stored or computed on chain: points come from
+the imdUSD token's standard `Transfer` events and the vault's liquidation event, and anyone can rerun
+this and get the same numbers.
 
 ## The rule
 
-| Who | Earns | Unit |
+**1 point = 1 imdUSD held for 1 day.**
+
+| Who | Earns | Rate |
 |---|---|---|
-| Borrowers | principal × seconds held | 1 point = 1 imdUSD of principal held for 1 day |
-| Liquidators | debt repaid × a flat credit (default 7 days) | same unit |
-| Redeemers | nothing | |
+| imdUSD in a wallet | balance × days held | 1× |
+| imdUSD provided to the imdUSD/USDC pool | position × days | 3× (default), because the launch needs liquidity |
+| Liquidators | debt repaid × 3 days | flat credit per liquidation |
+| Borrowing, redeeming | nothing by themselves | a borrower earns by holding or providing what they mint |
 
-- **Flat and linear.** Splitting a position across wallets earns exactly the same, and a late
-  entrant earns at the same rate as an early one. A borrow held for one block earns one block.
-- **Principal only.** Stability fees are a cost of borrowing, not borrowing, so they earn nothing.
-- **Season:** from the vault's deployment (or `--start`) until the swarm's mainnet launch and our
-  token launch (`--end`). A run mid-season is a live leaderboard.
+- **Points belong to an address, not to the token.** A buyer earns from the block the imdUSD arrives;
+  the seller keeps what it earned and stops. Nothing moves with the token.
+- **Flat and linear.** Splitting across wallets earns exactly the same, and a late entrant earns at the
+  same rate as an early one. Only the balance at the end of a block counts, so a flash loan earns
+  nothing.
+- **Excluded:** the vault, the Treasury (stability fees are minted to it) and the Uniswap v4
+  PoolManager, whose imdUSD belongs to the LPs and is credited to them at the liquidity rate.
+- **Season:** from the stablecoin's deployment until the swarm's mainnet launch and our token launch.
 
-## How it is computed
+**Time is measured in blocks**: a day is 7,200 blocks at 12 seconds. Every holder sees the same block
+count, so each share is exact. Only the absolute figure moves with a missed slot. No timestamps are
+needed, so any RPC or explorer reproduces the same numbers.
 
-The vault emits `Principal(owner, debt)` whenever a position's principal changes, by any path: draw,
-repay, liquidation or redemption. It carries the new total, because repayments pay fees before
-principal and no other event says how a repayment split. `test/PrincipalEvent.t.sol` proves the
-stream equals the vault's principal after every step of a fuzzed draw/repay sequence.
+**Liquidity is not live yet.** The pool does not exist, so `lp` events have no reader: liquidity
+earns nothing until the pool's LP reader is built, and the terminal says so.
 
-`engine.mjs` is pure (events in, points out) so the terminal can import the same code.
-`logs.mjs` reads the vault's logs from Blockscout. It never uses a public RPC's `eth_getLogs`, which
-can silently return an empty array, and it treats zero logs as an error rather than as "nobody
-borrowed".
+## Files
+
+- `engine.ts`: the rule. Pure; the terminal imports it through Vite and the CLI runs it under Node's
+  type stripping, so both always agree.
+- `logs.ts` + `chains.ts`: read logs from Blockscout, never a public RPC's `eth_getLogs`, which can
+  silently return an empty array. Zero logs is an error, never "nobody holds anything".
+- `cli.ts`: writes the leaderboard as JSON.
 
 ## Run
 
 ```bash
-node points/cli.mjs --vault 0x... --chain ethereum --out points.json
-node points/cli.mjs --vault 0x... --chain ethereum --end 2026-12-01T00:00:00Z   # a fixed season end
-node --test points/engine.test.mjs                                             # engine tests
+node points/cli.ts --stablecoin 0x.. --vault 0x.. --chain ethereum --exclude <treasury> --out points.json
+node --test points/engine.test.ts
 ```
 
-Set `BLOCKSCOUT_API_KEY` to raise the explorer's rate limit.
-
-**Only the mainnet vault counts.** Testnet collateral comes from a free faucet, so testnet activity
-costs nothing to fake.
+**Only mainnet counts.** Testnet balances cost nothing to fake.

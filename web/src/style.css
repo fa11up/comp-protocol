@@ -1120,7 +1120,8 @@ td span {
 @media (min-width: 1101px) {
   .workspace[data-monitor="loans"] .pane-loans,
   .workspace[data-monitor="oracle"] .pane-oracle,
-  .workspace[data-monitor="backing"] .pane-backing {
+  .workspace[data-monitor="backing"] .pane-backing,
+  .workspace[data-monitor="points"] .pane-points {
     display: flex;
   }
 }
@@ -1272,6 +1273,7 @@ td span {
   .workspace[data-mobile-pane="loans"] .pane-loans,
   .workspace[data-mobile-pane="oracle"] .pane-oracle,
   .workspace[data-mobile-pane="backing"] .pane-backing,
+  .workspace[data-mobile-pane="points"] .pane-points,
   .workspace[data-mobile-pane="position"] .pane-position,
   .workspace[data-mobile-pane="redemption"] .pane-redemption,
   .workspace[data-mobile-pane="work"] .pane-work,
@@ -2087,4 +2089,26 @@ html.app-page body {
 }
 .buy-update .action-note:empty {
   display: none;
+}
+
+/* Genesis points: the leaderboard reuses the loan feed's list, with its own four columns. */
+.points-board {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.points-columns,
+.points-feed li {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) 0.9fr 0.6fr 0.8fr;
+  gap: 10px;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+.points-feed li {
+  padding: 6px 0;
+}
+.points-columns > :not(:first-child),
+.points-feed li > :not(:first-child) {
+  text-align: end;
 }

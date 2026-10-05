@@ -142,6 +142,7 @@ const monitorLabels = {
   loans: "Loan book",
   oracle: "Oracle",
   backing: "Backing",
+  points: "Points",
 };
 // Site-drawn dropdowns: open by the labelled button, then pick the option by its text.
 async function choose(page, scope, label, text) {
@@ -1054,6 +1055,38 @@ try {
   passed(
     "Silent empty RPC uses paginated Blockscout fallback; empty fallback and partial owner failure render unknown, retry restores the book",
   );
+  await tab(page, "points");
+  const pointsPane = page.locator(".pane-points");
+  await page.locator(".points-feed li").first().waitFor();
+  await expectText(pointsPane, "Preview on");
+  assert.match(await pointsPane.textContent(), /do not count/);
+  const rows = await page.locator(".points-feed li").allTextContents();
+  assert.equal(
+    rows.length,
+    2,
+    "the Treasury's stability-fee imdUSD earns nothing",
+  );
+  assert.match(
+    rows[0],
+    /34\.47/,
+    "holding plus three days of liquidation credit",
+  );
+  assert.match(rows[1], /3\.62/);
+  assert.match(await pointsPane.textContent(), /3× once the pool is live/);
+  assert.match(await pointsPane.textContent(), /3 days per imdUSD/);
+  await page.screenshot({ path: `${evidence}/points-1440.png` });
+  s.logMode = "empty";
+  s.explorerEmpty = true;
+  await refresh(page);
+  await expectText(pointsPane, "not the same as nobody holding imdUSD");
+  assert.equal(await page.locator(".points-feed li").count(), 0);
+  s.explorerEmpty = false;
+  s.logMode = "rpc";
+  await pointsPane.getByRole("button", { name: "Retry", exact: true }).click();
+  await page.locator(".points-feed li").first().waitFor();
+  passed(
+    "Points: holders ranked from imdUSD transfers, Treasury excluded, liquidation credit, testnet label, LP boost marked not live; unreadable history is an error, never an empty board",
+  );
   // System default, live OS change, explicit persistence, theme-color, and both palettes.
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForFunction(
@@ -1221,7 +1254,7 @@ try {
     );
   }
   passed(
-    "Both themes fit all five viewport sizes; all eight mobile panes reachable; desktop axe reports no violations",
+    "Both themes fit all five viewport sizes; all nine mobile panes reachable; desktop axe reports no violations",
     variants,
   );
   await page.emulateMedia({ reducedMotion: "reduce" });

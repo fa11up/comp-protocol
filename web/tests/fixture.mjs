@@ -576,15 +576,51 @@ export function fixtureLogs(s, address) {
     };
   };
   if (name === "ParameterizedVault")
-    return [account, candidate, extraOwner, closedOwner, account].map(
-      (owner, i) =>
-        event(
-          "CollateralDeposited",
-          { account: owner, amount: 100n * W },
-          100 + i,
-          0,
-        ),
-    );
+    return [
+      ...[account, candidate, extraOwner, closedOwner, account].map(
+        (owner, i) =>
+          event(
+            "CollateralDeposited",
+            { account: owner, amount: 100n * W },
+            100 + i,
+            0,
+          ),
+      ),
+      // One liquidation, so points credit a liquidator (legacy name for Bite).
+      event(
+        "Liquidated",
+        {
+          owner: closedOwner,
+          liquidator: account,
+          debtRepaid: 10n * W,
+          collateralSeized: 11n * W,
+        },
+        200,
+        1,
+      ),
+    ];
+  // imdUSD transfers for genesis points: the account mints 300 and sends 100 on; the Treasury's
+  // stability-fee mint must earn nothing. Expected (season 16..256, 7,200 blocks a point):
+  // account 4.47 holding + 30 liquidation = 34.47, candidate 3.62.
+  if (name === "compToken") {
+    const zero = "0x0000000000000000000000000000000000000000";
+    return [
+      event("Transfer", { from: zero, to: account, value: 300n * W }, 110, 0),
+      event("Transfer", { from: zero, to: candidate, value: 100n * W }, 111, 0),
+      event(
+        "Transfer",
+        { from: account, to: candidate, value: 100n * W },
+        140,
+        0,
+      ),
+      event(
+        "Transfer",
+        { from: zero, to: addresses.treasury, value: 5n * W },
+        150,
+        0,
+      ),
+    ];
+  }
   if (!["PriceFeed", "NhiFeed", "SpotFeed", "oracle"].includes(name)) return [];
   return [7200, 7000, 2400, 120, ...(s.extraPoint ? [30] : [])].flatMap(
     (seconds, i) => {
