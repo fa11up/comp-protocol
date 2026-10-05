@@ -68,22 +68,22 @@ Each feed row expands to show its latest value, when it was updated, its maximum
 Left column, **Your position**:
 
 - **Collateral ratio** and the required ratio beside it.
-- **Collateral** (IMD), **Accrued debt** (imdUSD, including fees) and **Unpaid stability fee**.
-- **Liquidation price:** the dollar price per IMD at which your ratio reaches `mat`. "No debt" if you owe nothing. The line below says how far above it the price is.
+- **Collateral** (sIMD), **Accrued debt** (imdUSD, including fees) and **Unpaid stability fee**.
+- **Liquidation price:** the dollar price per IMD at which your ratio reaches `mat`, counting your sIMD at the IMD it is worth. "No debt" if you owe nothing. The line below says how far above it the price is.
 - **Can still borrow** and **Can withdraw:** the most you could add or remove at the current price without going under `mat`.
-- **Wallet:** your IMD and imdUSD balances.
+- **Wallet:** your IMD, sIMD and imdUSD balances.
 
-Right column, **Act**: choose Deposit (`lock`), Borrow (`draw`), Repay (`wipe`) or Withdraw (`free`). Deposit first asks for an IMD approval for exactly the amount, as its own transaction. Repay needs no approval.
+Right column, **Act**: choose Deposit (`lock`), Borrow (`draw`), Repay (`wipe`) or Withdraw (`free`). Deposit takes IMD (staked for you) or sIMD, and first asks for an approval of that token for exactly the amount, as its own transaction. Repay needs no approval.
 
 ### Redeem
 
-Left: **Current fee** (before your amount is added), **Floor / cap**, **Paid at** ($1, or the backing figure if lower), **Reserve on hand** (Treasury IMD), **Eligibility ceiling**, and a table of the fee for 1%, 5% and 10% of supply.
+Left: **Current fee** (before your amount is added), **Floor / cap**, **Paid at** ($1, or the backing figure if lower), **Reserve on hand** (Treasury sIMD), **Eligibility ceiling**, and a table of the fee for 1%, 5% and 10% of supply.
 
 Right: enter an amount, a slippage tolerance in basis points and, if the reserve is short, a **Candidate position**. Press Quote redemption. The quote shows what you receive, your fee, whether it is served by the reserve, a position or both, the debt cancelled and your minimum. Any edit clears the quote. Then press Review redemption to run Redeem (`cash`).
 
 ### Work
 
-Shows the swarm's attested cumulative task count and your minting rights, then **Mint from work** (`earn`). The note states that the count is a published tally attested by a panel, not an on-chain proof.
+Shows the work rights you can use, then **Mint from work** (`earn`). Rights come from the swarm's daily work tally: the work oracle holds an attested root of that tally, and an agent's controller claims the agent's accepted tasks against it with `claim` on the work oracle. Whether minting from work is open at launch is (under consideration).
 
 ### Keeper
 

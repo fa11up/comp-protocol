@@ -1,5 +1,5 @@
 ---
-title: Redeem imdUSD for IMD
+title: Redeem imdUSD
 section: guides
 order: 4
 audience: everyone
@@ -12,26 +12,26 @@ sources:
   - web/src/Redemption.tsx:28-379
 ---
 
-# Redeem imdUSD for IMD
+# Redeem imdUSD
 
-Redeem (`cash`) burns imdUSD from your wallet and pays you IMD. It is the floor under the price: while the market price is below what redemption pays, redeeming is a way to turn cheap imdUSD into IMD.
+Redeem (`cash`) burns imdUSD from your wallet and pays you sIMD, staked IMD. It is the floor under the price: while the market price is below what redemption pays, redeeming is a way to turn cheap imdUSD into staked IMD. Unstake the sIMD in the staking vault to get IMD; sIMD received in a block cannot be unstaked in that same block, so do it in the next one.
 
 ## What you are paid
 
-The vault pays IMD worth the lesser of $1 and backing per imdUSD, less the fee, for each imdUSD burned:
+The vault pays sIMD worth the lesser of $1 and backing per imdUSD, less the fee, for each imdUSD burned:
 
-> IMD out = imdUSD burned × min($1, backing per imdUSD) × (1 − fee) ÷ IMD price in dollars
+> sIMD out = imdUSD burned × min($1, backing per imdUSD) × (1 − fee) ÷ sIMD price in dollars
 
 - **Backing per imdUSD** is read with `backingPerUnit()` and shown in the terminal. It is capped at $1.
 - **The fee** has a floor and a cap. It rises with the share of imdUSD supply your burn represents, and decays as time passes since the last redemption. Values are (under consideration). The fee is quoted before you send: `redemptionFeeBps(amount)`.
-- If backing is below $1, you are paid less than $1 per imdUSD. The channel does not close.
+- If backing is below $1, you are paid less than $1 per imdUSD. A shortfall does not close the channel, but the usual checks still apply: fresh agreeing prices, an eligible candidate when the reserve is short, and a nonzero payout.
 
 ## Who funds the payout
 
-1. **The reserve first.** The vault pays from the Treasury's idle IMD.
-2. **A candidate position for any shortfall.** If the reserve cannot cover the whole payout, you must name a candidate: a borrower's address. The vault cancels that borrower's debt by the matching amount and pays the rest of your IMD from their collateral.
+1. **The reserve first.** The vault pays from the Treasury's idle sIMD.
+2. **A candidate position for any shortfall.** If the reserve cannot cover the whole payout, you must name a candidate: a borrower's address. The vault cancels that borrower's debt by the matching amount and pays the rest of your sIMD from their collateral.
 
-A candidate must have debt, and its collateral ratio must be below `mat` plus the spread `gap`. The Loan book's redeemable band shows such positions. The candidate must also stay no worse off in ratio: the IMD taken may not exceed their collateral in proportion to the debt cancelled.
+A candidate must have debt, and its collateral ratio must be below `mat` plus the spread `gap`. The Loan book's redeemable band shows such positions. The candidate must also stay no worse off in ratio: the sIMD taken may not exceed their collateral in proportion to the debt cancelled.
 
 ## Prerequisites
 
@@ -53,16 +53,16 @@ A candidate must have debt, and its collateral ratio must be below `mat` plus th
 
 | Revert | Cause | Recovery |
 |---|---|---|
-| `ZeroAmount` | Amount is zero, or it rounds to zero IMD out | Increase the amount |
+| `ZeroAmount` | Amount is zero, or it rounds to zero sIMD out | Increase the amount |
 | `StaleFeed`, `PriceDivergence`, `InvalidPrice` | Feeds unusable | Wait for fresh agreeing attestations |
 | `ExcessRepayment` | Amount exceeds total imdUSD supply, or the shortfall exceeds the candidate's debt | Reduce the amount |
 | `MinimumOutNotMet` | Payout fell below `minImdOut` | Get a new quote; widen slippage |
 | `IneligibleRedemptionPosition` | The candidate has no debt, is at or above `mat` plus `gap`, or none was given when needed | Choose another candidate from the redeemable band |
-| `RedemptionWorsensRatio` | The IMD taken would exceed the candidate's collateral share of the debt cancelled; typical for a position that is already deeply short | Choose another candidate or a smaller amount |
+| `RedemptionWorsensRatio` | The sIMD taken would exceed the candidate's collateral share of the debt cancelled; typical for a position that is already deeply short | Choose another candidate or a smaller amount |
 | ERC-20 balance error | You hold less imdUSD than the amount | Reduce the amount |
 
 Each revert rolls back the whole call; your imdUSD is not burned.
 
 ## What your redemption changes
 
-Your fee remains in the protocol and raises backing per imdUSD for everyone left. A larger burn raises the fee that the next redeemer pays, until it decays. Principal minted only recently and then cancelled does not raise that fee, which stops a borrower from pumping it at no cost.
+Your fee remains in the protocol as collateral value behind the imdUSD that is left. The `backingPerUnit()` figure is a conservative measure and can still fall after a redemption that cancels a candidate's debt, because that collateral stops counting as securing debt. A larger burn raises the fee that the next redeemer pays, until it decays. Principal minted only recently and then cancelled does not raise that fee, which stops a borrower from pumping it at no cost.

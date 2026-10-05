@@ -1015,7 +1015,7 @@
         "internalType": "address"
       },
       {
-        "name": "compBurned",
+        "name": "burned",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

@@ -39,7 +39,7 @@ The relay is a contract and not a key for two reasons. Several feeds can update 
 
 Attestations come from the IdentityMD oracle service, signed by its attester under an EIP-712 domain bound to the chain and the specific feed. A request must name the target feed as its consumer, or the signature will not verify.
 
-TODO(oracle-funding): Describe how attestations are paid for on chain. Oracle updates purchased through an Intake contract and funded from treasury assets are being built and are not in this source. This page should say what the keeper submits, who pays, from which assets, and what the relayer is repaid.
+Most updates arrive without a keeper: `OracleAsker` buys them with Treasury IMD and they are delivered through `SwarmRelay` automatically. A keeper's part is to call `fundOracle`, `arm` and `ask` when the chain allows, and to relay by hand when an automatic delivery fails or the day's budget is spent. See [How updates are paid for](../reference/oracle-and-question-binding.md#how-updates-are-paid-for).
 
 ## What a feed checks
 
@@ -83,13 +83,13 @@ Between your update and your call, another keeper can see the new price and act 
 
 ### How `relayAndBite` handles tokens
 
-The vault burns the caller's imdUSD and pays the caller the seized IMD, and here the caller is the relay. So:
+The vault burns the caller's imdUSD and pays the caller the seized sIMD, and here the caller is the relay. So:
 
 1. You approve `SwarmRelay` for at least `debtToRepay` of imdUSD.
 2. The relay pulls exactly `debtToRepay`, never more. Over-approving leaves the surplus with you.
 3. It calls `vault.bite(borrower, debtToRepay)`.
-4. It sends you whatever IMD the vault actually paid, measured as a balance change.
-5. It checks that it holds no more imdUSD or IMD than before, and reverts with `StablecoinRetained` or `CollateralRetained` otherwise.
+4. It sends you whatever sIMD the vault actually paid, measured as a balance change.
+5. It checks that it holds no more imdUSD or sIMD than before, and reverts with `StablecoinRetained` or `CollateralRetained` otherwise.
 6. It emits `RelayedLiquidation(keeper, vault, borrower, debtRepaid, seized)`.
 
 Because it uses balance changes, a donation to the relay cannot be taken by a liquidator and cannot make the checks fail for everyone.

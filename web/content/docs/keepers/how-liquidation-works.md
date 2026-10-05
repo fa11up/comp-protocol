@@ -53,9 +53,9 @@ Time since the mark decides what is possible:
 `bite(owner, debtToRepay)` requires fresh agreeing feeds, an unsafe position, a mark (`PositionNotMarked`), an elapsed grace and an unexpired mark. It then:
 
 1. Accrues the borrower's stability fee and checks `debtToRepay` is at most their debt (`ExcessRepayment`).
-2. Computes the collateral seized: `debtToRepay` plus the bonus, converted to IMD at the vault's price. The bonus is `CHOP_PERCENT`, a source constant whose value is (under consideration). If that exceeds the borrower's collateral it reverts with `InsufficientCollateral`; a smaller `debtToRepay` is the remedy.
+2. Computes the collateral seized: `debtToRepay` plus the bonus, converted to sIMD at the vault's collateral price. The bonus is `CHOP_PERCENT`, a source constant whose value is (under consideration). If that exceeds the borrower's collateral it reverts with `InsufficientCollateral`; a smaller `debtToRepay` is the remedy.
 3. Burns `debtToRepay` of the caller's imdUSD. No approval is needed. Fees paid are minted to the Treasury.
-4. Splits the seized IMD ([Keeper economics](./keeper-economics.md)).
+4. Splits the seized sIMD ([Keeper economics](./keeper-economics.md)).
 5. Emits `Bite(owner, liquidator, debtRepaid, collateralSeized)`.
 
 You can liquidate part of the debt. Partial liquidation is how a keeper handles a position larger than their imdUSD inventory. If the position becomes safe after a partial `bite`, the mark is cleared and further `bite` calls revert with `HealthyPosition`.

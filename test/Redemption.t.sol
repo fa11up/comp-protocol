@@ -19,7 +19,7 @@ contract RedemptionTest is WorkBackingFixture {
     event Cash(
         address indexed redeemer,
         address indexed candidate,
-        uint256 compBurned,
+        uint256 burned,
         uint256 imdOut,
         uint256 reserveOut,
         uint256 debtCancelled,

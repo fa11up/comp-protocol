@@ -23,7 +23,7 @@ Your position is safe while collateral value divided by debt is at least `mat`. 
 
 > liquidation price = debt × `mat` ÷ 100 ÷ collateral
 
-with debt in imdUSD, collateral in IMD and `mat` as a whole percentage. The terminal shows this as **Liquidation price**, with the cushion below the current price. Two things move it that are not the IMD price:
+with debt in imdUSD, collateral as the IMD your sIMD is worth (sIMD × the staking vault's exchange rate) and `mat` as a whole percentage. The terminal shows this as **Liquidation price**, with the cushion below the current price. Two things move it that are not the IMD price:
 
 - **Stability fee.** Debt grows with `duty` through `chi`, so the liquidation price rises over time.
 - **Network health.** `mat` is derived from the network health index. When health falls, `mat` rises and your liquidation price rises with it, even if IMD is flat. When health rises, `mat` falls. The curve is (under consideration); read the live value with `mat()` or in the Position tab.
@@ -32,7 +32,7 @@ Keep a cushion that covers a price fall and a health fall together. Check **Liqu
 
 ## Add collateral: Deposit (`lock`)
 
-1. Choose Deposit, enter the IMD amount, approve if asked, then confirm.
+1. Choose Deposit, pick IMD or sIMD, enter the amount, approve if asked, then confirm.
 2. The ratio rises and the liquidation price falls.
 
 Deposit works even when feeds are stale. It reverts only with `ZeroAmount`, an ERC-20 balance or allowance error, or `UnexpectedCollateralReceived`.
@@ -47,8 +47,8 @@ Repay works even when feeds are stale. Errors: `ZeroAmount`; `ExcessRepayment` i
 
 ## Take collateral out: Withdraw (`free`)
 
-1. Choose Withdraw, enter an IMD amount and confirm.
-2. With no debt, the vault just returns your IMD. With debt, it needs fresh agreeing feeds and refuses if the remainder would fall below `mat`.
+1. Choose Withdraw, enter an sIMD amount and confirm.
+2. With no debt, the vault just returns your sIMD. Unstake it in the staking vault if you want IMD. With debt, it needs fresh agreeing feeds and refuses if the remainder would fall below `mat`.
 
 Errors: `InsufficientCollateral` (you asked for more than you hold); `UnsafeCollateralRatio` (the remainder is too thin; the note gives the most you can take); `StaleFeed`, `PriceDivergence` (feeds not usable; wait).
 
@@ -70,7 +70,7 @@ If a Deposit or Repay restores your ratio but a feed is stale or primary and spo
 
 ## What liquidation costs you
 
-If a keeper Liquidates you, the debt they repay is cancelled and they take IMD worth that debt plus the bonus (`CHOP_PERCENT`). The bonus is the cost to you. It is the same however it is split between marker, protocol and liquidator. If your collateral cannot cover the debt, the remainder is recorded as bad debt and is not forgiven to you in any later action.
+If a keeper Liquidates you, the debt they repay is cancelled and they take sIMD worth that debt plus the bonus (`CHOP_PERCENT`). The bonus is the cost to you. It is the same however it is split between marker, protocol and liquidator. If your collateral cannot cover the debt, the remainder is recorded as bad debt and is not forgiven to you in any later action.
 
 ## Other ways your position can change
 

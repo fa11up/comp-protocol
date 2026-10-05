@@ -14,19 +14,19 @@ sources:
 
 # Open a position
 
-This guide takes you from holding IMD to holding borrowed imdUSD. It uses two vault calls: Deposit (`lock`) and Borrow (`draw`). For how the numbers work, read [How imdUSD holds a dollar](../overview/how-it-holds-a-dollar.md) first if you have not.
+This guide takes you from holding IMD or sIMD to holding borrowed imdUSD. It uses two vault calls: Deposit (`lock` for sIMD, `lockIMD` for IMD) and Borrow (`draw`). For how the numbers work, read [How imdUSD holds a dollar](../overview/how-it-holds-a-dollar.md) first if you have not.
 
 ## Before you start
 
-- A wallet holding IMD on the same chain as the vault, and a little ETH for gas.
+- A wallet holding IMD or sIMD on the same chain as the vault, and a little ETH for gas. Your collateral is held as sIMD either way: deposit IMD and the vault stakes it for you.
 - The terminal open at `/terminal/` with the wallet connected ([Use the terminal](./use-the-terminal.md)).
 - The Oracle tab showing **Price actions: Open**. Borrowing is refused while a feed is stale or primary and spot disagree. Depositing is not.
 - The vault address (waiting for mainnet launch). Check it against [Contracts and addresses](../reference/contracts-and-addresses.md) before approving anything.
 
 ## Steps
 
-1. **Approve IMD.** In Position, choose Deposit and enter the amount. The first button reads "Approve IMD". It sends an ERC-20 `approve` to the vault for exactly that amount. This is a separate transaction.
-2. **Deposit (`lock(amount)`).** Press the button again, now labelled "Review deposit", and confirm. The vault pulls your IMD, adds it to your position and emits `Lock`. You owe nothing yet and can withdraw it at any time, with no price check, while you have no debt.
+1. **Approve.** In Position, choose Deposit, pick the token you hold (IMD or sIMD) and enter the amount. The first button reads "Approve IMD" or "Approve sIMD". It sends an ERC-20 `approve` to the vault for exactly that amount. This is a separate transaction.
+2. **Deposit.** Press the button again, now labelled "Review deposit", and confirm. With sIMD the vault calls `lock(amount)` and pulls your sIMD. With IMD it calls `lockIMD(amount)`: it pulls your IMD, stakes it in the staking vault and credits the sIMD it receives. Either way your position grows by sIMD and the vault emits `Lock`. You owe nothing yet and can withdraw it at any time, with no price check, while you have no debt.
 3. **Check what you can borrow.** The **Can still borrow** figure is the most imdUSD you could add at the current price without going below the required ratio `mat`. Do not borrow all of it. `mat` moves with network health, and the IMD price moves, so a position at the limit can become unsafe without any action from you. See [Manage and protect a position](./manage-and-protect-a-position.md).
 4. **Borrow (`draw(amount)`).** Choose Borrow, enter an imdUSD amount smaller than the maximum and confirm. The vault checks your resulting debt against `mat`, checks the total against the debt ceiling `line`, mints the imdUSD to you and emits `Draw`.
 5. **Read the result.** Collateral ratio, Liquidation price and Accrued debt update. Note the liquidation price.
@@ -38,7 +38,8 @@ Your debt is the principal you drew plus the stability fee (`duty`) accrued thro
 | Revert | Where | Cause | Recovery |
 |---|---|---|---|
 | `ZeroAmount` | Deposit, Borrow | Amount is zero | Enter a positive amount |
-| `ERC20InsufficientAllowance` / `ERC20InsufficientBalance` | Deposit | Approval is smaller than the amount, or you hold too little IMD | Approve the exact amount again; lower the amount |
+| `ERC20InsufficientAllowance` / `ERC20InsufficientBalance` | Deposit | Approval is smaller than the amount, or you hold too little of the token | Approve the exact amount again; lower the amount |
+| `CollateralNotWrappable` | Deposit IMD | The vault's collateral is not a staking-vault share | Do not use this contract |
 | `UnexpectedCollateralReceived` | Deposit | The token delivered a different amount than requested | The vault refuses such tokens; there is no recovery for that token |
 | `StaleFeed` | Borrow | The IMD/ETH, network health, spot or ETH/USD feed is older than its maximum age | Wait for someone to relay a fresh attestation; check the Oracle tab |
 | `PriceDivergence` | Borrow | Primary and spot differ by more than `skew` | Wait for them to converge |

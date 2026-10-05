@@ -26,7 +26,7 @@ Each entry gives the plain meaning first, then the identifier where one exists. 
 
 **bonus.** The extra collateral a liquidator receives on top of the debt repaid, set by `CHOP_PERCENT`. Split into `chip`, `cut` and the biter's remainder.
 
-**cash.** Redeem: burn imdUSD for IMD. The terminal button is Redeem. Function `cash(amount, minImdOut, candidate)`.
+**cash.** Redeem: burn imdUSD for sIMD. The terminal button is Redeem. Function `cash(amount, minImdOut, candidate)`.
 
 **chi.** The stability-fee index. It starts at 1 and only rises, linearly with time at the rate `duty`. A position's own checkpoint is `chiOf(owner)`. `drip()` records the current value; anyone may call it.
 
@@ -68,7 +68,7 @@ Each entry gives the plain meaning first, then the identifier where one exists. 
 
 **question hash.** The hash of the question document a panel answered. A feed rebuilds the expected hash from the block window and refuses answers to any other question. Read with `expectedQuestionHash(fromBlock, toBlock)`. See [Oracle and question binding](../reference/oracle-and-question-binding.md).
 
-**reserve.** The assets the Treasury holds: IMD plus any asset governance lists. Redemption draws on its IMD first.
+**reserve.** The assets the Treasury holds: sIMD plus any asset governance lists. Redemption draws on its sIMD first.
 
 **skew.** The most the primary and spot prices may differ before price-dependent actions pause.
 

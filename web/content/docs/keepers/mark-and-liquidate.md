@@ -49,7 +49,7 @@ Marking an already marked, unexpired position succeeds and changes nothing; the 
 
 1. Wait until `markedAt + grace`. Before that, `bite` reverts with `GracePeriodNotElapsed`; the terminal shows the countdown.
 2. Choose `debtToRepay`: how much of the borrower's debt to cancel. It must be no more than their `debtOf` and no more than the collateral can cover with the bonus.
-3. Press Liquidate or call `bite(owner, debtToRepay)`. The vault burns that imdUSD from you and sends you the seized IMD, less the protocol's cut, and less the marker's chip if someone else marked.
+3. Press Liquidate or call `bite(owner, debtToRepay)`. The vault burns that imdUSD from you and sends you the seized sIMD, less the protocol's cut, and less the marker's chip if someone else marked.
 4. The vault emits `Bite(owner, liquidator, debtRepaid, collateralSeized)`.
 
 Do it before the window closes: `markedAt + grace + tail()`.

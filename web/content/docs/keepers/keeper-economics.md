@@ -21,7 +21,7 @@ A keeper does three jobs: relay attestations, Mark unsafe positions and Liquidat
 
 When you Liquidate (`bite`), you repay `debtToRepay` of the borrower's debt and receive collateral worth `debtToRepay` plus a bonus. The bonus rate is `CHOP_PERCENT`, a source constant.
 
-> bonus = IMD seized − `debtToRepay` valued in IMD
+> bonus = sIMD seized − `debtToRepay` valued in sIMD
 
 The bonus is divided:
 
@@ -29,7 +29,7 @@ The bonus is divided:
 |---|---|---|
 | Marker's share | `chip` | The address recorded when the position was marked |
 | Protocol's share | `cut` | The Treasury (`feeRecipient()`) |
-| The rest | | The biter, plus the whole of the debt's value in IMD |
+| The rest | | The biter, plus the whole of the debt's value in sIMD |
 
 `chip` and `cut` are fractions of the bonus, in basis points. Together they cannot exceed the whole bonus: the parameter contract refuses such a proposal (`SharesExceedBonus`) and the vault refuses a liquidation with `InvalidBonusShares` if it ever happened.
 
@@ -53,7 +53,7 @@ A mark pays nothing at the time. You are paid the chip only if the position is e
 
 Relaying an attestation costs gas, and obtaining the attestation costs whatever the oracle service charges.
 
-TODO(oracle-funding): State who pays for attestations, in which asset, whether an Intake contract funds them from treasury assets, and whether a relayer is reimbursed. This is not in the source. Until it is filled in, no page should promise a keeper any reimbursement for relaying.
+The protocol pays for its own attestations: the Treasury streams IMD to `OracleAsker`, which buys an update when a feed nears staleness or IMD's pool drifts from it ([How updates are paid for](../reference/oracle-and-question-binding.md#how-updates-are-paid-for)). Calling `ask`, `arm` or `fundOracle` costs only gas. Relayers are not reimbursed.
 
 Relaying has no direct on-chain reward in the source. The benefit is indirect: it opens the actions that pay (Mark, Liquidate) and it keeps the protocol operable.
 
@@ -62,20 +62,20 @@ Relaying has no direct on-chain reward in the source. The benefit is indirect: i
 Three separate balances, not interchangeable:
 
 1. **ETH for gas.** Every relay, mark, liquidation and clear mark.
-2. **imdUSD inventory.** Liquidation burns the caller's imdUSD. A keeper with none cannot liquidate anything. This is working capital, not an expense, and it comes back as IMD at a discount, which you then hold or sell.
-3. **Funds for attestations.** The asset and amount depend on how attestations are purchased. TODO(oracle-funding): fill in.
+2. **imdUSD inventory.** Liquidation burns the caller's imdUSD. A keeper with none cannot liquidate anything. This is working capital, not an expense, and it comes back as sIMD at a discount, which you then hold, or unstake and sell.
+3. **Nothing for attestations, normally.** The Treasury pays for them. Hold IMD only if you want to buy an attestation yourself when the protocol's daily budget is spent.
 
 If you liquidate through `SwarmRelay`, also approve the relay to spend at least `debtToRepay` of imdUSD.
 
 ## Risks you carry
 
-- **Inventory risk.** You are paid in IMD, whose dollar price moves. Between receiving it and selling it, you carry that risk.
+- **Inventory risk.** You are paid in sIMD, whose dollar price moves with IMD's. Between receiving it and selling it, you carry that risk, and unstaking adds at least one block: sIMD received in a block cannot be unstaked in that same block.
 - **Smaller positions.** Gas must be less than the bonus on the debt you can cover, after the cut and chip.
 - **Races.** Other keepers can mark, bite or relay first. You lose gas on a reverted transaction. Bundling with `relayAndBite` removes the gap between your update and your action, not the race to the block.
 - **Feed risk.** A stale or divergent feed halts every action that pays you.
 - **Bad debt.** If a position is worth less than its debt plus the bonus, no one can profitably liquidate it in full, and the shortfall becomes recorded bad debt.
 - **Grace.** You cannot liquidate before grace ends, and the borrower can recover in that time, in which case your mark earns nothing.
-- **Stranded rewards.** A chip credited to the `SwarmRelay` contract can never be recovered. Always use `relayAndBark` or `barkFor` with your own address.
+- **Stranded rewards.** If `SwarmRelay` is a position's recorded marker and the position is then liquidated by a direct `bite`, the chip is paid to the relay and cannot be recovered. A `relayAndBite` passes it on to its caller with the rest of the payout. Mark with `relayAndBark` or `barkFor` naming your own address.
 
 ## Operating notes
 

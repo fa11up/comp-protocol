@@ -13,28 +13,30 @@ sources:
 
 # What is imdUSD
 
-imdUSD is a stablecoin meant to be worth one US dollar. You get it by locking IMD, the IdentityMD token, in a vault and borrowing imdUSD against it. How it holds that value is in [How imdUSD holds a dollar](./how-it-holds-a-dollar.md).
+imdUSD is a stablecoin meant to be worth one US dollar. You get it by locking staked IMD in a vault and borrowing imdUSD against it.
+
+The collateral is **sIMD** (Staked IMD), the share token of IdentityMD's staking vault: each sIMD is a claim on IMD, the IdentityMD token, held by that vault. You can deposit sIMD you already hold, or deposit IMD and the vault stakes it for you in the same transaction. Everything the vault pays out (withdrawals, liquidations and redemptions) is paid in sIMD, which you unstake in the staking vault to get IMD. How it holds that value is in [How imdUSD holds a dollar](./how-it-holds-a-dollar.md).
 
 The vault is the only contract that can mint or burn imdUSD. There is no owner, pause switch or upgrade path on the token (`ImdUSD`). Contract addresses: (waiting for mainnet launch).
 
 ## Who it is for
 
-- **Borrowers** who hold IMD and want dollars without selling it. Start with [Open a position](../guides/open-a-position.md).
-- **Holders** who want to turn imdUSD back into IMD. See [Redeem](../guides/redeem.md).
+- **Borrowers** who hold IMD or sIMD and want dollars without selling it. Start with [Open a position](../guides/open-a-position.md).
+- **Holders** who want to turn imdUSD back into staked IMD. See [Redeem](../guides/redeem.md).
 - **Keepers**, who keep the system solvent by relaying prices and liquidating unsafe positions, and are paid a share of the liquidation bonus. See [How liquidation works](../keepers/how-liquidation-works.md).
 
 ## What backs it
 
 Two things stand behind imdUSD:
 
-1. **Collateral.** Every position must hold more IMD, valued in dollars, than the imdUSD it owes. The required margin (the collateral ratio, `mat`) rises and falls with the network health index.
-2. **A reserve.** The protocol's Treasury holds IMD and any other assets governance lists. Redemptions are paid from it first.
+1. **Collateral.** Every position must hold more sIMD, valued in dollars, than the imdUSD it owes. The required margin (the collateral ratio, `mat`) rises and falls with the network health index.
+2. **A reserve.** The protocol's Treasury holds sIMD and any other assets governance lists. Redemptions are paid from it first.
 
-The value of IMD in dollars is not read from an exchange contract. It is an attested price: a panel of IdentityMD agents answers a fixed question, the answer is signed, and anyone may submit it on chain.
+The value of IMD in dollars is not read from an exchange contract. (sIMD is valued as the IMD it is a claim on, at the staking vault's own exchange rate.) It is an attested price: a panel of IdentityMD agents answers a fixed question, the answer is signed, and anyone may submit it on chain.
 
 ## What it pays when redeemed
 
-A holder can burn imdUSD for IMD at the lesser of $1 and the backing per imdUSD, less a fee. If the system is fully backed, that is $1 of IMD per imdUSD minus the fee. If it is not, the payout shrinks with the backing instead of the channel closing.
+A holder can burn imdUSD for sIMD at the lesser of $1 and the backing per imdUSD, less a fee. If the system is fully backed, that is $1 of sIMD per imdUSD minus the fee. If it is not, the payout shrinks with the backing instead of the channel closing.
 
 ## What is unproven
 
