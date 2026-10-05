@@ -29,7 +29,7 @@ import {
   maxDebt,
   requiredCollateral,
 } from "./math";
-import { positionName } from "./history";
+import { useEns, ensName, displayName } from "./ens";
 const amt = (name: string) => ({ name, kind: "amount" as const });
 const addr = (name: string) => ({ name, kind: "address" as const });
 const num = (name: string) => ({ name, kind: "uint" as const });
@@ -439,7 +439,7 @@ export function Oracle({
       </Row>
       <div className="section-label">Feeds</div>
       <ul className="feed-list">
-        {["PriceFeed", "NhiFeed", "SpotFeed", "USD"].map((n) => {
+        {["NhiFeed", "PriceFeed", "SpotFeed", "USD"].map((n) => {
           const expanded = open === n;
           return (
             <li key={n} className={expanded ? "is-open" : undefined}>
@@ -521,6 +521,7 @@ export function Keeper({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("inspect");
+  useEns([position?.owner]);
   const borrower = (f: Failure) => {
     if (!position || !s) return undefined;
     const graceEnds = position.mark[0] + position.mark[1];
@@ -538,214 +539,185 @@ export function Keeper({
     position && s?.v.minCR
       ? liquidationPrice(position.collateral, position.debt, s.v.minCR)
       : undefined;
-  return (
+  const summary = position && (
     <>
-      <div className="desk-span">
-        <Choice
-          label="Keeper mode"
-          value={mode}
-          onChange={setMode}
-          options={[
-            ["inspect", "Inspect"],
-            ["act", "Act"],
-          ]}
-        />
+      <p className="keeper-owner">
+        <b className={ensName(position.owner) ? "ens-name" : undefined}>
+          {displayName(position.owner)}
+        </b>{" "}
+        · {position.owner}
+      </p>
+      <div className="row-grid">
+        <Row label="Collateral ratio">{ratio(position.cr)}</Row>
+        <Row label="Collateral">{fmt(position.collateral)} IMD</Row>
+        <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
+        <Row label="Bad debt estimate">{fmt(position.badDebt)} COMP</Row>
+        <Row label="Liquidation price">{liq ? `$${fmt(liq)} / IMD` : "—"}</Row>
+        <Row label="Cushion">
+          {liq ? cushion(s?.feeds.USD?.value, liq) : "—"}
+        </Row>
+        <Row label="Mark">
+          {position.mark[2]
+            ? now < position.mark[0] + position.mark[1]
+              ? `Grace ${(position.mark[0] + position.mark[1] - now).toString()}s`
+              : "Active · liquidatable"
+            : "None"}
+        </Row>
       </div>
+    </>
+  );
+  // Inspect and Act each take the whole desk; the mode switch is the only thing they share.
+  return (
+    <div className="desk-span keeper">
+      <Choice
+        label="Keeper mode"
+        value={mode}
+        onChange={setMode}
+        options={[
+          ["inspect", "Inspect"],
+          ["act", "Act"],
+        ]}
+      />
       {mode === "inspect" ? (
         <>
-          <Col label="Borrower">
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setLoading(true);
-                setError("");
-                setPosition(undefined);
-                try {
-                  if (!s) throw Error("Wait for state to load.");
-                  const a = address(owner);
-                  const [cr, debt, mark, badDebt, held] = await Promise.all(
-                    [
-                      "collateralRatio",
-                      "debtOf",
-                      "liquidationMarks",
-                      "badDebtOf",
-                      "positions",
-                    ].map((fn) =>
-                      read(r, s.targets.ParameterizedVault, fn, [a]),
-                    ),
-                  );
-                  setPosition({
-                    cr,
-                    debt,
-                    mark,
-                    badDebt,
-                    owner: a,
-                    collateral: held[0],
-                  });
-                } catch (e) {
-                  setError(message(e));
-                } finally {
-                  setLoading(false);
-                }
-              }}
-            >
-              <label>
-                Borrower address
-                <input
-                  required
-                  value={owner}
-                  onChange={(e) => {
-                    setOwner(e.target.value);
-                    setPosition(undefined);
-                  }}
-                  spellCheck={false}
-                  placeholder="0x…"
-                />
-              </label>
+          <form
+            className="keeper-search"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setLoading(true);
+              setError("");
+              setPosition(undefined);
+              try {
+                if (!s) throw Error("Wait for state to load.");
+                const a = address(owner);
+                const [cr, debt, mark, badDebt, held] = await Promise.all(
+                  [
+                    "collateralRatio",
+                    "debtOf",
+                    "liquidationMarks",
+                    "badDebtOf",
+                    "positions",
+                  ].map((fn) => read(r, s.targets.ParameterizedVault, fn, [a])),
+                );
+                setPosition({
+                  cr,
+                  debt,
+                  mark,
+                  badDebt,
+                  owner: a,
+                  collateral: held[0],
+                });
+              } catch (e) {
+                setError(message(e));
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            <label htmlFor="keeper-borrower">Borrower address</label>
+            <div className="inline-field">
+              <input
+                id="keeper-borrower"
+                required
+                value={owner}
+                onChange={(e) => {
+                  setOwner(e.target.value);
+                  setPosition(undefined);
+                }}
+                spellCheck={false}
+                placeholder="0x… or pick one in the loan book"
+              />
               <button type="submit" disabled={!s || loading}>
                 {loading ? "Inspecting…" : "Inspect position"}
               </button>
-            </form>
-            <p role="status" className="micro">
-              {error}
-            </p>
-          </Col>
-          <Col label="Position">
-            {position ? (
-              <>
-                <Row label="Collateral ratio">{ratio(position.cr)}</Row>
-                <Row label="Collateral">{fmt(position.collateral)} IMD</Row>
-                <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
-                {liq ? (
-                  <>
-                    <Row label="Liquidation price">${fmt(liq)} / IMD</Row>
-                    <p className="micro">
-                      IMD is ${fmt(s?.feeds.USD?.value)} now,{" "}
-                      {cushion(s?.feeds.USD?.value, liq)}.
-                    </p>
-                  </>
-                ) : null}
-                <Row label="Bad debt estimate">
-                  {fmt(position.badDebt)} COMP
-                </Row>
-                <Row label="Mark">
-                  {position.mark[2]
-                    ? now < position.mark[0] + position.mark[1]
-                      ? `Grace ${(position.mark[0] + position.mark[1] - now).toString()}s`
-                      : "Active · liquidatable"
-                    : "None"}
-                </Row>
-              </>
-            ) : (
-              <p className="micro">
-                Inspect a borrower, record an unhealthy position, then liquidate
-                inside its grace and execution window. Owners are listed in the
-                loan book.
-              </p>
-            )}
-          </Col>
+            </div>
+          </form>
+          <p role="status" className="micro">
+            {error}
+          </p>
+          {summary}
         </>
       ) : (
         <>
-          <Col label="Target">
-            {position ? (
-              <>
-                {position && (
-                  <p className="micro keeper-owner">
-                    Acting on {positionName(position.owner)}: {position.owner}
-                  </p>
-                )}
-                <Row label="Collateral ratio">{ratio(position.cr)}</Row>
-                <Row label="Accrued debt">{fmt(position.debt)} COMP</Row>
-                {liq ? (
-                  <Row label="Liquidation price">${fmt(liq)} / IMD</Row>
-                ) : null}
-                <Row label="Mark">
-                  {position.mark[2]
-                    ? now < position.mark[0] + position.mark[1]
-                      ? `Grace ${(position.mark[0] + position.mark[1] - now).toString()}s`
-                      : "Active · liquidatable"
-                    : "None"}
-                </Row>
-              </>
-            ) : (
-              <p className="micro">Inspect a borrower first.</p>
-            )}
-          </Col>
-          <Col label="Act">
-            <div className="button-row">
-              <Action
-                id="mark"
-                label="Review mark"
+          {summary || <p className="micro">Inspect a borrower first.</p>}
+          <div className="keeper-actions">
+            <div>
+              <ActionForm
+                id="liquidate"
+                label="Review liquidation"
                 actions={actions}
+                target={s?.targets.ParameterizedVault}
+                fn="liquidate"
+                fields={[amt("Repay borrower COMP")]}
+                mapArgs={(a) => [address(owner), ...a]}
+                summary="Burn your COMP to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares."
+                explain={borrower}
                 disabled={
-                  !feedsReady(s) || !position || position.cr >= s?.v.minCR
+                  !feedsReady(s) ||
+                  !position?.mark[2] ||
+                  now < position.mark[0] + position.mark[1] ||
+                  now >
+                    position.mark[0] +
+                      position.mark[1] +
+                      (s?.v.liquidationWindow ?? 0n)
                 }
-                reason="Inspect an unhealthy borrower with fresh feeds."
-                request={() => ({
-                  target: s!.targets.ParameterizedVault,
-                  fn: "markUnderwater",
-                  args: [address(owner)],
-                  summary: `Mark ${address(owner)} as underwater. The on-chain grace snapshot governs liquidation.`,
-                  explain: borrower,
-                })}
-              />
-              <Action
-                id="clear-mark"
-                label="Review clear mark"
-                actions={actions}
-                disabled={!position?.mark[2]}
-                reason="Inspect a marked position."
-                request={() => ({
-                  target: s!.targets.ParameterizedVault,
-                  fn: "clearRecoveredMark",
-                  args: [address(owner)],
-                  summary: `Clear the mark only if ${address(owner)} has recovered.`,
-                  explain: (f) =>
-                    f.name === "UnderwaterPosition" && position
-                      ? `${position.owner} is still at ${ratio(position.cr)}, below minCR ${ratio(s?.v.minCR)}. A mark clears only once the position recovers.`
-                      : undefined,
-                })}
+                reason="An active mark, elapsed grace, open execution window and fresh feeds are required."
               />
             </div>
-            <ActionForm
-              id="liquidate"
-              label="Review liquidation"
-              actions={actions}
-              target={s?.targets.ParameterizedVault}
-              fn="liquidate"
-              fields={[amt("Repay borrower COMP")]}
-              mapArgs={(a) => [address(owner), ...a]}
-              summary="Burn your COMP to cancel borrower debt and receive IMD, including the liquidation bonus after protocol and marker shares."
-              explain={borrower}
-              disabled={
-                !feedsReady(s) ||
-                !position?.mark[2] ||
-                now < position.mark[0] + position.mark[1] ||
-                now >
-                  position.mark[0] +
-                    position.mark[1] +
-                    (s?.v.liquidationWindow ?? 0n)
-              }
-              reason="An active mark, elapsed grace, open execution window and fresh feeds are required."
-            />
-            <ActionForm
-              id="mark-for"
-              label="Review beneficiary mark"
-              actions={actions}
-              target={s?.targets.ParameterizedVault}
-              fn="markUnderwaterFor"
-              fields={[addr("Marker beneficiary")]}
-              mapArgs={(a) => [address(owner), ...a]}
-              summary="Mark for another beneficiary of the marker reward."
-              explain={borrower}
-              disabled={!feedsReady(s) || !position}
-              reason="Inspect a borrower and wait for fresh feeds."
-            />
-          </Col>
+            <div>
+              <div className="button-row">
+                <Action
+                  id="mark"
+                  label="Review mark"
+                  actions={actions}
+                  disabled={
+                    !feedsReady(s) || !position || position.cr >= s?.v.minCR
+                  }
+                  reason="Inspect an unhealthy borrower with fresh feeds."
+                  request={() => ({
+                    target: s!.targets.ParameterizedVault,
+                    fn: "markUnderwater",
+                    args: [address(owner)],
+                    summary: `Mark ${address(owner)} as underwater. The on-chain grace snapshot governs liquidation.`,
+                    explain: borrower,
+                  })}
+                />
+                <Action
+                  id="clear-mark"
+                  label="Review clear mark"
+                  actions={actions}
+                  disabled={!position?.mark[2]}
+                  reason="Inspect a marked position."
+                  request={() => ({
+                    target: s!.targets.ParameterizedVault,
+                    fn: "clearRecoveredMark",
+                    args: [address(owner)],
+                    summary: `Clear the mark only if ${address(owner)} has recovered.`,
+                    explain: (f) =>
+                      f.name === "UnderwaterPosition" && position
+                        ? `${position.owner} is still at ${ratio(position.cr)}, below minCR ${ratio(s?.v.minCR)}. A mark clears only once the position recovers.`
+                        : undefined,
+                  })}
+                />
+              </div>
+              <ActionForm
+                id="mark-for"
+                label="Review beneficiary mark"
+                actions={actions}
+                target={s?.targets.ParameterizedVault}
+                fn="markUnderwaterFor"
+                fields={[addr("Marker beneficiary")]}
+                mapArgs={(a) => [address(owner), ...a]}
+                summary="Mark for another beneficiary of the marker reward."
+                explain={borrower}
+                disabled={!feedsReady(s) || !position}
+                reason="Inspect a borrower and wait for fresh feeds."
+              />
+            </div>
+          </div>
         </>
       )}
-    </>
+    </div>
   );
 }
 

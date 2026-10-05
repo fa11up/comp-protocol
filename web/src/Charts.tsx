@@ -13,6 +13,7 @@ import {
 import { fmt, ratio, WAD, message, liquidationPrice, cushion } from "./math";
 import { Ticker } from "./motion";
 import { Info } from "./actions";
+import { useEns, ensName, displayName } from "./ens";
 
 type Loaded<T> = Result<T> & { snapshot?: Snapshot; loading?: boolean };
 export function useCharts(r: Runtime, s?: Snapshot) {
@@ -104,6 +105,7 @@ export function LoanBook({
   }, [book.data, available]);
   const s = book.snapshot;
   const positions = book.data?.positions ?? [];
+  useEns(positions.map((p) => p.owner));
   const min = s?.v.minCR as bigint | undefined;
   const ceiling = s?.v.redemptionCeilingCR as bigint | undefined;
   const valid =
@@ -238,8 +240,8 @@ export function LoanBook({
                   type="button"
                   className={`loan-mark ${p.cr < min! ? "is-danger" : "is-healthy"}`}
                   style={{ left: `${p.x}%`, top: p.lane * 48 + 4 }}
-                  title={`${positionName(p.owner)} · ${p.owner}\n${p.cr}% · ${fmt(p.debt)} COMP · ${stateOf(p.cr, min!, ceiling!)}\n${liquidation(p, s)}`}
-                  aria-label={`${positionName(p.owner)}, ${p.owner}, ${p.cr}% collateral ratio, ${fmt(p.debt)} COMP, ${stateOf(p.cr, min!, ceiling!)}, ${liquidation(p, s)}`}
+                  title={`${displayName(p.owner)} · ${p.owner}\n${p.cr}% · ${fmt(p.debt)} COMP · ${stateOf(p.cr, min!, ceiling!)}\n${liquidation(p, s)}`}
+                  aria-label={`${displayName(p.owner)}, ${p.owner}, ${p.cr}% collateral ratio, ${fmt(p.debt)} COMP, ${stateOf(p.cr, min!, ceiling!)}, ${liquidation(p, s)}`}
                   aria-pressed={selected === p.owner}
                   onClick={() =>
                     setSelected(selected === p.owner ? undefined : p.owner)
@@ -252,7 +254,7 @@ export function LoanBook({
                   {p.labelled && (
                     <span className="loan-label">
                       {p.cr === maxUint256 && "→ "}
-                      {positionName(p.owner)}
+                      {displayName(p.owner)}
                     </span>
                   )}
                 </button>
@@ -303,6 +305,7 @@ function LoanFeed({
         (zone === "all" || stateOf(p.cr, min, ceiling) === zone) &&
         (!q ||
           p.owner.toLowerCase().includes(q) ||
+          displayName(p.owner).toLowerCase().includes(q) ||
           positionName(p.owner).toLowerCase().includes(q)),
     )
     .sort((a, b) =>
@@ -331,7 +334,7 @@ function LoanFeed({
           type="search"
           id="loan-search"
           aria-label="Search positions by name or address"
-          placeholder="Search name or 0x…"
+          placeholder="Search name, ENS or 0x…"
           autoComplete="off"
           spellCheck={false}
           value={query}
@@ -382,7 +385,9 @@ function LoanFeed({
                 }
               >
                 <span className="loan-who">
-                  <b>{positionName(p.owner)}</b>
+                  <b className={ensName(p.owner) ? "ens-name" : undefined}>
+                    {displayName(p.owner)}
+                  </b>
                   <span className="loan-address" title={p.owner}>
                     {p.owner}
                   </span>

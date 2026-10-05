@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { zeroAddress, type Address } from "viem";
 import { type Runtime } from "./config";
 import { type Snapshot, read, feedsReady } from "./state";
-import { Action, Row, Col, type Actions } from "./actions";
+import { Action, Row, Col, Info, type Actions } from "./actions";
 import {
   amount,
   address,
@@ -84,34 +84,43 @@ export function Redemption({
     <>
       <Col label="Fee and floor">
         <div className="hero-stat">
-          <span>Current fee</span>
+          <span>
+            Current fee
+            <Info
+              label="Current fee"
+              text="The fee before your amount is added. Larger redemptions raise it, up to the cap, and the base decays with a half-life of about 12 hours. The fee stays in the protocol as backing."
+            />
+          </span>
           <strong>
             <Ticker text={percent(v.fee)} />
           </strong>
-          <small>before your amount</small>
         </div>
-        <div className="two-col">
-          <Row label="Floor">{percent(v.REDEMPTION_FEE_FLOOR_BPS)}</Row>
-          <Row label="Cap">{percent(v.REDEMPTION_FEE_CAP_BPS)}</Row>
-        </div>
-        <Row label="Paid at, per COMP">
+        <Row label="Floor / cap">
+          {percent(v.REDEMPTION_FEE_FLOOR_BPS)} /{" "}
+          {percent(v.REDEMPTION_FEE_CAP_BPS)}
+        </Row>
+        <Row
+          label="Paid at, per COMP"
+          info="A redemption pays the lesser of $1 and backing per COMP, less the fee."
+        >
           {v.backingPerComp === undefined
             ? "Par (backing unavailable)"
-            : `$${fmt(v.backingPerComp < WAD ? v.backingPerComp : WAD)}`}
-        </Row>
-        <p className="micro">
-          {v.backingPerComp === undefined
-            ? "This vault does not report backingPerComp, so it pays par less the fee."
             : v.backingPerComp < WAD
-              ? `Backing is below par, so the cap binds: each COMP redeems for $${fmt(v.backingPerComp)} of IMD less the fee, not $1.`
-              : "Backing is at or above par, so the cap does not bind: each COMP redeems for $1 of IMD less the fee."}
-        </p>
-        <Row label="Reserve on hand">{fmt(v.redemptionReserve)} IMD</Row>
-        <Row label="Eligibility ceiling">{ratio(v.redemptionCeilingCR)}</Row>
-        <p className="micro">
-          minCR {ratio(v.minCR)} + {v.redemptionSpread?.toString() ?? "—"} ratio
-          points. A candidate must have debt and be strictly below the ceiling.
-        </p>
+              ? `$${fmt(v.backingPerComp)} · cap binds`
+              : "$1 · par"}
+        </Row>
+        <Row
+          label="Reserve on hand"
+          info="Redemptions are paid from the reserve first; a candidate position covers any shortfall."
+        >
+          {fmt(v.redemptionReserve)} IMD
+        </Row>
+        <Row
+          label="Eligibility ceiling"
+          info={`minCR ${ratio(v.minCR)} + ${v.redemptionSpread?.toString() ?? "—"} ratio points. A candidate must have debt and sit strictly below the ceiling.`}
+        >
+          {ratio(v.redemptionCeilingCR)}
+        </Row>
         <div className="size-table">
           <div className="section-label">Size / fee at this block</div>
           {curve.length ? (
@@ -128,15 +137,9 @@ export function Redemption({
               </div>
             ))
           ) : (
-            <p className="micro">
-              A nonzero supply is needed for size comparisons.
-            </p>
+            <Row label="Supply">—</Row>
           )}
         </div>
-        <p className="micro">
-          Larger redemptions raise the fee, up to the cap. The base decays with
-          an approximately 12-hour half-life. The fee stays as backing.
-        </p>
       </Col>
       <Col label="Redeem">
         <form
@@ -343,8 +346,8 @@ export function Redemption({
             <Row label="Your fee">
               {percent(q.fee)} ·{" "}
               {q.capped
-                ? `$${fmt(q.paidAt)} / COMP (backing cap)`
-                : "$1 / COMP (par)"}
+                ? `$${fmt(q.paidAt)} (backing cap)`
+                : "$1 (par)"}
             </Row>
             <Row label="Served by">{q.source}</Row>
             {q.reserveOut > 0n && q.positionOut > 0n && (

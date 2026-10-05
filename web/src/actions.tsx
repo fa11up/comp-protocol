@@ -11,6 +11,7 @@ import type { Target } from "./config";
 import { Ticker } from "./motion";
 import { amount, address, uint, message } from "./math";
 import type { Failure } from "./explain";
+import { Who } from "./ens";
 export type Request = {
   target: Target;
   fn: string;
@@ -432,10 +433,7 @@ export function AddressLink({
         rel="noreferrer"
         title={value}
       >
-        {label} ↗{" "}
-        <span>
-          {value.slice(0, 6)}…{value.slice(-4)}
-        </span>
+        {label} ↗ <Who address={value} />
       </a>
       <button
         type="button"

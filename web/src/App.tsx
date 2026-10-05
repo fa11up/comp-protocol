@@ -13,6 +13,7 @@ import { Position, Work, Oracle, Keeper, Backing, Governance } from "./Panes";
 import { message, fmt } from "./math";
 import { explained } from "./explain";
 import { ThemeToggle } from "./theme";
+import { Who } from "./ens";
 import { LoanBook, useCharts } from "./Charts";
 import { Ticker } from "./motion";
 import { MarketCap, compact } from "./MarketCap";
@@ -342,8 +343,8 @@ function Terminal({ r }: { r: Runtime }) {
           <ThemeToggle />
           {account ? (
             <>
-              <span className="account" title={account}>
-                {account.slice(0, 6)}…{account.slice(-4)}
+              <span className="account">
+                <Who address={account} />
               </span>
               {!correctChain && (
                 <button

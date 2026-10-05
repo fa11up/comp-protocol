@@ -107,7 +107,7 @@ input::placeholder {
 label {
   display: block;
   color: var(--muted);
-  margin-block: 10px 6px;
+  margin-block: 8px 4px;
   font-size: 12px;
 }
 label input,
@@ -1544,5 +1544,105 @@ td span {
   .loan-columns > :nth-child(4),
   .loan-feed button > :nth-child(4) {
     display: none;
+  }
+}
+/* Dropdowns drawn by the page, not the OS: square, token colours, a two-stroke chevron. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-inline-end: 30px;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 52%,
+    calc(100% - 10px) 52%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--text);
+  cursor: pointer;
+}
+select:hover {
+  border-color: var(--text);
+}
+select option {
+  background: var(--surface);
+  color: var(--text);
+}
+/* Disclosures use the same +/− as the oracle feed list. */
+summary {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary::after {
+  content: "+";
+  color: var(--muted);
+}
+details[open] > summary::after {
+  content: "−";
+}
+/* Keeper: Inspect and Act each span the desk. */
+.keeper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.inline-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.inline-field input {
+  margin: 0;
+}
+.inline-field button {
+  min-height: 36px;
+}
+.keeper-owner {
+  margin-block: 6px 4px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.keeper-owner b {
+  color: var(--text);
+  font-weight: normal;
+}
+.row-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 28px;
+}
+.keeper-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 28px;
+  border-top: 1px solid var(--rule);
+  margin-top: 8px;
+}
+.keeper-actions .action-form,
+.keeper-actions .button-row {
+  margin-block: 12px 0;
+}
+.ens-name {
+  color: var(--text);
+}
+/* Laid out to fit 1280x720 and up. A smaller window scrolls the panel rather than cutting it off. */
+.desk-body,
+.monitor-body {
+  overflow: auto;
+}
+@media (max-width: 760px) {
+  .row-grid,
+  .keeper-actions {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
   }
 }

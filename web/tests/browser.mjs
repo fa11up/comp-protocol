@@ -14,6 +14,8 @@ import {
   candidate,
   account,
   blockscout,
+  ensRpc,
+  ensRpcUrls,
 } from "./fixture.mjs";
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const evidence = resolve(root, "docs/frontend");
@@ -76,6 +78,14 @@ async function setup({ wallet = true, chain = "0x1" } = {}) {
     ) {
       await route.fulfill({
         json: blockscout(s, request.url()),
+        headers: { "access-control-allow-origin": "*" },
+      });
+      return;
+    }
+    if (ensRpcUrls.some((u) => request.url().startsWith(u))) {
+      const body = request.postDataJSON();
+      await route.fulfill({
+        json: Array.isArray(body) ? body.map(ensRpc) : ensRpc(body),
         headers: { "access-control-allow-origin": "*" },
       });
       return;
@@ -203,6 +213,17 @@ try {
   passed(
     "Connect rejection recovery, wrong chain and exact add-chain fallback",
   );
+  await expectText(page.locator(".topbar .account"), "miyagod.eth");
+  assert.equal(
+    await page
+      .locator("select")
+      .first()
+      .evaluate((n) => getComputedStyle(n).appearance),
+    "none",
+  );
+  passed(
+    "A verified ENS name replaces the connected address; dropdowns use the site's own style",
+  );
   const red = page.locator(".pane-redemption");
   await tab(page, "redemption");
   await red.getByLabel("Redeem COMP", { exact: true }).fill("10");
@@ -260,7 +281,7 @@ try {
   s.backing = (8n * 10n ** 18n) / 10n;
   s.pinned = true;
   await refresh(page);
-  await expectText(red, "the cap binds");
+  await expectText(red, "cap binds");
   await red.getByRole("button", { name: "Quote redemption" }).click();
   await expectText(red.locator(".quote"), "(backing cap)");
   await tab(page, "backing");
@@ -526,6 +547,37 @@ try {
       }
     }
   }
+  // A laptop browser window: every tab, both keeper modes and a live quote still fit.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.waitForTimeout(150);
+  const fits = async (selector, what) => {
+    const fit = await page
+      .locator(selector)
+      .evaluate((n) => ({ content: n.scrollHeight, box: n.clientHeight }));
+    assert.ok(
+      fit.content <= fit.box + 1,
+      `${what} overflows at 1280x720: ${fit.content} > ${fit.box}`,
+    );
+  };
+  for (const id of Object.keys(deskLabels)) {
+    await tab(page, id);
+    if (id === "keeper") {
+      for (const mode of ["Inspect", "Act"]) {
+        await page
+          .locator(".pane-keeper")
+          .getByRole("button", { name: mode, exact: true })
+          .click();
+        await fits(".pane-keeper .desk-body", `keeper ${mode}`);
+      }
+    } else await fits(`.pane-${id} .desk-body`, `${id} desk tab`);
+  }
+  for (const id of Object.keys(monitorLabels)) {
+    await tab(page, id);
+    await fits(`.pane-${id} .monitor-body`, `${id} monitor tab`);
+  }
+  await tab(page, "loans");
+  await tab(page, "redemption");
+  await page.setViewportSize({ width: 320, height: 740 });
   passed(
     "One viewport; every desk and monitor tab fits without scrolling; all mobile panes reachable",
     viewports,
@@ -689,6 +741,17 @@ try {
     await page.locator(".selected-loan").textContent(),
     /0x[0-9a-fA-F]{40}/,
   );
+  // ENS names replace the readable labels where they resolve, and search finds either.
+  const loans = page.locator(".pane-loans");
+  await expectText(loans.locator(".loan-feed"), "keeper.eth");
+  await expectText(loans.locator(".loan-feed"), "Golden Sovereign");
+  await loans.getByLabel("Search positions by name or address").fill("keeper");
+  assert.equal(await loans.locator(".loan-feed li").count(), 1);
+  await loans
+    .getByLabel("Search positions by name or address")
+    .fill("copper penny");
+  await expectText(loans.locator(".loan-feed"), "miyagod.eth");
+  await loans.getByLabel("Search positions by name or address").fill("");
   passed(
     "Deposit owners deduplicated, zero-debt owner excluded, debt area ratio 4:1; hover, keyboard and touch-readable addresses",
     names,
@@ -707,14 +770,14 @@ try {
     .evaluate((n) => parseFloat(n.style.width));
   assert.ok(updatedWidth > initialWidth);
   const oldLeft = await page
-    .getByRole("button", { name: /^Copper Penny,/ })
+    .getByRole("button", { name: /^miyagod\.eth,/ })
     .evaluate((n) => n.style.left);
   s.priceMultiplier = 0.9;
   await refresh(page);
   await page.waitForFunction(
     (previous) =>
       [...document.querySelectorAll(".loan-mark")].find((n) =>
-        n.textContent.includes("Copper Penny"),
+        n.textContent.includes("miyagod.eth"),
       )?.style.left !== previous,
     oldLeft,
   );

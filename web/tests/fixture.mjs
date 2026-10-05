@@ -516,3 +516,44 @@ export function blockscout(s, url) {
     next_page_params: page + 3 < all.length ? { cursor: page + 3 } : null,
   };
 }
+
+// Mainnet ENS, answered for the demo and the tests: two fixture addresses carry names, every
+// other reverse lookup reverts as an address with no primary name does.
+export const ensRpcUrls = JSON.parse(
+  readFileSync(new URL("../src/ens-rpc.json", import.meta.url)),
+);
+export const ensNames = {
+  [account.toLowerCase()]: "miyagod.eth",
+  [candidate.toLowerCase()]: "keeper.eth",
+};
+const reverseAbi = parseAbi([
+  "function reverseWithGateways(bytes reverseName, uint256 coinType, string[] gateways) view returns (string resolvedName, address resolver, address reverseResolver)",
+]);
+export function ensRpc(body) {
+  const reply = (result) => ({ jsonrpc: "2.0", id: body.id, result });
+  if (body.method === "eth_chainId") return reply("0x1");
+  if (body.method !== "eth_call")
+    return {
+      jsonrpc: "2.0",
+      id: body.id,
+      error: { code: -32601, message: "unsupported" },
+    };
+  const { args } = decodeFunctionData({
+    abi: reverseAbi,
+    data: body.params[0].data,
+  });
+  const name = ensNames[String(args[0]).toLowerCase()];
+  if (!name)
+    return {
+      jsonrpc: "2.0",
+      id: body.id,
+      error: { code: 3, message: "execution reverted", data: "0x" },
+    };
+  return reply(
+    encodeFunctionResult({
+      abi: reverseAbi,
+      functionName: "reverseWithGateways",
+      result: [name, zeroAddress, zeroAddress],
+    }),
+  );
+}

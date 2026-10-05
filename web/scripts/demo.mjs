@@ -13,6 +13,8 @@ import {
   installWallet,
   config,
   blockscout,
+  ensRpc,
+  ensRpcUrls,
 } from "../tests/fixture.mjs";
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -61,6 +63,14 @@ await context.route(/^https:\/\//, async (route) => {
   if (request.url().startsWith("https://eth-sepolia.blockscout.com/api/v2/")) {
     await route.fulfill({
       json: blockscout(s, request.url()),
+      headers: { "access-control-allow-origin": "*" },
+    });
+    return;
+  }
+  if (ensRpcUrls.some((u) => request.url().startsWith(u))) {
+    const body = request.postDataJSON();
+    await route.fulfill({
+      json: Array.isArray(body) ? body.map(ensRpc) : ensRpc(body),
       headers: { "access-control-allow-origin": "*" },
     });
     return;
