@@ -25,7 +25,7 @@ function apply() {
     );
   // The favicon follows an explicit choice too, not just the OS preference. Same mark as
   // public/favicon.svg; public-check fails the build if the two drift apart.
-  const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="${style.getPropertyValue("--bg").trim()}"/><path d="M9 9h9M9 16h17M9 23h9M17 8v16" fill="none" stroke="${style.getPropertyValue("--text").trim()}" stroke-width="2"/></svg>`;
+  const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges"><rect width="16" height="16" fill="${style.getPropertyValue("--bg").trim()}"/><g fill="${style.getPropertyValue("--text").trim()}"><rect x="5" y="4" width="4" height="1"/><rect x="8" y="4" width="1" height="8"/><rect x="5" y="11" width="4" height="1"/><rect x="4" y="4" width="1" height="1" fill-opacity=".5"/><rect x="4" y="11" width="1" height="1" fill-opacity=".5"/><rect x="5" y="7" width="3" height="2" fill-opacity=".5"/><rect x="9" y="7" width="4" height="2" fill-opacity=".5"/><rect x="4" y="7" width="1" height="2" fill-opacity=".25"/></g></svg>`;
   document
     .querySelector('link[rel="icon"]')
     ?.setAttribute("href", `data:image/svg+xml,${encodeURIComponent(icon)}`);

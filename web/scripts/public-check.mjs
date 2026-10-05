@@ -33,7 +33,8 @@ for (const f of files.filter((f) => /\.(html|js|css|webmanifest)$/.test(f))) {
 }
 // The favicon is drawn twice: public/favicon.svg (follows the OS theme) and theme.tsx (follows the
 // in-page toggle). Both must be the same mark.
-const mark = (await readFile(`${dir}/favicon.svg`, "utf8")).match(/<path d="([^"]+)"/)?.[1];
+// The mark is pixel art: the <rect>s inside the favicon's ink group.
+const mark = (await readFile(`${dir}/favicon.svg`, "utf8")).match(/<g style="fill:var\(--text\)">(.*?)<\/g>/)?.[1];
 const bundle = (await Promise.all(files.filter((f) => f.endsWith(".js")).map((f) => readFile(`${dir}/${f}`, "utf8")))).join("");
 if (!mark || !bundle.includes(mark)) fail("favicon.svg and the theme toggle's favicon are different marks");
 const manifest = JSON.parse(await readFile(`${dir}/manifest.webmanifest`, "utf8"));
