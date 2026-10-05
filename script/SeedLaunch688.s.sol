@@ -16,7 +16,7 @@ interface IVaultLike {
     function priceFeed() external view returns (address);
     function spotFeed() external view returns (address);
     function nhiFeed() external view returns (address);
-    function minCR() external view returns (uint256);
+    function mat() external view returns (uint256);
 }
 
 /// @notice Seed launch 688's spot and health feeds from the price the SWARM attested.
@@ -29,7 +29,7 @@ interface IVaultLike {
 /// figure we invented, which is an avoidable way to lose 0.5 IMD.
 ///
 /// Spot is then set to the attested price EXACTLY, so `maxDivergenceBps` has nothing to object to.
-/// NHI is set to 0.9e18, which the curve maps to minCR 150 and a six-hour grace.
+/// NHI is set to 0.9e18, which the curve maps to mat 150 and a six-hour grace.
 ///
 /// TESTNET ONLY. This uses the reporter fallback, which is the mainnet hole this protocol is
 /// deleting (see `src/DeploymentConfig.sol`): past `maxAge` the deviation bound lifts and the next
@@ -42,7 +42,7 @@ contract SeedLaunch688 is Script {
     address constant SPOT_FEED = 0x73BF2ebfc5Bf181AC23799D2d79AC2B48F20284b;
     address constant VAULT = 0x850B0d7a6dD95bE3e842c0ef14EEFE0008f2c68F;
 
-    /// @dev 0.9e18 maps to minCR 150 / grace 6h on the health curve.
+    /// @dev 0.9e18 maps to mat 150 / grace 6h on the health curve.
     uint256 constant NHI_SEED = 0.9 ether;
 
     function run() external {
@@ -84,7 +84,7 @@ contract SeedLaunch688 is Script {
         console.log("divergence (wei):", gap);
         require(gap == 0, "seeded with a nonzero gap");
 
-        console.log("vault minCR:", IVaultLike(VAULT).minCR());
+        console.log("vault mat:", IVaultLike(VAULT).mat());
         console.log("SEEDED. The vault can price, and divergence is zero.");
     }
 }

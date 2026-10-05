@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {CDPVault} from "../src/CDPVault.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {APPROVED_OPERATOR, FEE_RECIPIENT} from "../src/DeploymentConfig.sol";
@@ -20,7 +20,7 @@ contract PayingVault is CDPVault {
         return 3_333;
     }
 
-    function stabilityFeeBps() public pure override returns (uint256) {
+    function duty() public pure override returns (uint256) {
         return 0;
     }
 }
@@ -120,25 +120,25 @@ contract TreasuryTest is Test {
 
         TestSwarmFeed price = new TestSwarmFeed(1 ether);
         TestSwarmFeed spot = new TestSwarmFeed(1 ether);
-        TestSwarmFeed nhi = new TestSwarmFeed(0.6 ether); // minCR 200, grace 0
+        TestSwarmFeed nhi = new TestSwarmFeed(0.6 ether); // mat 200, grace 0
         PayingVault vault = new PayingVault(address(imd), address(price), address(nhi), address(spot));
-        CompToken comp = vault.compToken();
+        ImdUSD comp = vault.stablecoin();
 
         vm.prank(APPROVED_OPERATOR);
         imd.mint(BORROWER, 300 ether);
         vm.startPrank(BORROWER);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(300 ether);
-        vault.mintCOMP(150 ether); // CR 200 exactly
+        vault.lock(300 ether);
+        vault.draw(150 ether); // CR 200 exactly
         comp.transfer(KEEPER, 150 ether);
         vm.stopPrank();
 
-        price.setValue(0.9 ether); // underwater at minCR 200
+        price.setValue(0.9 ether); // underwater at mat 200
         spot.setValue(0.9 ether);
         vm.prank(KEEPER);
-        vault.markUnderwater(BORROWER);
+        vault.bark(BORROWER);
         vm.prank(KEEPER);
-        vault.liquidate(BORROWER, 50 ether);
+        vault.bite(BORROWER, 50 ether);
 
         uint256 arrived = imd.balanceOf(FEE_RECIPIENT);
         assertGt(arrived, 0, "the protocol share must reach the treasury");

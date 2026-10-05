@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {MockIMD} from "../src/MockIMD.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
@@ -14,7 +14,7 @@ import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 abstract contract ProtocolFixture is LegacyWorkBacking {
     address internal constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
     MockIMD internal imd;
-    CompToken internal comp;
+    ImdUSD internal comp;
     MockWorkOracle internal oracle;
     CDPVault internal vault;
     TestSwarmFeed internal priceFeed;
@@ -25,7 +25,7 @@ abstract contract ProtocolFixture is LegacyWorkBacking {
 
     function setUp() public virtual {
         imd = new MockIMD();
-        comp = new CompToken(address(0));
+        comp = new ImdUSD(address(0));
         priceFeed = new TestSwarmFeed(1 ether);
         nhiFeed = new TestSwarmFeed(0.85 ether);
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
@@ -48,8 +48,8 @@ abstract contract ProtocolFixture is LegacyWorkBacking {
 
     function _open(address user, uint256 collateral, uint256 debt) internal {
         vm.startPrank(user);
-        vault.depositCollateral(collateral);
-        if (debt != 0) vault.mintCOMP(debt);
+        vault.lock(collateral);
+        if (debt != 0) vault.draw(debt);
         vm.stopPrank();
     }
 

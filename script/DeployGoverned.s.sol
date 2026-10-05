@@ -22,12 +22,12 @@ import {
     MARKER_SHARE_BPS,
     MAX_DIVERGENCE_BPS,
     PROTOCOL_BONUS_SHARE_BPS,
-    STABILITY_FEE_BPS,
+    DUTY_BPS,
     WORK_RATIO_BPS
 } from "../src/DeploymentConfig.sol";
 
 /// @notice The governed variant of the stack: same feeds, same vault logic, economics in a contract.
-/// @dev A separate script rather than a flag on DeployComp, and that is a lesson rather than a
+/// @dev A separate script rather than a flag on DeployProtocol, and that is a lesson rather than a
 /// preference. A launch manifest identifies a deployment by contract name and cannot represent two
 /// shapes of the same stack — conditional deployment inside one script is how round 1 and round 3
 /// both parked. One script, one artifact set.
@@ -87,7 +87,7 @@ contract DeployGoverned is Script {
         console2.log("Registry           ", address(registry));
         console2.log("Treasury    (inner)", address(treasury));
         console2.log("UsdPriceFeed(inner)", address(vault.usdPriceFeed()));
-        console2.log("CompToken   (inner)", address(vault.compToken()));
+        console2.log("ImdUSD   (inner)", address(vault.stablecoin()));
         console2.log("MockWorkOracle(in) ", address(vault.oracle()));
 
         verify(vault, parameters, registry, treasury, priceFeed, nhiFeed, spotFeed);
@@ -138,8 +138,8 @@ contract DeployGoverned is Script {
 
         // Governance opens at the status quo: every knob reads the same value it would have had
         // compiled in. A deployment that silently changed the economics would be caught here.
-        require(vault.debtCeiling() == type(uint256).max, "params: ceiling is not the shipped default");
-        require(vault.stabilityFeeBps() == STABILITY_FEE_BPS, "params: fee drifted from source");
+        require(vault.line() == type(uint256).max, "params: ceiling is not the shipped default");
+        require(vault.duty() == DUTY_BPS, "params: fee drifted from source");
         require(vault.protocolBonusShareBps() == PROTOCOL_BONUS_SHARE_BPS, "params: protocol share drifted");
         require(vault.maxDivergenceBps() == MAX_DIVERGENCE_BPS, "params: divergence drifted");
         require(vault.markerShareBps() == MARKER_SHARE_BPS, "params: marker share drifted");
@@ -147,7 +147,7 @@ contract DeployGoverned is Script {
         require(vault.redemptionSpread() == parameters.redemptionSpread(), "vault: wrong redemption spread");
         require(parameters.MIN_REDEMPTION_SPREAD() == 25, "params: redemption spread floor changed");
         require(parameters.MAX_REDEMPTION_SPREAD() == 100, "params: redemption spread cap changed");
-        require(vault.redemptionCeilingCR() == vault.minCR() + 50, "vault: redemption ceiling is not derived");
+        require(vault.redemptionCeilingCR() == vault.mat() + 50, "vault: redemption ceiling is not derived");
         require(vault.REDEMPTION_FEE_FLOOR_BPS() == 50, "vault: redemption fee floor changed");
         require(vault.REDEMPTION_FEE_CAP_BPS() == 500, "vault: redemption fee cap changed");
         require(vault.redemptionBaseRate() == 0, "vault: redemption base rate opens nonzero");
@@ -185,9 +185,9 @@ contract DeployGoverned is Script {
             "oracle: faucet authority is not the pinned operator"
         );
         require(MockWorkOracle(address(vault.oracle())).vault() == address(vault), "oracle: not bound to vault");
-        require(vault.compToken().vault() == address(vault), "comp: not bound to vault");
-        require(vault.compToken().totalSupply() == 0, "comp: nonzero opening supply");
-        require(treasury.totalReceived(vault.compToken()) == 0, "treasury: opens with a recorded receipt");
+        require(vault.stablecoin().vault() == address(vault), "comp: not bound to vault");
+        require(vault.stablecoin().totalSupply() == 0, "comp: nonzero opening supply");
+        require(treasury.totalReceived(vault.stablecoin()) == 0, "treasury: opens with a recorded receipt");
 
         PriceFeed[3] memory feeds = [priceFeed, PriceFeed(address(nhiFeed)), PriceFeed(address(spotFeed))];
         for (uint256 i = 0; i < feeds.length; ++i) {

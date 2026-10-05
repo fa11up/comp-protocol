@@ -89,17 +89,17 @@ the reserve term is backed 1:1 by assets the protocol owns, and the ratio term i
 surplus collateral every borrower posts above their debt.
 
 Let `D` = CDP principal, `W` = work-minted, `R` = reserve value, `r` = workRatioBps/10000, and take
-the worst case where every position sits exactly at `minCR`:
+the worst case where every position sits exactly at `mat`:
 
 ```
-supply = D + W,  W = R + rD,  collateral C = minCR × D
+supply = D + W,  W = R + rD,  collateral C = mat × D
 
-B = (C + R)/(D + W) = (minCR·D + R)/(D + R + rD)
+B = (C + R)/(D + W) = (mat·D + R)/(D + R + rD)
 
-numerator − denominator = (minCR − 1 − r)·D
+numerator − denominator = (mat − 1 − r)·D
 ```
 
-So **B > 1 for all R if and only if r < minCR − 1.** `minCR` is 150 at NHI 0.9 and rises to 200 as
+So **B > 1 for all R if and only if r < mat − 1.** `mat` is 150 at NHI 0.9 and rises to 200 as
 NHI falls, so the binding case is `r < 0.50`.
 
 | r | R = 0 | R = 0.5D | R = 2D | R → ∞ |
@@ -118,7 +118,7 @@ must not be reachable by governance.
 Three corrections to the formula as built, none to the bound it derives:
 
 - **One unit.** `D` is denominated in the primary feed's unit — the pinned question asks for wei of
-  ETH per IMD, so a COMP of debt is an ETH-worth of collateral to `minCR` and `liquidate` — while
+  ETH per IMD, so a COMP of debt is an ETH-worth of collateral to `mat` and `bite` — while
   `reserveValueUsd` is USD. Added unconverted, the reserve authorised ETH/USD times more work
   minting than the vault valued it at. The vault now converts the reserve at the Chainlink ETH/USD
   leg (`reserveValue()`), zero while that leg is stale. For IMD priced through `UsdPriceFeed` the leg
@@ -252,7 +252,7 @@ reaches anyone's collateral.
 the **lowest-ratio position** and pays the redeemer that position's IMD at the feed price, minus the
 fee. Only positions **below `redemptionCeilingCR`** are eligible, so a borrower can price themselves
 out of redemption entirely by posting more collateral. The floor still holds, because some positions
-always sit near `minCR`. Capacity is the debt of eligible positions rather than the whole pool, which
+always sit near `mat`. Capacity is the debt of eligible positions rather than the whole pool, which
 is the cost of giving borrowers an opt-out.
 
 **Channel B — reserve assets.** Free choice against a heterogeneous reserve is adverse selection: the
@@ -314,7 +314,7 @@ twelve hours does not move the base rate — and then its own reviewers found th
 Before acting on any of it, the two reported reproductions were replayed against the delivered code in
 `test/RedemptionFeePinning.t.sol`. Both pass:
 
-* **one wei every 11h59m** no longer keeps a record fresh, because `mintCOMP` now amount-weights
+* **one wei every 11h59m** no longer keeps a record fresh, because `draw` now amount-weights
   `mintedAt` — a dust mint against a large balance moves the date by about nothing, so the record ages
   out on schedule;
 * **mint-then-repay round trips** no longer wash the age down, because `_reduceDebt` conserves the
@@ -355,7 +355,7 @@ both bypasses cease to exist rather than being patched, and `_reduceDebt` needs 
 
 The limit is the one already accepted for the ceiling: an attacker can inflate supply in transaction
 N−1 and redeem in N. That costs **real capital held across a transaction boundary** — COMP minted
-against collateral at `minCR` and held — where today's bypass costs gas. Section 3 takes that trade
+against collateral at `mat` and held — where today's bypass costs gas. Section 3 takes that trade
 for `backedDebt`; taking it again here is consistency, not an excuse.
 
 ### Self-redemption
@@ -444,16 +444,16 @@ remainder            -> held, then converted to reserve assets when a COMP marke
 ```
 
 **BURNING IS NOT AN OPTIMISATION, IT IS WHAT STOPS THE FEE DILUTING THE PROTOCOL.** `_payDebt` does
-`compToken.mint(feeRecipient(), feePaid)` — the fee is newly MINTED COMP, not COMP taken from the
+`stablecoin.mint(feeRecipient(), feePaid)` — the fee is newly MINTED COMP, not COMP taken from the
 borrower. Since `B = (C + R) / supply`, a fee raises the denominator and leaves the numerator alone, so
 **every fee payment lowers the backing ratio until that COMP is burned.** `feeBurnShareBps` should ship
 at 10000 for that reason alone, and the held remainder is a deliberate cost rather than free upside.
 
 Held COMP is **never** counted in `reserveValueUsd`: `Treasury.validateReserveAsset` refuses the
-vault's own stablecoin outright (`CompIsNotReserve`), because counting it would let reserve value raise
+vault's own stablecoin outright (`StablecoinIsNotReserve`), because counting it would let reserve value raise
 `workCeiling`, which permits minting more COMP backed by COMP.
 
-**What the held remainder is actually good for, and it is not a market.** `liquidate` burns the
+**What the held remainder is actually good for, and it is not a market.** `bite` burns the
 CALLER's COMP, so a keeper needs COMP as working capital — real inventory, not an expense. Treasury
 COMP is worthless as backing and ideal for exactly that, with no swap route, no sell policy and no
 price risk. That is the first use to build.
@@ -479,11 +479,11 @@ rather than by an external feed.
 - `SwarmRelay` is permissionless by design, and the feeds pin it.
 
 So anyone can poll the list, pull the attestation for a request we paid 0.5 IMD for, and
-relay-and-liquidate ahead of us. `relayAndLiquidate` makes the update and the liquidation atomic; it
+relay-and-bite ahead of us. `relayAndBite` makes the update and the liquidation atomic; it
 does not make the payer first. The window is the couple of minutes between the panel attesting and
 our relay landing.
 
-**What is NOT at risk, and it is the larger half.** `liquidate` pays `protocolCut` to `feeRecipient()`
+**What is NOT at risk, and it is the larger half.** `bite` pays `protocolCut` to `feeRecipient()`
 and `markerCut` to the recorded marker, both independent of `msg.sender`; only the remainder goes to
 the caller. So the protocol is paid its `protocolBonusShareBps` share whoever liquidates. The
 contestable amount is the liquidator's own margin plus the 0.5 IMD spent on an update somebody else
@@ -496,7 +496,7 @@ while a searcher has to discover it by polling. Being first is a matter of not w
 
 What that keeper actually needs, stated plainly because two of these are easy to underestimate:
 
-- **COMP inventory, not just gas.** `liquidate` burns the CALLER's COMP, so a keeper must already hold
+- **COMP inventory, not just gas.** `bite` burns the CALLER's COMP, so a keeper must already hold
   the stablecoin it repays with. That is working capital, sourced by minting against its own
   collateral or buying, and it is the real constraint on keeping one running.
 - **Its own key, on its own machine.** Not the worker box: strangers' tasks execute there, and this
@@ -551,11 +551,11 @@ is what removes every objection at once:
 * **Yield needs no accounting.** Share count fixed, backing grows, so a borrower's collateral value and
   therefore their CR rise on their own. The position repairs itself against the stability fee instead of
   decaying. "Their yield minus our fee" is already exactly what happens: their net is yield minus
-  `stabilityFeeBps`, with no distribution machinery and no per-position accrual.
+  `duty`, with no distribution machinery and no per-position accrual.
 * **It adds no new price risk.** Burns stream in and nothing can take assets out, so the sIMD/IMD leg is
   **monotone non-decreasing**. The only price risk is still IMD/USD.
 
-**It does NOT justify a lower `minCR`, and that is not a close call.** Yield is drift; `minCR` covers
+**It does NOT justify a lower `mat`, and that is not a close call.** Yield is drift; `mat` covers
 tails. A 10% APY contributes 0.027% a day against the 44.6% single-day move we measured — it covers
 about 0.06% of it. Treating expected return as a substitute for tail risk is how CDP protocols fail.
 
@@ -645,7 +645,7 @@ The page should expect that and retry rather than present it as a failure.
 
    **A note on the manifest cap, since it shaped this whole section.** It was four contracts; it is now
    eight, and a new `evm_contracts` kind deploys application contracts with no token, no pool and no
-   reward distributor at all. The in-constructor creation of `CompToken`, `Parameters`, `Treasury` and
+   reward distributor at all. The in-constructor creation of `ImdUSD`, `Parameters`, `Treasury` and
    `UsdPriceFeed` therefore no longer rests on scarcity — it rests on the better reason, which is that
    a manifest makes no post-deploy calls, so a stack that is not linked by its own constructors comes
    up unlinked. Nothing here changes; the justification does.
@@ -659,7 +659,7 @@ The page should expect that and retry rather than present it as a failure.
 5. Redemption channel B (reserve assets, weight-priced fee).
 6. Upstream: the oracle-batch second-root PR.
 7. The in-house keeper (§5b). Off-chain, so it is not contract work and belongs in no `workflow.open`:
-   poll our own oracle requests, relay-and-liquidate atomically, hold COMP inventory, run on its own
+   poll our own oracle requests, relay-and-bite atomically, hold COMP inventory, run on its own
    machine with its own key. The relayer automation and the price-movement watcher of the cadence
    finding are the same daemon — all three want the same key and the same loop.
 
@@ -669,9 +669,9 @@ All under the existing 48-hour delay, all hard-bounded in the parameters contrac
 
 | parameter | purpose | proposed | hard bound |
 |---|---|---|---|
-| `workRatioBps` | ratio term of `workCeiling` | 2500 | ≤ 2500 (cliff is `minCR − 1` = 5000) |
-| `compPerTaskWad` | COMP an accepted task earns | 0.01 | ≤ 1e18 — one task is never worth more than one COMP |
-| `redemptionCeilingCR` | above this a position cannot be redeemed against | 200 | ≥ `minCR`, ≤ 400 |
+| `workRatioBps` | ratio term of `workCeiling` | 2500 | ≤ 2500 (cliff is `mat − 1` = 5000) |
+| `unitsPerTaskWad` | COMP an accepted task earns | 0.01 | ≤ 1e18 — one task is never worth more than one COMP |
+| `redemptionCeilingCR` | above this a position cannot be redeemed against | 200 | ≥ `mat`, ≤ 400 |
 | `feeBurnShareBps` | share of COMP fees burned on arrival | 10000 at first | no bound needed |
 | `haircutBps[asset]` | per-asset retained-value factor | near 10000 stables, lower for IMD | 0–10000 |
 | `targetWeightBps[asset]` | basket weight driving channel B's fee | — | must sum to 10000 |
@@ -693,5 +693,5 @@ peg, and a governable cap is a redemption halt with extra steps.
   that day.
 - **When the held fee COMP converts to reserve assets**, and through what route. Blocked on COMP
   liquidity existing at all.
-- **Whether `redemptionCeilingCR` should move with NHI** the way `minCR` does, so redemption
+- **Whether `redemptionCeilingCR` should move with NHI** the way `mat` does, so redemption
   eligibility widens as network health falls.

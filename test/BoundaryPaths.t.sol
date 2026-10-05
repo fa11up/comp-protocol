@@ -7,7 +7,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {MockWorkOracle} from "src/MockWorkOracle.sol";
 import {LaunchToken} from "src/LaunchToken.sol";
@@ -16,20 +16,20 @@ contract BoundaryPathsTest is ProtocolFixture {
     error TokenUnavailable();
 
     function test_mintRejectsUnlinkedTokenDespiteConstructorBoundOracle() public {
-        CompToken token = new CompToken(address(0));
+        ImdUSD token = new ImdUSD(address(0));
         CDPVault fresh = new BaselineVault(
             address(imd), address(token), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         assertEq(MockWorkOracle(address(fresh.oracle())).vault(), address(fresh));
         vm.expectRevert(CDPVault.NotInitialized.selector);
-        fresh.mintCOMP(1);
+        fresh.draw(1);
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintFromWork(1);
         assertEq(token.totalSupply(), 0);
     }
 
     function test_mintRejectsTokenLinkedToDifferentVault() public {
-        CompToken token = new CompToken(address(0));
+        ImdUSD token = new ImdUSD(address(0));
         CDPVault fresh = new BaselineVault(
             address(imd), address(token), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
@@ -41,7 +41,7 @@ contract BoundaryPathsTest is ProtocolFixture {
         vm.stopPrank();
         assertEq(token.vault(), address(registeredVault));
         vm.expectRevert(CDPVault.NotInitialized.selector);
-        fresh.mintCOMP(1);
+        fresh.draw(1);
         vm.expectRevert(CDPVault.NotInitialized.selector);
         fresh.mintFromWork(1);
         assertEq(token.totalSupply(), 0);
@@ -53,8 +53,8 @@ contract BoundaryPathsTest is ProtocolFixture {
         );
         vm.startPrank(alice);
         imd.approve(address(fresh), 7);
-        fresh.depositCollateral(7);
-        fresh.withdrawCollateral(7);
+        fresh.lock(7);
+        fresh.free(7);
         vm.stopPrank();
         (uint256 collateral, uint256 debt) = fresh.positions(alice);
         assertEq(collateral, 0);
@@ -69,14 +69,14 @@ contract BoundaryPathsTest is ProtocolFixture {
         vault.mintFromWork(1000 ether);
         vm.expectRevert(CDPVault.InsufficientRights.selector);
         vault.mintFromWork(1);
-        vault.depositCollateral(150 ether);
-        vault.mintCOMP(100 ether);
-        vault.repayCOMP(100 ether);
+        vault.lock(150 ether);
+        vault.draw(100 ether);
+        vault.wipe(100 ether);
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
-        vault.repayCOMP(1);
-        vault.withdrawCollateral(150 ether);
+        vault.wipe(1);
+        vault.free(150 ether);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
-        vault.withdrawCollateral(1);
+        vault.free(1);
         vm.stopPrank();
         _assertPosition(alice, 0, 0);
         assertEq(oracle.mintingRights(alice), 0);
@@ -95,14 +95,14 @@ contract BoundaryPathsTest is ProtocolFixture {
         );
         vm.prank(alice);
         vm.expectRevert(TokenUnavailable.selector);
-        vault.mintCOMP(100 ether);
+        vault.draw(100 ether);
         _assertPosition(alice, 150 ether, 0);
         assertEq(oracle.mintingRights(alice), 1000 ether);
         assertEq(comp.totalSupply(), 0);
         assertEq(comp.balanceOf(alice), 0);
         vm.clearMockedCalls();
         vm.prank(alice);
-        vault.mintCOMP(100 ether);
+        vault.draw(100 ether);
         _assertPosition(alice, 150 ether, 100 ether);
     }
 
@@ -138,9 +138,9 @@ contract BoundaryPathsTest is ProtocolFixture {
         vm.startPrank(alice);
         vm.expectRevert(TokenUnavailable.selector);
         vault.mintFromWork(1);
-        vault.mintCOMP(1);
-        vault.repayCOMP(100 ether + 1);
-        vault.withdrawCollateral(200 ether);
+        vault.draw(1);
+        vault.wipe(100 ether + 1);
+        vault.free(200 ether);
         vm.stopPrank();
         vm.clearMockedCalls();
         _assertPosition(alice, 0, 0);
@@ -168,7 +168,7 @@ contract BoundaryPathsTest is ProtocolFixture {
         oracle.grantRights(alice, type(uint256).max - remainingRights);
         vm.prank(alice);
         vm.expectRevert(stdError.arithmeticError);
-        vault.mintCOMP(type(uint256).max);
+        vault.draw(type(uint256).max);
         _assertPosition(alice, 2, 1);
         assertEq(comp.totalSupply(), 1);
         assertEq(oracle.mintingRights(alice), type(uint256).max);
@@ -185,7 +185,7 @@ contract BoundaryPathsTest is ProtocolFixture {
         assertEq(freshIMD.balanceOf(alice), type(uint256).max);
         assertEq(freshIMD.balanceOf(bob), 0);
 
-        CompToken freshCOMP = new CompToken(address(0));
+        ImdUSD freshCOMP = new ImdUSD(address(0));
         CDPVault tokenVault = new BaselineVault(
             address(imd), address(freshCOMP), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );

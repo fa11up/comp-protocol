@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {CompToken} from "./CompToken.sol";
+import {ImdUSD} from "./ImdUSD.sol";
 import {MockIMD} from "./MockIMD.sol";
 import {MockWorkOracle} from "./MockWorkOracle.sol";
 import {WorkOracleFactory} from "./WorkOracleFactory.sol";
@@ -15,7 +15,7 @@ import {
     FEE_RECIPIENT,
     MAX_DIVERGENCE_BPS,
     MARKER_SHARE_BPS,
-    STABILITY_FEE_BPS,
+    DUTY_BPS,
     PROTOCOL_BONUS_SHARE_BPS,
     WORK_ORACLE_FACTORY,
     WORK_ORACLE_SENTINEL,
@@ -79,13 +79,13 @@ contract CDPVault is ReentrancyGuard {
     error MinimumOutNotMet();
 
     event OracleSet(address indexed oracle);
-    event CollateralDeposited(address indexed account, uint256 amount);
-    event CollateralWithdrawn(address indexed account, uint256 amount);
-    event COMPMinted(address indexed account, uint256 amount);
+    event Lock(address indexed account, uint256 amount);
+    event Free(address indexed account, uint256 amount);
+    event Draw(address indexed account, uint256 amount);
     event WorkMinted(address indexed account, uint256 amount);
-    event COMPRepaid(address indexed account, uint256 amount);
-    event Liquidated(address indexed owner, address indexed liquidator, uint256 debtRepaid, uint256 collateralSeized);
-    event UnderwaterMarked(address indexed owner, uint256 markedAt, uint256 grace);
+    event Wipe(address indexed account, uint256 amount);
+    event Bite(address indexed owner, address indexed liquidator, uint256 debtRepaid, uint256 collateralSeized);
+    event Bark(address indexed owner, uint256 markedAt, uint256 grace);
     event UnderwaterMarkCleared(address indexed owner);
     event IndexCheckpointed(uint256 index, uint256 at);
     event Redeemed(
@@ -98,7 +98,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 feeBps
     );
 
-    uint256 public constant LIQUIDATION_BONUS_PERCENT = 10;
+    uint256 public constant CHOP_PERCENT = 10;
     uint256 public constant REDEMPTION_FEE_FLOOR_BPS = 50;
     uint256 public constant REDEMPTION_FEE_CAP_BPS = 500;
     /// @dev floor(1e18 * 2**(-1/43200)): a twelve-hour half-life, with per-second decay.
@@ -128,7 +128,7 @@ contract CDPVault is ReentrancyGuard {
     /// @dev Unlimited by default so behaviour is unchanged; a deployment that wants a cap overrides
     /// this. There is no admin, so the value a deployment chooses is permanent for that vault —
     /// raising a ceiling means a new vault and a migration, which is the price of having no keys.
-    function debtCeiling() public view virtual returns (uint256) {
+    function line() public view virtual returns (uint256) {
         return type(uint256).max;
     }
 
@@ -147,13 +147,13 @@ contract CDPVault is ReentrancyGuard {
 
     /// @notice Annual stability fee on open debt, in basis points, accrued linearly from the last
     /// index checkpoint.
-    /// @dev Virtual for the same reason debtCeiling and protocolBonusShareBps are: a deployment pins
+    /// @dev Virtual for the same reason line and protocolBonusShareBps are: a deployment pins
     /// it in source, and a test can hold it at another value without rewriting the source to do it.
     /// This contract has no setter, so the rate is permanent unless a subclass reads it from
-    /// somewhere governed — in which case that governor MUST call `pokeIndex` in the same
+    /// somewhere governed — in which case that governor MUST call `drip` in the same
     /// transaction as the change, or the new rate reaches time that has already elapsed.
-    function stabilityFeeBps() public view virtual returns (uint256) {
-        return STABILITY_FEE_BPS;
+    function duty() public view virtual returns (uint256) {
+        return DUTY_BPS;
     }
 
     /// @notice Share of the liquidation bonus paid to FEE_RECIPIENT, in basis points of the bonus.
@@ -171,7 +171,7 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @notice Maximum cumulative COMP the work channel may have minted, in COMP units.
-    /// @dev Unlimited here, exactly as `debtCeiling` is: this contract has no reserve to read and no
+    /// @dev Unlimited here, exactly as `line` is: this contract has no reserve to read and no
     /// governed ratio, so a bound would be a number pulled from the air. ParameterizedVault overrides
     /// it with reserveValueUsd + totalDebt * workRatioBps / 10000, the bound docs/COMPUTE-BACKING-
     /// DESIGN.md section 3 derives, and `mintFromWork` enforces whatever this returns.
@@ -179,13 +179,13 @@ contract CDPVault is ReentrancyGuard {
         return type(uint256).max;
     }
 
-    /// @notice Ratio points above minCR eligible for redemption; governed in ParameterizedVault.
+    /// @notice Ratio points above mat eligible for redemption; governed in ParameterizedVault.
     function redemptionSpread() public view virtual returns (uint256) {
         return 50;
     }
 
     function redemptionCeilingCR() public view returns (uint256) {
-        return minCR() + redemptionSpread();
+        return mat() + redemptionSpread();
     }
 
     /// @notice Idle IMD available before any borrower is reached. The plain vault has no Treasury.
@@ -217,15 +217,15 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Sum over positions of min(collateral, SECURED_COLLATERAL_MULTIPLE x principal / price),
     /// in IMD, each term at the price in force when that position last changed.
     /// @dev REVISION (finding 7cd5035c): the backing guard read the vault's whole balance, less what
-    /// this transaction deposited, and capped it at minCR x prior principal. The cap assumes indebted
+    /// this transaction deposited, and capped it at mat x prior principal. The cap assumes indebted
     /// positions hold at least that much; whenever they hold less (a price fall, an NHI fall raising
-    /// minCR) there is a gap, and a debt-free deposit made in an EARLIER transaction filled it: not
+    /// mat) there is a gap, and a debt-free deposit made in an EARLIER transaction filled it: not
     /// in the transient tally, no debt, no health check, withdrawable the next transaction, so it
     /// cost nothing and let a redemption take the reserve above its pro-rata share. Collateral is
     /// now counted per position and bounded by that position's own principal, maintained wherever
     /// either changes, so a position with no debt contributes nothing and one wei of debt contributes
-    /// two wei's worth. The multiple is the largest minCR, fixed so the sum stays well defined as NHI
-    /// moves; the aggregate minCR cap in `_securedCollateralValue` still applies on top of it.
+    /// two wei's worth. The multiple is the largest mat, fixed so the sum stays well defined as NHI
+    /// moves; the aggregate mat cap in `_securedCollateralValue` still applies on top of it.
     /// Principal is denominated in the unit `_price()` quotes and collateral in IMD, so the bound
     /// needs a price, and a sum cannot be revalued for every position when the feed moves: each
     /// term is fixed at the price its position was last touched at. Positions whose collateral is
@@ -242,7 +242,7 @@ contract CDPVault is ReentrancyGuard {
     uint256 public totalDebt;
 
     IERC20 public immutable imdToken;
-    CompToken public immutable compToken;
+    ImdUSD public immutable stablecoin;
     IWorkOracle public immutable oracle;
     ISwarmFeed public immutable priceFeed;
     ISwarmFeed public immutable nhiFeed;
@@ -254,13 +254,13 @@ contract CDPVault is ReentrancyGuard {
     /// residual; adding collateral cannot hide it. Use badDebtOf for a current-price, accrued view.
     uint256 public totalBadDebt;
     mapping(address account => Position position) private _positions;
-    mapping(address account => uint256 index) public debtIndexOf;
+    mapping(address account => uint256 index) public chiOf;
     mapping(address account => uint256 fees) private _stabilityFees;
     mapping(address account => uint256 debt) private _recordedBadDebt;
     mapping(address account => LiquidationMark mark) public liquidationMarks;
 
     /// @param imdToken_ Deployed, nonrebasing, fee-free MockIMD collateral (18 decimals).
-    /// @param compToken_ Zero creates a fresh CompToken bound to this vault; otherwise an existing token
+    /// @param stablecoin_ Zero creates a fresh ImdUSD bound to this vault; otherwise an existing token
     /// to be authorized separately through its reciprocal setVault check.
     /// @param oracle_ Zero creates a fresh MockWorkOracle (the testnet faucet) bound to this vault
     /// during construction; WORK_ORACLE_SENTINEL asks WorkOracleFactory for a real attested
@@ -271,7 +271,7 @@ contract CDPVault is ReentrancyGuard {
     /// @param spotFeed_ Immutable spot price feed, used only to bound divergence from the primary average.
     constructor(
         address imdToken_,
-        address compToken_,
+        address stablecoin_,
         address oracle_,
         address priceFeed_,
         address nhiFeed_,
@@ -285,7 +285,7 @@ contract CDPVault is ReentrancyGuard {
         // deployed to, and this constructor requires code — so the project could not be constructed
         // anywhere else, which is how the launch failed with "project constructor failed".
         //
-        // Why not zero, the convention compToken_ and oracle_ use: zero is what an unset field looks
+        // Why not zero, the convention stablecoin_ and oracle_ use: zero is what an unset field looks
         // like, and a mainnet vault that quietly took a MOCK token as its collateral would accept a
         // worthless asset against real debt. The existing guard refuses zero deliberately and still
         // does; this is an unmistakable opt-in that nobody passes by accident.
@@ -293,8 +293,8 @@ contract CDPVault is ReentrancyGuard {
             imdToken_ = address(new MockIMD());
         }
         if (
-            imdToken_.code.length == 0 || (compToken_ != address(0) && compToken_.code.length == 0)
-                || imdToken_ == compToken_
+            imdToken_.code.length == 0 || (stablecoin_ != address(0) && stablecoin_.code.length == 0)
+                || imdToken_ == stablecoin_
         ) {
             revert InvalidToken();
         }
@@ -303,7 +303,7 @@ contract CDPVault is ReentrancyGuard {
                 || priceFeed_ == nhiFeed_ || spotFeed_ == nhiFeed_ || spotFeed_ == priceFeed_
         ) revert InvalidFeed();
         imdToken = IERC20(imdToken_);
-        compToken = compToken_ == address(0) ? new CompToken(address(this)) : CompToken(compToken_);
+        stablecoin = stablecoin_ == address(0) ? new ImdUSD(address(this)) : ImdUSD(stablecoin_);
         priceFeed = ISwarmFeed(priceFeed_);
         nhiFeed = ISwarmFeed(nhiFeed_);
         spotFeed = ISwarmFeed(spotFeed_);
@@ -325,7 +325,7 @@ contract CDPVault is ReentrancyGuard {
         emit OracleSet(oracle_);
     }
 
-    function depositCollateral(uint256 amount) external nonReentrant {
+    function lock(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         uint256 beforeBalance = imdToken.balanceOf(address(this));
         Position storage position = _positions[msg.sender];
@@ -334,10 +334,10 @@ contract CDPVault is ReentrancyGuard {
         imdToken.safeTransferFrom(msg.sender, address(this), amount);
         if (imdToken.balanceOf(address(this)) - beforeBalance != amount) revert UnexpectedCollateralReceived();
         _clearIfRecovered(msg.sender);
-        emit CollateralDeposited(msg.sender, amount);
+        emit Lock(msg.sender, amount);
     }
 
-    function withdrawCollateral(uint256 amount) external nonReentrant {
+    function free(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         Position storage position = _positions[msg.sender];
         if (amount > position.collateral) revert InsufficientCollateral();
@@ -354,20 +354,20 @@ contract CDPVault is ReentrancyGuard {
         _resecure(position, _priceOrZero());
         _clearMark(msg.sender);
         imdToken.safeTransfer(msg.sender, amount);
-        emit CollateralWithdrawn(msg.sender, amount);
+        emit Free(msg.sender, amount);
     }
 
-    function mintCOMP(uint256 amount) external nonReentrant {
+    function draw(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _requireFreshFeeds();
         _requirePriceAgreement();
-        if (compToken.vault() != address(this)) revert NotInitialized();
+        if (stablecoin.vault() != address(this)) revert NotInitialized();
         _accrue(msg.sender);
         Position storage position = _positions[msg.sender];
         uint256 resultingDebt = position.debt + _stabilityFees[msg.sender] + amount;
         if (!_healthy(position.collateral, resultingDebt)) revert UnsafeCollateralRatio();
         uint256 resultingTotal = totalDebt + amount;
-        if (resultingTotal > debtCeiling()) revert DebtCeilingReached();
+        if (resultingTotal > line()) revert DebtCeilingReached();
         totalDebt = resultingTotal;
         _debtChanged(resultingTotal - amount);
         position.debt += amount;
@@ -385,8 +385,8 @@ contract CDPVault is ReentrancyGuard {
                 + Math.mulDiv(block.timestamp - position.mintedAt, amount, fresh + amount, Math.Rounding.Ceil);
         position.recentlyMinted = fresh + amount;
         _clearMark(msg.sender);
-        compToken.mint(msg.sender, amount);
-        emit COMPMinted(msg.sender, amount);
+        stablecoin.mint(msg.sender, amount);
+        emit Draw(msg.sender, amount);
     }
 
     /// @notice Mint earned COMP by consuming work rights, without collateral or a debt entry.
@@ -398,7 +398,7 @@ contract CDPVault is ReentrancyGuard {
     function mintFromWork(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _requireFreshFeeds();
-        if (compToken.vault() != address(this)) revert NotInitialized();
+        if (stablecoin.vault() != address(this)) revert NotInitialized();
         if (oracle.mintingRights(msg.sender) < amount) revert InsufficientRights();
         uint256 resultingWork = totalWorkMinted + amount;
         uint256 ceiling = workCeiling();
@@ -411,19 +411,19 @@ contract CDPVault is ReentrancyGuard {
         if (resultingWork > ceiling) revert WorkCeilingReached();
         totalWorkMinted = resultingWork;
         oracle.consumeRights(msg.sender, amount);
-        compToken.mint(msg.sender, amount);
+        stablecoin.mint(msg.sender, amount);
         emit WorkMinted(msg.sender, amount);
     }
 
     /// @notice Repay the caller's debt by burning their COMP; no COMP approval is required.
     /// @dev Repayment does not restore consumed work credits.
-    function repayCOMP(uint256 amount) external nonReentrant {
+    function wipe(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _accrue(msg.sender);
         uint256 feePaid = _reduceDebt(msg.sender, amount);
         _payDebt(amount, feePaid);
         _clearIfRecovered(msg.sender);
-        emit COMPRepaid(msg.sender, amount);
+        emit Wipe(msg.sender, amount);
     }
 
     /// @notice Burn exactly `amount` caller COMP for feed-priced IMD, less the capped fee.
@@ -465,7 +465,7 @@ contract CDPVault is ReentrancyGuard {
         // The honest consequence, which is the point rather than a cost: the peg floor is
         // min(1 - fee, backing). A protocol backed at 0.96 cannot promise 0.995, and the previous
         // design's answer to that was to stop redeeming rather than to stop overpaying.
-        uint256 payoutScale = Math.mulDiv(_backingPerComp(price), 10_000 - feeBps, 10_000);
+        uint256 payoutScale = Math.mulDiv(_backingPerUnit(price), 10_000 - feeBps, 10_000);
         imdOut = Math.mulDiv(amount, payoutScale, price);
         if (imdOut == 0) revert ZeroAmount();
         if (imdOut < minImdOut) revert MinimumOutNotMet();
@@ -483,7 +483,7 @@ contract CDPVault is ReentrancyGuard {
         // The fresh part of the burn is charged in full but does not move the rate everyone else pays.
         redemptionBaseRate = freshCancelled == 0 ? base : _redemptionRate(amount - freshCancelled);
         lastRedemptionAt = block.timestamp;
-        compToken.burn(msg.sender, amount);
+        stablecoin.burn(msg.sender, amount);
         if (reserveOut != 0) _payRedemptionReserve(reserveOut);
         if (reserveOut < imdOut) imdToken.safeTransfer(msg.sender, imdOut - reserveOut);
         emit Redeemed(msg.sender, candidate, amount, imdOut, reserveOut, debtCancelled, feeBps);
@@ -493,37 +493,37 @@ contract CDPVault is ReentrancyGuard {
     /// @dev Public because it is the figure a redeemer is actually paid against and the one a reader
     /// needs to judge the protocol: below 1e18 it says plainly that a COMP is not fully backed, and
     /// the redemption payout falls with it instead of the channel closing.
-    function backingPerComp() external view returns (uint256) {
-        return _backingPerComp(_price());
+    function backingPerUnit() external view returns (uint256) {
+        return _backingPerUnit(_price());
     }
 
     /// @notice Value backing one COMP, 1e18-scaled, never above par.
     /// @dev Reserve plus secured collateral over supply. Capped at 1e18 because a protocol backed
     /// above par does not pay a premium: the surplus is the borrowers' and the work ceiling's
     /// headroom, not a redeemer's windfall. Read pre-payout, so it is the state the burn found.
-    function _backingPerComp(uint256 price) private view returns (uint256) {
-        uint256 supply = compToken.totalSupply();
+    function _backingPerUnit(uint256 price) private view returns (uint256) {
+        uint256 supply = stablecoin.totalSupply();
         if (supply == 0) return 1e18;
         (uint256 backing,) = _redemptionReserveBacking(0, price);
         backing += _securedCollateralValue(price);
-        uint256 perComp = Math.mulDiv(backing, 1e18, supply);
-        return perComp < 1e18 ? perComp : 1e18;
+        uint256 perUnit = Math.mulDiv(backing, 1e18, supply);
+        return perUnit < 1e18 ? perUnit : 1e18;
     }
 
     /// @dev The vault's collateral the guard may count as backing: what stood behind debt before this
-    /// transaction, and no more than the debt that existed before it holds at minCR.
+    /// transaction, and no more than the debt that existed before it holds at mat.
     /// REVISION (finding 8936befa): the whole balance counted, including collateral posted against no
     /// debt and every borrower's surplus, which is withdrawable with no feed or health check and backs
     /// no COMP. A redeemer deposited debt-free, redeemed and withdrew in one call, and the deposit
     /// passed the guard for any amount. Secured collateral added in this transaction is excluded, as
-    /// backedDebt excludes same-transaction debt; and the remainder counts only up to minCR times the
+    /// backedDebt excludes same-transaction debt; and the remainder counts only up to mat times the
     /// principal that existed before this transaction (less bad debt), the surplus every borrower must
     /// keep in place and the figure section 3 of docs/COMPUTE-BACKING-DESIGN.md backs work minting
     /// against. One-for-one with debt would be wrong the other way: it would refuse the brief's own
     /// flow of redeeming work-issued COMP against an eligible position in a fully backed system.
     /// REVISION (finding 7cd5035c): the balance is replaced by `securedCollateral`, which is bounded
     /// position by position, so the slow version of the same deposit no longer fills the gap the cap
-    /// leaves open when indebted positions hold less than minCR.
+    /// leaves open when indebted positions hold less than mat.
     function _securedCollateralValue(uint256 price) private view returns (uint256) {
         uint256 secured = securedCollateral;
         uint256 added = _transient(SECURED_THIS_TX_SLOT);
@@ -532,7 +532,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 prior = totalDebt > minted ? totalDebt - minted : 0;
         uint256 bad = totalBadDebt;
         prior = prior > bad ? prior - bad : 0;
-        return Math.min(Math.mulDiv(held, price, 1e18), Math.mulDiv(prior, minCR(), 100));
+        return Math.min(Math.mulDiv(held, price, 1e18), Math.mulDiv(prior, mat(), 100));
     }
 
     /// @dev REVISION (finding b952037a): a position-funded fee stays in the candidate, so a redeemer
@@ -541,7 +541,7 @@ contract CDPVault is ReentrancyGuard {
     /// else pays at the cap for gas. Principal younger than one half-life of the rate therefore
     /// counts for nothing in the increase when cancelled: the pump now needs that much principal-time
     /// held in the eligible band, exposed to price and liquidation — twelve hours of the whole amount,
-    /// or the same product in other tranches, see `mintCOMP` — per pinning, and a rotating supply of
+    /// or the same product in other tranches, see `draw` — per pinning, and a rotating supply of
     /// it to keep the rate there. It is a cost, not a closure: with the fee retained where the brief
     /// puts it, no rule can tell a seasoned self-redemption from an honest one.
     /// @return principalCancelled Minted principal retired, as opposed to accrued fees.
@@ -600,7 +600,7 @@ contract CDPVault is ReentrancyGuard {
     /// less than the fee-adjusted price for that size and leaving the understated base for everyone
     /// after. Principal minted this transaction is netted out; a burn at or beyond what remains saturates.
     function _redemptionRate(uint256 amount) private view returns (uint256) {
-        uint256 supply = compToken.totalSupply();
+        uint256 supply = stablecoin.totalSupply();
         if (amount > supply) revert ExcessRepayment();
         uint256 cap = (REDEMPTION_FEE_CAP_BPS - REDEMPTION_FEE_FLOOR_BPS) * 1e14;
         uint256 minted = _transient(MINTED_THIS_TX_SLOT);
@@ -655,8 +655,8 @@ contract CDPVault is ReentrancyGuard {
     /// retaken, which restarts grace. latestValue cannot reveal a recover-then-fall sequence nobody
     /// transacted through, so bounding a mark's lifetime is what keeps an old mark from turning a later
     /// dip into a same-block liquidation with no effective grace.
-    function markUnderwater(address owner) external {
-        markUnderwaterFor(owner, msg.sender);
+    function bark(address owner) external {
+        barkFor(owner, msg.sender);
     }
 
     /// @notice Mark a position underwater and credit the marker's bonus share to `beneficiary`.
@@ -664,13 +664,13 @@ contract CDPVault is ReentrancyGuard {
     /// `msg.sender` is wrong as soon as the call arrives through anything. A keeper bundling the
     /// feed update with the mark calls through a relay, and the relay would be recorded as the
     /// marker: its share would then be paid to a contract with no owner and no way to move it, or
-    /// handed to whichever keeper happened to liquidate. The reward belongs to whoever caused the
+    /// handed to whichever keeper happened to bite. The reward belongs to whoever caused the
     /// mark, not to whatever contract carried the call.
     ///
     /// Naming someone else is allowed and uninteresting: a caller can only give away its own share.
     /// A zero beneficiary is refused, because the bonus is paid by transfer and burning it silently
     /// is worse than failing here.
-    function markUnderwaterFor(address owner, address beneficiary) public nonReentrant {
+    function barkFor(address owner, address beneficiary) public nonReentrant {
         if (beneficiary == address(0)) revert InvalidBeneficiary();
         _requireFreshFeeds();
         _requirePriceAgreement();
@@ -680,7 +680,7 @@ contract CDPVault is ReentrancyGuard {
         if (mark.marked && !_expired(mark)) return;
         uint256 grace = gracePeriod();
         liquidationMarks[owner] = LiquidationMark(block.timestamp, grace, true, beneficiary);
-        emit UnderwaterMarked(owner, block.timestamp, grace);
+        emit Bark(owner, block.timestamp, grace);
     }
 
     /// @notice Anyone may clear a mark after observing recovery, including a recovery caused only by a feed.
@@ -699,8 +699,8 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Burn caller COMP against a marked, still-underwater position after its snapshotted grace.
     /// @dev Payout is floor(debtToRepay * 1.1e18 / price) IMD, i.e. collateral worth 110% of the COMP burned
     /// at the same accepted price the health check reads; collateral must cover the full payout.
-    /// The mark must still be within its liquidation window (see markUnderwater).
-    function liquidate(address owner, uint256 debtToRepay) external nonReentrant {
+    /// The mark must still be within its liquidation window (see bark).
+    function bite(address owner, uint256 debtToRepay) external nonReentrant {
         if (debtToRepay == 0) revert ZeroAmount();
         _requireFreshFeeds();
         _requirePriceAgreement();
@@ -713,7 +713,7 @@ contract CDPVault is ReentrancyGuard {
         _accrue(owner);
         if (debtToRepay > position.debt + _stabilityFees[owner]) revert ExcessRepayment();
         uint256 price = _price();
-        uint256 collateralSeized = Math.mulDiv(debtToRepay, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, price);
+        uint256 collateralSeized = Math.mulDiv(debtToRepay, (100 + CHOP_PERCENT) * 1e16, price);
         if (collateralSeized > position.collateral) revert InsufficientCollateral();
         // Both shares come out of the same bonus, never principal or extra borrower collateral.
         uint256 protocolShare = protocolBonusShareBps();
@@ -724,7 +724,7 @@ contract CDPVault is ReentrancyGuard {
         address marker = mark.marker;
         // Sweep a remainder nobody could ever claim. Taking the largest coverable debt leaves dust,
         // and once that dust is smaller than the seizure for a single wei of debt every later
-        // liquidate reverts InsufficientCollateral: the position freezes with debt outstanding and
+        // bite reverts InsufficientCollateral: the position freezes with debt outstanding and
         // collateral no one can reach, so it never drains and its loss is never realized. Observed
         // on Sepolia at 887 wei against 157364181818182858 of debt.
         // It is folded in AFTER the split, so it enlarges neither the bonus nor the marker's and
@@ -734,7 +734,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 remainder = position.collateral - collateralSeized;
         if (
             remainder != 0 && debtToRepay < position.debt + _stabilityFees[owner]
-                && remainder < Math.mulDiv(1, (100 + LIQUIDATION_BONUS_PERCENT) * 1e16, price)
+                && remainder < Math.mulDiv(1, (100 + CHOP_PERCENT) * 1e16, price)
         ) {
             collateralSeized += remainder;
         }
@@ -751,7 +751,7 @@ contract CDPVault is ReentrancyGuard {
             if (markerCut != 0) imdToken.safeTransfer(marker, markerCut);
         }
         if (protocolCut != 0) imdToken.safeTransfer(feeRecipient(), protocolCut);
-        emit Liquidated(owner, msg.sender, debtToRepay, collateralSeized);
+        emit Bite(owner, msg.sender, debtToRepay, collateralSeized);
     }
 
     /// @notice floor(collateral * price * 100 / (debt * 1e18)), using the latest accepted price.
@@ -770,19 +770,19 @@ contract CDPVault is ReentrancyGuard {
 
     /// @notice Linear index accumulated from the last checkpoint; no per-second compounding.
     /// @dev Accrual is measured from `indexCheckpointAt`, not from deployment, so a change to
-    /// `stabilityFeeBps()` applies only to the time after it. Computing from deployment at the
+    /// `duty()` applies only to the time after it. Computing from deployment at the
     /// current rate would reprice every elapsed second, and a rate cut would make the subtraction
     /// in `stabilityFeeOf` underflow, reverting `_accrue` and freezing every position.
-    function debtIndex() public view returns (uint256) {
+    function chi() public view returns (uint256) {
         return indexCheckpoint
-            + Math.mulDiv(block.timestamp - indexCheckpointAt, stabilityFeeBps() * INDEX_SCALE, 365 days * 10_000);
+            + Math.mulDiv(block.timestamp - indexCheckpointAt, duty() * INDEX_SCALE, 365 days * 10_000);
     }
 
     /// @notice Freezes accrual to date at the rate in force, so a later rate change is forward-only.
     /// @dev Permissionless by design: it can only move the index forward by time already elapsed,
     /// and it MUST be called in the same transaction that changes the rate, before the change.
-    function pokeIndex() public {
-        uint256 index = debtIndex();
+    function drip() public {
+        uint256 index = chi();
         indexCheckpoint = index;
         indexCheckpointAt = block.timestamp;
         emit IndexCheckpointed(index, block.timestamp);
@@ -793,7 +793,7 @@ contract CDPVault is ReentrancyGuard {
     function stabilityFeeOf(address owner) public view returns (uint256) {
         uint256 principal = _positions[owner].debt;
         if (principal == 0) return _stabilityFees[owner];
-        return _stabilityFees[owner] + Math.mulDiv(principal, debtIndex() - debtIndexOf[owner], INDEX_SCALE);
+        return _stabilityFees[owner] + Math.mulDiv(principal, chi() - chiOf[owner], INDEX_SCALE);
     }
 
     function debtOf(address owner) public view returns (uint256) {
@@ -817,8 +817,8 @@ contract CDPVault is ReentrancyGuard {
         if (collateral == 0) return debt;
         uint256 price = _price();
         // A ratio of at least 110 guarantees full coverage and avoids overflow on very large collateral.
-        if (_collateralRatio(collateral, debt, price) >= 100 + LIQUIDATION_BONUS_PERCENT) return 0;
-        uint256 payoutScale = (100 + LIQUIDATION_BONUS_PERCENT) * 1e16;
+        if (_collateralRatio(collateral, debt, price) >= 100 + CHOP_PERCENT) return 0;
+        uint256 payoutScale = (100 + CHOP_PERCENT) * 1e16;
         uint256 covered = Math.mulDiv(collateral, price, payoutScale);
         // Match the existing floor-rounded payout exactly: capacity = ceil((collateral + 1)
         // * price / payoutScale) - 1, split into quotients/remainders to avoid overflowing either product.
@@ -829,9 +829,9 @@ contract CDPVault is ReentrancyGuard {
 
     /// @notice Minimum CR, derived only from NHI: 200 at/below .60; 150 at/above .85.
     /// @dev Linear interpolation rounds up to a whole percent, so rounding cannot weaken the threshold.
-    function minCR() public view returns (uint256) {
+    function mat() public view returns (uint256) {
         (uint256 nhi,) = nhiFeed.latestValue();
-        return _minCR(nhi);
+        return _mat(nhi);
     }
 
     /// @notice Grace derived only from NHI: zero at/below .60; six hours at/above .85.
@@ -884,7 +884,7 @@ contract CDPVault is ReentrancyGuard {
 
     function _accrue(address owner) private {
         _stabilityFees[owner] = stabilityFeeOf(owner);
-        debtIndexOf[owner] = debtIndex();
+        chiOf[owner] = chi();
     }
 
     /// @dev Pay fees first, then principal. Only burning COMP can reduce either obligation.
@@ -909,7 +909,7 @@ contract CDPVault is ReentrancyGuard {
         // the record the integer-second mean age of the merged record rounds to zero, so that
         // remainder stayed fresh forever. Converting a fee obligation into principal adds no exposure
         // and no new borrowing, which is what the record measures, so it is not fresh either. And the
-        // conserved age rounds up (older), undoing the second `mintCOMP` rounds toward the present.
+        // conserved age rounds up (older), undoing the second `draw` rounds toward the present.
         // A record whose remaining debt would be dated outside the window simply ages out.
         uint256 fresh = _recentlyMinted(position);
         uint256 remaining = fresh > amount ? fresh - amount : 0;
@@ -942,22 +942,22 @@ contract CDPVault is ReentrancyGuard {
     function _debtChanged(uint256 previousTotal) internal virtual {}
 
     function _payDebt(uint256 amount, uint256 feePaid) private {
-        compToken.burn(msg.sender, amount);
+        stablecoin.burn(msg.sender, amount);
         if (feePaid != 0) {
             totalFeesMinted += feePaid;
-            compToken.mint(feeRecipient(), feePaid);
+            stablecoin.mint(feeRecipient(), feePaid);
         }
     }
 
     /// @dev Counts a shortfall only once it is REALIZED, meaning the position has been drained and
     /// the loss is no longer a mark-to-market estimate that a price recovery could erase. The sweep
-    /// in liquidate() is what makes this reachable: before it, a liquidation of the largest coverable
+    /// in bite() is what makes this reachable: before it, a liquidation of the largest coverable
     /// debt left a remainder too small to ever seize, so the position never drained and this never
     /// fired. Recording the live shortfall instead was tried and rejected — it makes totalBadDebt a
     /// moving estimate rather than realized losses, which is a different number than the one the
     /// invariant suite checks.
     function _recordBadDebt(address owner) private {
-        // Reachable because liquidate() sweeps an unreachable remainder: without that, a position
+        // Reachable because bite() sweeps an unreachable remainder: without that, a position
         // drained to dust never hit zero and this never fired, leaving totalBadDebt at zero while
         // badDebtOf reported the shortfall. Still "realized" only — a loss is counted once the
         // position is actually drained, not while it is a mark-to-market estimate a price recovery
@@ -970,7 +970,7 @@ contract CDPVault is ReentrancyGuard {
 
     /// @notice What one 1e18 of collateral is worth, in the unit debt is denominated in.
     /// @dev Virtual because the denomination is the subclass's choice, and every formula that reads it
-    /// is a ratio: `collateralRatio` is collateral x price / debt and `liquidate` seizes debt / price,
+    /// is a ratio: `collateralRatio` is collateral x price / debt and `bite` seizes debt / price,
     /// so neither cares what the unit is as long as it is the one debt is in. Here it is the unit the
     /// primary feed quotes — wei of ETH per IMD — so one COMP of debt is one ETH-worth of collateral.
     /// ParameterizedVault overrides it to price in USD, which is what makes a COMP a dollar.
@@ -996,7 +996,7 @@ contract CDPVault is ReentrancyGuard {
         return priceFeed.isStale() || nhiFeed.isStale();
     }
 
-    function _minCR(uint256 nhi) private pure returns (uint256) {
+    function _mat(uint256 nhi) private pure returns (uint256) {
         if (nhi >= 0.85e18) return 150;
         if (nhi <= 0.6e18) return 200;
         return 150 + Math.mulDiv(0.85e18 - nhi, 50, 0.25e18, Math.Rounding.Ceil);
@@ -1009,7 +1009,7 @@ contract CDPVault is ReentrancyGuard {
     }
 
     function _healthy(uint256 collateral, uint256 debt) private view returns (bool) {
-        return debt == 0 || _collateralRatio(collateral, debt, _price()) >= minCR();
+        return debt == 0 || _collateralRatio(collateral, debt, _price()) >= mat();
     }
 
     function _clearIfRecovered(address owner) private {
@@ -1022,7 +1022,7 @@ contract CDPVault is ReentrancyGuard {
             // AUDIT FIX (job da7d5b1c, medium): TWO prices, because they answer different questions.
             // The divergence comparison takes the RAW primary, since both legs quote IMD in the same
             // unit and the ETH/USD factor would cancel anyway. The health check takes the DENOMINATED
-            // price, because it is compared against minCR like every other health check. Reading one
+            // price, because it is compared against mat like every other health check. Reading one
             // price for both put ETH-valued collateral against USD-denominated debt the moment
             // ParameterizedVault denominated in dollars, understating the ratio by the whole ETH/USD
             // factor — so a position restored to health kept its mark, and a liquidator could reuse
@@ -1035,7 +1035,7 @@ contract CDPVault is ReentrancyGuard {
             if (
                 primary != 0 && spot != 0 && priced != 0
                     && difference <= Math.mulDiv(primary, maxDivergenceBps(), 10_000)
-                    && _collateralRatio(position.collateral, debt, priced) >= minCR()
+                    && _collateralRatio(position.collateral, debt, priced) >= mat()
             ) {
                 _clearMark(owner);
             }

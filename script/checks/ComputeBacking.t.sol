@@ -11,7 +11,7 @@ import {Parameters} from "../../src/Parameters.sol";
 import {Governed} from "../../src/Governed.sol";
 import {Treasury} from "../../src/Treasury.sol";
 import {UsdPriceFeed} from "../../src/UsdPriceFeed.sol";
-import {CompToken} from "../../src/CompToken.sol";
+import {ImdUSD} from "../../src/ImdUSD.sol";
 import {MockIMD} from "../../src/MockIMD.sol";
 import {MockWorkOracle} from "../../src/MockWorkOracle.sol";
 import {ISwarmFeed} from "../../src/interfaces/ISwarmFeed.sol";
@@ -21,7 +21,7 @@ import {
     ETH_USD_MAX_AGE,
     FEE_RECIPIENT,
     PROTOCOL_BONUS_SHARE_BPS,
-    STABILITY_FEE_BPS,
+    DUTY_BPS,
     WORK_RATIO_BPS
 } from "../../src/DeploymentConfig.sol";
 
@@ -141,22 +141,22 @@ contract RoundTripper {
     }
 
     function borrow(uint256 collateral, uint256 debt) external returns (uint256 ceiling, uint256 backed) {
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
         return (vault.workCeiling(), vault.backedDebt());
     }
 
     function roundTrip(uint256 collateral, uint256 debt, uint256 work) external {
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
         vault.mintFromWork(work);
-        vault.repayCOMP(debt);
-        vault.withdrawCollateral(collateral);
+        vault.wipe(debt);
+        vault.free(collateral);
     }
 
     function repayThenMint(uint256 repay, uint256 mint) external returns (uint256 backed) {
-        vault.repayCOMP(repay);
-        vault.mintCOMP(mint);
+        vault.wipe(repay);
+        vault.draw(mint);
         return vault.backedDebt();
     }
 }
@@ -179,7 +179,7 @@ contract ComputeBackingTest is Test {
     Parameters private params;
     Treasury private treasury;
     UsdPriceFeed private usd;
-    CompToken private comp;
+    ImdUSD private comp;
     MockWorkOracle private oracle;
     CheckFeed private price;
     CheckFeed private spot;
@@ -192,13 +192,13 @@ contract ComputeBackingTest is Test {
         imd = new MockIMD();
         price = new CheckFeed(1 ether);
         spot = new CheckFeed(1 ether);
-        nhi = new CheckFeed(0.6 ether); // minCR 200, grace 0
+        nhi = new CheckFeed(0.6 ether); // mat 200, grace 0
         vault =
             new ParameterizedVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
         params = vault.parameters();
         treasury = vault.treasury();
         usd = vault.usdPriceFeed();
-        comp = vault.compToken();
+        comp = vault.stablecoin();
         oracle = MockWorkOracle(address(vault.oracle()));
 
         vm.etch(CHAINLINK_ETH_USD, address(new MockAggregator()).code);
@@ -217,8 +217,8 @@ contract ComputeBackingTest is Test {
 
     function _borrow(uint256 collateral, uint256 debt) private {
         vm.startPrank(BORROWER);
-        vault.depositCollateral(collateral);
-        if (debt != 0) vault.mintCOMP(debt);
+        vault.lock(collateral);
+        if (debt != 0) vault.draw(debt);
         vm.stopPrank();
     }
 
@@ -286,7 +286,7 @@ contract ComputeBackingTest is Test {
     /// arrives at FEE_RECIPIENT, and `sync` turns each into a receipt.
     function test_aLiquidationRoutesTheProtocolCutAndTheFeeToTheTreasury() public {
         assertEq(vault.protocolBonusShareBps(), PROTOCOL_BONUS_SHARE_BPS);
-        assertEq(vault.stabilityFeeBps(), STABILITY_FEE_BPS);
+        assertEq(vault.duty(), DUTY_BPS);
         _borrow(300 ether, 150 ether); // CR 200 exactly
         vm.prank(BORROWER);
         comp.transfer(KEEPER, 150 ether);
@@ -298,8 +298,8 @@ contract ComputeBackingTest is Test {
         price.setValue(0.9 ether);
         spot.setValue(0.9 ether);
         vm.startPrank(KEEPER);
-        vault.markUnderwater(BORROWER);
-        vault.liquidate(BORROWER, 50 ether);
+        vault.bark(BORROWER);
+        vault.bite(BORROWER, 50 ether);
         vm.stopPrank();
 
         uint256 seized = Math.mulDiv(50 ether, 1.1e18, 0.9 ether);
@@ -324,14 +324,14 @@ contract ComputeBackingTest is Test {
 
     function test_registeringCompAsReserveIsRefusedWithItsOwnError() public {
         vm.prank(APPROVED_OPERATOR);
-        vm.expectRevert(Treasury.CompIsNotReserve.selector);
+        vm.expectRevert(Treasury.StablecoinIsNotReserve.selector);
         params.proposeReserveAsset(IERC20(address(comp)), usd, 0);
         assertEq(params.pendingEta(), 0, "a refused listing never occupies the slot");
 
-        vm.expectRevert(Treasury.CompIsNotReserve.selector);
+        vm.expectRevert(Treasury.StablecoinIsNotReserve.selector);
         treasury.validateReserveAsset(IERC20(address(comp)), usd, 5_000);
         // Even as a removal: COMP is refused before anything else is looked at.
-        vm.expectRevert(Treasury.CompIsNotReserve.selector);
+        vm.expectRevert(Treasury.StablecoinIsNotReserve.selector);
         treasury.validateReserveAsset(IERC20(address(comp)), ISwarmFeed(address(0)), 0);
     }
 
@@ -498,13 +498,13 @@ contract ComputeBackingTest is Test {
         assertEq(vault.reserveValue(), 50e18);
 
         // And the reserve never authorises more than the vault itself would lend against the same
-        // IMD at 100% CR: a borrower posting 100 IMD can mint at most 50 COMP at minCR 200 here.
+        // IMD at 100% CR: a borrower posting 100 IMD can mint at most 50 COMP at mat 200 here.
         price.setValue(1 ether);
         spot.setValue(1 ether);
         _borrow(100 ether, 50 ether);
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        vault.mintCOMP(1);
+        vault.draw(1);
         assertLe(vault.reserveValue(), 100e18);
     }
 
@@ -560,7 +560,7 @@ contract ComputeBackingTest is Test {
         oracle.grantRights(address(tripper), 25 ether);
         vm.stopPrank();
 
-        // deposit 300, mint 100 (minCR 200 exactly), mint 25 of work against it, repay, withdraw.
+        // deposit 300, mint 100 (mat 200 exactly), mint 25 of work against it, repay, withdraw.
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         tripper.roundTrip(300 ether, 100 ether, 25 ether);
         assertEq(vault.totalWorkMinted(), 0);
@@ -587,7 +587,7 @@ contract ComputeBackingTest is Test {
     // --- principal whose collateral is gone backs nothing (revision, finding e3888b1e) -------------
 
     /// @dev Grace is zero at NHI 0.6, so a mark is actionable at once. BORROWER posts 200 IMD against
-    /// 100 COMP (minCR 200 exactly); the price halves; the largest coverable liquidation seizes all
+    /// 100 COMP (mat 200 exactly); the price halves; the largest coverable liquidation seizes all
     /// but two wei of it, which a second one-wei liquidation takes (the remainder is then swept),
     /// leaving about 9 COMP of principal and no collateral.
     function _drainBorrower() private returns (uint256 residualPrincipal) {
@@ -600,11 +600,11 @@ contract ComputeBackingTest is Test {
         spot.setValue(0.5 ether);
         uint256 repay = Math.mulDiv(200 ether, 0.5e18, 1.1e18);
         vm.startPrank(KEEPER);
-        vault.markUnderwater(BORROWER);
-        vault.liquidate(BORROWER, repay);
+        vault.bark(BORROWER);
+        vault.bite(BORROWER, repay);
         (uint256 left,) = vault.positions(BORROWER);
         assertEq(left, 2, "two wei, too small to sweep, large enough to seize for one wei of debt");
-        vault.liquidate(BORROWER, 1);
+        vault.bite(BORROWER, 1);
         vm.stopPrank();
         (uint256 collateral,) = vault.positions(BORROWER);
         assertEq(collateral, 0, "drained");
@@ -639,7 +639,7 @@ contract ComputeBackingTest is Test {
         vm.prank(KEEPER);
         comp.transfer(BORROWER, 1);
         vm.prank(BORROWER);
-        vault.repayCOMP(1);
+        vault.wipe(1);
         uint256 overcount = vault.totalBadDebt() - vault.totalDebt();
         assertGt(overcount, 0, "30 days of fee on the drained principal");
 
@@ -648,8 +648,8 @@ contract ComputeBackingTest is Test {
         imd.mint(other, 1_000 ether);
         vm.startPrank(other);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(1_000 ether);
-        vault.mintCOMP(100 ether); // 500 IMD-worth at 0.5 against 100: CR 500
+        vault.lock(1_000 ether);
+        vault.draw(100 ether); // 500 IMD-worth at 0.5 against 100: CR 500
         vm.stopPrank();
 
         assertEq(vault.totalDebt(), residual + 100e18);
@@ -661,7 +661,7 @@ contract ComputeBackingTest is Test {
         vm.prank(KEEPER);
         comp.transfer(BORROWER, 5 ether);
         vm.prank(BORROWER);
-        vault.repayCOMP(5 ether);
+        vault.wipe(5 ether);
         assertEq(vault.totalBadDebt(), vault.totalDebt() - 100e18);
         assertEq(vault.backedDebt(), 100e18);
     }
@@ -825,7 +825,7 @@ contract ComputeBackingTest is Test {
         // Both terms are live. Repayment shrinks the ratio term; a withdrawal from the reserve shrinks
         // the other. What was already minted stays minted — the ceiling gates new supply only.
         vm.prank(BORROWER);
-        vault.repayCOMP(200 ether);
+        vault.wipe(200 ether);
         assertEq(vault.workCeiling(), 100e18);
         vm.prank(APPROVED_OPERATOR);
         treasury.withdraw(IERC20(address(imd)), STRANGER, 50 ether);
@@ -850,8 +850,8 @@ contract ComputeBackingTest is Test {
         assertEq(comp.totalSupply(), 125e18, "supply = principal + work-minted");
     }
 
-    /// @dev The ratio with an empty reserve bounds worst-case backing at (minCR x D) / (D + rD): at
-    /// minCR 150 and r = 0.25 that is 1.2, and at r = 0.5 it is exactly 1. The cap keeps governance
+    /// @dev The ratio with an empty reserve bounds worst-case backing at (mat x D) / (D + rD): at
+    /// mat 150 and r = 0.25 that is 1.2, and at r = 0.5 it is exactly 1. The cap keeps governance
     /// on the right side of that cliff.
     function test_theWorkRatioIsBoundedAt2500ByTheContract() public {
         vm.startPrank(APPROVED_OPERATOR);
@@ -892,15 +892,15 @@ contract ComputeBackingTest is Test {
         (Parameters.Change kind,) = params.pendingChange();
         assertTrue(kind == Parameters.Change.Economics);
         (Parameters.ParamSet memory pendingNext, uint256 eta) = params.pendingSet();
-        assertEq(pendingNext.debtCeiling, 500 ether);
+        assertEq(pendingNext.line, 500 ether);
         assertEq(pendingNext.markerShareBps, 1_500);
         assertEq(eta, params.pendingEta());
         (uint256 ratio, uint256 ratioEta) = params.pendingWorkRatio();
         assertEq(ratio + ratioEta, 0, "the other views claim nothing");
 
         _apply();
-        assertEq(vault.debtCeiling(), 500 ether);
-        assertEq(vault.stabilityFeeBps(), 400);
+        assertEq(vault.line(), 500 ether);
+        assertEq(vault.duty(), 400);
         assertEq(vault.workRatioBps(), 2_500, "an economics change leaves the ratio alone");
         assertEq(treasury.reserveAssetCount(), 0, "and the register");
     }

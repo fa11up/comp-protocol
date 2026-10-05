@@ -31,7 +31,7 @@ import {ATTESTATION_RELAYER} from "./DeploymentConfig.sol";
 /// What is NOT here, and must never be: the attestation signer, the three price feeds, and the
 /// collateral token. The difference is not that those are more important — it is that a wrong value
 /// there is not a cost, it is custody. Whoever names the price feed decides what every position is
-/// worth and can liquidate all of them in one block; whoever names the attester decides what counts
+/// worth and can bite all of them in one block; whoever names the attester decides what counts
 /// as a swarm answer. A 48-hour delay does not make that safe, it only makes it slow, and a borrower
 /// who has to watch for a feed swap has no guarantee worth anything. Those stay immutable in the
 /// vault and pinned in DeploymentConfig, where changing them means a new deployment someone has to

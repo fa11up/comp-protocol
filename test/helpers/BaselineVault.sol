@@ -10,20 +10,20 @@ import {CDPVault} from "src/CDPVault.sol";
 /// now, which would bury what each one is actually asserting. They use this instead, so zero-rate
 /// behaviour stays covered exactly as before and the shipped rate is covered where it belongs.
 ///
-/// This is why stabilityFeeBps is virtual, as debtCeiling and protocolBonusShareBps already were.
+/// This is why duty is virtual, as line and protocolBonusShareBps already were.
 /// It replaces test/check_stability_fee.py, which could only reach a non-zero rate by copying the
 /// source and rewriting the constant outside the build.
 contract BaselineVault is CDPVault {
     constructor(
         address imdToken_,
-        address compToken_,
+        address stablecoin_,
         address oracle_,
         address priceFeed_,
         address nhiFeed_,
         address spotFeed_
-    ) CDPVault(imdToken_, compToken_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
+    ) CDPVault(imdToken_, stablecoin_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
 
-    function stabilityFeeBps() public pure override returns (uint256) {
+    function duty() public pure override returns (uint256) {
         return 0;
     }
 
@@ -43,14 +43,14 @@ contract BaselineVault is CDPVault {
 contract TenPercentFeeVault is CDPVault {
     constructor(
         address imdToken_,
-        address compToken_,
+        address stablecoin_,
         address oracle_,
         address priceFeed_,
         address nhiFeed_,
         address spotFeed_
-    ) CDPVault(imdToken_, compToken_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
+    ) CDPVault(imdToken_, stablecoin_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {}
 
-    function stabilityFeeBps() public pure override returns (uint256) {
+    function duty() public pure override returns (uint256) {
         return 1_000;
     }
 }

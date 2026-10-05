@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {MockIMD} from "../src/MockIMD.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
@@ -16,7 +16,7 @@ contract ProtocolHandler is Test {
     uint256 public constant INITIAL_BALANCE = 1e30;
     uint256 public constant INITIAL_RIGHTS = 1e30;
     MockIMD public imd;
-    CompToken public comp;
+    ImdUSD public comp;
     MockWorkOracle public oracle;
     CDPVault public vault;
     TestSwarmFeed public priceFeed;
@@ -45,7 +45,7 @@ contract ProtocolHandler is Test {
 
     constructor() {
         imd = new MockIMD();
-        comp = new CompToken(address(0));
+        comp = new ImdUSD(address(0));
         priceFeed = new TestSwarmFeed(1 ether);
         nhiFeed = new TestSwarmFeed(0.85 ether);
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
@@ -63,8 +63,8 @@ contract ProtocolHandler is Test {
             vm.stopPrank();
             vm.startPrank(actor);
             imd.approve(address(vault), type(uint256).max);
-            vault.depositCollateral(150 ether);
-            vault.mintCOMP(100 ether);
+            vault.lock(150 ether);
+            vault.draw(100 ether);
             // Both supply channels start nonzero, so the retired invariant fails immediately.
             assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 25 ether);
             vault.mintFromWork(25 ether);
@@ -81,7 +81,7 @@ contract ProtocolHandler is Test {
         if (available == 0) return;
         amount = bound(amount, 1, available);
         vm.prank(actor);
-        vault.depositCollateral(amount);
+        vault.lock(amount);
         deposited[actor] += amount;
     }
 
@@ -93,7 +93,7 @@ contract ProtocolHandler is Test {
         if (maximumDebt <= debt) return;
         amount = bound(amount, 1, _min(maximumDebt - debt, 1000 ether));
         vm.prank(actor);
-        vault.mintCOMP(amount);
+        vault.draw(amount);
         debtMinted[actor] += amount;
         ++successfulDebtMints;
     }
@@ -126,7 +126,7 @@ contract ProtocolHandler is Test {
         // history stays an independent model of principal rather than of gross payments.
         uint256 feeBefore = vault.stabilityFeeOf(actor);
         vm.prank(actor);
-        vault.repayCOMP(amount);
+        vault.wipe(amount);
         repaid[actor] += amount - (amount < feeBefore ? amount : feeBefore);
         ++successfulRepayments;
     }
@@ -140,7 +140,7 @@ contract ProtocolHandler is Test {
         if (collateral <= requiredCollateral) return;
         amount = bound(amount, 1, collateral - requiredCollateral);
         vm.prank(actor);
-        vault.withdrawCollateral(amount);
+        vault.free(amount);
         withdrawn[actor] += amount;
     }
 
@@ -183,7 +183,7 @@ contract ProtocolHandler is Test {
         address actor = actors[seed % 4];
         if (!_fresh()) {
             vm.expectRevert(CDPVault.StaleFeed.selector);
-            vault.markUnderwater(actor);
+            vault.bark(actor);
             return;
         }
         (uint256 timestamp, uint256 grace, bool marked,) = vault.liquidationMarks(actor);
@@ -193,11 +193,11 @@ contract ProtocolHandler is Test {
                 ++successfulRecoveries;
             } else {
                 vm.expectRevert(CDPVault.HealthyPosition.selector);
-                vault.markUnderwater(actor);
+                vault.bark(actor);
             }
             return;
         }
-        vault.markUnderwater(actor);
+        vault.bark(actor);
         (uint256 actualTimestamp, uint256 actualGrace, bool actualMarked,) = vault.liquidationMarks(actor);
         assertTrue(actualMarked);
         if (marked && block.timestamp <= timestamp + grace + vault.liquidationWindow()) {
@@ -212,7 +212,7 @@ contract ProtocolHandler is Test {
         }
     }
 
-    function liquidate(uint256 ownerSeed, uint256 callerSeed, uint256 amount) external {
+    function bite(uint256 ownerSeed, uint256 callerSeed, uint256 amount) external {
         address owner = actors[ownerSeed % 4];
         address caller = actors[callerSeed % 4];
         if (!_fresh() || _healthy(owner)) return;
@@ -236,14 +236,14 @@ contract ProtocolHandler is Test {
         uint256 beforeCOMP = comp.balanceOf(caller);
         uint256 expectedPayout = amount * 1.1 ether / _price();
         vm.prank(caller);
-        vault.liquidate(owner, amount);
+        vault.bite(owner, amount);
         (uint256 remainingCollateral, uint256 remainingDebt) = vault.positions(owner);
         uint256 received = imd.balanceOf(caller) - beforeIMD;
         assertEq(comp.balanceOf(caller), beforeCOMP - amount, "liquidator pays its own COMP");
         assertEq(remainingDebt, debt - amount, "liquidation retires debt");
         uint256 markerCut = (expectedPayout - amount * 1 ether / _price()) * vault.markerShareBps() / 10_000;
         assertEq(collateral - remainingCollateral, received + markerCut, "seized collateral reaches both keepers");
-        // liquidate() folds a remainder no liquidation could ever take into the seizure, as extra
+        // bite() folds a remainder no liquidation could ever take into the seizure, as extra
         // incentive for whoever closes the position. It sits outside the bonus, so the marker's cut
         // is unchanged by it, and it may only appear when the position is left closed.
         // Predict the dust from the pre-call collateral/debt, independently of actual transfers.
@@ -271,7 +271,7 @@ contract ProtocolHandler is Test {
         bytes4 reason = _fresh() ? CDPVault.UnsafeCollateralRatio.selector : CDPVault.StaleFeed.selector;
         vm.prank(actor);
         vm.expectRevert(reason);
-        vault.mintCOMP(amount);
+        vault.draw(amount);
     }
 
     function attemptUnsafeWithdrawal(uint256 seed) external {
@@ -284,7 +284,7 @@ contract ProtocolHandler is Test {
         bytes4 reason = _fresh() ? CDPVault.UnsafeCollateralRatio.selector : CDPVault.StaleFeed.selector;
         vm.prank(actor);
         vm.expectRevert(reason);
-        vault.withdrawCollateral(amount);
+        vault.free(amount);
     }
 
     function attemptExcessRepayment(uint256 seed) external {
@@ -292,7 +292,7 @@ contract ProtocolHandler is Test {
         (, uint256 debt) = vault.positions(actor);
         vm.prank(actor);
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
-        vault.repayCOMP(debt + 1);
+        vault.wipe(debt + 1);
     }
 
     function attemptInsufficientWork(uint256 seed) external {
@@ -325,7 +325,7 @@ contract ProtocolHandler is Test {
         }
         vm.prank(actors[callerSeed % 4]);
         vm.expectRevert(expected);
-        vault.liquidate(owner, 1);
+        vault.bite(owner, 1);
     }
 
     function _fresh() private view returns (bool) {
@@ -378,7 +378,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         selectors[12] = handler.setStale.selector;
         selectors[13] = handler.advanceTime.selector;
         selectors[14] = handler.markOrClear.selector;
-        selectors[15] = handler.liquidate.selector;
+        selectors[15] = handler.bite.selector;
         selectors[16] = handler.attemptInsufficientWork.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
@@ -453,7 +453,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
 
     /// @dev Redistribute existing COMP and close debt, even after market shocks or while feeds are stale.
     function afterInvariant() public {
-        CompToken comp = handler.comp();
+        ImdUSD comp = handler.comp();
         address collector = handler.actors(0);
         for (uint256 i = 1; i < 4; ++i) {
             address actor = handler.actors(i);
@@ -504,7 +504,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         handler.markOrClear(2);
         handler.attemptPrematureLiquidation(2, 1);
         handler.advanceTime(5 hours);
-        handler.liquidate(2, 1, 10 ether);
+        handler.bite(2, 1, 10 ether);
         // Recovery through a later feed update is explicitly observed by the keeper action.
         handler.markOrClear(3);
         handler.setMarket(2, 0.85 ether);
@@ -539,7 +539,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
             uint256 beforeCollateral = handler.imd().balanceOf(liquidator);
             (uint256 collateral, uint256 debt) = handler.vault().positions(owner);
             (uint256 price,) = handler.priceFeed().latestValue();
-            handler.liquidate(0, 1, debtToRepay);
+            handler.bite(0, 1, debtToRepay);
             (uint256 remainingCollateral, uint256 remainingDebt) = handler.vault().positions(owner);
             uint256 received = handler.imd().balanceOf(liquidator) - beforeCollateral;
             assertEq(remainingDebt, debt - debtToRepay, "liquidation retires debt at every price");
@@ -557,7 +557,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         handler.setMarket(3, 0.85 ether);
         handler.markOrClear(3);
         handler.advanceTime(6 hours);
-        handler.liquidate(3, 2, type(uint256).max);
+        handler.bite(3, 2, type(uint256).max);
 
         address owner = handler.actors(3);
         (uint256 collateral, uint256 debt) = handler.vault().positions(owner);
@@ -581,7 +581,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         handler.advanceTime(12 hours);
         handler.setMarket(1, 0.7 ether);
         handler.attemptPrematureLiquidation(0, 1);
-        handler.liquidate(0, 1, 10 ether);
+        handler.bite(0, 1, 10 ether);
         assertEq(handler.successfulLiquidations(), 0, "expired mark cannot execute");
         handler.markOrClear(0);
         assertGt(handler.markedAt(handler.actors(0)), originalTimestamp, "expired mark takes a new timestamp");
@@ -590,7 +590,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
         handler.attemptPrematureLiquidation(0, 1);
         handler.advanceTime(3 hours);
-        handler.liquidate(0, 1, 10 ether);
+        handler.bite(0, 1, 10 ether);
         assertEq(handler.successfulLiquidations(), 1, "refreshed mark becomes executable");
         invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
         afterInvariant();
@@ -599,7 +599,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
     function test_handlerFractionalNhiThresholdPreservesActionPreconditions() public {
         // A one-wei NHI decline raises the whole-percent minimum from 150 to 151.
         handler.setMarket(1, 0.85 ether - 1);
-        assertEq(handler.vault().minCR(), 151);
+        assertEq(handler.vault().mat(), 151);
         handler.markOrClear(0);
         assertEq(handler.successfulMarks(), 1, "150% position becomes underwater");
         handler.attemptPrematureLiquidation(0, 1);
@@ -619,7 +619,7 @@ contract ProtocolInvariantTest is StdInvariant, Test {
         assertEq(handler.successfulDebtMints(), 1);
 
         handler.advanceTime(6 hours);
-        handler.liquidate(0, 1, 10 ether);
+        handler.bite(0, 1, 10 ether);
         assertEq(handler.successfulLiquidations(), 1);
         invariant_supplyEqualsDebtPlusWorkAndCollateralIsConserved();
         afterInvariant();

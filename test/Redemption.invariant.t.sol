@@ -69,7 +69,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
             workOracle.grantRights(actor, type(uint128).max);
             _deposit(actor, 180 ether);
             vm.prank(actor);
-            backedVault.mintCOMP(100 ether);
+            backedVault.draw(100 ether);
             principal[actor] = 100 ether;
             _recordMint(actor, 100 ether);
             debtIssued += 100 ether;
@@ -103,11 +103,11 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     function borrow(uint256 seed, uint256 rawAmount) external {
         address actor = actors[seed % 4];
         (uint256 amountCollateral, uint256 debt) = backedVault.positions(actor);
-        uint256 maximumDebt = Math.mulDiv(amountCollateral, 100, backedVault.minCR());
+        uint256 maximumDebt = Math.mulDiv(amountCollateral, 100, backedVault.mat());
         if (maximumDebt <= debt) return;
         uint256 amount = bound(rawAmount, 1, Math.min(maximumDebt - debt, 100 ether));
         vm.prank(actor);
-        backedVault.mintCOMP(amount);
+        backedVault.draw(amount);
         debtIssued += amount;
         principal[actor] += amount;
         _recordMint(actor, amount);
@@ -135,7 +135,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         uint256 amount = bound(rawAmount, 1, available);
         uint256 fee = Math.min(amount, backedVault.stabilityFeeOf(actor));
         vm.prank(actor);
-        backedVault.repayCOMP(amount);
+        backedVault.wipe(amount);
         principal[actor] -= amount - fee;
         _retireFresh(actor, amount);
         repaymentBurns += amount;
@@ -145,11 +145,11 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     function withdraw(uint256 seed, uint256 rawAmount) external {
         address actor = actors[seed % 4];
         (uint256 amountCollateral, uint256 debt) = backedVault.positions(actor);
-        uint256 required = Math.mulDiv(debt, backedVault.minCR(), 100, Math.Rounding.Ceil);
+        uint256 required = Math.mulDiv(debt, backedVault.mat(), 100, Math.Rounding.Ceil);
         if (amountCollateral <= required) return;
         uint256 amount = bound(rawAmount, 1, amountCollateral - required);
         vm.prank(actor);
-        backedVault.withdrawCollateral(amount);
+        backedVault.free(amount);
         withdrawn[actor] += amount;
     }
 
@@ -196,7 +196,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         // par-minus-fee unconditionally, with a separate branch below expecting a revert whenever
         // that exceeded the burn's share of backing — which is the halt that is gone.
         amounts.payout = Math.mulDiv(
-            Math.mulDiv(amount, _backingPerComp(beforeState.backing, beforeState.supply), 1e18), 10_000 - feeBps, 10_000
+            Math.mulDiv(amount, _backingPerUnit(beforeState.backing, beforeState.supply), 1e18), 10_000 - feeBps, 10_000
         );
         amounts.reserveOut = Math.min(amounts.payout, beforeState.reserveIMD);
         amounts.cancelled = amounts.reserveOut == amounts.payout
@@ -255,7 +255,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
 
     /// @dev A helper rather than a local: the handler is already at the stack limit, and one more
     /// variable in it makes the whole file fail to compile without viaIR.
-    function _backingPerComp(uint256 backing, uint256 supply) private pure returns (uint256) {
+    function _backingPerUnit(uint256 backing, uint256 supply) private pure returns (uint256) {
         if (supply == 0) return 1e18;
         return Math.min(1e18, Math.mulDiv(backing, 1e18, supply));
     }
@@ -301,7 +301,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         state.supply = stable.totalSupply();
         state.reserveIMD = collateral.balanceOf(address(reserve));
         state.redeemerIMD = collateral.balanceOf(redeemer);
-        // What the guard may count: all Treasury IMD, plus the vault's IMD only up to minCR
+        // What the guard may count: all Treasury IMD, plus the vault's IMD only up to mat
         // percent of the principal standing behind it. Surplus and debt-free collateral is
         // withdrawable without a health check and backs no COMP. Each handler call is its own
         // transaction, so nothing here was deposited or minted "this transaction".
@@ -309,11 +309,11 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         // twice that position's own principal -- NOT by its whole balance. A debt-free deposit makes
         // the balance exceed it, and modelling the payout off the balance overstates it, which
         // surfaced as MinimumOutNotMet where an eligibility revert was expected.
-        uint256 secured = Math.mulDiv(backedVault.totalDebt() - backedVault.totalBadDebt(), backedVault.minCR(), 100);
+        uint256 secured = Math.mulDiv(backedVault.totalDebt() - backedVault.totalBadDebt(), backedVault.mat(), 100);
         state.backing = state.reserveIMD + Math.min(backedVault.securedCollateral(), secured);
         // The ECONOMIC figure, which is the one a pro-rata payout makes monotone. Kept separate
         // because `backing` above is deliberately conservative and is NOT monotone: cancelling a
-        // borrower's debt disqualifies minCR worth of collateral to retire one COMP of supply.
+        // borrower's debt disqualifies mat worth of collateral to retire one COMP of supply.
         state.econBacking = state.reserveIMD + collateral.balanceOf(address(backedVault));
         state.ceiling = backedVault.workCeiling();
         state.base = backedVault.redemptionBaseRate();
@@ -382,7 +382,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         collateralIssued += amount;
         vm.startPrank(actor);
         collateral.approve(address(backedVault), amount);
-        backedVault.depositCollateral(amount);
+        backedVault.lock(amount);
         vm.stopPrank();
         deposited[actor] += amount;
     }
@@ -395,8 +395,8 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     }
 
     /// @dev For the sequence tests: the figure the vault caps a redemption payout at.
-    function vaultBackingPerComp() external view returns (uint256) {
-        return backedVault.backingPerComp();
+    function vaultBackingPerUnit() external view returns (uint256) {
+        return backedVault.backingPerUnit();
     }
 
     function assertAccounting() external view {
@@ -528,7 +528,7 @@ contract RedemptionInvariantTest is StdInvariant, Test {
         // burn is now PAID that fraction rather than refused, which is how the halt goes away
         // without the protocol overpaying. The handler models the capped figure and asserts the
         // payout to the wei, so "not rejected" here is backed by an exact expectation.
-        uint256 backingBefore = handler.vaultBackingPerComp();
+        uint256 backingBefore = handler.vaultBackingPerUnit();
         assertLt(backingBefore, 1e18, "work-issued COMP with no borrowers is underbacked");
         handler.redeem(3, 0, 1 ether);
         assertEq(handler.rejectedCalls(), rejected, "a capped payout is not a rejection");
@@ -540,7 +540,7 @@ contract RedemptionInvariantTest is StdInvariant, Test {
         // figure: it is below it by the fee, and well below the 1 IMD that par would have paid.
         assertLt(paid, backingBefore, "capped at backing, and the fee takes a little more");
         assertLt(paid, 1 ether, "par would have paid a whole IMD");
-        assertGt(handler.vaultBackingPerComp(), 0, "and the protocol is still measurably backed");
+        assertGt(handler.vaultBackingPerUnit(), 0, "and the protocol is still measurably backed");
         handler.assertAccounting();
     }
 }

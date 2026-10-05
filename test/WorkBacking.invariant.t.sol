@@ -7,7 +7,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {WorkBackingFixture, ReserveTestToken} from "./helpers/WorkBackingFixture.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
 import {Treasury} from "src/Treasury.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {APPROVED_OPERATOR, ETH_USD_MAX_AGE} from "src/DeploymentConfig.sol";
 
@@ -101,9 +101,9 @@ contract WorkBackingHandler is WorkBackingFixture {
         // The vault denominates in USD, so the ETH/USD leg this handler moves changes what a unit of
         // collateral is worth — it used to touch only the reserve term. A fixed multiple of the debt
         // was enough while one unit of collateral was one unit of account; now the top-up has to be
-        // divided by the live price or a cheap ETH leaves the position under minCR.
+        // divided by the live price or a cheap ETH leaves the position under mat.
         // Rounded UP, so the top-up is never zero: with the debt repaid, a 1-wei borrow and a price
-        // above two dollars per unit, the floored quotient was 0 and depositCollateral(0) reverted
+        // above two dollars per unit, the floored quotient was 0 and lock(0) reverted
         // ZeroAmount, which fail_on_revert turned into a failed campaign (reviewer finding, 2026-10-04).
         (uint256 price,) = backedVault.usdPriceFeed().latestValue();
         if (price == 0) return;
@@ -112,8 +112,8 @@ contract WorkBackingHandler is WorkBackingFixture {
         collateral.mint(BORROWER, topUp);
         vm.startPrank(BORROWER);
         collateral.approve(address(backedVault), topUp);
-        backedVault.depositCollateral(topUp);
-        backedVault.mintCOMP(amount);
+        backedVault.lock(topUp);
+        backedVault.draw(amount);
         vm.stopPrank();
         collateralDeposited += topUp;
         debtMinted += amount;
@@ -132,26 +132,26 @@ contract WorkBackingHandler is WorkBackingFixture {
         uint256 fees = backedVault.stabilityFeeOf(BORROWER);
         uint256 paidFees = amount < fees ? amount : fees;
         vm.prank(BORROWER);
-        backedVault.repayCOMP(amount);
+        backedVault.wipe(amount);
         feePaid += paidFees;
         principalRepaid += amount - paidFees;
     }
 
-    function withdrawCollateral(uint256 raw) external {
+    function free(uint256 raw) external {
         // The vault denominates in USD, so a stale ETH/USD leg halts every priced action. A halted
         // vault is modelled by taking no action, not by reverting the campaign.
         if (ethUsdStale) return;
 
         (uint256 deposited, uint256 debt) = backedVault.positions(BORROWER);
         // Priced, for the same reason borrow's top-up is: the vault measures collateral in USD, so
-        // what minCR requires depends on the ETH/USD leg this handler moves.
+        // what mat requires depends on the ETH/USD leg this handler moves.
         (uint256 price,) = backedVault.usdPriceFeed().latestValue();
         if (price == 0) return;
         uint256 required = Math.mulDiv((debt * 150 + 99) / 100, 1e18, price) + 1;
         if (deposited <= required) return;
         uint256 amount = bound(raw, 1, deposited - required);
         vm.prank(BORROWER);
-        backedVault.withdrawCollateral(amount);
+        backedVault.free(amount);
         collateralWithdrawn += amount;
     }
 
@@ -209,7 +209,7 @@ contract WorkBackingHandler is WorkBackingFixture {
         assertEq(backedVault.reserveValue(), value, "the ceiling's reserve term is the register itself");
         uint256 principal = debtMinted - principalRepaid;
         assertEq(backedVault.totalDebt(), principal);
-        assertEq(backedVault.totalBadDebt(), 0, "a borrower kept at or above minCR never leaves bad debt");
+        assertEq(backedVault.totalBadDebt(), 0, "a borrower kept at or above mat never leaves bad debt");
         assertEq(backedVault.backedDebt(), principal, "between transactions every open position counts");
         assertEq(backedVault.workCeiling(), value + principal * backedVault.workRatioBps() / 10_000);
         assertLe(backedVault.workRatioBps(), 2500);
@@ -247,7 +247,7 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
         selectors[5] = handler.governRatio.selector;
         selectors[6] = handler.borrow.selector;
         selectors[7] = handler.repay.selector;
-        selectors[8] = handler.withdrawCollateral.selector;
+        selectors[8] = handler.free.selector;
         selectors[9] = handler.mintWork.selector;
         selectors[10] = handler.governReserveHaircut.selector;
         selectors[11] = handler.setEthUsd.selector;
@@ -271,7 +271,7 @@ contract WorkBackingInvariantTest is StdInvariant, Test {
         handler.mintWork(1 ether, false);
         handler.borrow(10 ether);
         handler.repay(5 ether);
-        handler.withdrawCollateral(1 ether);
+        handler.free(1 ether);
         handler.rejectUnauthorizedWithdrawal(1);
         assertEq(handler.acceptedWorkCalls(), 2);
         assertEq(handler.rejectedWorkCalls(), 2);

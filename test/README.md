@@ -27,7 +27,7 @@ Dependencies are already vendored. The submitted suite needs no network, RPC, en
 The original protocol invariant campaign uses four tracked actors and 17 handler operations, with 256 sequences of 128 calls and unexpected reverts treated as failures. Both work and debt supply start nonzero, making the retired debt-only invariant immediately falsifiable. The replacement asserts:
 
 ```text
-STABILITY_FEE_BPS == 0
+DUTY_BPS == 0
 vault.totalFeesMinted == 0
 COMP.totalSupply == sum(all position debts) + vault.totalWorkMinted + vault.totalFeesMinted
 ```
@@ -42,7 +42,7 @@ The handler models the accepted implementation's upward rounding of the NHI-deri
 
 ## Revision coverage
 
-The self-contained factory tests pass `compToken_ = oracle_ = address(0)` and assert reciprocal links immediately after construction. Real `PriceFeed` and `NhiFeed` instances receive their first values through the configured reporter before feed-dependent calls. Deterministic CREATE and CREATE2 round trips and 1,000 fuzz cases fund the borrower through MockIMD, borrow without work rights, mint earned work, repay without COMP allowance and recover all collateral without an initialization call. Both modes reject unsafe borrowing, excess repayment, unauthorized faucets and token/oracle consumption; `setVault` returns `AlreadyInitialized` for the operator, factory and unrelated callers from genesis. A seeded-feed expiry regression checks each stale feed independently and proves debt repayment and debt-free withdrawal remain possible.
+The self-contained factory tests pass `stablecoin_ = oracle_ = address(0)` and assert reciprocal links immediately after construction. Real `PriceFeed` and `NhiFeed` instances receive their first values through the configured reporter before feed-dependent calls. Deterministic CREATE and CREATE2 round trips and 1,000 fuzz cases fund the borrower through MockIMD, borrow without work rights, mint earned work, repay without COMP allowance and recover all collateral without an initialization call. Both modes reject unsafe borrowing, excess repayment, unauthorized faucets and token/oracle consumption; `setVault` returns `AlreadyInitialized` for the operator, factory and unrelated callers from genesis. A seeded-feed expiry regression checks each stale feed independently and proves debt repayment and debt-free withdrawal remain possible.
 
 The existing constructor-rejection test now uses code-less collateral with zero COMP: zero COMP itself is valid under the approved construction change. All existing test cases are retained. Historical findings about the removed `setOracle` API are outside this increment; the current vault binds its oracle in its constructor.
 
@@ -58,7 +58,7 @@ Legacy fixtures now pass the sixth constructor address and read the fourth liqui
 
 `MarkerBadDebt.t.sol` covers exactly exhausted collateral, insufficient-collateral rollback one wei beyond capacity, remaining repayable debt, multiple borrowers, repeated liquidation and recapitalization. Its fuzz properties verify the maximum debt payable under the integer payout formula, including collateral dust. The focused `BadDebtSequences.invariant.t.sol` additionally checks shortfall and custody accounting across random repayments, recapitalization, withdrawals and repeated exhaustion.
 
-`StabilityFee.t.sol` exercises the shipped zero-rate deployment through real borrowing, elapsed-time reads, work issuance, repayment, liquidation and failed repayments. It checks untouched positions, late opening, partial repayment, unchanged principal supply and absence of stablecoin fee mints. Nonzero-rate behavior cannot be reached by a constructor argument or subclass override: `STABILITY_FEE_BPS` is a source constant. Separate parameterized tests and a disposable source-variant runner cover that case; a passing zero-rate run alone is not evidence for a nonzero fee deployment.
+`StabilityFee.t.sol` exercises the shipped zero-rate deployment through real borrowing, elapsed-time reads, work issuance, repayment, liquidation and failed repayments. It checks untouched positions, late opening, partial repayment, unchanged principal supply and absence of stablecoin fee mints. Nonzero-rate behavior cannot be reached by a constructor argument or subclass override: `DUTY_BPS` is a source constant. Separate parameterized tests and a disposable source-variant runner cover that case; a passing zero-rate run alone is not evidence for a nonzero fee deployment.
 
 Run the supplemental nonzero-rate suite with:
 
@@ -85,7 +85,7 @@ reserve-only and debt-only backing, sum and rounding arithmetic, full-precision
 products, multiple workers sharing one ceiling, exact mint boundaries, atomic
 failure, the 2500-bps governance limit, and contraction after repayments,
 withdrawals or ratio changes. The backing-ratio fuzz property compares exact
-cross-products at `minCR`, avoiding fixed-point rounding that could hide the
+cross-products at `mat`, avoiding fixed-point rounding that could hide the
 surplus as reserves grow. Strict backing greater than one requires positive debt;
 reserve-only backing is exactly one and the empty balance sheet has no ratio.
 
@@ -154,10 +154,10 @@ is worth one ETH: `reserveValueUsd` is asserted in dollars and `reserveValue`,
   divergence bound reverts `PriceDivergence`, a stale spot reverts `StaleFeed`, and
   the exact bound is accepted (independent spot feed on a second vault).
 - **Backing bound on chain.** In addition to the pure-arithmetic fuzz, a 1000-run
-  fuzz opens the only position at exactly `minCR` (collateral rounded up to the
+  fuzz opens the only position at exactly `mat` (collateral rounded up to the
   wei), funds any reserve size, governs any ratio up to 2500, mints the whole
   ceiling and checks collateral-plus-reserve exceeds all COMP by at least
-  `(minCR - 1 - r) x D`.
+  `(mat - 1 - r) x D`.
 - **Register validation.** A source with code that reverts on, or returns short
   words from, either `isStale` or `latestValue` is refused at proposal with
   `InvalidPriceSource`; a token claiming 78 decimals is refused and 77 is valued
@@ -192,7 +192,7 @@ denomination; 33 expectations across four existing suites moved from ETH to USD 
 **Audit `da7d5b1c`.** Five findings, all fixed, reproduced in `audit/Audit20261004.t.sol`. Each
 `test_regression_*` fails on the audited commit and passes on the fix; reverting `src/` fails 8 of 8.
 The important one was a mixed-unit path the denomination created — `_clearIfRecovered` compared an
-ETH-valued ratio against `minCR` — and two more were `try/catch` not covering ABI **decoding** in
+ETH-valued ratio against `mat` — and two more were `try/catch` not covering ABI **decoding** in
 `Treasury.reserveValueOf`, which made a malformed listed feed revert `workCeiling()` instead of
 counting for nothing.
 
@@ -221,7 +221,7 @@ no additional profile, RPC, downloaded dependency or scratch source is needed.
   reserve shortfall, and refusal to spend other Treasury assets. Ceiling equality
   is refused and one wei below is accepted at both 150% and 200% minimum ratios.
   Tests compare exact collateral/debt fractions, including full repayment,
-  accrued fees, recovery below minCR, and candidate-independent payouts.
+  accrued fees, recovery below mat, and candidate-independent payouts.
 - Failure cases cover zero/dust burns, excessive amounts, insufficient caller
   balance or candidate debt, ineligible candidates, minimum output, stale/zero
   prices, spot divergence, deeply underwater positions, direct Treasury calls,
@@ -304,7 +304,7 @@ pin, and the suite was brought up to the accepted source rather than rewritten:
   principal. The invariant handler mirrors the per-position fresh record and
   asserts the stored base after **every** successful redemption, with time steps
   of up to twelve hours so both regimes occur.
-- The backing guard counts Treasury IMD plus vault IMD only up to `minCR()`
+- The backing guard counts Treasury IMD plus vault IMD only up to `mat()`
   percent of pre-transaction principal less realized bad debt. The invariant's
   backing model uses that figure; its seeded redemptions moved out of the handler
   constructor into a separate top-level call, because a constructor shares one
@@ -386,7 +386,7 @@ up to them rather than rewritten:
 Also fixed on the way, from an advisory finding against the shipped tree: the
 `WorkBacking.invariant.t.sol` handler's priced collateral top-up floored to zero
 when a 1-wei borrow met a cleared debt and an ETH/USD answer above two dollars
-per unit, and `depositCollateral(0)` reverted `ZeroAmount`, which
+per unit, and `lock(0)` reverted `ZeroAmount`, which
 `fail_on_revert` turned into a failed campaign (replayed deterministically as
 `repay(max); setEthUsd(13856, false); borrow(0)`). The top-up now rounds up, so it
 is never zero and still leaves the position at twice its debt.

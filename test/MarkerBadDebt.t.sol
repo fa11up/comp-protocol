@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {APPROVED_OPERATOR, FEE_RECIPIENT, MARKER_SHARE_BPS} from "src/DeploymentConfig.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
@@ -25,7 +25,7 @@ contract MarkerProtocolShareVault is CDPVault {
     }
     /// @dev Held at zero so this suite keeps asserting what it is about. The shipped rate is
     /// non-zero and ShippedRateStabilityFeeTest covers it.
-    function stabilityFeeBps() public pure override returns (uint256) {
+    function duty() public pure override returns (uint256) {
         return 0;
     }
 
@@ -43,7 +43,7 @@ contract MarkerBadDebtTest is Test {
 
     MockIMD private imd;
     CDPVault private vault;
-    CompToken private comp;
+    ImdUSD private comp;
     TestSwarmFeed private primary;
     TestSwarmFeed private spot;
     TestSwarmFeed private nhi;
@@ -64,7 +64,7 @@ contract MarkerBadDebtTest is Test {
         _mark(BORROWER, MARKER);
         assertEq(imd.balanceOf(MARKER), 0, "marking alone earns nothing");
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         assertEq(imd.balanceOf(MARKER), 1 ether);
         assertEq(imd.balanceOf(FEE_RECIPIENT), 2.5 ether);
         assertEq(imd.balanceOf(LIQUIDATOR), 106.5 ether);
@@ -79,12 +79,12 @@ contract MarkerBadDebtTest is Test {
 
     function test_defaultProtocolShareStillPaysMarkerFromBonus() public {
         vault = new BaselineVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
-        comp = vault.compToken();
+        comp = vault.stablecoin();
         _open(BORROWER, 140 ether, 100 ether);
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         assertEq(imd.balanceOf(MARKER), 1 ether);
         assertEq(imd.balanceOf(LIQUIDATOR), 109 ether);
         assertEq(imd.balanceOf(FEE_RECIPIENT), 0);
@@ -97,7 +97,7 @@ contract MarkerBadDebtTest is Test {
         _mark(BORROWER, LIQUIDATOR);
         vm.recordLogs();
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 collateralTransfers;
         uint256 transfersToLiquidator;
@@ -122,7 +122,7 @@ contract MarkerBadDebtTest is Test {
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         assertEq(imd.balanceOf(LIQUIDATOR), 100 ether);
         assertEq(imd.balanceOf(MARKER), 1 ether);
         assertEq(imd.balanceOf(FEE_RECIPIENT), 9 ether);
@@ -136,7 +136,7 @@ contract MarkerBadDebtTest is Test {
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.InvalidBonusShares.selector);
-        vault.liquidate(BORROWER, 50 ether);
+        vault.bite(BORROWER, 50 ether);
         _assertUnpaid(BORROWER, 55 ether, 100 ether);
     }
 
@@ -146,7 +146,7 @@ contract MarkerBadDebtTest is Test {
         _mark(BORROWER, MARKER);
         vm.recordLogs();
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 1);
+        vault.bite(BORROWER, 1);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 transfers;
         for (uint256 i; i < logs.length; ++i) {
@@ -181,7 +181,7 @@ contract MarkerBadDebtTest is Test {
         uint256 markerCut = bonus * MARKER_SHARE_BPS / 10_000;
         uint256 protocolCut = bonus * protocolShare / 10_000;
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, repayment);
+        vault.bite(BORROWER, repayment);
         assertEq(imd.balanceOf(MARKER), markerCut);
         assertEq(imd.balanceOf(FEE_RECIPIENT), protocolCut);
         assertEq(imd.balanceOf(LIQUIDATOR), seized - markerCut - protocolCut);
@@ -206,10 +206,10 @@ contract MarkerBadDebtTest is Test {
         assertEq(marker, MARKER);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.GracePeriodNotElapsed.selector);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         vm.warp(markedAt + grace);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         assertEq(imd.balanceOf(MARKER), 1 ether);
         assertEq(imd.balanceOf(NEXT_MARKER), 0);
     }
@@ -223,7 +223,7 @@ contract MarkerBadDebtTest is Test {
         vm.warp(markedAt + grace + vault.liquidationWindow() + 1);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.MarkExpired.selector);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         _assertUnpaid(BORROWER, 140 ether, 100 ether);
         _mark(BORROWER, NEXT_MARKER);
         (uint256 newMarkedAt, uint256 newGrace,, address marker) = vault.liquidationMarks(BORROWER);
@@ -231,10 +231,10 @@ contract MarkerBadDebtTest is Test {
         assertEq(marker, NEXT_MARKER);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.GracePeriodNotElapsed.selector);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         vm.warp(newMarkedAt + newGrace);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         assertEq(imd.balanceOf(MARKER), 0);
         assertEq(imd.balanceOf(NEXT_MARKER), 1 ether);
     }
@@ -250,14 +250,14 @@ contract MarkerBadDebtTest is Test {
         );
         vm.prank(LIQUIDATOR);
         vm.expectRevert(TransferUnavailable.selector);
-        vault.liquidate(BORROWER, 50 ether);
+        vault.bite(BORROWER, 50 ether);
         _assertUnpaid(BORROWER, 55 ether, 100 ether);
         assertEq(comp.balanceOf(LIQUIDATOR), 100 ether);
         assertEq(comp.totalSupply(), 100 ether);
         assertEq(vault.totalDebt(), 100 ether);
         vm.clearMockedCalls();
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 50 ether);
+        vault.bite(BORROWER, 50 ether);
         assertEq(vault.totalBadDebt(), 50 ether);
     }
 
@@ -269,10 +269,10 @@ contract MarkerBadDebtTest is Test {
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
-        vault.liquidate(BORROWER, 50 ether + 1);
+        vault.bite(BORROWER, 50 ether + 1);
         _assertUnpaid(BORROWER, 55 ether, 100 ether);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 50 ether);
+        vault.bite(BORROWER, 50 ether);
         _assertPosition(BORROWER, 0, 50 ether);
         assertEq(vault.totalBadDebt(), 50 ether);
         assertEq(vault.badDebtOf(BORROWER), 50 ether);
@@ -280,7 +280,7 @@ contract MarkerBadDebtTest is Test {
         assertEq(comp.totalSupply(), 50 ether);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
-        vault.liquidate(BORROWER, 1);
+        vault.bite(BORROWER, 1);
         assertEq(vault.totalBadDebt(), 50 ether, "failed retries cannot count a loss twice");
     }
 
@@ -291,20 +291,20 @@ contract MarkerBadDebtTest is Test {
         _mark(BORROWER, MARKER);
         _mark(SECOND_BORROWER, NEXT_MARKER);
         vm.startPrank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 50 ether);
+        vault.bite(BORROWER, 50 ether);
         assertEq(vault.totalBadDebt(), 50 ether);
-        vault.liquidate(SECOND_BORROWER, 40 ether);
+        vault.bite(SECOND_BORROWER, 40 ether);
         assertEq(vault.totalBadDebt(), 90 ether);
         comp.transfer(BORROWER, 20 ether);
         comp.transfer(SECOND_BORROWER, 40 ether);
         vm.stopPrank();
         vm.prank(BORROWER);
-        vault.repayCOMP(20 ether);
+        vault.wipe(20 ether);
         assertEq(vault.totalBadDebt(), 70 ether);
         assertEq(vault.badDebtOf(BORROWER), 30 ether);
         assertEq(vault.badDebtOf(SECOND_BORROWER), 40 ether);
         vm.prank(SECOND_BORROWER);
-        vault.repayCOMP(40 ether);
+        vault.wipe(40 ether);
         assertEq(vault.totalBadDebt(), 30 ether);
         assertEq(vault.badDebtOf(SECOND_BORROWER), 0);
         assertEq(comp.totalSupply(), 30 ether);
@@ -316,11 +316,11 @@ contract MarkerBadDebtTest is Test {
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 50 ether);
+        vault.bite(BORROWER, 50 ether);
         _deposit(BORROWER, 11 ether);
         assertEq(vault.totalBadDebt(), 50 ether);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 10 ether);
+        vault.bite(BORROWER, 10 ether);
         _assertPosition(BORROWER, 0, 40 ether);
         assertEq(vault.totalBadDebt(), 40 ether);
         _deposit(BORROWER, 100 ether);
@@ -329,7 +329,7 @@ contract MarkerBadDebtTest is Test {
         vm.prank(LIQUIDATOR);
         comp.transfer(BORROWER, 40 ether);
         vm.prank(BORROWER);
-        vault.repayCOMP(40 ether);
+        vault.wipe(40 ether);
         assertEq(vault.totalBadDebt(), 0);
         assertEq(comp.totalSupply(), 0);
         _assertPosition(BORROWER, 100 ether, 0);
@@ -355,7 +355,7 @@ contract MarkerBadDebtTest is Test {
         _setPrice(1 ether);
         _mark(BORROWER, MARKER);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 50 ether);
+        vault.bite(BORROWER, 50 ether);
         primary.setValue(0);
         primary.setStale(true);
         assertEq(vault.badDebtOf(BORROWER), 50 ether);
@@ -384,7 +384,7 @@ contract MarkerBadDebtTest is Test {
 
     function _deploy(uint256 share) private {
         vault = new MarkerProtocolShareVault(address(imd), address(primary), address(nhi), address(spot), share);
-        comp = vault.compToken();
+        comp = vault.stablecoin();
     }
 
     function _setPrice(uint256 price) private {
@@ -395,7 +395,7 @@ contract MarkerBadDebtTest is Test {
     function _open(address owner, uint256 collateral, uint256 debt) private {
         _deposit(owner, collateral);
         vm.startPrank(owner);
-        vault.mintCOMP(debt);
+        vault.draw(debt);
         comp.transfer(LIQUIDATOR, debt);
         vm.stopPrank();
     }
@@ -405,13 +405,13 @@ contract MarkerBadDebtTest is Test {
         imd.mint(owner, amount);
         vm.startPrank(owner);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(amount);
+        vault.lock(amount);
         vm.stopPrank();
     }
 
     function _mark(address owner, address marker) private {
         vm.prank(marker);
-        vault.markUnderwater(owner);
+        vault.bark(owner);
     }
 
     function _assertPosition(address owner, uint256 collateral, uint256 debt) private view {

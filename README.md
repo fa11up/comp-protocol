@@ -17,7 +17,7 @@ it is ours.
 | `CDPVault` | positions, minting, the stability fee index, liquidation, bad debt |
 | `ParameterizedVault` | `CDPVault` plus five overrides that read its economics from `Parameters` |
 | `SwarmFeed` | attestation verification; `PriceFeed` / `NhiFeed` / `SpotFeed` are its three leaves |
-| `SwarmRelay` | permissionless relay, and keeper bundling: relay-and-mark, relay-and-liquidate |
+| `SwarmRelay` | permissionless relay, and keeper bundling: relay-and-mark, relay-and-bite |
 | `Parameters` / `Governed` | the governed economics and the reserve register, behind a 48-hour delay |
 | `Treasury` | where the protocol's own revenue lands |
 | `Registry` | replaceable counterparties — **written, not yet wired to anything** |
@@ -25,7 +25,7 @@ it is ours.
 | `SharePriceFeed` | prices any ERC-4626 share from a feed for its asset, in USD per 1e18 raw units — built for sIMD |
 | `SwarmWorkOracle` | minting rights earned from an attested work tally; extends `SwarmFeed`, so it inherits question binding |
 | `WorkOracleFactory` | deploys the above, because its creation code will not fit in the vault's |
-| `CompToken` | the stablecoin; minted and burned only by its vault |
+| `ImdUSD` | the stablecoin; minted and burned only by its vault |
 | `MockIMD` / `MockWorkOracle` / `LaunchToken` | testnet collateral faucet, the work-credit faucet `SwarmWorkOracle` replaces, launch token |
 
 Three feed leaves exist rather than two `PriceFeed` instances because a launch manifest identifies a
@@ -47,7 +47,7 @@ before it deploys anywhere, so a literal Sepolia address has no code there and t
 it. No wording given to the swarm can put code at an address on a chain it was never deployed to — only
 a value the constructor can resolve locally can. Zero is deliberately *not* that value: zero is what an
 unset manifest field looks like, and a vault quietly accepting a mock token as collateral would take a
-worthless asset against real debt. `CompToken`, `Parameters`, `Treasury` and `UsdPriceFeed` are still
+worthless asset against real debt. `ImdUSD`, `Parameters`, `Treasury` and `UsdPriceFeed` are still
 created inside the vault's constructor, now because that is what makes the deployment come up fully
 linked with no transaction sent afterwards — a manifest makes none — rather than because slots are
 scarce.
@@ -63,7 +63,7 @@ reverts** rather than silently leaving the vault on the faucet.
 | input | what it decides |
 |---|---|
 | **price** | `collateralRatio = collateral * price * 100 / (debt * 1e18)`, from a window median. On `ParameterizedVault` the price is `UsdPriceFeed`, so **one COMP of debt is one USD-worth of collateral**; the base vault prices in ETH |
-| **NHI** | `minCR()` 150 at ≥0.85 rising to 200 at ≤0.60; `gracePeriod()` 6h falling to 0 |
+| **NHI** | `mat()` 150 at ≥0.85 rising to 200 at ≤0.60; `gracePeriod()` 6h falling to 0 |
 | **spot** | not a price — a sanity bound. A gap over `MAX_DIVERGENCE_BPS` (500) halts minting, marking and liquidation while still allowing withdrawal |
 
 Shipped economics: stability fee 200 bps, marker share 1000 bps of the liquidation bonus, protocol
@@ -129,7 +129,7 @@ because abandoning a change can only return things to what borrowers already pri
 The bounds are constants in the contract, not governance choices, so the governor cannot widen its own
 authority. What is deliberately **not** governable: the attester, the three price feeds, and the
 collateral token. A wrong parameter is a bad business decision a borrower can see coming and exit
-ahead of; a wrong feed is not a cost, it is custody — whoever names the price feed can liquidate
+ahead of; a wrong feed is not a cost, it is custody — whoever names the price feed can bite
 everyone in one block. Those stay immutable, and so does a vault's reference to its own `Parameters`.
 
 A rate change checkpoints the fee index first. Without that, the index recomputed from deployment at
@@ -146,7 +146,7 @@ have frozen every position.
 | NhiFeed | `0x125100448612347ba2604E9dA26f40013C602b3A` |
 | SpotFeed | `0x0535C1A564B2594676239428A113d542cd6c2Ed9` |
 | SwarmRelay | `0xe36FFc2688Bf5974f2187AC9086492e372926D40` *(deployed, not wired to these feeds)* |
-| CompToken | `0xd5B99590CC79592a6C2C46991a9F873dF72b4c0B` *(created in the vault's constructor)* |
+| ImdUSD | `0xd5B99590CC79592a6C2C46991a9F873dF72b4c0B` *(created in the vault's constructor)* |
 | MockWorkOracle | `0x7df0f2Ea286738f905ab5b1B8899E9e207996198` *(same)* |
 | MockIMD | `0xe44ab81ce23d34e29383dd158a1dffeb1c10d439` |
 
@@ -222,7 +222,7 @@ compiled tree, kept verbatim; the Treasury proof now **passes** and is a regress
 `test/audit/Audit20261004.t.sol`; reverting `src/` to the audited commit fails 8 of 8 of them.
 
 The one that mattered was ours and three hours old: `_clearIfRecovered` read the **raw** primary feed
-and compared an ETH-valued ratio against `minCR`, so after denomination the ratio was understated by
+and compared an ETH-valued ratio against `mat`, so after denomination the ratio was understated by
 the whole ETH/USD factor and a position restored to health **kept its liquidation mark**. Two mediums
 in `Treasury` shared one cause — `try/catch` does not cover **decoding**, so a listed feed returning
 `abi.encode(uint256(2))` for a bool panicked in the caller's frame where no catch clause could see it,
@@ -238,7 +238,7 @@ the written reproductions. Archive the record immediately.
 
 - **Nothing here operates the protocol.** A CDP protocol with no keeper is a contract that
   accumulates bad debt: somebody has to relay attestations before feeds go stale, mark positions, and
-  liquidate them with their own stablecoin. That lives in **`fa11up/imd-keeper`**, which is private on
+  bite them with their own stablecoin. That lives in **`fa11up/imd-keeper`**, which is private on
   purpose — it publishes bidding thresholds a searcher would use to be one block earlier.
 - The live deployment's reporter and relayer are a single testnet key. **Mainnet must be a fresh
   deployment with a key held outside this repository.**
@@ -257,7 +257,7 @@ the written reproductions. Archive the record immediately.
   launch manifest therefore still passes zero, which is the faucet, deliberately.
 - `protocolBonusShareBps` is bounded but the bound is economically empty at its top: at 10000 a
   liquidator who did not mark receives exactly the principal back, so liquidations stop.
-- There is no insurance and no write-off path. A liquidation can leave bad debt; `liquidate` sweeps an
+- There is no insurance and no write-off path. A liquidation can leave bad debt; `bite` sweeps an
   unreachable remainder so the position closes rather than freezing, but the loss is realised.
 
 ## Documents

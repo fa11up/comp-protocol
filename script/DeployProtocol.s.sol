@@ -6,7 +6,7 @@ import {PriceFeed} from "../src/PriceFeed.sol";
 import {SpotFeed} from "../src/SpotFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
 import {CDPVault} from "../src/CDPVault.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {
@@ -27,7 +27,7 @@ import {
 ///      3, verified by recovering live attestation signatures against candidate uint8 values.
 /// Both are immutable, so 519's feeds are permanently inert. Nothing here is upgradeable either —
 /// that is the point — so every constant below is checked against chain state by `verify()`.
-contract DeployComp is Script {
+contract DeployProtocol is Script {
     // The attester, relayer, reporters, quorum, answer type and payload chainId are no longer
     // written here at all: PriceFeed and NhiFeed take none of them, because every one of them is
     // pinned in src/DeploymentConfig.sol. This script cannot get them wrong, and neither can a
@@ -78,8 +78,8 @@ contract DeployComp is Script {
         // deployment by contract name and cannot list one twice. SPOT_MAX_AGE is tighter because a
         // point-in-time price goes stale faster than the window average it is checking.
         SpotFeed spotFeed = new SpotFeed(SPOT_MAX_AGE, MAX_DEVIATION_BPS);
-        // compToken_ = 0 and oracle_ = 0 put the vault in self-contained mode: it creates and
-        // permanently binds its own CompToken and MockWorkOracle, so no post-deploy call exists.
+        // stablecoin_ = 0 and oracle_ = 0 put the vault in self-contained mode: it creates and
+        // permanently binds its own ImdUSD and MockWorkOracle, so no post-deploy call exists.
         CDPVault vault =
             new CDPVault(imd, address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
 
@@ -89,7 +89,7 @@ contract DeployComp is Script {
         console2.log("NhiFeed            ", address(nhiFeed));
         console2.log("SpotFeed           ", address(spotFeed));
         console2.log("CDPVault           ", address(vault));
-        console2.log("CompToken   (inner)", address(vault.compToken()));
+        console2.log("ImdUSD   (inner)", address(vault.stablecoin()));
         console2.log("MockWorkOracle(in) ", address(vault.oracle()));
 
         verify(vault, priceFeed, nhiFeed, spotFeed, imd, operator);
@@ -113,7 +113,7 @@ contract DeployComp is Script {
         require(address(priceFeed) != address(nhiFeed), "feeds must differ");
         require(address(spotFeed) != address(priceFeed) && address(spotFeed) != address(nhiFeed), "feeds must differ");
 
-        CompToken comp = vault.compToken();
+        ImdUSD comp = vault.stablecoin();
         require(comp.vault() == address(vault), "comp: not bound to vault");
         require(comp.totalSupply() == 0, "comp: nonzero opening supply");
         MockWorkOracle workOracle = MockWorkOracle(address(vault.oracle()));
@@ -124,7 +124,7 @@ contract DeployComp is Script {
         require(vault.feeRecipient() == FEE_RECIPIENT, "vault: fee recipient is not the pinned one");
         require(vault.workCeiling() == type(uint256).max, "vault: a plain vault has no work ceiling to enforce");
         require(vault.redemptionSpread() == 50, "vault: redemption spread is not the shipped default");
-        require(vault.redemptionCeilingCR() == vault.minCR() + 50, "vault: redemption ceiling is not derived");
+        require(vault.redemptionCeilingCR() == vault.mat() + 50, "vault: redemption ceiling is not derived");
         require(vault.REDEMPTION_FEE_FLOOR_BPS() == 50, "vault: redemption fee floor changed");
         require(vault.REDEMPTION_FEE_CAP_BPS() == 500, "vault: redemption fee cap changed");
         require(vault.redemptionBaseRate() == 0, "vault: redemption base rate opens nonzero");

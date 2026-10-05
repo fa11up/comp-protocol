@@ -9,7 +9,7 @@ import {SwarmFeed} from "src/SwarmFeed.sol";
 /// which a pinned deployment artifact will never provide.
 /// Nothing under src/ or script/ references this contract, so it is absent from every deployment —
 /// which is the point. It is not a loophole in the pinning: a deployer cannot choose WHICH contract
-/// a pinned script deploys, and DeployComp.verify() reads the authorities back off chain regardless.
+/// a pinned script deploys, and DeployProtocol.verify() reads the authorities back off chain regardless.
 contract ConfigurableSwarmFeed is SwarmFeed {
     constructor(
         address attester_,

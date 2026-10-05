@@ -7,7 +7,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {MockIMD} from "../src/MockIMD.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
@@ -20,13 +20,13 @@ abstract contract ReentryProbe {
 
     function _probe(CDPVault vault, address account) internal {
         bytes[8] memory calls = [
-            abi.encodeCall(vault.depositCollateral, (1)),
-            abi.encodeCall(vault.withdrawCollateral, (1)),
-            abi.encodeCall(vault.mintCOMP, (1)),
-            abi.encodeCall(vault.repayCOMP, (1)),
-            abi.encodeCall(vault.liquidate, (account, 1)),
+            abi.encodeCall(vault.lock, (1)),
+            abi.encodeCall(vault.free, (1)),
+            abi.encodeCall(vault.draw, (1)),
+            abi.encodeCall(vault.wipe, (1)),
+            abi.encodeCall(vault.bite, (account, 1)),
             abi.encodeCall(vault.mintFromWork, (1)),
-            abi.encodeCall(vault.markUnderwater, (account)),
+            abi.encodeCall(vault.bark, (account)),
             abi.encodeCall(vault.clearRecoveredMark, (account))
         ];
         for (uint256 i; i < calls.length; ++i) {
@@ -104,7 +104,7 @@ contract AdversarialCollateral is ERC20, ReentryProbe {
 
 contract AdversarialTest is LegacyWorkBacking {
     address internal alice = address(0xA11CE);
-    CompToken internal comp;
+    ImdUSD internal comp;
     CDPVault internal vault;
     AdversarialCollateral internal collateral;
     AdversarialOracle internal oracle;
@@ -114,7 +114,7 @@ contract AdversarialTest is LegacyWorkBacking {
 
     function setUp() public {
         collateral = new AdversarialCollateral(alice);
-        comp = new CompToken(address(0));
+        comp = new ImdUSD(address(0));
         priceFeed = new TestSwarmFeed(1 ether);
         nhiFeed = new TestSwarmFeed(0.85 ether);
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
@@ -135,7 +135,7 @@ contract AdversarialTest is LegacyWorkBacking {
     function test_oracleCallbackCannotReenterAnyVaultAction() public {
         _establishWorkBacking(vault, 100 ether);
         vm.startPrank(alice);
-        vault.depositCollateral(150 ether);
+        vault.lock(150 ether);
         vault.mintFromWork(100 ether);
         vm.stopPrank();
         assertEq(oracle.blockedCallbacks(), 8);
@@ -150,7 +150,7 @@ contract AdversarialTest is LegacyWorkBacking {
         _establishWorkBacking(vault, 100 ether);
         oracle.setFail(true);
         vm.startPrank(alice);
-        vault.depositCollateral(150 ether);
+        vault.lock(150 ether);
         vm.expectRevert(AdversarialOracle.OracleOffline.selector);
         vault.mintFromWork(100 ether);
         vm.stopPrank();
@@ -166,11 +166,11 @@ contract AdversarialTest is LegacyWorkBacking {
         collateral.configure(vault, AdversarialCollateral.Mode.FalseIn);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(collateral)));
-        vault.depositCollateral(10 ether);
+        vault.lock(10 ether);
         collateral.configure(vault, AdversarialCollateral.Mode.ShortIn);
         vm.prank(alice);
         vm.expectRevert(CDPVault.UnexpectedCollateralReceived.selector);
-        vault.depositCollateral(10 ether);
+        vault.lock(10 ether);
         (uint256 c, uint256 d) = vault.positions(alice);
         assertEq(c, 0);
         assertEq(d, 0);
@@ -182,8 +182,8 @@ contract AdversarialTest is LegacyWorkBacking {
     function test_transferCallbacksCannotReenterDepositOrWithdrawal() public {
         collateral.configure(vault, AdversarialCollateral.Mode.Callback);
         vm.startPrank(alice);
-        vault.depositCollateral(150 ether);
-        vault.withdrawCollateral(150 ether);
+        vault.lock(150 ether);
+        vault.free(150 ether);
         vm.stopPrank();
         assertEq(collateral.blockedCallbacks(), 16);
         (uint256 c,) = vault.positions(alice);
@@ -193,11 +193,11 @@ contract AdversarialTest is LegacyWorkBacking {
 
     function test_failedOutgoingTransferRollsBackWithdrawal() public {
         vm.prank(alice);
-        vault.depositCollateral(150 ether);
+        vault.lock(150 ether);
         collateral.configure(vault, AdversarialCollateral.Mode.FalseOut);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(collateral)));
-        vault.withdrawCollateral(150 ether);
+        vault.free(150 ether);
         (uint256 c,) = vault.positions(alice);
         assertEq(c, 150 ether);
         assertEq(collateral.balanceOf(address(vault)), 150 ether);
@@ -205,15 +205,15 @@ contract AdversarialTest is LegacyWorkBacking {
 
     function test_failedLiquidationTransferRollsBackBurnAndPosition() public {
         vm.startPrank(alice);
-        vault.depositCollateral(150 ether);
-        vault.mintCOMP(100 ether);
+        vault.lock(150 ether);
+        vault.draw(100 ether);
         vm.stopPrank();
         nhiFeed.setValue(0.6 ether);
-        vault.markUnderwater(alice);
+        vault.bark(alice);
         collateral.configure(vault, AdversarialCollateral.Mode.FalseOut);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(collateral)));
-        vault.liquidate(alice, 100 ether);
+        vault.bite(alice, 100 ether);
         (uint256 c, uint256 d) = vault.positions(alice);
         assertEq(c, 150 ether);
         assertEq(d, 100 ether);
@@ -223,14 +223,14 @@ contract AdversarialTest is LegacyWorkBacking {
 
     function test_liquidationTransferCallbackCannotReenter() public {
         vm.startPrank(alice);
-        vault.depositCollateral(150 ether);
-        vault.mintCOMP(100 ether);
+        vault.lock(150 ether);
+        vault.draw(100 ether);
         vm.stopPrank();
         nhiFeed.setValue(0.6 ether);
-        vault.markUnderwater(alice);
+        vault.bark(alice);
         collateral.configure(vault, AdversarialCollateral.Mode.Callback);
         vm.prank(alice);
-        vault.liquidate(alice, 100 ether);
+        vault.bite(alice, 100 ether);
         assertEq(collateral.blockedCallbacks(), 16);
         assertEq(collateral.blockedCallbacksForRecipient(alice), 8, "liquidator payout blocks every reentry");
         assertEq(collateral.blockedCallbacksForRecipient(address(this)), 8, "marker payout blocks every reentry");

@@ -27,8 +27,8 @@ abstract contract LegacyWorkBacking is Test {
             deal(address(token), WORK_BACKER, token.balanceOf(WORK_BACKER) + deposit, true);
             vm.startPrank(WORK_BACKER);
             token.approve(address(target), deposit);
-            target.depositCollateral(deposit);
-            target.mintCOMP(extra);
+            target.lock(deposit);
+            target.draw(extra);
             vm.stopPrank();
             backingPrincipal[address(target)] += extra;
             backingCollateral[address(target)] += deposit;

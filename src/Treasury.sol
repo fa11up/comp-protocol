@@ -75,7 +75,7 @@ contract Treasury {
     error ZeroAmount();
     /// @notice COMP can never be a reserve asset: the Treasury receives stability fees in COMP, and
     /// backing a liability with the same liability is not backing.
-    error CompIsNotReserve();
+    error StablecoinIsNotReserve();
     error InvalidReserveAsset();
     error InvalidPriceSource();
     error HaircutOutOfRange(uint256 bps);
@@ -113,7 +113,7 @@ contract Treasury {
     /// this when a change is PROPOSED, so an invalid one never occupies the slot or the two days.
     /// @dev A zero price source means removal, which needs the asset to be listed and no haircut.
     function validateReserveAsset(IERC20 asset, ISwarmFeed priceFeed, uint256 haircutBps) public view {
-        if (address(asset) == _linked(abi.encodeWithSignature("compToken()"))) revert CompIsNotReserve();
+        if (address(asset) == _linked(abi.encodeWithSignature("stablecoin()"))) revert StablecoinIsNotReserve();
         if (address(asset) == address(0) || address(asset).code.length == 0) revert InvalidReserveAsset();
         if (address(priceFeed) == address(0)) {
             if (!isReserveAsset(asset)) revert NotAReserveAsset();

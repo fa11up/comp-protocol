@@ -37,12 +37,12 @@ contract ParameterizedVault is CDPVault {
 
     constructor(
         address imdToken_,
-        address compToken_,
+        address stablecoin_,
         address oracle_,
         address priceFeed_,
         address nhiFeed_,
         address spotFeed_
-    ) CDPVault(imdToken_, compToken_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {
+    ) CDPVault(imdToken_, stablecoin_, oracle_, priceFeed_, nhiFeed_, spotFeed_) {
         // AUDIT FIX (job c71449d1): there is deliberately no way to pass a Parameters in. Accepting
         // one allowed an attacker to bind an impostor ahead of the deployer, and allowed a second
         // vault to borrow a Parameters already bound elsewhere and read a rate it is never
@@ -58,16 +58,16 @@ contract ParameterizedVault is CDPVault {
         usdPriceFeed = new UsdPriceFeed(ISwarmFeed(priceFeed_));
     }
 
-    function debtCeiling() public view override returns (uint256) {
-        return parameters.debtCeiling();
+    function line() public view override returns (uint256) {
+        return parameters.line();
     }
 
     function protocolBonusShareBps() public view override returns (uint256) {
         return parameters.protocolBonusShareBps();
     }
 
-    function stabilityFeeBps() public view override returns (uint256) {
-        return parameters.stabilityFeeBps();
+    function duty() public view override returns (uint256) {
+        return parameters.duty();
     }
 
     function maxDivergenceBps() public view override returns (uint256) {
@@ -181,7 +181,7 @@ contract ParameterizedVault is CDPVault {
     /// included) while totalDebt is principal, so the subtraction over-counts slightly, in the
     /// tightening direction. A position left with collateral below the liquidation payout but not yet
     /// drained is not recorded until someone finishes it; the remainder is seizable at the usual 10%
-    /// bonus, and the sweep in `liquidate` then records it.
+    /// bonus, and the sweep in `bite` then records it.
     function backedDebt() public view returns (uint256) {
         uint256 debt = Math.min(totalDebt, _debtAtTransactionStart());
         uint256 bad = totalBadDebt;
@@ -192,7 +192,7 @@ contract ParameterizedVault is CDPVault {
     /// @dev A sum, not a maximum, because the two terms are backed by different things: the reserve
     /// one-for-one by assets the protocol owns, the ratio term by the surplus collateral every
     /// borrower posts above their own debt. Section 3 of docs/COMPUTE-BACKING-DESIGN.md shows
-    /// backing exceeds one for every reserve size exactly when the ratio is below minCR - 1, and
+    /// backing exceeds one for every reserve size exactly when the ratio is below mat - 1, and
     /// Parameters caps the ratio at half that cliff.
     function workCeiling() public view override returns (uint256) {
         return reserveValue() + Math.mulDiv(backedDebt(), parameters.workRatioBps(), 10_000);

@@ -12,7 +12,7 @@
   },
   {
     "type": "function",
-    "name": "MAX_COMP_PER_TASK_WAD",
+    "name": "MAX_DIVERGENCE_BPS_LIMIT",
     "inputs": [],
     "outputs": [
       {
@@ -25,7 +25,7 @@
   },
   {
     "type": "function",
-    "name": "MAX_DIVERGENCE_BPS_LIMIT",
+    "name": "MAX_DUTY_BPS",
     "inputs": [],
     "outputs": [
       {
@@ -51,7 +51,7 @@
   },
   {
     "type": "function",
-    "name": "MAX_STABILITY_FEE_BPS",
+    "name": "MAX_UNITS_PER_TASK_WAD",
     "inputs": [],
     "outputs": [
       {
@@ -130,19 +130,6 @@
   },
   {
     "type": "function",
-    "name": "compPerTaskWad",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "current",
     "inputs": [],
     "outputs": [
@@ -152,7 +139,7 @@
         "internalType": "struct Parameters.ParamSet",
         "components": [
           {
-            "name": "debtCeiling",
+            "name": "line",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -162,7 +149,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "stabilityFeeBps",
+            "name": "duty",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -183,7 +170,7 @@
   },
   {
     "type": "function",
-    "name": "debtCeiling",
+    "name": "duty",
     "inputs": [],
     "outputs": [
       {
@@ -206,6 +193,19 @@
       }
     ],
     "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "line",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -334,7 +334,7 @@
         "internalType": "struct Parameters.ParamSet",
         "components": [
           {
-            "name": "debtCeiling",
+            "name": "line",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -344,7 +344,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "stabilityFeeBps",
+            "name": "duty",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -396,7 +396,7 @@
         "internalType": "struct Parameters.ParamSet",
         "components": [
           {
-            "name": "debtCeiling",
+            "name": "line",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -406,7 +406,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "stabilityFeeBps",
+            "name": "duty",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -421,19 +421,6 @@
             "internalType": "uint256"
           }
         ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "proposeCompPerTask",
-    "inputs": [
-      {
-        "name": "wad",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -468,6 +455,19 @@
       },
       {
         "name": "haircutBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeUnitsPerTask",
+    "inputs": [
+      {
+        "name": "wad",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -516,7 +516,7 @@
   },
   {
     "type": "function",
-    "name": "stabilityFeeBps",
+    "name": "unitsPerTaskWad",
     "inputs": [],
     "outputs": [
       {
@@ -600,17 +600,6 @@
   },
   {
     "type": "error",
-    "name": "CompPerTaskTooHigh",
-    "inputs": [
-      {
-        "name": "wad",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DivergenceOutOfRange",
     "inputs": [
       {
@@ -679,6 +668,17 @@
     "inputs": [
       {
         "name": "eta",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnitsPerTaskTooHigh",
+    "inputs": [
+      {
+        "name": "wad",
         "type": "uint256",
         "internalType": "uint256"
       }

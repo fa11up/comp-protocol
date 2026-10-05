@@ -5,17 +5,17 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {APPROVED_OPERATOR} from "./DeploymentConfig.sol";
 
 /// @dev The one view a vault must expose so this token can verify the reciprocal link before locking it.
-interface ICompTokenConsumer {
-    function compToken() external view returns (address);
+interface IStablecoinConsumer {
+    function stablecoin() external view returns (address);
 }
 
 /// @notice Elastic-supply COMP; starts with zero supply and has no configured supply cap.
 /// @dev Two ways to register the single minter/burner, both irreversible:
-/// - `CompToken(address(0))`: the workflow's approved operator later calls `setVault` once.
-/// - `CompToken(vault)`: the link is fixed at construction. A CDPVault creating this token in its own
+/// - `ImdUSD(address(0))`: the workflow's approved operator later calls `setVault` once.
+/// - `ImdUSD(vault)`: the link is fixed at construction. A CDPVault creating this token in its own
 ///   constructor passes itself; any other target must already have code and report this token.
 /// There are no ownership, upgrade, pause, rescue, or role-management functions.
-contract CompToken is ERC20 {
+contract ImdUSD is ERC20 {
     error Unauthorized();
     error AlreadyInitialized();
     error InvalidVault();
@@ -26,7 +26,7 @@ contract CompToken is ERC20 {
     address private _initializer;
 
     /// @param vault_ Zero for deferred one-time setup, or the CDPVault that will mint and burn COMP.
-    constructor(address vault_) ERC20("Compute Money", "COMP") {
+    constructor(address vault_) ERC20("imdUSD", "imdUSD") {
         if (vault_ == address(0)) {
             _initializer = APPROVED_OPERATOR;
         } else if (vault_ == msg.sender) {
@@ -45,7 +45,7 @@ contract CompToken is ERC20 {
 
     /// @notice Irreversibly register CDPVault; callable once by the workflow's approved operator.
     /// @dev Rejects, without consuming initialization authority, any target that lacks code or whose
-    /// `compToken()` is not this token.
+    /// `stablecoin()` is not this token.
     function setVault(address vault_) external {
         if (_initializer == address(0)) revert AlreadyInitialized();
         if (msg.sender != _initializer) revert Unauthorized();
@@ -65,7 +65,7 @@ contract CompToken is ERC20 {
 
     function _setVault(address vault_) private {
         if (vault_.code.length == 0) revert InvalidVault();
-        (bool ok, bytes memory data) = vault_.staticcall(abi.encodeCall(ICompTokenConsumer.compToken, ()));
+        (bool ok, bytes memory data) = vault_.staticcall(abi.encodeCall(IStablecoinConsumer.stablecoin, ()));
         if (!ok || data.length != 32 || abi.decode(data, (uint256)) != uint256(uint160(address(this)))) {
             revert InvalidVault();
         }

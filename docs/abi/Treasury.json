@@ -407,11 +407,6 @@
   },
   {
     "type": "error",
-    "name": "CompIsNotReserve",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "FailedInnerCall",
     "inputs": []
   },
@@ -461,6 +456,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "StablecoinIsNotReserve",
+    "inputs": []
   },
   {
     "type": "error",

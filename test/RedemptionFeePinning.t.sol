@@ -16,7 +16,7 @@ import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
 ///     the stored rate, and that exclusion could be kept alive indefinitely.
 ///
 /// Both FLOOR bypasses were reported against an intermediate revision, and the contracts node then
-/// changed `mintCOMP` to amount-weight `mintedAt` and `_reduceDebt` to conserve principal-time
+/// changed `draw` to amount-weight `mintedAt` and `_reduceDebt` to conserve principal-time
 /// rounding OLDER. This file replays the reported reproductions against the DELIVERED code, because a
 /// finding record that still reads "unresolved" is not evidence either way — and the answer turned out
 /// to be that both are closed.
@@ -42,7 +42,7 @@ contract RedemptionFeePinningTest is WorkBackingFixture {
             vm.warp(vm.getBlockTimestamp() + 11 hours + 59 minutes);
             _refreshEthUsd();
             vm.prank(BORROWER);
-            backedVault.mintCOMP(1);
+            backedVault.draw(1);
         }
 
         uint256 before = backedVault.redemptionBaseRate();
@@ -70,9 +70,9 @@ contract RedemptionFeePinningTest is WorkBackingFixture {
             _refreshEthUsd();
             for (uint256 i; i < 20; ++i) {
                 vm.startPrank(BORROWER);
-                backedVault.mintCOMP(190 ether);
+                backedVault.draw(190 ether);
                 stable.approve(address(backedVault), 190 ether);
-                backedVault.repayCOMP(190 ether);
+                backedVault.wipe(190 ether);
                 vm.stopPrank();
             }
         }
@@ -118,15 +118,15 @@ contract RedemptionFeePinningTest is WorkBackingFixture {
         collateral.mint(who, c);
         vm.startPrank(who);
         collateral.approve(address(backedVault), c);
-        backedVault.depositCollateral(c);
-        backedVault.mintCOMP(debt);
+        backedVault.lock(c);
+        backedVault.draw(debt);
         vm.stopPrank();
     }
 
     /// @dev Mirrors the vault: par minus the fee, then capped at what actually backs a COMP.
     function _quote(uint256 amount) private view returns (uint256) {
         (uint256 price,) = backedVault.usdPriceFeed().latestValue();
-        uint256 scale = Math.mulDiv(backedVault.backingPerComp(), 10_000 - backedVault.redemptionFeeBps(amount), 10_000);
+        uint256 scale = Math.mulDiv(backedVault.backingPerUnit(), 10_000 - backedVault.redemptionFeeBps(amount), 10_000);
         return Math.mulDiv(amount, scale, price);
     }
 }

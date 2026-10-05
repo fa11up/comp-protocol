@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
@@ -56,8 +56,8 @@ contract UsdDenominationTest is Test {
     function _open(CDPVault vault, uint256 collateral, uint256 debt) private {
         vm.startPrank(BORROWER);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
         vm.stopPrank();
     }
 
@@ -86,10 +86,10 @@ contract UsdDenominationTest is Test {
         _open(usdVault, 1_000 ether, 0.5 ether);
         assertEq(usdVault.collateralRatio(BORROWER), 400_000, "the usd vault prices a COMP as a dollar");
 
-        // And 1,000 COMP of debt is simply unopenable in ETH terms: 1 ETH cannot back it at minCR 150.
+        // And 1,000 COMP of debt is simply unopenable in ETH terms: 1 ETH cannot back it at mat 150.
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        ethVault.mintCOMP(1_000 ether);
+        ethVault.draw(1_000 ether);
     }
 
     /// @dev The regression that would have broken everything silently. The guard compares the primary
@@ -103,8 +103,8 @@ contract UsdDenominationTest is Test {
         assertEq(spot, IMD_ETH, "spot still quotes ETH per IMD");
 
         vm.startPrank(BORROWER);
-        usdVault.mintCOMP(1);           // a priced action, through the guard
-        usdVault.repayCOMP(1);
+        usdVault.draw(1);           // a priced action, through the guard
+        usdVault.wipe(1);
         vm.stopPrank();
     }
 
@@ -117,7 +117,7 @@ contract UsdDenominationTest is Test {
 
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        usdVault.mintCOMP(1);
+        usdVault.draw(1);
 
         // The base vault, which does not read the USD leg, keeps working through the same outage.
         _open(ethVault, 1_000 ether, 0.5 ether);

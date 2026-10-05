@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {ProtocolFixture} from "./ProtocolFixture.sol";
 import {MockIMD} from "../src/MockIMD.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
@@ -14,7 +14,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 contract ArithmeticTest is ProtocolFixture {
     function setUp() public override {
         imd = new MockIMD();
-        comp = new CompToken(address(0));
+        comp = new ImdUSD(address(0));
         priceFeed = new TestSwarmFeed(1 ether);
         nhiFeed = new TestSwarmFeed(0.85 ether);
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
@@ -40,9 +40,9 @@ contract ArithmeticTest is ProtocolFixture {
         assertEq(vault.collateralRatio(alice), 150);
         vm.startPrank(alice);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        vault.mintCOMP(1);
-        vault.repayCOMP(debt);
-        vault.withdrawCollateral(collateral);
+        vault.draw(1);
+        vault.wipe(debt);
+        vault.free(collateral);
         vm.stopPrank();
         assertEq(imd.balanceOf(alice), type(uint256).max);
         assertEq(comp.totalSupply(), 0);

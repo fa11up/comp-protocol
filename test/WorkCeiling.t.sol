@@ -23,33 +23,33 @@ contract AtomicWorkBorrower {
     }
 
     function borrowThenMintWork(uint256 collateral, uint256 debt, uint256 work) external {
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
         vault.mintFromWork(work);
     }
 
     function borrowMintWorkRepayAndLeave(uint256 collateral, uint256 debt, uint256 work) external {
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
         vault.mintFromWork(work);
-        vault.repayCOMP(debt);
-        vault.withdrawCollateral(collateral);
+        vault.wipe(debt);
+        vault.free(collateral);
     }
 
     function borrowThenRead(uint256 collateral, uint256 debt) external returns (uint256 backed, uint256 ceiling) {
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
         return (vault.backedDebt(), vault.workCeiling());
     }
 
     function repayThenMintWork(uint256 repay, uint256 work) external {
-        vault.repayCOMP(repay);
+        vault.wipe(repay);
         vault.mintFromWork(work);
     }
 
     function open(uint256 collateral, uint256 debt) external {
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
     }
 }
 
@@ -115,7 +115,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         _mintWork(WORKER, 1);
         _assertRejected(WORKER, 1);
         vm.prank(BORROWER);
-        backedVault.mintCOMP(1);
+        backedVault.draw(1);
         assertEq(backedVault.workCeiling(), 2);
         _mintWork(OTHER_WORKER, 1);
     }
@@ -150,20 +150,20 @@ contract WorkCeilingTest is WorkBackingFixture {
         uint256 ratio = bound(rawRatio, 0, 2500);
         _setRatio(ratio);
         health.setValue(bound(rawNhi, 0.5 ether, 0.95 ether));
-        uint256 minCR = backedVault.minCR();
-        assertGe(minCR, 150);
-        // Exact rational worst-case C = minCR * D / 100, W = R + rD (before rounding).
-        uint256 backingScaled = minCR * debt * 100 + value * 10_000;
+        uint256 mat = backedVault.mat();
+        assertGe(mat, 150);
+        // Exact rational worst-case C = mat * D / 100, W = R + rD (before rounding).
+        uint256 backingScaled = mat * debt * 100 + value * 10_000;
         uint256 liabilitiesScaled = debt * 10_000 + value * 10_000 + debt * backedVault.workRatioBps();
         assertGt(backingScaled, liabilitiesScaled);
         assertGe(backingScaled - liabilitiesScaled, debt * 2500);
         // The reserve cancels, proving the bound also for R beyond the fuzz range.
-        assertEq(backingScaled - liabilitiesScaled, (minCR * 100 - 10_000 - ratio) * debt);
+        assertEq(backingScaled - liabilitiesScaled, (mat * 100 - 10_000 - ratio) * debt);
     }
 
     function test_bindingMinimumRatioGives120PercentAtEmptyReserveAnd5000IsTheCliff() public view {
         uint256 debt = 100 ether;
-        uint256 assets = backedVault.minCR() * debt / 100;
+        uint256 assets = backedVault.mat() * debt / 100;
         assertEq(backedVault.workRatioBps(), 2500);
         assertEq(assets * 10_000 / (debt + debt * backedVault.workRatioBps() / 10_000), 12_000);
         for (uint256 i; i < 5; ++i) {
@@ -211,7 +211,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         _openDebt(100 ether);
         _mintWork(WORKER, 25 ether);
         vm.prank(BORROWER);
-        backedVault.repayCOMP(100 ether);
+        backedVault.wipe(100 ether);
         assertEq(backedVault.workCeiling(), 0);
         assertEq(backedVault.totalWorkMinted(), 25 ether);
         _assertRejected(WORKER, 1);
@@ -375,19 +375,19 @@ contract WorkCeilingTest is WorkBackingFixture {
     }
 
     function test_drainedPositionResidualPrincipalIsNotBacking() public {
-        health.setValue(0.6 ether); // minCR 200, zero grace
+        health.setValue(0.6 ether); // mat 200, zero grace
         _openDebt(100 ether);
         vm.prank(BORROWER);
         stable.transfer(WORKER, 91 ether);
         assertEq(backedVault.workCeiling(), 25 ether);
         _setVaultPrice(0.5 ether);
         vm.prank(OTHER_WORKER);
-        backedVault.markUnderwater(BORROWER);
+        backedVault.bark(BORROWER);
         // The largest debt whose 110% payout at 0.5 is exactly the 200 of collateral: the position
         // drains to zero collateral and the residual principal is recorded as bad debt.
         uint256 repaid = 90_909_090_909_090_909_091;
         vm.prank(WORKER);
-        backedVault.liquidate(BORROWER, repaid);
+        backedVault.bite(BORROWER, repaid);
         (uint256 c, uint256 d) = backedVault.positions(BORROWER);
         assertEq(c, 0);
         assertEq(d, 100 ether - repaid);
@@ -405,7 +405,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         // about the ceiling's treatment of drained principal, not about staleness.
         _refreshEthUsd();
         vm.prank(BORROWER);
-        backedVault.repayCOMP(1);
+        backedVault.wipe(1);
         assertGt(backedVault.totalBadDebt(), backedVault.totalDebt());
         assertEq(backedVault.backedDebt(), 0);
         assertEq(backedVault.workCeiling(), 0);
@@ -418,8 +418,8 @@ contract WorkCeilingTest is WorkBackingFixture {
         collateral.mint(second, 200 ether);
         vm.startPrank(second);
         collateral.approve(address(backedVault), 200 ether);
-        backedVault.depositCollateral(200 ether);
-        backedVault.mintCOMP(40 ether);
+        backedVault.lock(200 ether);
+        backedVault.draw(40 ether);
         vm.stopPrank();
         uint256 overcount = backedVault.totalBadDebt() - (100 ether - repaid);
         assertGt(overcount, 0, "the record carries the drained position's unpaid fees");
@@ -446,8 +446,8 @@ contract WorkCeilingTest is WorkBackingFixture {
         vm.stopPrank();
         vm.startPrank(BORROWER);
         collateral.approve(address(vaultWithSpot), 200 ether);
-        vaultWithSpot.depositCollateral(200 ether);
-        vaultWithSpot.mintCOMP(100 ether);
+        vaultWithSpot.lock(200 ether);
+        vaultWithSpot.draw(100 ether);
         vm.stopPrank();
         assertEq(vaultWithSpot.workCeiling(), 25 ether);
 
@@ -482,9 +482,9 @@ contract WorkCeilingTest is WorkBackingFixture {
 
     // --- the derivation, checked against the deployed vault rather than on paper -----------------
 
-    /// @dev Worst case: the only position sits exactly at minCR, the reserve is any size, and the
+    /// @dev Worst case: the only position sits exactly at mat, the reserve is any size, and the
     /// whole ceiling is minted. Assets (collateral priced by the primary, plus the reserve in the
-    /// same unit) must still exceed liabilities (all COMP) by at least (minCR - 1 - r) x D.
+    /// same unit) must still exceed liabilities (all COMP) by at least (mat - 1 - r) x D.
     /// forge-config: default.fuzz.runs = 1000
     function testFuzz_worstCaseBackingExceedsOneOnChain(
         uint96 rawDebt,
@@ -498,17 +498,17 @@ contract WorkCeilingTest is WorkBackingFixture {
         health.setValue(bound(rawNhi, 0.5 ether, 0.95 ether));
         _setRatio(ratio);
         _fundReserve(reserveUnits);
-        uint256 minCR = backedVault.minCR();
-        uint256 collateralAtMinCR = (minCR * debt + 99) / 100;
+        uint256 mat = backedVault.mat();
+        uint256 collateralAtMinCR = (mat * debt + 99) / 100;
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(BORROWER, collateralAtMinCR);
         vm.startPrank(BORROWER);
         collateral.approve(address(backedVault), collateralAtMinCR);
-        backedVault.depositCollateral(collateralAtMinCR);
-        backedVault.mintCOMP(debt);
+        backedVault.lock(collateralAtMinCR);
+        backedVault.draw(debt);
         vm.stopPrank();
-        assertGe(backedVault.collateralRatio(BORROWER), minCR);
-        assertLt(backedVault.collateralRatio(BORROWER), minCR + 1);
+        assertGe(backedVault.collateralRatio(BORROWER), mat);
+        assertLt(backedVault.collateralRatio(BORROWER), mat + 1);
 
         uint256 ceiling = backedVault.workCeiling();
         assertEq(ceiling, reserveUnits + debt * ratio / 10_000);
@@ -519,7 +519,7 @@ contract WorkCeilingTest is WorkBackingFixture {
         uint256 liabilities = stable.totalSupply();
         assertEq(liabilities, debt + ceiling);
         assertGt(assets, liabilities, "backing above one for this reserve size");
-        assertGe(assets - liabilities, (minCR * 100 - 10_000 - ratio) * debt / 10_000);
+        assertGe(assets - liabilities, (mat * 100 - 10_000 - ratio) * debt / 10_000);
     }
 
     function _assertRejected(address worker, uint256 amount) internal {

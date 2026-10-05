@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {APPROVED_OPERATOR, FEE_RECIPIENT, MARKER_SHARE_BPS} from "src/DeploymentConfig.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
@@ -18,7 +18,7 @@ contract BadDebtSequenceHandler is Test {
     address[3] public actors = [address(0xB001), address(0xB002), address(0xB003)];
     MockIMD public imd;
     CDPVault public vault;
-    CompToken public comp;
+    ImdUSD public comp;
     TestSwarmFeed private primary;
     TestSwarmFeed private spot;
     mapping(address => uint256) public collateral;
@@ -34,12 +34,12 @@ contract BadDebtSequenceHandler is Test {
         spot = new TestSwarmFeed(4 ether);
         TestSwarmFeed nhi = new TestSwarmFeed(0.6 ether);
         vault = new BaselineVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
-        comp = vault.compToken();
+        comp = vault.stablecoin();
         for (uint256 i; i < actors.length; ++i) {
             address actor = actors[i];
             _deposit(actor, 60 ether);
             vm.startPrank(actor);
-            vault.mintCOMP(100 ether);
+            vault.draw(100 ether);
             comp.transfer(LIQUIDATOR, 100 ether);
             vm.stopPrank();
             debt[actor] = 100 ether;
@@ -73,7 +73,7 @@ contract BadDebtSequenceHandler is Test {
         vm.prank(LIQUIDATOR);
         comp.transfer(actor, amount);
         vm.prank(actor);
-        vault.repayCOMP(amount);
+        vault.wipe(amount);
         debt[actor] = outstanding - amount;
         // Repayment cannot erase more historical residual than the debt that actually remains.
         if (recorded[actor] > debt[actor]) recorded[actor] = debt[actor];
@@ -90,7 +90,7 @@ contract BadDebtSequenceHandler is Test {
         _deposit(actor, debt[actor] + 2 * amount);
         _price(4 ether);
         vm.startPrank(actor);
-        vault.mintCOMP(amount);
+        vault.draw(amount);
         comp.transfer(LIQUIDATOR, amount);
         vm.stopPrank();
         debt[actor] += amount;
@@ -102,7 +102,7 @@ contract BadDebtSequenceHandler is Test {
         if (debt[actor] != 0 || collateral[actor] == 0) return;
         uint256 amount = bound(rawAmount, 1, collateral[actor]);
         vm.prank(actor);
-        vault.withdrawCollateral(amount);
+        vault.free(amount);
         collateral[actor] -= amount;
     }
 
@@ -112,9 +112,9 @@ contract BadDebtSequenceHandler is Test {
 
     function _liquidate(address actor, uint256 amount) private {
         vm.prank(MARKER);
-        vault.markUnderwater(actor);
+        vault.bark(actor);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(actor, amount);
+        vault.bite(actor, amount);
         collateral[actor] -= amount;
         debt[actor] -= amount;
         if (recorded[actor] > debt[actor]) recorded[actor] = debt[actor];
@@ -133,7 +133,7 @@ contract BadDebtSequenceHandler is Test {
         imd.mint(actor, amount);
         vm.startPrank(actor);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(amount);
+        vault.lock(amount);
         vm.stopPrank();
         collateral[actor] += amount;
     }
@@ -167,7 +167,7 @@ contract BadDebtSequencesInvariantTest is StdInvariant, Test {
     function invariant_realizedShortfallsAndCustodyMatchIndependentHistory() public view {
         CDPVault vault = handler.vault();
         MockIMD imd = handler.imd();
-        CompToken comp = handler.comp();
+        ImdUSD comp = handler.comp();
         uint256 totalCollateral;
         uint256 totalDebt;
         uint256 totalRecorded;

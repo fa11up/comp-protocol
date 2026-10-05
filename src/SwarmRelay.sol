@@ -24,10 +24,10 @@ import {CDPVault} from "./CDPVault.sol";
 ///     else liquidates between your update and your call.
 ///
 /// AUDIT NOTE (job c71449d1, info): "holds nothing" is not quite true, and the balance-delta
-/// accounting is why. `markUnderwaterFor` lets any caller name any beneficiary, so a griefer can name
-/// THIS contract as the marker of a position they do not intend to liquidate. A later DIRECT
+/// accounting is why. `barkFor` lets any caller name any beneficiary, so a griefer can name
+/// THIS contract as the marker of a position they do not intend to bite. A later DIRECT
 /// liquidation then pays the marker's cut here, and with no owner and no sweep it stays forever. A
-/// liquidation through `relayAndLiquidate` pays the keeper instead, so the loss is bounded to a
+/// liquidation through `relayAndBite` pays the keeper instead, so the loss is bounded to a
 /// griefer's own forgone reward plus the stranded cut. Left as is: a sweep would need to decide who
 /// deserves the funds, and the vault cannot be asked to recognise which addresses are relays.
 ///
@@ -57,10 +57,10 @@ contract SwarmRelay is ReentrancyGuard {
     }
 
     /// @notice Relay, then mark a position underwater with the CALLER as the marker.
-    /// @dev Moves no tokens. `markUnderwater` would record THIS contract as the marker and pay its
+    /// @dev Moves no tokens. `bark` would record THIS contract as the marker and pay its
     /// share of a later liquidation bonus to an address with no owner and no sweep, stranding it;
-    /// `markUnderwaterFor` exists precisely so a relayed mark pays the keeper that caused it.
-    function relayAndMark(
+    /// `barkFor` exists precisely so a relayed mark pays the keeper that caused it.
+    function relayAndBark(
         SwarmFeed[] calldata feeds,
         SwarmFeed.OracleAttestation[] calldata attestations,
         bytes[] calldata signatures,
@@ -68,10 +68,10 @@ contract SwarmRelay is ReentrancyGuard {
         address borrower
     ) external nonReentrant {
         _relayMany(feeds, attestations, signatures);
-        vault.markUnderwaterFor(borrower, msg.sender);
+        vault.barkFor(borrower, msg.sender);
     }
 
-    /// @notice Relay, then liquidate, so nobody can act on the fresh price in between.
+    /// @notice Relay, then bite, so nobody can act on the fresh price in between.
     /// @dev The custody problem, and the whole difficulty of this function: the vault burns the
     /// CALLER's stablecoin and pays the CALLER the seized collateral, and here the caller is this
     /// contract. So it must hold both for the length of one call and end holding neither.
@@ -84,7 +84,7 @@ contract SwarmRelay is ReentrancyGuard {
     ///
     /// Balance deltas rather than absolute balances, so a donation to this contract cannot be swept
     /// out by a liquidator and cannot make the final assertion fail for everyone.
-    function relayAndLiquidate(
+    function relayAndBite(
         SwarmFeed[] calldata feeds,
         SwarmFeed.OracleAttestation[] calldata attestations,
         bytes[] calldata signatures,
@@ -94,14 +94,14 @@ contract SwarmRelay is ReentrancyGuard {
     ) external nonReentrant {
         _relayMany(feeds, attestations, signatures);
 
-        IERC20 comp = IERC20(address(vault.compToken()));
+        IERC20 comp = IERC20(address(vault.stablecoin()));
         IERC20 collateral = vault.imdToken();
 
         uint256 compBefore = comp.balanceOf(address(this));
         uint256 collateralBefore = collateral.balanceOf(address(this));
 
         comp.safeTransferFrom(msg.sender, address(this), debtToRepay);
-        vault.liquidate(borrower, debtToRepay);
+        vault.bite(borrower, debtToRepay);
 
         uint256 seized = collateral.balanceOf(address(this)) - collateralBefore;
         if (seized != 0) collateral.safeTransfer(msg.sender, seized);

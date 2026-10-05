@@ -20,8 +20,8 @@ is **imdUSD**. "COMP" was a testnet placeholder and must not reach mainnet: COMP
 governance token, listed on every major venue, so shipping a second one guarantees mislabelling by
 aggregators, refused listings, and a domain and ENS name that belong to someone else.
 
-The on-chain cost of the rename is **one line** — `ERC20("Compute Money", "COMP")` in
-`src/CompToken.sol` — because the Solidity identifier never appears in a launch manifest (the vault
+The on-chain cost of the rename is **one line** — `ERC20("imdUSD", "imdUSD")` in
+`src/ImdUSD.sol` — because the Solidity identifier never appears in a launch manifest (the vault
 creates the token in its own constructor). Everything else is identifiers and prose.
 
 Nothing else in this runbook depends on the name, but the name must be settled before the deploy,
@@ -52,7 +52,7 @@ point: an authority held by a contract with no owner cannot be lost, stolen or m
 | name | what it can do | where it lives |
 |---|---|---|
 | `APPROVED_OPERATOR` | propose parameter changes, withdraw from the Treasury, list reserve assets | **cold / multisig. Never on a server.** |
-| keeper daemon | relay attestations, liquidate, mark, buy oracle requests | **hot, on its own machine.** Never the swarm worker box: tasks from strangers execute as that user. |
+| keeper daemon | relay attestations, bite, mark, buy oracle requests | **hot, on its own machine.** Never the swarm worker box: tasks from strangers execute as that user. |
 | deployer | one-time broadcast; needs ETH only | throwaway, discard after §6 |
 
 Held by contracts, not keys:
@@ -74,8 +74,8 @@ Not ours:
 Three separate balances, and they are not interchangeable:
 
 * **ETH** for gas.
-* **imdUSD inventory** — `liquidate` burns the *caller's* stablecoin. A keeper with no imdUSD cannot
-  liquidate anything. This is working capital, not an expense.
+* **imdUSD inventory** — `bite` burns the *caller's* stablecoin. A keeper with no imdUSD cannot
+  bite anything. This is working capital, not an expense.
 * **IMD** for oracle requests, 0.5 IMD each.
 
 `Treasury.withdraw` is `APPROVED_OPERATOR`-only, so the daemon **cannot** pull its own funding
@@ -117,11 +117,11 @@ is immutable and silent** — this is exactly how launch 519 shipped two dead fe
 ### Economic, carry over unchanged unless deliberately revised
 
 `MAX_DIVERGENCE_BPS` 500 · `MARKER_SHARE_BPS` 1000 · `PROTOCOL_BONUS_SHARE_BPS` 3333 ·
-`STABILITY_FEE_BPS` 200 · `ETH_USD_MAX_AGE` 1 day.
+`DUTY_BPS` 200 · `ETH_USD_MAX_AGE` 1 day.
 
 ### The compute channel does not ship in this deployment
 
-`WORK_RATIO_BPS`, `COMP_PER_TASK_WAD`, `WORK_ORACLE_MAX_AGE` and the work oracle's own constants are
+`WORK_RATIO_BPS`, `UNITS_PER_TASK_WAD`, `WORK_ORACLE_MAX_AGE` and the work oracle's own constants are
 **out of scope for a mainnet launch**, and the reason is not readiness. `SwarmWorkOracle` as built
 credits **one** agent named in source, which is a private faucet wearing a protocol's clothes, not a
 compute-backed currency. A protocol that mints for its author's own seat cannot be launched as one
@@ -230,7 +230,7 @@ and Robinhood Chain.
    * each feed's `attester`, `relayer`, `attestationChainId`, `attestationAnswerType`, `maxAge`,
      `maxDeviationBps`
    * each feed's `expectedQuestionHash(from, to)` against the JavaScript hash for the same window
-   * the vault's `imdToken`, `compToken`, `oracle`, `priceFeed`, `nhiFeed`, `spotFeed`,
+   * the vault's `imdToken`, `stablecoin`, `oracle`, `priceFeed`, `nhiFeed`, `spotFeed`,
      `parameters`, `treasury`, `usdPriceFeed`, `feeRecipient`
    * `treasury.vault() == vault` and `parameters.vault() == vault`
    * `vault.workCeiling() == 0` — correct on an empty stack, and proof the ceiling is live

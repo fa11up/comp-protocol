@@ -6,7 +6,7 @@ import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
@@ -38,7 +38,7 @@ contract SelfContainedDeploymentHandler is Test {
     SelfContainedInvariantFactory public factory;
     MockIMD public imd;
     CDPVault public vault;
-    CompToken public comp;
+    ImdUSD public comp;
     MockWorkOracle public oracle;
     SeedablePriceFeed public priceFeed;
     SeedableNhiFeed public nhiFeed;
@@ -60,7 +60,7 @@ contract SelfContainedDeploymentHandler is Test {
         MirroredSwarmFeed spot = new MirroredSwarmFeed(address(priceFeed));
         vm.prank(RELAYER, ORIGIN);
         vault = factory.deploy(address(imd), address(priceFeed), address(nhiFeed), address(spot));
-        comp = vault.compToken();
+        comp = vault.stablecoin();
         oracle = MockWorkOracle(address(vault.oracle()));
         assertEq(comp.vault(), address(vault), "token linked by constructor");
         assertEq(oracle.vault(), address(vault), "oracle linked by constructor");
@@ -81,8 +81,8 @@ contract SelfContainedDeploymentHandler is Test {
             address actor = actors[i];
             vm.startPrank(actor);
             imd.approve(address(vault), type(uint256).max);
-            vault.depositCollateral(300 ether);
-            vault.mintCOMP(100 ether);
+            vault.lock(300 ether);
+            vault.draw(100 ether);
             assertGe(vault.totalDebt() / 4, vault.totalWorkMinted() + 25 ether);
             vault.mintFromWork(25 ether);
             vm.stopPrank();
@@ -98,7 +98,7 @@ contract SelfContainedDeploymentHandler is Test {
         if (available == 0) return;
         amount = bound(amount, 1, available);
         vm.prank(actor);
-        vault.depositCollateral(amount);
+        vault.lock(amount);
         deposited[actor] += amount;
     }
 
@@ -109,7 +109,7 @@ contract SelfContainedDeploymentHandler is Test {
         if (maximumDebt <= debt) return;
         amount = bound(amount, 1, _min(maximumDebt - debt, 1000 ether));
         vm.prank(actor);
-        vault.mintCOMP(amount);
+        vault.draw(amount);
         debtMinted[actor] += amount;
     }
 
@@ -139,7 +139,7 @@ contract SelfContainedDeploymentHandler is Test {
         // history stays an independent model of principal rather than of gross payments.
         uint256 feeBefore = vault.stabilityFeeOf(actor);
         vm.prank(actor);
-        vault.repayCOMP(amount);
+        vault.wipe(amount);
         repaid[actor] += amount - (amount < feeBefore ? amount : feeBefore);
     }
 
@@ -150,7 +150,7 @@ contract SelfContainedDeploymentHandler is Test {
         if (collateral <= requiredCollateral) return;
         amount = bound(amount, 1, collateral - requiredCollateral);
         vm.prank(actor);
-        vault.withdrawCollateral(amount);
+        vault.free(amount);
         withdrawn[actor] += amount;
     }
 
@@ -171,27 +171,27 @@ contract SelfContainedDeploymentHandler is Test {
         bytes32 beforeState = _stateDigest(actor);
         vm.startPrank(actor);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        vault.mintCOMP(collateral * 2 / 3 - debt + 1);
+        vault.draw(collateral * 2 / 3 - debt + 1);
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
-        vault.repayCOMP(debt + 1);
+        vault.wipe(debt + 1);
         vm.expectRevert(CDPVault.InsufficientRights.selector);
         vault.mintFromWork(rights + 1);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
-        vault.withdrawCollateral(collateral + 1);
+        vault.free(collateral + 1);
         if (debt != 0) {
             vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-            vault.withdrawCollateral(collateral - (debt * 3 + 1) / 2 + 1);
+            vault.free(collateral - (debt * 3 + 1) / 2 + 1);
         }
         vm.expectRevert(CDPVault.ZeroAmount.selector);
-        vault.depositCollateral(0);
+        vault.lock(0);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
-        vault.mintCOMP(0);
+        vault.draw(0);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
         vault.mintFromWork(0);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
-        vault.repayCOMP(0);
+        vault.wipe(0);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
-        vault.withdrawCollateral(0);
+        vault.free(0);
         vm.stopPrank();
         assertEq(_stateDigest(actor), beforeState, "rejected borrower calls are atomic");
     }
@@ -201,11 +201,11 @@ contract SelfContainedDeploymentHandler is Test {
         address[3] memory callers = [OPERATOR, address(factory), actor];
         bytes32 beforeState = _stateDigest(actor);
         vm.startPrank(callers[(seed / 4) % 3], OPERATOR);
-        vm.expectRevert(CompToken.AlreadyInitialized.selector);
+        vm.expectRevert(ImdUSD.AlreadyInitialized.selector);
         comp.setVault(actor);
-        vm.expectRevert(CompToken.Unauthorized.selector);
+        vm.expectRevert(ImdUSD.Unauthorized.selector);
         comp.mint(actor, 1);
-        vm.expectRevert(CompToken.Unauthorized.selector);
+        vm.expectRevert(ImdUSD.Unauthorized.selector);
         comp.burn(actor, 1);
         vm.expectRevert(MockWorkOracle.Unauthorized.selector);
         oracle.consumeRights(actor, 1);
@@ -232,12 +232,12 @@ contract SelfContainedDeploymentHandler is Test {
         (, uint256 debt) = vault.positions(actor);
         vm.startPrank(actor);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vault.mintCOMP(1);
+        vault.draw(1);
         vm.expectRevert(CDPVault.StaleFeed.selector);
         vault.mintFromWork(1);
         if (debt != 0) {
             vm.expectRevert(CDPVault.StaleFeed.selector);
-            vault.withdrawCollateral(1);
+            vault.free(1);
         }
         vm.stopPrank();
         assertEq(_stateDigest(actor), beforeState, "one fresh feed cannot authorize borrowing");
@@ -291,7 +291,7 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
 
     function invariant_constructorLinksSupplyRightsAndCustodyRemainConsistent() public view {
         CDPVault vault = handler.vault();
-        CompToken comp = handler.comp();
+        ImdUSD comp = handler.comp();
         uint256 debts;
         uint256 work;
         uint256 collateral;
@@ -338,7 +338,7 @@ contract SelfContainedDeploymentInvariantTest is StdInvariant, Test {
         assertEq(handler.imd().balanceOf(address(vault)), collateral, "vault IMD custody");
         assertEq(handler.imd().totalSupply(), walletIMD + collateral, "all IMD accounted for");
         assertEq(address(vault.imdToken()), address(handler.imd()));
-        assertEq(address(vault.compToken()), address(comp));
+        assertEq(address(vault.stablecoin()), address(comp));
         assertEq(comp.vault(), address(vault), "token remains bound");
         assertEq(address(vault.oracle()), address(handler.oracle()), "oracle remains bound");
         assertEq(handler.oracle().vault(), address(vault), "oracle consumer remains bound");

@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CDPVault} from "src/CDPVault.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {SwarmFeed} from "src/SwarmFeed.sol";
 import {SwarmRelay} from "src/SwarmRelay.sol";
@@ -13,7 +13,7 @@ import {APPROVED_OPERATOR} from "src/DeploymentConfig.sol";
 
 /// @notice Keeper bundling: one transaction that carries the price AND acts on it.
 /// @dev The race this closes is real money. A keeper who relays an attestation and then calls
-/// liquidate in a second transaction is handing every other keeper a free option on the price they
+/// bite in a second transaction is handing every other keeper a free option on the price they
 /// just paid to publish. Bundling removes the gap. The difficulty is entirely custody: the vault
 /// burns the CALLER's stablecoin and pays the CALLER the collateral, so for the length of one call
 /// the relay is the liquidator, and it must end the call holding nothing.
@@ -32,7 +32,7 @@ contract RelayBundlingTest is Test {
     ConfigurableSwarmFeed private spotFeed;
     CDPVault private vault;
     MockIMD private imd;
-    CompToken private comp;
+    ImdUSD private comp;
 
     function setUp() public {
         vm.chainId(11155111);
@@ -48,18 +48,18 @@ contract RelayBundlingTest is Test {
         vault = new CDPVault(
             address(imd), address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
-        comp = vault.compToken();
+        comp = vault.stablecoin();
 
         vm.prank(APPROVED_OPERATOR);
         imd.mint(BORROWER, 1_000 ether);
         vm.startPrank(BORROWER);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(1_000 ether);
-        vault.mintCOMP(550 ether); // CR ~182%, healthy while NHI is 0.9
+        vault.lock(1_000 ether);
+        vault.draw(550 ether); // CR ~182%, healthy while NHI is 0.9
         vm.stopPrank();
     }
 
-    /// @dev Dropping NHI to 0.6 raises minCR to 200 and sets the grace period to zero, which is how a
+    /// @dev Dropping NHI to 0.6 raises mat to 200 and sets the grace period to zero, which is how a
     /// position becomes liquidatable immediately instead of after a six-hour wait.
     function _makeLiquidatable() private {
         // Walked in two steps: 0.9 straight to 0.6 is a 33% move and the feed's own deviation bound
@@ -76,16 +76,16 @@ contract RelayBundlingTest is Test {
         imd.mint(market, 1_000 ether);
         vm.startPrank(market);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(1_000 ether);
-        vault.mintCOMP(amount);
+        vault.lock(1_000 ether);
+        vault.draw(amount);
         comp.transfer(keeper, amount);
         vm.stopPrank();
     }
 
     // --- marking --------------------------------------------------------------
 
-    /// @dev The reason markUnderwaterFor exists. Through a relay, msg.sender is the relay, so a plain
-    /// markUnderwater would pay the marker's share of a future bonus to a contract with no owner and
+    /// @dev The reason barkFor exists. Through a relay, msg.sender is the relay, so a plain
+    /// bark would pay the marker's share of a future bonus to a contract with no owner and
     /// no sweep — stranded forever.
     function test_aRelayedMarkPaysTheKeeperAndNeverTheRelay() public {
         _makeLiquidatable();
@@ -93,7 +93,7 @@ contract RelayBundlingTest is Test {
             _bundle(keccak256("mark"), PRICE);
 
         vm.prank(KEEPER);
-        relay.relayAndMark(feeds, a, sigs, vault, BORROWER);
+        relay.relayAndBark(feeds, a, sigs, vault, BORROWER);
 
         (,,, address beneficiary) = vault.liquidationMarks(BORROWER);
         assertEq(beneficiary, KEEPER, "the keeper that caused the mark is the marker");
@@ -105,7 +105,7 @@ contract RelayBundlingTest is Test {
         (SwarmFeed[] memory feeds, SwarmFeed.OracleAttestation[] memory a, bytes[] memory sigs) =
             _bundle(keccak256("mark2"), PRICE);
         vm.prank(KEEPER);
-        relay.relayAndMark(feeds, a, sigs, vault, BORROWER);
+        relay.relayAndBark(feeds, a, sigs, vault, BORROWER);
         assertEq(comp.balanceOf(address(relay)), 0);
         assertEq(imd.balanceOf(address(relay)), 0);
     }
@@ -125,7 +125,7 @@ contract RelayBundlingTest is Test {
         _fundKeeper(KEEPER, debt);
         vm.startPrank(KEEPER);
         comp.approve(address(vault), debt);
-        vault.liquidate(BORROWER, debt);
+        vault.bite(BORROWER, debt);
         vm.stopPrank();
         uint256 direct = imd.balanceOf(KEEPER);
         assertGt(direct, 0);
@@ -139,7 +139,7 @@ contract RelayBundlingTest is Test {
             _bundle(keccak256("liq"), PRICE);
         vm.startPrank(KEEPER);
         comp.approve(address(relay), debt);
-        relay.relayAndLiquidate(feeds, a, sigs, vault, BORROWER, debt);
+        relay.relayAndBite(feeds, a, sigs, vault, BORROWER, debt);
         vm.stopPrank();
 
         assertEq(imd.balanceOf(KEEPER), direct, "to the wei");
@@ -159,7 +159,7 @@ contract RelayBundlingTest is Test {
 
         vm.startPrank(KEEPER);
         comp.approve(address(relay), type(uint256).max);
-        relay.relayAndLiquidate(feeds, a, sigs, vault, BORROWER, debt);
+        relay.relayAndBite(feeds, a, sigs, vault, BORROWER, debt);
         vm.stopPrank();
 
         assertEq(comp.balanceOf(KEEPER), 5 ether, "only the debt amount was taken");
@@ -181,7 +181,7 @@ contract RelayBundlingTest is Test {
         vm.startPrank(KEEPER);
         comp.approve(address(relay), debt);
         vm.expectRevert(SwarmFeed.InvalidSignature.selector);
-        relay.relayAndLiquidate(feeds, a, forged, vault, BORROWER, debt);
+        relay.relayAndBite(feeds, a, forged, vault, BORROWER, debt);
         vm.stopPrank();
 
         assertEq(comp.balanceOf(KEEPER), debt, "the keeper's stablecoin never left");
@@ -206,7 +206,7 @@ contract RelayBundlingTest is Test {
         vm.startPrank(KEEPER);
         comp.approve(address(relay), debt);
         uint256 before = imd.balanceOf(KEEPER);
-        relay.relayAndLiquidate(feeds, a, sigs, vault, BORROWER, debt);
+        relay.relayAndBite(feeds, a, sigs, vault, BORROWER, debt);
         vm.stopPrank();
 
         assertEq(imd.balanceOf(address(relay)), 7 ether, "the donation stays put");
@@ -221,14 +221,14 @@ contract RelayBundlingTest is Test {
         (SwarmFeed[] memory feeds, SwarmFeed.OracleAttestation[] memory a, bytes[] memory sigs) =
             _bundle(keccak256("reenter"), PRICE);
         vm.expectRevert(); // ReentrancyGuardReentrantCall, surfaced through the vault's own revert
-        relay.relayAndLiquidate(feeds, a, sigs, CDPVault(address(evil)), BORROWER, 0);
+        relay.relayAndBite(feeds, a, sigs, CDPVault(address(evil)), BORROWER, 0);
     }
 
     // --- helpers --------------------------------------------------------------
 
     function _mark(address marker) private {
         vm.prank(marker);
-        vault.markUnderwater(BORROWER);
+        vault.bark(BORROWER);
     }
 
     function _bundle(bytes32 id, uint256 figure)
@@ -307,19 +307,19 @@ contract RelayBundlingTest is Test {
     }
 }
 
-/// @notice A "vault" whose liquidate calls straight back into the relay.
+/// @notice A "vault" whose bite calls straight back into the relay.
 contract ReenteringVault {
     SwarmRelay private immutable relay;
-    CompToken private immutable comp;
+    ImdUSD private immutable comp;
     MockIMD private immutable imd;
 
-    constructor(SwarmRelay relay_, CompToken comp_, MockIMD imd_) {
+    constructor(SwarmRelay relay_, ImdUSD comp_, MockIMD imd_) {
         relay = relay_;
         comp = comp_;
         imd = imd_;
     }
 
-    function compToken() external view returns (CompToken) {
+    function stablecoin() external view returns (ImdUSD) {
         return comp;
     }
 
@@ -327,10 +327,10 @@ contract ReenteringVault {
         return IERC20(address(imd));
     }
 
-    function liquidate(address, uint256) external {
+    function bite(address, uint256) external {
         SwarmFeed[] memory feeds = new SwarmFeed[](0);
         SwarmFeed.OracleAttestation[] memory a = new SwarmFeed.OracleAttestation[](0);
         bytes[] memory sigs = new bytes[](0);
-        relay.relayAndLiquidate(feeds, a, sigs, CDPVault(address(this)), address(0), 0);
+        relay.relayAndBite(feeds, a, sigs, CDPVault(address(this)), address(0), 0);
     }
 }

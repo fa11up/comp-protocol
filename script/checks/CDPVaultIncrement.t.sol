@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {CDPVault} from "../../src/CDPVault.sol";
-import {CompToken} from "../../src/CompToken.sol";
+import {ImdUSD} from "../../src/ImdUSD.sol";
 import {MockIMD} from "../../src/MockIMD.sol";
 import {MockWorkOracle} from "../../src/MockWorkOracle.sol";
 import {ISwarmFeed} from "../../src/interfaces/ISwarmFeed.sol";
@@ -14,7 +14,7 @@ import {
     FEE_RECIPIENT,
     MAX_DIVERGENCE_BPS,
     MARKER_SHARE_BPS,
-    STABILITY_FEE_BPS
+    DUTY_BPS
 } from "../../src/DeploymentConfig.sol";
 
 /// @dev Independent fixture: these tests exercise the vault's checks, not feed aggregation.
@@ -63,7 +63,7 @@ contract IncrementCeilingVault is IncrementShareVault {
         IncrementShareVault(collateral, primary, nhi, spot, 0)
     {}
 
-    function debtCeiling() public pure override returns (uint256) {
+    function line() public pure override returns (uint256) {
         return 100 ether;
     }
 }
@@ -71,11 +71,11 @@ contract IncrementCeilingVault is IncrementShareVault {
 /// @notice Run independently of legacy constructor fixtures with:
 /// FOUNDRY_TEST=script/checks FOUNDRY_OUT=test/scratch/out FOUNDRY_CACHE_PATH=test/scratch/cache \
 /// forge test --match-path script/checks/CDPVaultIncrement.t.sol
-/// The fee cases also support a scratch source copy with a nonzero STABILITY_FEE_BPS.
+/// The fee cases also support a scratch source copy with a nonzero DUTY_BPS.
 contract CDPVaultIncrementTest is Test {
     MockIMD private imd;
     CDPVault private vault;
-    CompToken private comp;
+    ImdUSD private comp;
     IncrementFeed private primary;
     IncrementFeed private spot;
     IncrementFeed private nhi;
@@ -90,7 +90,7 @@ contract CDPVaultIncrementTest is Test {
         spot = new IncrementFeed(1 ether);
         nhi = new IncrementFeed(0.85 ether);
         vault = new CDPVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
-        comp = vault.compToken();
+        comp = vault.stablecoin();
         vm.startPrank(APPROVED_OPERATOR);
         imd.mint(ALICE, 10_000 ether);
         imd.mint(BOB, 10_000 ether);
@@ -107,7 +107,7 @@ contract CDPVaultIncrementTest is Test {
         assertEq(address(vault.spotFeed()), address(spot));
         assertEq(vault.maxDivergenceBps(), MAX_DIVERGENCE_BPS);
         assertEq(vault.markerShareBps(), MARKER_SHARE_BPS);
-        assertEq(vault.stabilityFeeBps(), STABILITY_FEE_BPS);
+        assertEq(vault.duty(), DUTY_BPS);
         assertEq(comp.vault(), address(vault));
         assertEq(MockWorkOracle(address(vault.oracle())).vault(), address(vault));
     }
@@ -122,18 +122,18 @@ contract CDPVaultIncrementTest is Test {
         uint256 tolerance = 1 ether * MAX_DIVERGENCE_BPS / 10_000;
         spot.set(1 ether + tolerance);
         vm.prank(ALICE);
-        vault.mintCOMP(1 ether);
+        vault.draw(1 ether);
         spot.set(1 ether + tolerance + 1);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
         vm.prank(ALICE);
-        vault.mintCOMP(1 ether);
+        vault.draw(1 ether);
         spot.set(1 ether - tolerance);
         vm.prank(ALICE);
-        vault.mintCOMP(1 ether);
+        vault.draw(1 ether);
         spot.set(1 ether - tolerance - 1);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
         vm.prank(ALICE);
-        vault.mintCOMP(1 ether);
+        vault.draw(1 ether);
         assertEq(vault.debtOf(ALICE), 2 ether);
     }
 
@@ -144,11 +144,11 @@ contract CDPVaultIncrementTest is Test {
         primary.set(price);
         spot.set(price - tolerance);
         vm.prank(ALICE);
-        vault.mintCOMP(1 ether);
+        vault.draw(1 ether);
         spot.set(price - tolerance - 1);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
         vm.prank(ALICE);
-        vault.mintCOMP(1 ether);
+        vault.draw(1 ether);
     }
 
     function test_divergenceBlocksAllThreeActionsButAllowsRepaymentAndDebtFreeExit() public {
@@ -156,18 +156,18 @@ contract CDPVaultIncrementTest is Test {
         _price(0.4 ether);
         nhi.set(0.6 ether);
         vm.prank(MARKER);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         spot.set(1 ether);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
         vm.prank(ALICE);
-        vault.mintCOMP(1);
+        vault.draw(1);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
-        vault.liquidate(ALICE, 1);
+        vault.bite(ALICE, 1);
         vm.startPrank(ALICE);
-        vault.repayCOMP(100 ether);
-        vault.withdrawCollateral(300 ether);
+        vault.wipe(100 ether);
+        vault.free(300 ether);
         vm.stopPrank();
         _position(vault, 0, 0);
         assertEq(imd.balanceOf(ALICE), 10_000 ether);
@@ -177,30 +177,30 @@ contract CDPVaultIncrementTest is Test {
         _open(300 ether, 100 ether);
         _price(0.4 ether);
         nhi.set(0.6 ether);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         spot.setStale(true);
         vm.expectRevert(CDPVault.StaleFeed.selector);
         vm.prank(ALICE);
-        vault.mintCOMP(1);
+        vault.draw(1);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vault.liquidate(ALICE, 1);
+        vault.bite(ALICE, 1);
         spot.setStale(false);
         spot.set(0);
         vm.expectRevert(CDPVault.InvalidPrice.selector);
         vm.prank(ALICE);
-        vault.mintCOMP(1);
+        vault.draw(1);
         vm.expectRevert(CDPVault.InvalidPrice.selector);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         vm.expectRevert(CDPVault.InvalidPrice.selector);
-        vault.liquidate(ALICE, 1);
+        vault.bite(ALICE, 1);
         vm.startPrank(ALICE);
-        vault.repayCOMP(100 ether);
+        vault.wipe(100 ether);
         primary.setStale(true);
         nhi.setStale(true);
         spot.setStale(true);
-        vault.withdrawCollateral(300 ether);
+        vault.free(300 ether);
         vm.stopPrank();
         _position(vault, 0, 0);
     }
@@ -213,7 +213,7 @@ contract CDPVaultIncrementTest is Test {
         vault.mintFromWork(5 ether);
         vm.expectRevert(CDPVault.StaleFeed.selector);
         vm.prank(ALICE);
-        vault.withdrawCollateral(1 ether);
+        vault.free(1 ether);
         assertEq(comp.balanceOf(BOB), 5 ether);
         _position(vault, 300 ether, 100 ether);
     }
@@ -223,21 +223,21 @@ contract CDPVaultIncrementTest is Test {
         primary.setStale(true);
         vm.expectRevert(CDPVault.StaleFeed.selector);
         vm.prank(ALICE);
-        vault.withdrawCollateral(1);
+        vault.free(1);
         primary.setStale(false);
         nhi.setStale(true);
         vm.expectRevert(CDPVault.StaleFeed.selector);
         vm.prank(ALICE);
-        vault.mintCOMP(1);
+        vault.draw(1);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
     }
 
     function test_repeatedMarkPreservesMarkerAndGraceSnapshot() public {
         _open(300 ether, 100 ether);
         _price(0.4 ether);
         vm.prank(MARKER);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         (uint256 markedAt, uint256 grace, bool marked, address marker) = vault.liquidationMarks(ALICE);
         assertTrue(marked);
         assertEq(grace, 6 hours);
@@ -245,18 +245,18 @@ contract CDPVaultIncrementTest is Test {
         nhi.set(0.6 ether);
         vm.warp(block.timestamp + 1 hours);
         vm.prank(OTHER_MARKER);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         (uint256 againAt, uint256 againGrace,, address againMarker) = vault.liquidationMarks(ALICE);
         assertEq(againAt, markedAt);
         assertEq(againGrace, grace);
         assertEq(againMarker, MARKER);
         vm.expectRevert(CDPVault.GracePeriodNotElapsed.selector);
-        vault.liquidate(ALICE, 1);
+        vault.bite(ALICE, 1);
         vm.warp(markedAt + grace + vault.liquidationWindow() + 1);
         vm.expectRevert(CDPVault.MarkExpired.selector);
-        vault.liquidate(ALICE, 1);
+        vault.bite(ALICE, 1);
         vm.prank(OTHER_MARKER);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         (againAt, againGrace,, againMarker) = vault.liquidationMarks(ALICE);
         assertEq(againAt, block.timestamp);
         assertEq(againGrace, 0);
@@ -269,10 +269,10 @@ contract CDPVaultIncrementTest is Test {
         _price(0.4 ether);
         nhi.set(0.6 ether);
         vm.prank(MARKER);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         uint256 beforeBalance = imd.balanceOf(BOB);
         vm.prank(BOB);
-        vault.liquidate(ALICE, 20 ether);
+        vault.bite(ALICE, 20 ether);
         uint256 payout = 55 ether;
         uint256 markerCut = 5 ether * MARKER_SHARE_BPS / 10_000;
         assertEq(imd.balanceOf(MARKER), markerCut);
@@ -287,11 +287,11 @@ contract CDPVaultIncrementTest is Test {
         _price(0.4 ether);
         nhi.set(0.6 ether);
         vm.prank(BOB);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         uint256 beforeBalance = imd.balanceOf(BOB);
         vm.recordLogs();
         vm.prank(BOB);
-        vault.liquidate(ALICE, 20 ether);
+        vault.bite(ALICE, 20 ether);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 collateralTransfers;
         for (uint256 i; i < logs.length; ++i) {
@@ -311,28 +311,28 @@ contract CDPVaultIncrementTest is Test {
             new IncrementShareVault(address(imd), address(primary), address(nhi), address(spot), 2_000);
         vm.startPrank(ALICE);
         imd.approve(address(shared), type(uint256).max);
-        shared.depositCollateral(300 ether);
-        shared.mintCOMP(100 ether);
-        shared.compToken().transfer(BOB, 100 ether);
+        shared.lock(300 ether);
+        shared.draw(100 ether);
+        shared.stablecoin().transfer(BOB, 100 ether);
         vm.stopPrank();
         _open(300 ether, 100 ether);
         _fundLiquidator(100 ether);
         _price(0.4 ether);
         nhi.set(0.6 ether);
         vm.startPrank(MARKER);
-        vault.markUnderwater(ALICE);
-        shared.markUnderwater(ALICE);
+        vault.bark(ALICE);
+        shared.bark(ALICE);
         vm.stopPrank();
         uint256 protocolBalance = imd.balanceOf(FEE_RECIPIENT);
         uint256 liquidatorBalance = imd.balanceOf(BOB);
         vm.prank(BOB);
-        shared.liquidate(ALICE, 20 ether);
+        shared.bite(ALICE, 20 ether);
         uint256 markerCut = 5 ether * MARKER_SHARE_BPS / 10_000;
         assertEq(imd.balanceOf(FEE_RECIPIENT) - protocolBalance, 1 ether);
         assertEq(imd.balanceOf(MARKER), markerCut);
         assertEq(imd.balanceOf(BOB) - liquidatorBalance, 54 ether - markerCut);
         vm.prank(BOB);
-        vault.liquidate(ALICE, 20 ether);
+        vault.bite(ALICE, 20 ether);
         (uint256 defaultCollateral, uint256 defaultDebt) = vault.positions(ALICE);
         _position(shared, defaultCollateral, defaultDebt);
         assertEq(defaultCollateral, 245 ether, "same 110 percent payout regardless of recipients");
@@ -344,14 +344,14 @@ contract CDPVaultIncrementTest is Test {
         );
         vm.startPrank(ALICE);
         imd.approve(address(invalid), type(uint256).max);
-        invalid.depositCollateral(300 ether);
-        invalid.mintCOMP(100 ether);
+        invalid.lock(300 ether);
+        invalid.draw(100 ether);
         vm.stopPrank();
         _price(0.4 ether);
         nhi.set(0.6 ether);
-        invalid.markUnderwater(ALICE);
+        invalid.bark(ALICE);
         vm.expectRevert(CDPVault.InvalidBonusShares.selector);
-        invalid.liquidate(ALICE, 20 ether);
+        invalid.bite(ALICE, 20 ether);
         _position(invalid, 300 ether, 100 ether);
     }
 
@@ -362,29 +362,29 @@ contract CDPVaultIncrementTest is Test {
         nhi.set(0.6 ether);
         assertEq(vault.badDebtOf(ALICE), 15 ether);
         assertEq(vault.totalBadDebt(), 0, "not yet realized by collateral exhaustion");
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vm.prank(BOB);
-        vault.liquidate(ALICE, 70 ether);
+        vault.bite(ALICE, 70 ether);
         _position(vault, 110 ether, 70 ether);
         vm.prank(BOB);
-        vault.liquidate(ALICE, 55 ether);
+        vault.bite(ALICE, 55 ether);
         _position(vault, 0, 15 ether);
         assertEq(vault.badDebtOf(ALICE), 15 ether);
         assertEq(vault.totalBadDebt(), 15 ether);
         assertEq(vault.totalDebt(), 15 ether);
         vm.expectRevert(CDPVault.InsufficientCollateral.selector);
         vm.prank(BOB);
-        vault.liquidate(ALICE, 1 ether);
+        vault.bite(ALICE, 1 ether);
         assertEq(vault.totalBadDebt(), 15 ether);
         vm.prank(BOB);
         comp.transfer(ALICE, 15 ether);
         vm.prank(ALICE);
-        vault.repayCOMP(5 ether);
+        vault.wipe(5 ether);
         _position(vault, 0, 10 ether);
         assertEq(vault.totalBadDebt(), 10 ether);
         vm.prank(ALICE);
-        vault.repayCOMP(10 ether);
+        vault.wipe(10 ether);
         _position(vault, 0, 0);
         assertEq(vault.totalBadDebt(), 0);
         assertEq(comp.totalSupply(), 0);
@@ -395,11 +395,11 @@ contract CDPVaultIncrementTest is Test {
         _fundLiquidator(70 ether);
         _price(0.55 ether);
         nhi.set(0.6 ether);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         vm.prank(BOB);
-        vault.liquidate(ALICE, 55 ether);
+        vault.bite(ALICE, 55 ether);
         vm.prank(ALICE);
-        vault.depositCollateral(10 ether);
+        vault.lock(10 ether);
         _position(vault, 10 ether, 15 ether);
         assertEq(vault.badDebtOf(ALICE), 10 ether);
         assertEq(vault.totalBadDebt(), 15 ether);
@@ -413,9 +413,9 @@ contract CDPVaultIncrementTest is Test {
         _price(1 ether);
         nhi.set(0.6 ether);
         assertEq(vault.badDebtOf(ALICE), 0, "one collateral wei covers the rounded one-wei payout");
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         vm.prank(BOB);
-        vault.liquidate(ALICE, 1);
+        vault.bite(ALICE, 1);
         _position(vault, 0, 0);
         assertEq(vault.totalBadDebt(), 0);
     }
@@ -440,17 +440,17 @@ contract CDPVaultIncrementTest is Test {
 
     function test_feeIsLinearAndReadsDoNotCompoundOrCheckpoint() public {
         _open(1_000 ether, 100 ether);
-        uint256 originalIndex = vault.debtIndexOf(ALICE);
+        uint256 originalIndex = vault.chiOf(ALICE);
         uint256 started = block.timestamp;
         vm.warp(started + 365 days);
-        uint256 yearFee = 100 ether * STABILITY_FEE_BPS / 10_000;
+        uint256 yearFee = 100 ether * DUTY_BPS / 10_000;
         assertEq(vault.debtOf(ALICE), 100 ether + yearFee);
         assertEq(vault.stabilityFeeOf(ALICE), yearFee);
         _position(vault, 1_000 ether, 100 ether + yearFee);
         assertEq(vault.collateralRatio(ALICE), 1_000 ether * 100 / (100 ether + yearFee));
         vm.prank(ALICE);
-        vault.depositCollateral(1 ether);
-        assertEq(vault.debtIndexOf(ALICE), originalIndex, "collateral changes do not capitalize interest");
+        vault.lock(1 ether);
+        assertEq(vault.chiOf(ALICE), originalIndex, "collateral changes do not capitalize interest");
         vm.warp(started + 2 * 365 days);
         assertEq(vault.debtOf(ALICE), 100 ether + 2 * yearFee);
         assertEq(vault.totalDebt(), 100 ether, "ceiling remains an outstanding principal limit");
@@ -461,11 +461,11 @@ contract CDPVaultIncrementTest is Test {
         _open(1_000 ether, 100 ether);
         uint256 started = block.timestamp;
         vm.warp(started + 365 days);
-        uint256 fee = 100 ether * STABILITY_FEE_BPS / 10_000;
+        uint256 fee = 100 ether * DUTY_BPS / 10_000;
         uint256 recipientBalance = comp.balanceOf(FEE_RECIPIENT);
         if (fee != 0) {
             vm.prank(ALICE);
-            vault.repayCOMP(fee / 2);
+            vault.wipe(fee / 2);
             assertEq(vault.totalDebt(), 100 ether);
             assertEq(vault.stabilityFeeOf(ALICE), fee - fee / 2);
             assertEq(comp.balanceOf(FEE_RECIPIENT) - recipientBalance, fee / 2);
@@ -473,7 +473,7 @@ contract CDPVaultIncrementTest is Test {
         }
         uint256 remainingFee = vault.stabilityFeeOf(ALICE);
         vm.prank(ALICE);
-        vault.repayCOMP(remainingFee + 10 ether);
+        vault.wipe(remainingFee + 10 ether);
         assertEq(vault.totalDebt(), 90 ether);
         assertEq(vault.debtOf(ALICE), 90 ether);
         assertEq(vault.stabilityFeeOf(ALICE), 0);
@@ -481,20 +481,20 @@ contract CDPVaultIncrementTest is Test {
         assertEq(comp.balanceOf(FEE_RECIPIENT) - recipientBalance, fee);
         assertEq(comp.totalSupply(), vault.totalDebt() + vault.totalWorkMinted());
         vm.warp(started + 2 * 365 days);
-        assertEq(vault.debtOf(ALICE), 90 ether + 90 ether * STABILITY_FEE_BPS / 10_000);
+        assertEq(vault.debtOf(ALICE), 90 ether + 90 ether * DUTY_BPS / 10_000);
     }
 
     function test_borrowCheckpointPreservesUnpaidFeeWithoutChargingFeeOnFee() public {
         _open(1_000 ether, 100 ether);
         uint256 started = block.timestamp;
         vm.warp(started + 365 days);
-        uint256 firstYearFee = 100 ether * STABILITY_FEE_BPS / 10_000;
+        uint256 firstYearFee = 100 ether * DUTY_BPS / 10_000;
         vm.prank(ALICE);
-        vault.mintCOMP(50 ether);
+        vault.draw(50 ether);
         assertEq(vault.debtOf(ALICE), 150 ether + firstYearFee);
-        assertEq(vault.debtIndexOf(ALICE), vault.debtIndex());
+        assertEq(vault.chiOf(ALICE), vault.chi());
         vm.warp(started + 2 * 365 days);
-        assertEq(vault.debtOf(ALICE), 150 ether + 250 ether * STABILITY_FEE_BPS / 10_000);
+        assertEq(vault.debtOf(ALICE), 150 ether + 250 ether * DUTY_BPS / 10_000);
         assertEq(vault.totalDebt(), 150 ether);
         assertEq(vault.totalFeesMinted(), 0);
     }
@@ -504,37 +504,37 @@ contract CDPVaultIncrementTest is Test {
             new IncrementCeilingVault(address(imd), address(primary), address(nhi), address(spot));
         vm.startPrank(ALICE);
         imd.approve(address(capped), type(uint256).max);
-        capped.depositCollateral(1_000 ether);
-        capped.mintCOMP(100 ether);
+        capped.lock(1_000 ether);
+        capped.draw(100 ether);
         vm.warp(block.timestamp + 365 days);
         uint256 fee = capped.stabilityFeeOf(ALICE);
-        assertEq(capped.totalDebt(), capped.debtCeiling());
+        assertEq(capped.totalDebt(), capped.line());
         assertEq(capped.debtOf(ALICE), 100 ether + fee);
         vm.expectRevert(CDPVault.DebtCeilingReached.selector);
-        capped.mintCOMP(1);
-        capped.repayCOMP(fee + 10 ether);
+        capped.draw(1);
+        capped.wipe(fee + 10 ether);
         assertEq(capped.totalDebt(), 90 ether);
-        capped.mintCOMP(10 ether);
+        capped.draw(10 ether);
         assertEq(capped.totalDebt(), 100 ether);
         vm.expectRevert(CDPVault.DebtCeilingReached.selector);
-        capped.mintCOMP(1);
+        capped.draw(1);
         vm.stopPrank();
     }
 
     function test_nonzeroFeeAffectsHealthAndLiquidationRepayment() public {
-        if (STABILITY_FEE_BPS == 0) {
+        if (DUTY_BPS == 0) {
             vm.skip(true);
             return;
         }
         _open(150 ether, 100 ether);
         uint256 started = block.timestamp;
         vm.warp(started + 365 days);
-        uint256 fee = 100 ether * STABILITY_FEE_BPS / 10_000;
+        uint256 fee = 100 ether * DUTY_BPS / 10_000;
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
         vm.prank(ALICE);
-        vault.withdrawCollateral(1);
+        vault.free(1);
         vm.prank(MARKER);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         (, uint256 grace,,) = vault.liquidationMarks(ALICE);
         vm.warp(block.timestamp + grace);
         uint256 debt = vault.debtOf(ALICE);
@@ -545,7 +545,7 @@ contract CDPVaultIncrementTest is Test {
         uint256 recipientBalance = comp.balanceOf(FEE_RECIPIENT);
         uint256 owedFee = vault.stabilityFeeOf(ALICE);
         vm.prank(BOB);
-        vault.liquidate(ALICE, debt);
+        vault.bite(ALICE, debt);
         assertEq(vault.debtOf(ALICE), 0);
         assertEq(vault.totalDebt(), 0);
         assertEq(vault.totalFeesMinted(), owedFee);
@@ -554,7 +554,7 @@ contract CDPVaultIncrementTest is Test {
     }
 
     function test_nonzeroFeeOnlyRepaymentCannotEraseRecordedPrincipalShortfall() public {
-        if (STABILITY_FEE_BPS == 0) {
+        if (DUTY_BPS == 0) {
             vm.skip(true);
             return;
         }
@@ -562,9 +562,9 @@ contract CDPVaultIncrementTest is Test {
         _fundLiquidator(70 ether);
         _price(0.55 ether);
         nhi.set(0.6 ether);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         vm.prank(BOB);
-        vault.liquidate(ALICE, 55 ether);
+        vault.bite(ALICE, 55 ether);
         vm.warp(block.timestamp + 365 days);
         uint256 fee = vault.stabilityFeeOf(ALICE);
         vm.startPrank(BOB);
@@ -572,7 +572,7 @@ contract CDPVaultIncrementTest is Test {
         comp.transfer(ALICE, fee);
         vm.stopPrank();
         vm.prank(ALICE);
-        vault.repayCOMP(fee);
+        vault.wipe(fee);
         _position(vault, 0, 15 ether);
         assertEq(vault.totalDebt(), 15 ether);
         assertEq(vault.totalBadDebt(), 15 ether);
@@ -582,8 +582,8 @@ contract CDPVaultIncrementTest is Test {
 
     function _open(uint256 collateral, uint256 debt) private {
         vm.startPrank(ALICE);
-        vault.depositCollateral(collateral);
-        if (debt != 0) vault.mintCOMP(debt);
+        vault.lock(collateral);
+        if (debt != 0) vault.draw(debt);
         vm.stopPrank();
     }
 

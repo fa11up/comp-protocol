@@ -6,7 +6,7 @@ import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
 import {SpotFeed} from "../src/SpotFeed.sol";
 import {CDPVault} from "../src/CDPVault.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
 
@@ -19,7 +19,7 @@ contract SeedAndSmoke is Script {
     function run() external {
         CDPVault vault = CDPVault(vm.envAddress("VAULT"));
         uint256 price = vm.envUint("PRICE"); // e.g. 1292410679962996
-        uint256 nhi = vm.envOr("NHI", uint256(0.9e18)); // >= 0.85e18 => minCR 150, grace 6h
+        uint256 nhi = vm.envOr("NHI", uint256(0.9e18)); // >= 0.85e18 => mat 150, grace 6h
         address me = vm.envAddress("OPERATOR");
 
         PriceFeed priceFeed = PriceFeed(address(vault.priceFeed()));
@@ -29,7 +29,7 @@ contract SeedAndSmoke is Script {
         // vault price at all. SPOT exists so a run can deliberately put the two out of band.
         uint256 spot = vm.envOr("SPOT", price); // read for the divergence smoke check below
         MockIMD imd = MockIMD(address(vault.imdToken()));
-        CompToken comp = vault.compToken();
+        ImdUSD comp = vault.stablecoin();
 
         vm.startBroadcast();
 
@@ -46,18 +46,18 @@ contract SeedAndSmoke is Script {
             !priceFeed.isStale() && !nhiFeed.isStale() && !spotFeed.isStale(),
             "feeds are stale and this script cannot seed them: buy an attestation per stale feed and relay it (keeper/watch.mjs reports which, oracle/relay-attestation.js sends it)"
         );
-        console2.log("minCR now         ", vault.minCR());
+        console2.log("mat now         ", vault.mat());
         console2.log("gracePeriod now   ", vault.gracePeriod());
 
-        // A deposit large enough to clear minCR at this price, plus headroom.
+        // A deposit large enough to clear mat at this price, plus headroom.
         // MockIMD's faucet is pinned to APPROVED_OPERATOR in source, so the broadcaster cannot
         // mint unless it happens to be that wallet — it spends the balance it already holds.
         uint256 debt = vm.envOr("DEBT", uint256(1e18));
-        uint256 collateral = (debt * 1e18 * vault.minCR() * 3) / (price * 100);
+        uint256 collateral = (debt * 1e18 * vault.mat() * 3) / (price * 100);
         require(imd.balanceOf(me) >= collateral, "insufficient IMD: mint to this wallet from the faucet operator");
         imd.approve(address(vault), collateral);
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
         console2.log("collateral         ", collateral);
         console2.log("debt               ", debt);
         console2.log("collateralRatio    ", vault.collateralRatio(me));
@@ -76,7 +76,7 @@ contract SeedAndSmoke is Script {
             console2.log("work channel       SKIPPED - no rights; grantRights from the faucet operator");
         }
 
-        vault.repayCOMP(debt);
+        vault.wipe(debt);
         vm.stopBroadcast();
 
         (uint256 c, uint256 d) = vault.positions(me);

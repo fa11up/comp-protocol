@@ -8,7 +8,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {PriceFeed} from "../src/PriceFeed.sol";
 import {NhiFeed} from "../src/NhiFeed.sol";
 import {CDPVault} from "../src/CDPVault.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {ConfigurableSwarmFeed} from "./helpers/ConfigurableSwarmFeed.sol";
 import {
@@ -41,7 +41,7 @@ contract CappedFeeVault is CDPVault {
         _shareBps = shareBps_;
     }
 
-    function debtCeiling() public view override returns (uint256) {
+    function line() public view override returns (uint256) {
         return _ceiling;
     }
 
@@ -51,7 +51,7 @@ contract CappedFeeVault is CDPVault {
 
     /// @dev Held at zero so this suite keeps asserting what it is about. The shipped rate is
     /// non-zero and ShippedRateStabilityFeeTest covers it.
-    function stabilityFeeBps() public pure override returns (uint256) {
+    function duty() public pure override returns (uint256) {
         return 0;
     }
 }
@@ -84,7 +84,7 @@ contract InHouseTest is LegacyWorkBacking {
     SeedableNhiFeed nhiFeed;
     MirroredSwarmFeed spotFeed;
     CDPVault vault;
-    CompToken comp;
+    ImdUSD comp;
     MockIMD imd;
 
     function setUp() public {
@@ -102,7 +102,7 @@ contract InHouseTest is LegacyWorkBacking {
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
         vault =
             new CDPVault(address(imd), address(0), address(0), address(priceFeed), address(nhiFeed), address(spotFeed));
-        comp = vault.compToken();
+        comp = vault.stablecoin();
     }
 
     /// The faucet authority we actually hold, read from live chain state.
@@ -155,7 +155,7 @@ contract InHouseTest is LegacyWorkBacking {
     /// Full loop through both mint channels at a real, non-unit price.
     function test_seedThenBorrowRepayAtLivePrice() public {
         _seed(PRICE, 0.9e18);
-        assertEq(vault.minCR(), 150, "NHI 0.9 should give minCR 150");
+        assertEq(vault.mat(), 150, "NHI 0.9 should give mat 150");
         assertEq(vault.gracePeriod(), 6 hours);
 
         uint256 debt = 1e18;
@@ -163,8 +163,8 @@ contract InHouseTest is LegacyWorkBacking {
         vm.startPrank(OPERATOR);
         imd.mint(OPERATOR, collateral);
         imd.approve(address(vault), collateral);
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
         assertEq(comp.balanceOf(OPERATOR), debt, "COMP not minted");
 
         MockWorkOracle(address(vault.oracle())).grantRights(OPERATOR, debt);
@@ -176,7 +176,7 @@ contract InHouseTest is LegacyWorkBacking {
         (, uint256 d1) = vault.positions(OPERATOR);
         assertEq(d1, debt, "work mint must not add debt");
 
-        vault.repayCOMP(debt);
+        vault.wipe(debt);
         (, uint256 d2) = vault.positions(OPERATOR);
         assertEq(d2, 0, "debt not cleared");
         vm.stopPrank();
@@ -186,7 +186,7 @@ contract InHouseTest is LegacyWorkBacking {
     }
 
     /// The bug that parked launch 493: the payout must be priced, not a flat 110/100.
-    /// Opens at 160% so a single in-band (<=20%) price fall puts it under minCR 150.
+    /// Opens at 160% so a single in-band (<=20%) price fall puts it under mat 150.
     function test_liquidationPayoutIsPricedNotFlat() public {
         _seed(PRICE, 0.9e18);
         uint256 debt = 1e18;
@@ -194,15 +194,15 @@ contract InHouseTest is LegacyWorkBacking {
         vm.startPrank(OPERATOR);
         imd.mint(OPERATOR, collateral);
         imd.approve(address(vault), collateral);
-        vault.depositCollateral(collateral);
-        vault.mintCOMP(debt);
+        vault.lock(collateral);
+        vault.draw(debt);
         vm.stopPrank();
 
         uint256 fallen = _maxDownStep(PRICE); // the largest single step the band allows
         priceFeed.seed(fallen);
-        assertLt(vault.collateralRatio(OPERATOR), vault.minCR(), "position should be underwater");
+        assertLt(vault.collateralRatio(OPERATOR), vault.mat(), "position should be underwater");
 
-        vault.markUnderwater(OPERATOR);
+        vault.bark(OPERATOR);
         skip(6 hours);
         uint256 repay = debt / 2;
         uint256 expected = (repay * 11e17) / fallen; // floor(debtToRepay * 1.1e18 / price)
@@ -212,7 +212,7 @@ contract InHouseTest is LegacyWorkBacking {
         uint256 markerBefore = imd.balanceOf(address(this));
         uint256 before = imd.balanceOf(OPERATOR);
         vm.prank(OPERATOR);
-        vault.liquidate(OPERATOR, repay);
+        vault.bite(OPERATOR, repay);
         assertEq(imd.balanceOf(OPERATOR) - before, expected - markerCut, "priced payout less marker bonus");
         assertEq(imd.balanceOf(address(this)) - markerBefore, markerCut, "marker receives only its bonus share");
     }
@@ -221,7 +221,7 @@ contract InHouseTest is LegacyWorkBacking {
     /// bound is floor-based, so the largest legal step is v - floor(v * bps / 10000) exactly — one
     /// wei further reverts. A faster real move must be tracked in successive updates, so the feed
     /// lags a crash. This applies to attested updates too, not only the reporter path, and on
-    /// mainnet there is no reporter to walk it: see the note on the constant in DeployComp.
+    /// mainnet there is no reporter to walk it: see the note on the constant in DeployProtocol.
     function test_deviationCeilingIsExactAndFloorBased() public {
         _seed(PRICE, 0.9e18);
         uint256 floorStep = _maxDownStep(PRICE);
@@ -401,16 +401,16 @@ contract InHouseTest is LegacyWorkBacking {
         vm.startPrank(OPERATOR);
         imd.mint(OPERATOR, collateral);
         imd.approve(address(v), collateral);
-        v.depositCollateral(collateral);
+        v.lock(collateral);
 
-        v.mintCOMP(10 ether);
+        v.draw(10 ether);
         assertEq(v.totalDebt(), 10 ether, "totalDebt not tracked");
         vm.expectRevert(CDPVault.DebtCeilingReached.selector);
-        v.mintCOMP(1);
+        v.draw(1);
 
-        v.repayCOMP(4 ether);
+        v.wipe(4 ether);
         assertEq(v.totalDebt(), 6 ether, "repay must free headroom");
-        v.mintCOMP(4 ether); // the freed headroom is usable again
+        v.draw(4 ether); // the freed headroom is usable again
         assertEq(v.totalDebt(), 10 ether);
         vm.stopPrank();
     }
@@ -429,13 +429,13 @@ contract InHouseTest is LegacyWorkBacking {
         vm.startPrank(OPERATOR);
         imd.mint(OPERATOR, collateral);
         imd.approve(address(v), collateral);
-        v.depositCollateral(collateral);
-        v.mintCOMP(debt);
+        v.lock(collateral);
+        v.draw(debt);
         vm.stopPrank();
 
         uint256 fallen = PRICE - (PRICE * 2_000) / 10_000;
         priceFeed.seed(fallen);
-        v.markUnderwater(OPERATOR);
+        v.bark(OPERATOR);
         skip(6 hours);
 
         uint256 seized = (debt * 11e17) / fallen;
@@ -448,8 +448,8 @@ contract InHouseTest is LegacyWorkBacking {
         // different account or the two payouts land in one balance. That is not just a test detail:
         // the fee recipient must never be the party that sets the price or runs liquidations.
         address liquidator = address(0xBEEF);
-        // This vault created its own CompToken (compToken_ = 0), so it is not the one from setUp.
-        CompToken vComp = v.compToken();
+        // This vault created its own ImdUSD (stablecoin_ = 0), so it is not the one from setUp.
+        ImdUSD vComp = v.stablecoin();
         vm.prank(OPERATOR);
         vComp.transfer(liquidator, debt);
 
@@ -459,7 +459,7 @@ contract InHouseTest is LegacyWorkBacking {
         (uint256 collBefore,) = v.positions(OPERATOR);
 
         vm.prank(liquidator);
-        v.liquidate(OPERATOR, debt);
+        v.bite(OPERATOR, debt);
 
         (uint256 collAfter,) = v.positions(OPERATOR);
         assertEq(collBefore - collAfter, seized, "borrower's loss must be unchanged by the fee");

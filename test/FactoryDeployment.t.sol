@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {MockIMD} from "../src/MockIMD.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {CDPVault} from "../src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
 import {MockWorkOracle} from "../src/MockWorkOracle.sol";
@@ -39,7 +39,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
     address private constant BORROWER = address(0x1003);
     ApplicationConstructionFactory private factory;
     MockIMD private imd;
-    CompToken private comp;
+    ImdUSD private comp;
     CDPVault private vault;
     MockWorkOracle private oracle;
     TestSwarmFeed private priceFeed;
@@ -49,7 +49,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
     function setUp() public {
         factory = new ApplicationConstructionFactory();
         imd = new MockIMD();
-        comp = new CompToken(address(0));
+        comp = new ImdUSD(address(0));
         priceFeed = new TestSwarmFeed(1e18);
         nhiFeed = new TestSwarmFeed(0.85e18);
         spotFeed = new MirroredSwarmFeed(address(priceFeed));
@@ -78,7 +78,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
         assertEq(imd.deployer(), OPERATOR);
         assertEq(oracle.deployer(), OPERATOR);
         assertEq(address(vault.imdToken()), address(imd));
-        assertEq(address(vault.compToken()), address(comp));
+        assertEq(address(vault.stablecoin()), address(comp));
         assertEq(address(vault.priceFeed()), address(priceFeed));
         assertEq(address(vault.nhiFeed()), address(nhiFeed));
         assertEq(comp.vault(), address(0));
@@ -96,8 +96,8 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
         vm.stopPrank();
         vm.startPrank(BORROWER);
         imd.approve(address(vault), 150 ether);
-        vault.depositCollateral(150 ether);
-        vault.mintCOMP(100 ether);
+        vault.lock(150 ether);
+        vault.draw(100 ether);
         assertEq(vault.collateralRatio(BORROWER), 150);
         assertEq(oracle.mintingRights(BORROWER), 40 ether);
         vm.stopPrank();
@@ -108,8 +108,8 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
         assertEq(comp.totalSupply(), backingPrincipal[address(vault)] + 140 ether);
         assertEq(vault.totalWorkMinted(), 40 ether);
         assertEq(oracle.mintingRights(BORROWER), 0);
-        vault.repayCOMP(100 ether);
-        vault.withdrawCollateral(150 ether);
+        vault.wipe(100 ether);
+        vault.free(150 ether);
         vm.stopPrank();
         (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
         assertEq(collateral, 0);
@@ -142,7 +142,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
     }
 
     function _expectUnauthorized() private {
-        vm.expectRevert(CompToken.Unauthorized.selector);
+        vm.expectRevert(ImdUSD.Unauthorized.selector);
         comp.setVault(address(vault));
         vm.expectRevert(MockIMD.Unauthorized.selector);
         imd.mint(BORROWER, 1);
@@ -153,11 +153,11 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
     function test_operatorLosesInitializationAuthorityAndCannotMintBurnOrConsume() public {
         vm.startPrank(OPERATOR);
         comp.setVault(address(vault));
-        vm.expectRevert(CompToken.AlreadyInitialized.selector);
+        vm.expectRevert(ImdUSD.AlreadyInitialized.selector);
         comp.setVault(address(factory));
-        vm.expectRevert(CompToken.Unauthorized.selector);
+        vm.expectRevert(ImdUSD.Unauthorized.selector);
         comp.mint(BORROWER, 1);
-        vm.expectRevert(CompToken.Unauthorized.selector);
+        vm.expectRevert(ImdUSD.Unauthorized.selector);
         comp.burn(BORROWER, 1);
         oracle.grantRights(BORROWER, 1);
         vm.expectRevert(MockWorkOracle.Unauthorized.selector);
@@ -179,7 +179,7 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
     // names the pinned one. Picking any other address here would make _seedFeeds revert.
     ApplicationConstructionFactory private factory;
     MockIMD private imd;
-    CompToken private comp;
+    ImdUSD private comp;
     CDPVault private vault;
     MockWorkOracle private oracle;
     SeedablePriceFeed private priceFeed;
@@ -211,7 +211,7 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
             address(imd), address(0), address(priceFeed), address(nhiFeed), address(spotFeed), useCreate2
         );
         if (useCreate2) assertEq(address(vault), predicted, "CREATE2 uses the factory and zero constructor words");
-        comp = vault.compToken();
+        comp = vault.stablecoin();
         oracle = MockWorkOracle(address(vault.oracle()));
 
         // All links are already live before any reporter, operator or borrower transaction.
@@ -268,16 +268,16 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         imd.mint(BORROWER, collateral);
         vm.startPrank(BORROWER);
         imd.approve(address(vault), collateral);
-        vault.depositCollateral(collateral);
+        vault.lock(collateral);
         _assertAccounting(collateral, 0, 0);
         assertEq(imd.allowance(BORROWER, address(vault)), 0);
         assertEq(imd.balanceOf(BORROWER), 0);
         // Borrowing works even before the operator has granted any work rights.
-        vault.mintCOMP(debt);
+        vault.draw(debt);
         _assertAccounting(collateral, debt, 0);
         assertEq(comp.balanceOf(BORROWER), debt);
         assertEq(oracle.mintingRights(BORROWER), 0);
-        assertGe(vault.collateralRatio(BORROWER), vault.minCR());
+        assertGe(vault.collateralRatio(BORROWER), vault.mat());
         vm.stopPrank();
 
         vm.prank(OPERATOR);
@@ -289,10 +289,10 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         assertEq(oracle.mintingRights(BORROWER), 0);
         // Repayment burns caller COMP without an approval and preserves all earned work supply.
         assertEq(comp.allowance(BORROWER, address(vault)), 0);
-        vault.repayCOMP(debt);
+        vault.wipe(debt);
         _assertAccounting(collateral, 0, work);
         assertEq(comp.balanceOf(BORROWER), work);
-        vault.withdrawCollateral(collateral);
+        vault.free(collateral);
         vm.stopPrank();
         _assertAccounting(0, 0, work);
         assertEq(imd.balanceOf(BORROWER), collateral);
@@ -321,12 +321,12 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
             for (uint256 i; i < callers.length; ++i) {
                 vm.startPrank(callers[i]);
                 for (uint256 j; j < targets.length; ++j) {
-                    vm.expectRevert(CompToken.AlreadyInitialized.selector);
+                    vm.expectRevert(ImdUSD.AlreadyInitialized.selector);
                     comp.setVault(targets[j]);
                 }
-                vm.expectRevert(CompToken.Unauthorized.selector);
+                vm.expectRevert(ImdUSD.Unauthorized.selector);
                 comp.mint(BORROWER, 1);
-                vm.expectRevert(CompToken.Unauthorized.selector);
+                vm.expectRevert(ImdUSD.Unauthorized.selector);
                 comp.burn(BORROWER, 1);
                 vm.expectRevert(MockWorkOracle.Unauthorized.selector);
                 oracle.consumeRights(BORROWER, 1);
@@ -345,7 +345,7 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
             address[4] memory callers = [address(factory), RELAYER, ORIGIN, BORROWER];
             for (uint256 i; i < callers.length; ++i) {
                 vm.startPrank(callers[i], OPERATOR);
-                vm.expectRevert(CompToken.AlreadyInitialized.selector);
+                vm.expectRevert(ImdUSD.AlreadyInitialized.selector);
                 comp.setVault(address(vault));
                 vm.expectRevert(MockIMD.Unauthorized.selector);
                 imd.mint(BORROWER, 1);
@@ -367,24 +367,24 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
             vm.startPrank(BORROWER);
             imd.approve(address(vault), 150 ether);
             vm.expectRevert(CDPVault.ZeroAmount.selector);
-            vault.depositCollateral(0);
-            vault.depositCollateral(150 ether);
+            vault.lock(0);
+            vault.lock(150 ether);
             vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-            vault.mintCOMP(100 ether + 1);
+            vault.draw(100 ether + 1);
             _assertAccounting(150 ether, 0, 0);
-            vault.mintCOMP(100 ether);
+            vault.draw(100 ether);
             vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-            vault.withdrawCollateral(1);
+            vault.free(1);
             vm.expectRevert(CDPVault.ExcessRepayment.selector);
-            vault.repayCOMP(100 ether + 1);
+            vault.wipe(100 ether + 1);
             vm.expectRevert(CDPVault.InsufficientRights.selector);
             vault.mintFromWork(1);
             _assertAccounting(150 ether, 100 ether, 0);
             assertEq(comp.balanceOf(BORROWER), 100 ether);
-            vault.repayCOMP(100 ether);
-            vault.withdrawCollateral(150 ether);
+            vault.wipe(100 ether);
+            vault.free(150 ether);
             vm.expectRevert(CDPVault.InsufficientCollateral.selector);
-            vault.withdrawCollateral(1);
+            vault.free(1);
             vm.stopPrank();
             _assertAccounting(0, 0, 0);
         }
@@ -397,8 +397,8 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
         imd.mint(BORROWER, 150 ether);
         vm.startPrank(BORROWER);
         imd.approve(address(vault), 150 ether);
-        vault.depositCollateral(150 ether);
-        vault.mintCOMP(100 ether);
+        vault.lock(150 ether);
+        vault.draw(100 ether);
         vm.stopPrank();
         // Refresh each feed independently so both stale branches are exercised after valid seeding.
         for (uint256 staleFeed; staleFeed < 2; ++staleFeed) {
@@ -407,17 +407,17 @@ contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
             else priceFeed.seed(1 ether);
             vm.startPrank(BORROWER);
             vm.expectRevert(CDPVault.StaleFeed.selector);
-            vault.mintCOMP(1);
+            vault.draw(1);
             vm.expectRevert(CDPVault.StaleFeed.selector);
             vault.mintFromWork(1);
             vm.expectRevert(CDPVault.StaleFeed.selector);
-            vault.withdrawCollateral(1);
+            vault.free(1);
             vm.stopPrank();
             _assertAccounting(150 ether, 100 ether, 0);
         }
         vm.startPrank(BORROWER);
-        vault.repayCOMP(100 ether);
-        vault.withdrawCollateral(150 ether);
+        vault.wipe(100 ether);
+        vault.free(150 ether);
         vm.stopPrank();
         _assertAccounting(0, 0, 0);
         assertEq(imd.balanceOf(BORROWER), 150 ether);

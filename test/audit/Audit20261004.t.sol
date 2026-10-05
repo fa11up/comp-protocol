@@ -164,7 +164,7 @@ contract Audit20261004Test is WorkBackingFixture {
     // --- MEDIUM: _clearIfRecovered priced in ETH against USD debt -------------------------------
 
     /// @dev Finding 1. The automatic helper read the RAW primary feed and compared the resulting
-    /// ETH-valued ratio against minCR, understating it by the whole ETH/USD factor, so a position
+    /// ETH-valued ratio against mat, understating it by the whole ETH/USD factor, so a position
     /// restored to health kept its mark.
     function test_regression_usdRecoveryMustClearMark() public {
         _markedThenRestored();
@@ -189,7 +189,7 @@ contract Audit20261004Test is WorkBackingFixture {
         _openDebt(2000 ether);
         _setVaultPrice(0.7 ether);
         vm.prank(address(0xA11CE));
-        backedVault.markUnderwater(BORROWER);
+        backedVault.bark(BORROWER);
 
         _setVaultPrice(2 ether); // recovered by the market, with no vault interaction
         (bool marked,,) = _mark(BORROWER);
@@ -207,15 +207,15 @@ contract Audit20261004Test is WorkBackingFixture {
         _openDebt(2000 ether);
         _setVaultPrice(0.7 ether);
         vm.prank(address(0xA11CE));
-        backedVault.markUnderwater(BORROWER);
+        backedVault.bark(BORROWER);
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(BORROWER, 100 ether);
         vm.startPrank(BORROWER);
         collateral.approve(address(backedVault), 100 ether);
-        backedVault.depositCollateral(100 ether);
+        backedVault.lock(100 ether);
         vm.stopPrank();
         (bool marked,,) = _mark(BORROWER);
-        assertTrue(marked, "still below minCR, so the mark stands");
+        assertTrue(marked, "still below mat, so the mark stands");
     }
 
     // --- MEDIUM: try/catch does not cover decoding ----------------------------------------------
@@ -352,7 +352,7 @@ contract Audit20261004Test is WorkBackingFixture {
         _openDebt(2000 ether); // 4000 IMD collateral at $2 = $8000, $2000 debt
         _setVaultPrice(0.7 ether); // $2800 against $2000: 140%, below the 150% floor
         vm.prank(address(0xA11CE));
-        backedVault.markUnderwater(BORROWER);
+        backedVault.bark(BORROWER);
         (bool marked,,) = _mark(BORROWER);
         assertTrue(marked, "marked while underwater");
 
@@ -360,7 +360,7 @@ contract Audit20261004Test is WorkBackingFixture {
         collateral.mint(BORROWER, 1000 ether);
         vm.startPrank(BORROWER);
         collateral.approve(address(backedVault), 1000 ether);
-        backedVault.depositCollateral(1000 ether); // 5000 IMD at $0.7 = $3500: 175%
+        backedVault.lock(1000 ether); // 5000 IMD at $0.7 = $3500: 175%
         vm.stopPrank();
     }
 

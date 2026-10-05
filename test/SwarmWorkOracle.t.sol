@@ -13,7 +13,7 @@ import {
     WORK_ORACLE_FACTORY,
     WORK_ORACLE_SENTINEL,
     WORK_ORACLE_MAX_AGE,
-    COMP_PER_TASK_WAD
+    UNITS_PER_TASK_WAD
 } from "src/DeploymentConfig.sol";
 import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
 import {SeedableWorkOracle, SeedableWorkOracleFactory} from "./helpers/SeedableFeeds.sol";
@@ -84,7 +84,7 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         vm.prank(CONTROLLER_A);
         uint256 rights = work.claim(AGENT_A, 10, 10, proofA, root);
 
-        assertEq(rights, 10 * COMP_PER_TASK_WAD, "ten tasks at the shipped rate");
+        assertEq(rights, 10 * UNITS_PER_TASK_WAD, "ten tasks at the shipped rate");
         assertEq(work.mintingRights(CONTROLLER_A), rights);
         assertEq(work.creditedTasks(AGENT_A), 10);
         assertEq(work.mintingRights(STRANGER), 0, "nobody else gained anything");
@@ -103,8 +103,8 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         vm.prank(CONTROLLER_B);
         work.claim(AGENT_B, 20, 20, proofB, root);
 
-        assertEq(work.mintingRights(CONTROLLER_A), 10 * COMP_PER_TASK_WAD);
-        assertEq(work.mintingRights(CONTROLLER_B), 20 * COMP_PER_TASK_WAD);
+        assertEq(work.mintingRights(CONTROLLER_A), 10 * UNITS_PER_TASK_WAD);
+        assertEq(work.mintingRights(CONTROLLER_B), 20 * UNITS_PER_TASK_WAD);
     }
 
     function test_aStrangerCannotClaimAnotherAgentsTally() public {
@@ -168,8 +168,8 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         _accept(day2);
         vm.prank(CONTROLLER_A);
         uint256 more = work.claim(AGENT_A, 5, 15, p2, day2);
-        assertEq(more, 5 * COMP_PER_TASK_WAD, "only the five new tasks");
-        assertEq(work.mintingRights(CONTROLLER_A), 15 * COMP_PER_TASK_WAD);
+        assertEq(more, 5 * UNITS_PER_TASK_WAD, "only the five new tasks");
+        assertEq(work.mintingRights(CONTROLLER_A), 15 * UNITS_PER_TASK_WAD);
     }
 
     /// @dev An agent idle on a given day is absent from that day's tree, so proving against an OLDER
@@ -181,7 +181,7 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         _accept(keccak256("day-2-without-agent-a"));
         _controls(AGENT_A, CONTROLLER_A, true);
         vm.prank(CONTROLLER_A);
-        assertEq(work.claim(AGENT_A, 10, 10, p1, day1), 10 * COMP_PER_TASK_WAD);
+        assertEq(work.claim(AGENT_A, 10, 10, p1, day1), 10 * UNITS_PER_TASK_WAD);
     }
 
     // --- pricing, and the mistake not repeated ---------------------------------------------------
@@ -204,14 +204,14 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         uint256 atOldRate = w.claim(AGENT_A, 10, 10, proofA, root);
 
         vm.prank(APPROVED_OPERATOR);
-        params.proposeCompPerTask(COMP_PER_TASK_WAD * 2);
+        params.proposeUnitsPerTask(UNITS_PER_TASK_WAD * 2);
         vm.warp(params.pendingEta());
         vm.prank(address(0xA990));
         params.applyPending();
         _refreshEthUsd();
 
         assertEq(w.mintingRights(CONTROLLER_A), atOldRate, "a rate rise cannot reprice a past claim");
-        assertEq(w.compPerTaskWad(), COMP_PER_TASK_WAD * 2, "but it does apply to the next one");
+        assertEq(w.unitsPerTaskWad(), UNITS_PER_TASK_WAD * 2, "but it does apply to the next one");
     }
 
     // --- consumption ------------------------------------------------------------------------------

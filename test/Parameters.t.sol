@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "../src/CDPVault.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {Governed} from "../src/Governed.sol";
 import {Parameters, ICheckpointedVault} from "../src/Parameters.sol";
@@ -16,7 +16,7 @@ import {
     MARKER_SHARE_BPS,
     MAX_DIVERGENCE_BPS,
     PROTOCOL_BONUS_SHARE_BPS,
-    STABILITY_FEE_BPS
+    DUTY_BPS
 } from "../src/DeploymentConfig.sol";
 
 /// @notice The governed parameter path end to end: the seam, the delay, the bounds, and the two
@@ -28,7 +28,7 @@ contract ParametersTest is Test {
     Parameters private params;
     ParameterizedVault private vault;
     MockIMD private imd;
-    CompToken private comp;
+    ImdUSD private comp;
     TestSwarmFeed private price;
     TestSwarmFeed private nhi;
     TestSwarmFeed private spot;
@@ -49,12 +49,12 @@ contract ParametersTest is Test {
         nhi = new TestSwarmFeed(0.9 ether);
         vault = new ParameterizedVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
         params = vault.parameters();
-        comp = vault.compToken();
+        comp = vault.stablecoin();
         vm.prank(APPROVED_OPERATOR);
         imd.mint(BORROWER, 1_000 ether);
         vm.startPrank(BORROWER);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(1_000 ether);
+        vault.lock(1_000 ether);
         vm.stopPrank();
     }
 
@@ -81,8 +81,8 @@ contract ParametersTest is Test {
         imd.mint(market, 1_000 ether);
         vm.startPrank(market);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(1_000 ether);
-        vault.mintCOMP(amount);
+        vault.lock(1_000 ether);
+        vault.draw(amount);
         comp.transfer(to, amount);
         vm.stopPrank();
     }
@@ -91,18 +91,18 @@ contract ParametersTest is Test {
 
     /// @dev A fresh Parameters is the shipped configuration, so binding it changes nothing.
     function test_governanceStartsFromTheShippedConfiguration() public view {
-        assertEq(vault.debtCeiling(), type(uint256).max);
+        assertEq(vault.line(), type(uint256).max);
         assertEq(vault.protocolBonusShareBps(), PROTOCOL_BONUS_SHARE_BPS);
-        assertEq(vault.stabilityFeeBps(), STABILITY_FEE_BPS);
+        assertEq(vault.duty(), DUTY_BPS);
         assertEq(vault.maxDivergenceBps(), MAX_DIVERGENCE_BPS);
         assertEq(vault.markerShareBps(), MARKER_SHARE_BPS);
     }
 
     function test_everyEconomicKnobCanBeSourcedFromOutsideTheVault() public {
         _govern(_set(250 ether, 2_000, 400, 800, 1_500));
-        assertEq(vault.debtCeiling(), 250 ether, "ceiling follows the parameters contract");
+        assertEq(vault.line(), 250 ether, "ceiling follows the parameters contract");
         assertEq(vault.protocolBonusShareBps(), 2_000);
-        assertEq(vault.stabilityFeeBps(), 400);
+        assertEq(vault.duty(), 400);
         assertEq(vault.maxDivergenceBps(), 800);
         assertEq(vault.markerShareBps(), 1_500);
     }
@@ -110,22 +110,22 @@ contract ParametersTest is Test {
     /// @dev The knobs are not decorative: a tightened ceiling binds on the next mint.
     function test_aTightenedCeilingTakesEffectWithoutRedeployingTheVault() public {
         vm.prank(BORROWER);
-        vault.mintCOMP(100 ether);
-        _govern(_set(100 ether, 0, STABILITY_FEE_BPS, 500, 1_000));
+        vault.draw(100 ether);
+        _govern(_set(100 ether, 0, DUTY_BPS, 500, 1_000));
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.DebtCeilingReached.selector);
-        vault.mintCOMP(1);
+        vault.draw(1);
     }
 
     /// @dev And a tightened divergence bound starts refusing a gap it used to allow.
     function test_aTightenedDivergenceBoundBindsImmediately() public {
         spot.setValue(1.03 ether); // 300 bps apart: inside 500, outside 200
         vm.prank(BORROWER);
-        vault.mintCOMP(1 ether);
-        _govern(_set(type(uint256).max, 0, STABILITY_FEE_BPS, 200, 1_000));
+        vault.draw(1 ether);
+        _govern(_set(type(uint256).max, 0, DUTY_BPS, 200, 1_000));
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
-        vault.mintCOMP(1 ether);
+        vault.draw(1 ether);
     }
 
     /// @dev The asymmetry that makes this safe: what prices the collateral is NOT reachable this way.
@@ -146,7 +146,7 @@ contract ParametersTest is Test {
         Parameters.ParamSet memory next = _set(type(uint256).max, 0, 1_000, 500, 1_000);
         vm.prank(APPROVED_OPERATOR);
         params.propose(next);
-        assertEq(vault.stabilityFeeBps(), STABILITY_FEE_BPS, "the old rate is live for the whole delay");
+        assertEq(vault.duty(), DUTY_BPS, "the old rate is live for the whole delay");
 
         vm.warp(block.timestamp + params.TIMELOCK() - 1);
         vm.expectRevert(abi.encodeWithSelector(Governed.TooEarly.selector, params.pendingEta()));
@@ -154,7 +154,7 @@ contract ParametersTest is Test {
 
         vm.warp(block.timestamp + 1);
         params.applyPending();
-        assertEq(vault.stabilityFeeBps(), 1_000);
+        assertEq(vault.duty(), 1_000);
     }
 
     /// @dev The pending change is readable by anyone for the whole window — that is what makes the
@@ -163,8 +163,8 @@ contract ParametersTest is Test {
         vm.prank(APPROVED_OPERATOR);
         params.propose(_set(500 ether, 1_111, 700, 300, 2_000));
         (Parameters.ParamSet memory next, uint256 eta) = params.pendingSet();
-        assertEq(next.stabilityFeeBps, 700);
-        assertEq(next.debtCeiling, 500 ether);
+        assertEq(next.duty, 700);
+        assertEq(next.line, 500 ether);
         assertEq(eta, block.timestamp + params.TIMELOCK());
     }
 
@@ -195,7 +195,7 @@ contract ParametersTest is Test {
         vm.warp(block.timestamp + params.TIMELOCK());
         vm.prank(STRANGER);
         params.applyPending();
-        assertEq(vault.stabilityFeeBps(), 150);
+        assertEq(vault.duty(), 150);
     }
 
     function test_oneProposalAtATime() public {
@@ -233,24 +233,24 @@ contract ParametersTest is Test {
     /// @dev The ceiling is NOT checked against outstanding debt, which an audit showed was a
     /// griefing vector rather than a protection: minting is permissionless up to the current ceiling,
     /// so a borrower could keep totalDebt above any proposed figure and stall the whole payload. A low
-    /// ceiling strands nobody — repay, withdraw and liquidate are not ceiling-gated — so a proposal
+    /// ceiling strands nobody — repay, withdraw and bite are not ceiling-gated — so a proposal
     /// that tightens below current debt simply stops further growth.
     function test_aTightCeilingStopsGrowthWithoutStrandingAnyone() public {
         vm.prank(BORROWER);
-        vault.mintCOMP(100 ether);
+        vault.draw(100 ether);
 
-        _govern(_set(50 ether, 0, STABILITY_FEE_BPS, 500, 1_000));
-        assertEq(vault.debtCeiling(), 50 ether, "a ceiling below outstanding debt still applies");
+        _govern(_set(50 ether, 0, DUTY_BPS, 500, 1_000));
+        assertEq(vault.line(), 50 ether, "a ceiling below outstanding debt still applies");
 
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.DebtCeilingReached.selector);
-        vault.mintCOMP(1);
+        vault.draw(1);
 
         // The position is fully operable: the borrower is not trapped by a ceiling they are past.
         vm.startPrank(BORROWER);
         comp.approve(address(vault), type(uint256).max);
-        vault.repayCOMP(10 ether);
-        vault.withdrawCollateral(1 ether);
+        vault.wipe(10 ether);
+        vault.free(1 ether);
         vm.stopPrank();
         assertGt(vault.debtOf(BORROWER), 0);
     }
@@ -274,8 +274,8 @@ contract ParametersTest is Test {
         theirs.propose(Parameters.ParamSet(type(uint256).max, 0, 400, 500, 1_000));
         vm.warp(block.timestamp + theirs.TIMELOCK());
         theirs.applyPending();
-        assertEq(other.stabilityFeeBps(), 400);
-        assertEq(vault.stabilityFeeBps(), STABILITY_FEE_BPS, "the other vault is untouched");
+        assertEq(other.duty(), 400);
+        assertEq(vault.duty(), DUTY_BPS, "the other vault is untouched");
     }
 
     // --- what made the rate governable at all --------------------------------
@@ -285,7 +285,7 @@ contract ParametersTest is Test {
     /// the instant the rate went to 10% that same year cost 10.
     function test_aRateRiseDoesNotRepriceTimeThatHasAlreadyPassed() public {
         vm.prank(BORROWER);
-        vault.mintCOMP(100 ether);
+        vault.draw(100 ether);
         vm.warp(block.timestamp + 365 days);
 
         assertEq(vault.stabilityFeeOf(BORROWER), 2 ether, "100 COMP for a year at 200 bps");
@@ -306,7 +306,7 @@ contract ParametersTest is Test {
     /// reverts `_accrue`, which is on every entry point — a rate cut used to freeze every position.
     function test_aRateCutDoesNotFreezePositions() public {
         vm.prank(BORROWER);
-        vault.mintCOMP(100 ether);
+        vault.draw(100 ether);
         vm.warp(block.timestamp + 180 days);
 
         vm.prank(APPROVED_OPERATOR);
@@ -323,8 +323,8 @@ contract ParametersTest is Test {
         // And the position is still operable, which it was not before: a falling index made the
         // subtraction in `stabilityFeeOf` underflow, so every entry point reverted.
         vm.startPrank(BORROWER);
-        vault.mintCOMP(1 ether);
-        vault.withdrawCollateral(1 ether);
+        vault.draw(1 ether);
+        vault.free(1 ether);
         vm.stopPrank();
     }
 
@@ -332,7 +332,7 @@ contract ParametersTest is Test {
     /// proposed, and a borrower who does not want it can be fully out before it applies.
     function test_aBorrowerCanExitAtTheOldTermsDuringTheDelay() public {
         vm.prank(BORROWER);
-        vault.mintCOMP(100 ether);
+        vault.draw(100 ether);
         vm.warp(block.timestamp + 30 days);
 
         vm.prank(APPROVED_OPERATOR);
@@ -345,8 +345,8 @@ contract ParametersTest is Test {
         _fundFeeFromTheMarket(BORROWER, owed - 100 ether);
         vm.startPrank(BORROWER);
         comp.approve(address(vault), type(uint256).max);
-        vault.repayCOMP(owed);
-        vault.withdrawCollateral(1_000 ether);
+        vault.wipe(owed);
+        vault.free(1_000 ether);
         vm.stopPrank();
 
         assertEq(vault.debtOf(BORROWER), 0);
@@ -373,28 +373,28 @@ contract ParametersTest is Test {
         own.propose(Parameters.ParamSet(type(uint256).max, 0, 500, 500, 1_000));
         vm.warp(block.timestamp + own.TIMELOCK());
         own.applyPending();
-        assertEq(solo.stabilityFeeBps(), 500);
+        assertEq(solo.duty(), 500);
 
         // And it is a DIFFERENT Parameters from this fixture's: one per vault, never shared.
         assertTrue(address(own) != address(params), "a vault does not borrow another vault's parameters");
     }
 
-    /// @dev `pokeIndex` is permissionless and can only move the index forward, so calling it
+    /// @dev `drip` is permissionless and can only move the index forward, so calling it
     /// repeatedly is harmless and never changes what anyone owes.
     function test_pokingTheIndexIsIdempotentAndOpenToAnyone() public {
         vm.prank(BORROWER);
-        vault.mintCOMP(100 ether);
+        vault.draw(100 ether);
         vm.warp(block.timestamp + 90 days);
         uint256 owed = vault.stabilityFeeOf(BORROWER);
-        uint256 index = vault.debtIndex();
+        uint256 index = vault.chi();
 
         vm.prank(STRANGER);
-        vault.pokeIndex();
-        assertEq(vault.debtIndex(), index);
+        vault.drip();
+        assertEq(vault.chi(), index);
         assertEq(vault.stabilityFeeOf(BORROWER), owed);
 
         vm.prank(STRANGER);
-        vault.pokeIndex();
+        vault.drip();
         assertEq(vault.stabilityFeeOf(BORROWER), owed);
     }
 }

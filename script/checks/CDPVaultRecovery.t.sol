@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "../../src/CDPVault.sol";
-import {CompToken} from "../../src/CompToken.sol";
+import {ImdUSD} from "../../src/ImdUSD.sol";
 import {MockIMD} from "../../src/MockIMD.sol";
 import {APPROVED_OPERATOR, MAX_DIVERGENCE_BPS} from "../../src/DeploymentConfig.sol";
 import {IncrementFeed} from "./CDPVaultIncrement.t.sol";
@@ -21,7 +21,7 @@ contract CDPVaultRecoveryTest is Test {
     }
 
     MockIMD private imd;
-    CompToken private comp;
+    ImdUSD private comp;
     CDPVault private vault;
     IncrementFeed private primary;
     IncrementFeed private spot;
@@ -39,19 +39,19 @@ contract CDPVaultRecoveryTest is Test {
         spot = new IncrementFeed(1 ether);
         nhi = new IncrementFeed(0.85 ether);
         vault = new CDPVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
-        comp = vault.compToken();
+        comp = vault.stablecoin();
         vm.prank(APPROVED_OPERATOR);
         imd.mint(ALICE, 151 ether);
         vm.startPrank(ALICE);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(150 ether);
-        vault.mintCOMP(100 ether);
+        vault.lock(150 ether);
+        vault.draw(100 ether);
         comp.transfer(BOB, 10 ether);
         vm.stopPrank();
         primary.set(0.9 ether);
         spot.set(0.9 ether);
         vm.prank(MARKER);
-        vault.markUnderwater(ALICE);
+        vault.bark(ALICE);
         (markedAt, grace,,) = vault.liquidationMarks(ALICE);
         assertEq(grace, 6 hours);
         vm.warp(markedAt + grace);
@@ -90,9 +90,9 @@ contract CDPVaultRecoveryTest is Test {
         vm.prank(BOB);
         comp.transfer(ALICE, 10 ether);
         vm.startPrank(ALICE);
-        vault.repayCOMP(100 ether);
+        vault.wipe(100 ether);
         _assertCleared();
-        vault.withdrawCollateral(150 ether);
+        vault.free(150 ether);
         vm.stopPrank();
         assertEq(vault.debtOf(ALICE), 0);
         assertEq(imd.balanceOf(ALICE), 151 ether);
@@ -150,10 +150,10 @@ contract CDPVaultRecoveryTest is Test {
             spot.setStale(false);
             nhi.setStale(false);
             vm.prank(BOB);
-            vault.markUnderwater(ALICE);
+            vault.bark(ALICE);
             _assertOriginalMark();
             vm.prank(BOB);
-            vault.liquidate(ALICE, 10 ether);
+            vault.bite(ALICE, 10 ether);
             assertEq(vault.debtOf(ALICE), 90 ether - (route == 2 ? 1 : 0));
             assertGt(imd.balanceOf(MARKER), 0, "original marker receives its bonus share");
             assertTrue(vm.revertToStateAndDelete(snapshot));
@@ -174,8 +174,8 @@ contract CDPVaultRecoveryTest is Test {
     function _recover(uint256 route) private {
         vm.startPrank(ALICE);
         if (route == 0) vault.clearRecoveredMark(ALICE);
-        else if (route == 1) vault.depositCollateral(1);
-        else vault.repayCOMP(1);
+        else if (route == 1) vault.lock(1);
+        else vault.wipe(1);
         vm.stopPrank();
     }
 

@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {MockWorkOracle} from "src/MockWorkOracle.sol";
 import {APPROVED_OPERATOR, FEE_RECIPIENT, MAX_DIVERGENCE_BPS} from "src/DeploymentConfig.sol";
@@ -27,7 +27,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
     address private constant DEBT_FREE = address(0xD400);
 
     CDPVault private vault;
-    CompToken private comp;
+    ImdUSD private comp;
     MockIMD private imd;
     TestSwarmFeed private primary;
     TestSwarmFeed private spot;
@@ -40,7 +40,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         spot = new TestSwarmFeed(1 ether);
         nhi = new TestSwarmFeed(0.85 ether);
         vault = new BaselineVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
-        comp = vault.compToken();
+        comp = vault.stablecoin();
 
         vm.startPrank(APPROVED_OPERATOR);
         imd.mint(BORROWER, 300 ether);
@@ -50,12 +50,12 @@ contract DivergenceGuardTest is LegacyWorkBacking {
 
         vm.startPrank(BORROWER);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(300 ether);
-        vault.mintCOMP(100 ether);
+        vault.lock(300 ether);
+        vault.draw(100 ether);
         vm.stopPrank();
         vm.startPrank(DEBT_FREE);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(300 ether);
+        vault.lock(300 ether);
         vm.stopPrank();
         _establishWorkBacking(vault, 1000 ether);
         vm.prank(LIQUIDATOR);
@@ -65,7 +65,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
     function testFuzz_MintAcceptsExactlyMaximumDivergence(bool spotAbove) public {
         _setBoundary(1 ether, spotAbove, false);
         vm.prank(BORROWER);
-        vault.mintCOMP(50 ether);
+        vault.draw(50 ether);
         assertEq(vault.debtOf(BORROWER), 150 ether);
         assertEq(comp.balanceOf(BORROWER), 150 ether);
     }
@@ -74,7 +74,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         _prepare(Action.Mark);
         _setBoundary(0.4 ether, spotAbove, false);
         vm.prank(MARKER);
-        vault.markUnderwater(BORROWER);
+        vault.bark(BORROWER);
         (uint256 markedAt, uint256 grace, bool marked, address marker) = vault.liquidationMarks(BORROWER);
         assertTrue(marked);
         assertEq(markedAt, block.timestamp);
@@ -86,7 +86,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         _prepare(Action.Liquidate);
         _setBoundary(0.4 ether, spotAbove, false);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 10 ether);
+        vault.bite(BORROWER, 10 ether);
         (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
         assertEq(collateral, 272.5 ether);
         assertEq(debt, 90 ether);
@@ -121,14 +121,14 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         uint256 allowedDifference = price / 20;
         spot.setValue(spotAbove ? price + allowedDifference : price - allowedDifference);
         vm.prank(DEBT_FREE);
-        vault.mintCOMP(1);
+        vault.draw(1);
         assertEq(vault.debtOf(DEBT_FREE), 1);
 
         spot.setValue(spotAbove ? price + allowedDifference + 1 : price - allowedDifference - 1);
         bytes32 beforeState = _state();
         vm.prank(DEBT_FREE);
         vm.expectRevert(CDPVault.PriceDivergence.selector);
-        vault.mintCOMP(1);
+        vault.draw(1);
         assertEq(_state(), beforeState, "rejected mint changed state");
         assertEq(vault.debtOf(DEBT_FREE), 1);
         assertEq(comp.balanceOf(DEBT_FREE), 1);
@@ -139,11 +139,11 @@ contract DivergenceGuardTest is LegacyWorkBacking {
             primary.setValue(price);
             spot.setValue(price);
             vm.prank(DEBT_FREE);
-            vault.mintCOMP(1);
+            vault.draw(1);
             spot.setValue(price + 1);
             vm.prank(DEBT_FREE);
             vm.expectRevert(CDPVault.PriceDivergence.selector);
-            vault.mintCOMP(1);
+            vault.draw(1);
         }
         assertEq(vault.debtOf(DEBT_FREE), 19);
     }
@@ -216,7 +216,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         spot.setValue(0.4 ether);
         spot.setStale(false);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 10 ether);
+        vault.bite(BORROWER, 10 ether);
         assertEq(_markState(), matureMark, "liquidation must retain the original keeper snapshot");
         assertEq(imd.balanceOf(MARKER), 0.25 ether);
         assertEq(imd.balanceOf(LIQUIDATOR), 27.25 ether);
@@ -230,8 +230,8 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         _prepare(Action.Liquidate);
         _setBoundary(0.4 ether, spotAbove, true);
         vm.startPrank(BORROWER);
-        vault.repayCOMP(100 ether);
-        vault.withdrawCollateral(300 ether);
+        vault.wipe(100 ether);
+        vault.free(300 ether);
         vm.stopPrank();
         (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
         assertEq(collateral, 0);
@@ -247,7 +247,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         _prepare(Action.Liquidate);
         spot.setValue(2 ether);
         vm.prank(BORROWER);
-        vault.repayCOMP(10 ether);
+        vault.wipe(10 ether);
         assertEq(vault.debtOf(BORROWER), 90 ether);
         assertEq(comp.balanceOf(BORROWER), 90 ether);
         assertEq(vault.totalDebt(), backingPrincipal[address(vault)] + 90 ether);
@@ -259,7 +259,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
     function test_DebtFreeWithdrawalSucceedsWithoutTouchingTheDivergentFeeds() public {
         spot.setValue(100 ether);
         vm.prank(DEBT_FREE);
-        vault.withdrawCollateral(300 ether);
+        vault.free(300 ether);
         assertEq(imd.balanceOf(DEBT_FREE), 300 ether);
         (uint256 collateral, uint256 debt) = vault.positions(DEBT_FREE);
         assertEq(collateral, 0);
@@ -274,9 +274,9 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         spot.setStale(true);
         nhi.setStale(true);
         vm.startPrank(BORROWER);
-        vault.repayCOMP(1 ether);
-        vault.repayCOMP(99 ether);
-        vault.withdrawCollateral(300 ether);
+        vault.wipe(1 ether);
+        vault.wipe(99 ether);
+        vault.free(300 ether);
         vm.stopPrank();
         assertEq(vault.debtOf(BORROWER), 0);
         assertEq(imd.balanceOf(BORROWER), 300 ether);
@@ -290,7 +290,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         }
         if (action == Action.Liquidate || action == Action.ClearRecoveredMark) {
             vm.prank(MARKER);
-            vault.markUnderwater(BORROWER);
+            vault.bark(BORROWER);
             vm.warp(block.timestamp + 6 hours);
         }
         if (action == Action.ClearRecoveredMark) {
@@ -310,11 +310,11 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         address caller = action == Action.Mark ? MARKER : action == Action.Liquidate ? LIQUIDATOR : BORROWER;
         vm.prank(caller);
         vm.expectRevert(selector);
-        if (action == Action.Mint) vault.mintCOMP(1 ether);
-        else if (action == Action.Mark) vault.markUnderwater(BORROWER);
-        else if (action == Action.Liquidate) vault.liquidate(BORROWER, 10 ether);
+        if (action == Action.Mint) vault.draw(1 ether);
+        else if (action == Action.Mark) vault.bark(BORROWER);
+        else if (action == Action.Liquidate) vault.bite(BORROWER, 10 ether);
         else if (action == Action.ClearRecoveredMark) vault.clearRecoveredMark(BORROWER);
-        else vault.withdrawCollateral(1 ether);
+        else vault.free(1 ether);
         assertEq(_state(), beforeState, "failed price check changed debt, mark, collateral or balances");
     }
 
@@ -324,8 +324,8 @@ contract DivergenceGuardTest is LegacyWorkBacking {
             imd.mint(BORROWER, 1);
         }
         vm.prank(BORROWER);
-        if (repay) vault.repayCOMP(1);
-        else vault.depositCollateral(1);
+        if (repay) vault.wipe(1);
+        else vault.lock(1);
     }
 
     function _markState() private view returns (bytes32) {
@@ -345,7 +345,7 @@ contract DivergenceGuardTest is LegacyWorkBacking {
         (uint256 collateral, uint256 debt) = vault.positions(BORROWER);
         (uint256 markedAt, uint256 grace, bool marked, address marker) = vault.liquidationMarks(BORROWER);
         bytes32 positionState =
-            keccak256(abi.encode(collateral, debt, markedAt, grace, marked, marker, vault.debtIndexOf(BORROWER)));
+            keccak256(abi.encode(collateral, debt, markedAt, grace, marked, marker, vault.chiOf(BORROWER)));
         bytes32 accountingState = keccak256(
             abi.encode(
                 comp.totalSupply(),

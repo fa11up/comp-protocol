@@ -40,34 +40,34 @@ contract ProtocolSequencesTest is ProtocolFixture {
         vm.startPrank(alice);
         // Exercise finite allowances as well as the fixture's infinite approvals.
         imd.approve(address(vault), collateral);
-        vault.depositCollateral(collateral);
+        vault.lock(collateral);
         _assertPosition(alice, collateral, 0);
         assertEq(imd.allowance(alice, address(vault)), 0);
         assertEq(imd.balanceOf(address(vault)), previousCustody + collateral);
 
-        vault.mintCOMP(debt);
+        vault.draw(debt);
         _assertPosition(alice, collateral, debt);
         assertEq(comp.totalSupply(), previousSupply + debt);
         assertEq(comp.balanceOf(alice), debt);
         assertEq(oracle.mintingRights(alice), previousRights);
         assertEq(vault.collateralRatio(alice), collateral * 100 / debt);
 
-        vault.repayCOMP(repayment);
+        vault.wipe(repayment);
         _assertPosition(alice, collateral, remainingDebt);
         assertEq(comp.totalSupply(), previousSupply + remainingDebt);
         assertEq(comp.balanceOf(alice), remainingDebt);
         assertEq(comp.allowance(alice, address(vault)), 0);
         assertEq(oracle.mintingRights(alice), previousRights);
 
-        vault.withdrawCollateral(withdrawal);
+        vault.free(withdrawal);
         _assertPosition(alice, collateral - withdrawal, remainingDebt);
         assertGe((collateral - withdrawal) * 100, remainingDebt * 150);
         assertGe(vault.collateralRatio(alice), 150);
         assertEq(imd.balanceOf(alice), previousWallet + withdrawal);
         assertEq(imd.balanceOf(address(vault)), previousCustody + collateral - withdrawal);
 
-        if (remainingDebt != 0) vault.repayCOMP(remainingDebt);
-        if (withdrawal != collateral) vault.withdrawCollateral(collateral - withdrawal);
+        if (remainingDebt != 0) vault.wipe(remainingDebt);
+        if (withdrawal != collateral) vault.free(collateral - withdrawal);
         vm.stopPrank();
         _assertPosition(alice, 0, 0);
         assertEq(comp.totalSupply(), previousSupply);
@@ -91,9 +91,9 @@ contract ProtocolSequencesTest is ProtocolFixture {
 
         vm.startPrank(alice);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        vault.mintCOMP(1);
+        vault.draw(1);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        vault.withdrawCollateral(1);
+        vault.free(1);
         vm.stopPrank();
         _assertPosition(alice, collateral, debt);
         assertEq(imd.balanceOf(alice), balance);
@@ -105,6 +105,6 @@ contract ProtocolSequencesTest is ProtocolFixture {
         // A rejected withdrawal cannot make a position eligible for liquidation.
         vm.prank(bob);
         vm.expectRevert(CDPVault.HealthyPosition.selector);
-        vault.liquidate(alice, 1);
+        vault.bite(alice, 1);
     }
 }

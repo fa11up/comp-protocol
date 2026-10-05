@@ -4,16 +4,16 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {BaselineVault, TenPercentFeeVault} from "./helpers/BaselineVault.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {MockWorkOracle} from "src/MockWorkOracle.sol";
-import {APPROVED_OPERATOR, FEE_RECIPIENT, STABILITY_FEE_BPS} from "src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, FEE_RECIPIENT, DUTY_BPS} from "src/DeploymentConfig.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
 abstract contract StabilityFeeFixture is Test {
     CDPVault internal vault;
     MockIMD internal collateral;
-    CompToken internal comp;
+    ImdUSD internal comp;
     MockWorkOracle internal oracle;
     TestSwarmFeed internal primary;
     TestSwarmFeed internal spot;
@@ -39,7 +39,7 @@ abstract contract StabilityFeeFixture is Test {
         spot = new TestSwarmFeed(1 ether);
         nhi = new TestSwarmFeed(0.85 ether);
         vault = _deployVault();
-        comp = vault.compToken();
+        comp = vault.stablecoin();
         oracle = MockWorkOracle(address(vault.oracle()));
         vm.startPrank(APPROVED_OPERATOR);
         collateral.mint(BORROWER, 1_000_000 ether);
@@ -54,8 +54,8 @@ abstract contract StabilityFeeFixture is Test {
 
     function _open(address account, uint256 amount) internal {
         vm.startPrank(account);
-        vault.depositCollateral(amount * 3);
-        vault.mintCOMP(amount);
+        vault.lock(amount * 3);
+        vault.draw(amount);
         vm.stopPrank();
     }
 
@@ -76,21 +76,21 @@ abstract contract StabilityFeeFixture is Test {
 /// keeps asserting what it is about rather than restating it in terms of accrual.
 contract StabilityFeeTest is StabilityFeeFixture {
     function test_zeroRateUntouchedPositionAcrossKnownElapsedTimes() public {
-        assertEq(vault.stabilityFeeBps(), 0, "this suite pins the zero-rate configuration");
+        assertEq(vault.duty(), 0, "this suite pins the zero-rate configuration");
         uint256 principal = 100 ether + 7;
         _open(BORROWER, principal);
-        uint256 initialIndex = vault.debtIndexOf(BORROWER);
+        uint256 initialIndex = vault.chiOf(BORROWER);
         uint256[5] memory elapsed = [uint256(1), 365 days - 1, 365 days, 365 days + 1, 100 * 365 days];
         for (uint256 i; i < elapsed.length; ++i) {
             vm.warp(vault.deployedAt() + elapsed[i]);
-            assertEq(vault.debtIndex(), 1 ether, "zero slope at every elapsed time");
+            assertEq(vault.chi(), 1 ether, "zero slope at every elapsed time");
             assertEq(vault.debtOf(BORROWER), principal, "untouched debt remains exact");
             (uint256 held, uint256 debt) = vault.positions(BORROWER);
             assertEq(held, principal * 3);
             assertEq(debt, principal, "position and debt views agree");
             assertEq(vault.collateralRatio(BORROWER), 300);
             assertEq(vault.badDebtOf(BORROWER), 0);
-            assertEq(vault.debtIndexOf(BORROWER), initialIndex, "views never change the debt checkpoint");
+            assertEq(vault.chiOf(BORROWER), initialIndex, "views never change the debt checkpoint");
             _assertZeroFeeAccounting(principal, 0);
         }
     }
@@ -107,8 +107,8 @@ contract StabilityFeeTest is StabilityFeeFixture {
         vm.warp(vm.getBlockTimestamp() + elapsed);
         assertEq(vault.debtOf(BORROWER), principal, "no retroactive or elapsed-time fee at zero rate");
         vm.prank(BORROWER);
-        vault.repayCOMP(amount);
-        assertEq(vault.debtIndexOf(BORROWER), 1 ether);
+        vault.wipe(amount);
+        assertEq(vault.chiOf(BORROWER), 1 ether);
         assertEq(vault.debtOf(BORROWER), principal - amount);
         _assertZeroFeeAccounting(principal - amount, 0);
     }
@@ -123,20 +123,20 @@ contract StabilityFeeTest is StabilityFeeFixture {
 
         vm.warp(vm.getBlockTimestamp() + 365 days);
         vm.prank(BORROWER);
-        vault.mintCOMP(10 ether);
+        vault.draw(10 ether);
         _assertZeroFeeAccounting(150 ether, 7 ether);
 
         vm.warp(vm.getBlockTimestamp() + 182 days + 123);
         vm.prank(BORROWER);
-        vault.repayCOMP(35 ether);
+        vault.wipe(35 ether);
         assertEq(vault.debtOf(SECOND_BORROWER), 40 ether, "inactive borrower remains accounted for");
         _assertZeroFeeAccounting(115 ether, 7 ether);
 
         vm.warp(vm.getBlockTimestamp() + 3 * 365 days);
         vm.prank(BORROWER);
-        vault.repayCOMP(75 ether);
+        vault.wipe(75 ether);
         vm.prank(SECOND_BORROWER);
-        vault.repayCOMP(40 ether);
+        vault.wipe(40 ether);
         _assertZeroFeeAccounting(0, 7 ether);
         assertEq(comp.balanceOf(SECOND_BORROWER), 7 ether, "debt retirement preserves work-backed supply");
     }
@@ -144,21 +144,21 @@ contract StabilityFeeTest is StabilityFeeFixture {
     function test_zeroRateRepaymentFailuresRollBackDebtAndFeeAccounting() public {
         _open(BORROWER, 100 ether);
         vm.warp(vm.getBlockTimestamp() + 365 days);
-        uint256 checkpoint = vault.debtIndexOf(BORROWER);
+        uint256 checkpoint = vault.chiOf(BORROWER);
         vm.startPrank(BORROWER);
         vm.expectRevert(CDPVault.ZeroAmount.selector);
-        vault.repayCOMP(0);
+        vault.wipe(0);
         vm.expectRevert(CDPVault.ExcessRepayment.selector);
-        vault.repayCOMP(100 ether + 1);
+        vault.wipe(100 ether + 1);
         comp.transfer(SECOND_BORROWER, 1);
         vm.expectRevert(
             abi.encodeWithSignature(
                 "ERC20InsufficientBalance(address,uint256,uint256)", BORROWER, 100 ether - 1, 100 ether
             )
         );
-        vault.repayCOMP(100 ether);
+        vault.wipe(100 ether);
         vm.stopPrank();
-        assertEq(vault.debtIndexOf(BORROWER), checkpoint, "a failed burn cannot commit accrual");
+        assertEq(vault.chiOf(BORROWER), checkpoint, "a failed burn cannot commit accrual");
         assertEq(vault.debtOf(BORROWER), 100 ether);
         assertEq(comp.balanceOf(BORROWER), 100 ether - 1);
         assertEq(comp.balanceOf(SECOND_BORROWER), 1);
@@ -174,9 +174,9 @@ contract StabilityFeeTest is StabilityFeeFixture {
         spot.setValue(0.5 ether);
         nhi.setValue(0.6 ether);
         vm.prank(MARKER);
-        vault.markUnderwater(BORROWER);
+        vault.bark(BORROWER);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 10 ether);
+        vault.bite(BORROWER, 10 ether);
         assertEq(comp.balanceOf(LIQUIDATOR), 0, "liquidation burns the full repayment");
         assertEq(comp.balanceOf(MARKER), 0, "marker bonus is collateral, never a stability mint");
         _assertZeroFeeAccounting(90 ether, 0);
@@ -192,7 +192,7 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
 
     function setUp() public override {
         super.setUp();
-        rate = vault.stabilityFeeBps();
+        rate = vault.duty();
         assertEq(rate, 1_000, "these cases state their arithmetic longhand at a 10% rate");
     }
 
@@ -205,18 +205,18 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
     function test_nonzeroUntouchedDebtAccruesLinearlyAcrossYears() public {
         _open(BORROWER, 100 ether);
         uint256 started = vm.getBlockTimestamp();
-        uint256 checkpoint = vault.debtIndexOf(BORROWER);
+        uint256 checkpoint = vault.chiOf(BORROWER);
         for (uint256 yearsElapsed = 1; yearsElapsed <= 3; ++yearsElapsed) {
             vm.warp(started + yearsElapsed * 365 days);
             uint256 expectedFee = yearsElapsed * 10 ether;
-            assertEq(vault.debtIndex(), 1 ether + yearsElapsed * 0.1 ether);
+            assertEq(vault.chi(), 1 ether + yearsElapsed * 0.1 ether);
             assertEq(vault.debtOf(BORROWER), 100 ether + expectedFee, "idle debt must accrue without a transaction");
             assertEq(vault.stabilityFeeOf(BORROWER), expectedFee, "linear rate never compounds unpaid fees");
             (uint256 held, uint256 debt) = vault.positions(BORROWER);
             assertEq(held, 300 ether);
             assertEq(debt, 100 ether + expectedFee);
             assertEq(vault.collateralRatio(BORROWER), 30_000 ether / debt);
-            assertEq(vault.debtIndexOf(BORROWER), checkpoint, "reading debt cannot advance its checkpoint");
+            assertEq(vault.chiOf(BORROWER), checkpoint, "reading debt cannot advance its checkpoint");
             assertEq(vault.totalDebt(), 100 ether, "accrual leaves minted principal unchanged");
             assertEq(comp.totalSupply(), 100 ether, "unpaid fees are not minted");
             assertEq(vault.totalFeesMinted(), 0);
@@ -230,7 +230,7 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
         vm.warp(vault.deployedAt() + elapsed);
         // One token of principal makes the fee equal to the index delta, with one floor operation.
         uint256 expectedFee = elapsed * 1 ether / (10 * 365 days);
-        assertEq(vault.debtIndex(), 1 ether + expectedFee);
+        assertEq(vault.chi(), 1 ether + expectedFee);
         assertEq(vault.debtOf(BORROWER), 1 ether + expectedFee);
         assertEq(vault.stabilityFeeOf(BORROWER), expectedFee);
         assertEq(comp.totalSupply(), 1 ether);
@@ -240,13 +240,13 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
     function test_nonzeroDebtOpenedLaterDoesNotPayForTimeBeforeBorrowing() public {
         vm.warp(vault.deployedAt() + 2 * 365 days);
         _open(BORROWER, 100 ether);
-        assertEq(vault.debtIndexOf(BORROWER), 1.2 ether);
+        assertEq(vault.chiOf(BORROWER), 1.2 ether);
         assertEq(vault.stabilityFeeOf(BORROWER), 0);
         vm.warp(vault.deployedAt() + 3 * 365 days);
         assertEq(vault.debtOf(BORROWER), 110 ether);
         vm.prank(BORROWER);
-        vault.depositCollateral(1 ether);
-        assertEq(vault.debtIndexOf(BORROWER), 1.2 ether, "collateral changes do not capitalize fees");
+        vault.lock(1 ether);
+        assertEq(vault.chiOf(BORROWER), 1.2 ether, "collateral changes do not capitalize fees");
         vm.warp(vault.deployedAt() + 4 * 365 days);
         assertEq(vault.debtOf(BORROWER), 120 ether);
     }
@@ -255,15 +255,15 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
         _open(BORROWER, 100 ether);
         vm.warp(vault.deployedAt() + 365 days / 2);
         vm.prank(BORROWER);
-        vault.mintCOMP(50 ether);
-        assertEq(vault.debtIndexOf(BORROWER), 1.05 ether);
+        vault.draw(50 ether);
+        assertEq(vault.chiOf(BORROWER), 1.05 ether);
         assertEq(vault.debtOf(BORROWER), 155 ether);
         assertEq(vault.stabilityFeeOf(BORROWER), 5 ether);
 
         vm.warp(vault.deployedAt() + 3 * 365 days / 2);
         assertEq(vault.debtOf(BORROWER), 170 ether, "100 for half a year, then 150 for one year");
         vm.prank(BORROWER);
-        vault.repayCOMP(7 ether);
+        vault.wipe(7 ether);
         assertEq(vault.totalDebt(), 150 ether, "fees are paid before principal");
         assertEq(vault.stabilityFeeOf(BORROWER), 13 ether);
         assertEq(vault.totalFeesMinted(), 7 ether);
@@ -273,7 +273,7 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
         vm.warp(vault.deployedAt() + 2 * 365 days);
         assertEq(vault.debtOf(BORROWER), 170.5 ether, "unpaid fees do not earn interest");
         vm.prank(BORROWER);
-        vault.repayCOMP(30.5 ether);
+        vault.wipe(30.5 ether);
         assertEq(vault.totalDebt(), 140 ether, "20.5 fees and 10 principal were repaid");
         assertEq(vault.stabilityFeeOf(BORROWER), 0);
         assertEq(vault.totalFeesMinted(), 27.5 ether);
@@ -286,24 +286,24 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
     function test_nonzeroAccruedDebtControlsMintWithdrawalMarkAndLiquidation() public {
         nhi.setValue(0.6 ether);
         vm.startPrank(BORROWER);
-        vault.depositCollateral(200 ether);
-        vault.mintCOMP(100 ether);
+        vault.lock(200 ether);
+        vault.draw(100 ether);
         comp.transfer(LIQUIDATOR, 10 ether);
         vm.stopPrank();
         vm.expectRevert(CDPVault.HealthyPosition.selector);
-        vault.markUnderwater(BORROWER);
+        vault.bark(BORROWER);
         vm.warp(vault.deployedAt() + 365 days);
         assertEq(vault.debtOf(BORROWER), 110 ether);
         vm.startPrank(BORROWER);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        vault.mintCOMP(1);
+        vault.draw(1);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
-        vault.withdrawCollateral(1);
+        vault.free(1);
         vm.stopPrank();
         vm.prank(MARKER);
-        vault.markUnderwater(BORROWER);
+        vault.bark(BORROWER);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 10 ether);
+        vault.bite(BORROWER, 10 ether);
         (uint256 held, uint256 debt) = vault.positions(BORROWER);
         assertEq(held, 189 ether);
         assertEq(debt, 100 ether);
@@ -321,8 +321,8 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
         vm.expectRevert(
             abi.encodeWithSignature("ERC20InsufficientBalance(address,uint256,uint256)", BORROWER, 100 ether, 110 ether)
         );
-        vault.repayCOMP(110 ether);
-        assertEq(vault.debtIndexOf(BORROWER), 1 ether, "failed repayment restores the old checkpoint");
+        vault.wipe(110 ether);
+        assertEq(vault.chiOf(BORROWER), 1 ether, "failed repayment restores the old checkpoint");
         assertEq(vault.debtOf(BORROWER), 110 ether, "failed repayment cannot erase fee debt");
         assertEq(vault.totalDebt(), 100 ether);
         assertEq(vault.totalFeesMinted(), 0);
@@ -334,7 +334,7 @@ contract NonzeroStabilityFeeTest is StabilityFeeFixture {
         comp.transfer(BORROWER, 10 ether);
         vm.stopPrank();
         vm.prank(BORROWER);
-        vault.repayCOMP(110 ether);
+        vault.wipe(110 ether);
         assertEq(vault.debtOf(BORROWER), 0);
         assertEq(vault.stabilityFeeOf(BORROWER), 0);
         assertEq(vault.totalDebt(), 0);
@@ -355,8 +355,8 @@ contract ShippedRateStabilityFeeTest is StabilityFeeFixture {
 
     function setUp() public override {
         super.setUp();
-        rate = vault.stabilityFeeBps();
-        assertEq(rate, STABILITY_FEE_BPS, "the deployed vault must carry the shipped rate");
+        rate = vault.duty();
+        assertEq(rate, DUTY_BPS, "the deployed vault must carry the shipped rate");
     }
 
     function _deployVault() internal override returns (CDPVault) {
@@ -408,7 +408,7 @@ contract ShippedRateStabilityFeeTest is StabilityFeeFixture {
         assertEq(held, principal, "the borrower holds exactly what it minted");
 
         vm.prank(BORROWER);
-        vault.repayCOMP(held);
+        vault.wipe(held);
 
         assertEq(comp.balanceOf(BORROWER), 0, "every unit it had is gone");
         assertEq(vault.stabilityFeeOf(BORROWER), 0, "fees were taken first");

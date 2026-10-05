@@ -52,7 +52,7 @@ contract ManifestConstructibleTest is Test {
         // The faucet's authority is a source constant, so a fresh one is as usable as the reused one.
         assertEq(MockIMD(address(vault.imdToken())).deployer(), APPROVED_OPERATOR);
         // Everything else the vault creates is wired to it, with nothing sent after construction.
-        assertEq(vault.compToken().vault(), address(vault));
+        assertEq(vault.stablecoin().vault(), address(vault));
         assertEq(address(vault.parameters().vault()), address(vault));
         assertEq(address(vault.usdPriceFeed().imdEthFeed()), p);
         assertGt(address(vault.treasury()).code.length, 0);
@@ -74,7 +74,7 @@ contract ManifestConstructibleTest is Test {
         assertEq(address(vault.imdToken()), address(collateral), "the vault took the named token");
         assertEq(vault.imdToken().balanceOf(address(vault)), 0, "and holds none of it yet");
         assertEq(collateral.deployer(), APPROVED_OPERATOR, "whose faucet is the approved operator's");
-        assertTrue(address(vault.compToken()) != address(0), "stablecoin created in-constructor");
+        assertTrue(address(vault.stablecoin()) != address(0), "stablecoin created in-constructor");
         assertTrue(address(vault.parameters()) != address(0), "parameters too");
         assertTrue(address(vault.treasury()) != address(0), "and the treasury");
         assertTrue(address(vault.usdPriceFeed()) != address(0), "and the USD price feed");

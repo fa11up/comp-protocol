@@ -99,7 +99,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         assertEq(reserve.reserveValueUsd(), 0);
         assertEq(reserve.reserveValueOf(stable), 0);
         vm.prank(APPROVED_OPERATOR);
-        vm.expectRevert(Treasury.CompIsNotReserve.selector);
+        vm.expectRevert(Treasury.StablecoinIsNotReserve.selector);
         parameters.proposeReserveAsset(stable, reservePrice, 5000);
         assertEq(parameters.pendingEta(), 0);
     }
@@ -439,7 +439,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         _setVaultPrice(0.6 ether);
         health.setValue(0.6 ether); // Zero grace, preserving the exact accrued fee read below.
         vm.prank(OTHER_WORKER);
-        backedVault.markUnderwater(BORROWER);
+        backedVault.bark(BORROWER);
         uint256 fee = backedVault.stabilityFeeOf(BORROWER);
         assertGt(fee, 0);
         assertLt(fee, 50 ether);
@@ -451,7 +451,7 @@ contract ReserveValuationTest is WorkBackingFixture {
         uint256 oldRecipientCollateral = collateral.balanceOf(FEE_RECIPIENT);
         uint256 oldRecipientComp = stable.balanceOf(FEE_RECIPIENT);
         vm.prank(WORKER);
-        backedVault.liquidate(BORROWER, 50 ether);
+        backedVault.bite(BORROWER, 50 ether);
         assertEq(collateral.balanceOf(address(reserve)), cut);
         assertEq(stable.balanceOf(address(reserve)), fee);
         assertEq(backedVault.totalFeesMinted(), fee);

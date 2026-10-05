@@ -6,7 +6,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockIMD} from "src/MockIMD.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {MockWorkOracle} from "src/MockWorkOracle.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
 import {CDPVault} from "src/CDPVault.sol";
@@ -88,7 +88,7 @@ abstract contract WorkBackingFixture is Test {
     uint256 internal constant ASSET_USD = 1 ether;
     MockIMD internal collateral;
     ParameterizedVault internal backedVault;
-    CompToken internal stable;
+    ImdUSD internal stable;
     MockWorkOracle internal workOracle;
     Parameters internal parameters;
     Treasury internal reserve;
@@ -110,7 +110,7 @@ abstract contract WorkBackingFixture is Test {
         backedVault = new ParameterizedVault(
             address(collateral), address(0), address(0), address(primary), address(health), address(spot)
         );
-        stable = backedVault.compToken();
+        stable = backedVault.stablecoin();
         workOracle = MockWorkOracle(address(backedVault.oracle()));
         parameters = backedVault.parameters();
         reserve = backedVault.treasury();
@@ -173,8 +173,8 @@ abstract contract WorkBackingFixture is Test {
         collateral.mint(BORROWER, amount);
         vm.startPrank(BORROWER);
         collateral.approve(address(backedVault), amount);
-        backedVault.depositCollateral(amount);
-        backedVault.mintCOMP(debt);
+        backedVault.lock(amount);
+        backedVault.draw(debt);
         vm.stopPrank();
     }
 

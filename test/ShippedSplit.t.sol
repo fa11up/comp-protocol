@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {CDPVault} from "../src/CDPVault.sol";
-import {CompToken} from "../src/CompToken.sol";
+import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 import {APPROVED_OPERATOR, FEE_RECIPIENT, MARKER_SHARE_BPS, PROTOCOL_BONUS_SHARE_BPS} from "../src/DeploymentConfig.sol";
@@ -20,7 +20,7 @@ contract ShippedSplitTest is Test {
 
     CDPVault private vault;
     MockIMD private imd;
-    CompToken private comp;
+    ImdUSD private comp;
     TestSwarmFeed private price;
     TestSwarmFeed private nhi;
     TestSwarmFeed private spot;
@@ -34,16 +34,16 @@ contract ShippedSplitTest is Test {
         imd = new MockIMD();
         price = new TestSwarmFeed(1 ether);
         spot = new TestSwarmFeed(1 ether);
-        nhi = new TestSwarmFeed(0.6 ether); // minCR 200, grace 0
+        nhi = new TestSwarmFeed(0.6 ether); // mat 200, grace 0
         vault = new CDPVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
-        comp = vault.compToken();
+        comp = vault.stablecoin();
 
         vm.prank(APPROVED_OPERATOR);
         imd.mint(BORROWER, 300 ether);
         vm.startPrank(BORROWER);
         imd.approve(address(vault), type(uint256).max);
-        vault.depositCollateral(300 ether);
-        vault.mintCOMP(150 ether);
+        vault.lock(300 ether);
+        vault.draw(150 ether);
         comp.transfer(LIQUIDATOR, 150 ether);
         vm.stopPrank();
         price.setValue(PRICE);
@@ -55,10 +55,10 @@ contract ShippedSplitTest is Test {
         assertEq(vault.markerShareBps(), MARKER_SHARE_BPS);
 
         vm.prank(MARKER);
-        vault.markUnderwater(BORROWER);
+        vault.bark(BORROWER);
         uint256 liquidatorBefore = imd.balanceOf(LIQUIDATOR);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, REPAID);
+        vault.bite(BORROWER, REPAID);
 
         uint256 seized = REPAID * 110 * 1e16 / PRICE;
         uint256 bonus = seized - REPAID * 1e18 / PRICE;
@@ -77,9 +77,9 @@ contract ShippedSplitTest is Test {
     function test_theBorrowersLossDoesNotDependOnTheSplit() public {
         (uint256 collateralBefore,) = vault.positions(BORROWER);
         vm.prank(MARKER);
-        vault.markUnderwater(BORROWER);
+        vault.bark(BORROWER);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, REPAID);
+        vault.bite(BORROWER, REPAID);
         (uint256 collateralAfter,) = vault.positions(BORROWER);
         assertEq(collateralBefore - collateralAfter, REPAID * 110 * 1e16 / PRICE, "exactly the formula seizure");
     }

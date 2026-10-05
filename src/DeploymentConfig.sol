@@ -41,7 +41,7 @@ uint256 constant ETH_USD_MAX_AGE = 1 days;
 // PriceFeed and NhiFeed therefore accept NO authority and NO attestation policy as constructor
 // arguments. There is no slot for a template to fill in, correctly or otherwise, and a deploy
 // script that tries to pass one does not compile. Changing any of these is a source edit: it shows
-// up in a diff, goes through review, and is checked against chain state by DeployComp.verify().
+// up in a diff, goes through review, and is checked against chain state by DeployProtocol.verify().
 
 /// @dev Signer of every IdentityMD oracle attestation, recovered from live attestation signatures.
 address constant ORACLE_ATTESTER = 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982;
@@ -109,12 +109,12 @@ uint256 constant PROTOCOL_BONUS_SHARE_BPS = 3_333;
 
 /// @dev Annual stability fee on open debt, in basis points, accrued linearly from deployment.
 /// Ships at zero so this increment changes no existing behaviour; a later deployment turns it on.
-uint256 constant STABILITY_FEE_BPS = 200;
+uint256 constant DUTY_BPS = 200;
 
 /// @dev The ratio term of the work-minting ceiling, in basis points of collateral-backed debt:
 /// workCeiling = reserveValueUsd + totalDebt * WORK_RATIO_BPS / 10000. Section 3 of
 /// docs/COMPUTE-BACKING-DESIGN.md derives the bound: backing stays above one for every reserve size
-/// exactly when this ratio is below minCR - 1, which is 5000 at the loosest NHI. 2500 is half that
+/// exactly when this ratio is below mat - 1, which is 5000 at the loosest NHI. 2500 is half that
 /// cliff, 120% worst-case backing with an empty reserve. Parameters refuses any proposal above
 /// MAX_WORK_RATIO_BPS, which is also 2500, so governance can lower it and never raise it past here.
 uint256 constant WORK_RATIO_BPS = 2_500;
@@ -136,7 +136,7 @@ address constant ERC8004_ADAPTER = 0xde152AfB7db5373F34876E1499fbD893A82dD336;
 // COMP earned per accepted task, 1e18-scaled. Governed through `Parameters`, hard-bounded there at one
 // COMP per task. Shipped at a hundredth of a COMP; the work ceiling binds on top, so a claim is
 // bounded twice -- by what was earned and by what backs the protocol.
-uint256 constant COMP_PER_TASK_WAD = 0.01 ether;
+uint256 constant UNITS_PER_TASK_WAD = 0.01 ether;
 
 // The pre-deployed WorkOracleFactory, and the sentinel a vault passes as its oracle to ask for a real
 // attested work oracle from it.

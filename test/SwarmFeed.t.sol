@@ -9,7 +9,7 @@ import {NhiFeed} from "src/NhiFeed.sol";
 import {SpotFeed} from "src/SpotFeed.sol";
 import {CDPVault} from "src/CDPVault.sol";
 import {BaselineVault} from "./helpers/BaselineVault.sol";
-import {CompToken} from "src/CompToken.sol";
+import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {ConfigurableSwarmFeed} from "./helpers/ConfigurableSwarmFeed.sol";
 import {
@@ -250,7 +250,7 @@ abstract contract SwarmFeedTest is Test {
         nhi.seed(0.85 ether);
         vm.stopPrank();
         MockIMD imd = new MockIMD();
-        CompToken comp = new CompToken(address(0));
+        ImdUSD comp = new ImdUSD(address(0));
         MirroredSwarmFeed spot = new MirroredSwarmFeed(address(price));
         CDPVault vault =
             new BaselineVault(address(imd), address(comp), address(0), address(price), address(nhi), address(spot));
@@ -260,23 +260,23 @@ abstract contract SwarmFeedTest is Test {
         vm.stopPrank();
         vm.startPrank(BORROWER);
         imd.approve(address(vault), 140 ether);
-        vault.depositCollateral(140 ether);
-        vault.mintCOMP(100 ether);
+        vault.lock(140 ether);
+        vault.draw(100 ether);
         comp.transfer(LIQUIDATOR, 100 ether);
         vm.stopPrank();
         price.seed(1 ether);
-        vault.markUnderwater(BORROWER);
+        vault.bark(BORROWER);
         vm.warp(block.timestamp + 6 hours);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         price.seed(1 ether);
         vm.prank(LIQUIDATOR);
         vm.expectRevert(CDPVault.StaleFeed.selector);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         nhi.seed(0.85 ether);
         vm.prank(LIQUIDATOR);
-        vault.liquidate(BORROWER, 100 ether);
+        vault.bite(BORROWER, 100 ether);
         assertEq(imd.balanceOf(LIQUIDATOR), 109 ether, "liquidator receives principal plus 90% of bonus");
         assertEq(imd.balanceOf(address(this)), 1 ether, "distinct marker receives 10% of bonus");
         assertEq(imd.balanceOf(LIQUIDATOR) + imd.balanceOf(address(this)), 110 ether);

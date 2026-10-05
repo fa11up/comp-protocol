@@ -19,7 +19,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         _register(collateral, backedVault.usdPriceFeed(), 10_000);
         _openDebt(1000 ether);
         vm.prank(BORROWER);
-        backedVault.withdrawCollateral(200 ether); // 180%, inside the healthy 150..200 band.
+        backedVault.free(200 ether); // 180%, inside the healthy 150..200 band.
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(address(reserve), 1000 ether);
     }
@@ -175,7 +175,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
 
         // Principal minted after the window is fresh again, and only that part is excluded.
         vm.prank(BORROWER);
-        backedVault.mintCOMP(100 ether);
+        backedVault.draw(100 ether);
         decayed = backedVault.decayedRedemptionBaseRate();
         supply = stable.totalSupply();
         _redeem(150 ether);
@@ -193,7 +193,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         reserve.withdraw(collateral, APPROVED_OPERATOR, 1000 ether);
         _advance(12 hours); // the original 1000 has aged out
         vm.prank(BORROWER);
-        backedVault.mintCOMP(100 ether); // fresh, dated now
+        backedVault.draw(100 ether); // fresh, dated now
         _advance(6 hours);
         uint256 fees = backedVault.stabilityFeeOf(BORROWER);
         assertGt(fees, 0);
@@ -218,7 +218,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         for (uint256 i; i < 6; ++i) {
             _advance(12 hours - 60);
             vm.prank(BORROWER);
-            backedVault.mintCOMP(1);
+            backedVault.draw(1);
         }
         uint256 supply = stable.totalSupply();
         assertEq(backedVault.redemptionFeeBps(100 ether), 300);
@@ -237,7 +237,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         uint256 start = vm.getBlockTimestamp();
         _advance(12 hours - 60);
         vm.prank(BORROWER);
-        backedVault.mintCOMP(1);
+        backedVault.draw(1);
         vm.warp(start + 23 hours);
         _refreshEthUsd();
         uint256 supply = stable.totalSupply();
@@ -255,12 +255,12 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         collateral.mint(BORROWER, 1800 ether);
         vm.startPrank(BORROWER);
         collateral.approve(address(backedVault), 1800 ether);
-        backedVault.depositCollateral(1800 ether);
+        backedVault.lock(1800 ether);
         vm.stopPrank();
         uint256 start = vm.getBlockTimestamp();
         _advance(6 hours);
         vm.prank(BORROWER);
-        backedVault.mintCOMP(1000 ether);
+        backedVault.draw(1000 ether);
         assertLt(backedVault.collateralRatio(BORROWER), backedVault.redemptionCeilingCR());
 
         vm.warp(start + 15 hours - 1);
@@ -296,7 +296,7 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         vm.warp(start + gap);
         _refreshEthUsd();
         vm.prank(BORROWER);
-        backedVault.mintCOMP(topUp);
+        backedVault.draw(topUp);
         // mintedAt = start + ceil(gap * topUp / (1000 + topUp)).
         uint256 expectedAt = start + Math.mulDiv(gap, topUp, 1000 ether + topUp, Math.Rounding.Ceil);
         uint256 probe = bound(probeSeed, 0, 2);
@@ -472,6 +472,6 @@ contract RedemptionEconomicsTest is WorkBackingFixture {
         parameters.proposeRedemptionSpread(101);
         vm.stopPrank();
         assertEq(parameters.pendingEta(), 0);
-        assertGt(backedVault.redemptionCeilingCR(), backedVault.minCR());
+        assertGt(backedVault.redemptionCeilingCR(), backedVault.mat());
     }
 }
