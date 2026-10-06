@@ -72,6 +72,8 @@ const s = Object.assign(fixture(), {
   crs: { [extraOwner.toLowerCase()]: 130n },
   marked: [candidate],
   consistent: true,
+  // A populated book: 40 more borrowers clustered near the minimum, so the loan book shows its cloud.
+  crowd: 40,
 });
 
 const browser = await chromium.launch({ headless: false });

@@ -116,6 +116,8 @@ export const fixture = () => ({
   // Only marked owners carry an active liquidation mark; ratio overrides by address.
   marked: [candidate],
   crs: {},
+  /** Extra borrowers for the demo's loan book (0 in the tests): ratios clustered near the minimum. */
+  crowd: 0,
   consistent: false,
   rpcFail: false,
   codeMissing: false,
@@ -298,8 +300,11 @@ function call(s, params) {
     else if (f === "positions") {
       if (s.ownerReadFail && args[0].toLowerCase() === extraOwner.toLowerCase())
         throw Error("Position read unavailable");
+      const k = crowdIndex(args[0].toLowerCase());
       const debt =
-        args[0].toLowerCase() === closedOwner.toLowerCase()
+        s.crowd && k >= 0 && k < s.crowd
+          ? BigInt(40 + ((k * 389) % 1460)) * W
+          : args[0].toLowerCase() === closedOwner.toLowerCase()
           ? 0n
           : args[0].toLowerCase() === extraOwner.toLowerCase()
             ? 250n * W
@@ -418,9 +423,21 @@ function fee(s, amount) {
   const capped = base > 450n * 10n ** 14n ? 450n * 10n ** 14n : base;
   return 50n + (capped + 10n ** 14n - 1n) / 10n ** 14n;
 }
+/** The demo's crowd: deterministic owners, ratios mostly 150–230% with a tail, debts 40–1,500. */
+export const crowdOwner = (i) => `0x${(0xd000 + i).toString(16).padStart(40, "0")}`;
+function crowdIndex(owner) {
+  const n = parseInt(owner.slice(-6), 16) - 0xd000;
+  return n >= 0 && n < 10000 ? n : -1;
+}
+function crowdCr(i) {
+  const a = ((i * 7919) % 101) / 100, b = ((i * 104729) % 97) / 96;
+  return BigInt(Math.round(150 + a * b * 160 + (i % 9 === 0 ? 40 : 0)));
+}
 function crOf(s, owner) {
   const o = owner.toLowerCase();
   if (s.crs[o] !== undefined) return s.crs[o];
+  const k = crowdIndex(o);
+  if (s.crowd && k >= 0 && k < s.crowd) return crowdCr(k);
   if (o === candidate.toLowerCase()) return s.candidateCR;
   return BigInt(
     Math.round(
@@ -586,7 +603,7 @@ export function fixtureLogs(s, address) {
   };
   if (name === "ParameterizedVault")
     return [
-      ...[account, candidate, extraOwner, closedOwner, account].map(
+      ...[account, candidate, extraOwner, closedOwner, account, ...Array.from({ length: s.crowd ?? 0 }, (_, i) => crowdOwner(i))].map(
         (owner, i) =>
           event(
             "CollateralDeposited",

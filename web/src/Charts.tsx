@@ -1,6 +1,7 @@
 import { unit } from "./unit";
 import { perImd } from "./collateral";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { swarm, extent } from "./swarm";
 import { formatUnits, maxUint256 } from "viem";
 import type { Runtime } from "./config";
 import type { Snapshot } from "./state";
@@ -131,32 +132,79 @@ export function LoanBook({
     ) * 100,
   );
   const maximum = axisCeiling.current;
-  const at = (value: bigint) => Math.min(100, (Number(value) / maximum) * 100);
+  // The axis starts at 100%: below it a position is underwater (debt worth more than its collateral), and
+  // those are pinned to the left edge with an arrow rather than stretching the axis down to zero.
+  const FLOOR = 100;
+  const at = (value: bigint) =>
+    Math.max(0, Math.min(100, ((Number(value) - FLOOR) / (maximum - FLOOR)) * 100));
   const maxDebt = positions.reduce((m, p) => (p.debt > m ? p.debt : m), 1n);
-  // Pack labels in separate lanes without changing the ratio coordinate.
-  const lanes: number[] = [];
-  let marksDrawn = 0;
-  const marks = [...positions]
-    .sort((a, b) =>
-      a.cr < b.cr ? -1 : a.cr > b.cr ? 1 : a.owner.localeCompare(b.owner),
-    )
-    .map((p) => {
-      const x = at(p.cr),
-        px = (x / 100) * width;
-      let lane = lanes.findIndex((end) => end + 12 < px - 64);
-      // Three label lanes at most, so the strip keeps a fixed height; the list names the rest.
-      const labelled = lane >= 0 || lanes.length < 3;
-      if (lane < 0) lane = labelled ? lanes.length : marksDrawn++ % 3;
-      if (labelled) lanes[lane] = px + 64;
-      return {
-        ...p,
-        x,
-        lane,
-        labelled,
-        radius: 12 * Math.sqrt(Number(p.debt) / Number(maxDebt)),
-      };
+  // A bubble cloud: each circle at its exact ratio, nudged up or down only as far as it must to clear the
+  // others (the height carries no value). Circles are packed at no less than a 12px radius so every one keeps
+  // a 24px touch target; area is debt. If the cloud would outgrow MAX_HEIGHT, every circle shrinks and it
+  // packs again.
+  const MAX_HEIGHT = 200;
+  const plotWidth = Math.max(1, width);
+  let scale = 1;
+  let circles: { id: string; x: number; r: number; dot: number }[] = [];
+  let ys = new Map<string, number>();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    circles = positions.map((p) => {
+      const dot = 12 * scale * Math.sqrt(Number(p.debt) / Number(maxDebt));
+      return { id: p.owner, x: (at(p.cr) / 100) * plotWidth, r: Math.max(dot, 12 * scale, 6), dot };
     });
-  const height = Math.max(64, lanes.length * 48 + 14);
+    ys = swarm(circles);
+    if (2 * extent(circles, ys) + 12 <= MAX_HEIGHT) break;
+    scale *= 0.8;
+  }
+  const height = Math.min(MAX_HEIGHT, Math.max(96, Math.ceil(2 * extent(circles, ys) + 12)));
+  const centre = height / 2;
+  // Names beside the biggest circles where there is room (right, else left); the rest read on hover and in
+  // the list below. A label never covers another label or circle.
+  const boxes: { id: string; l: number; r: number; t: number; b: number }[] = circles.map((c) => ({
+    id: c.id,
+    l: c.x - c.r,
+    r: c.x + c.r,
+    t: centre + (ys.get(c.id) ?? 0) - c.r,
+    b: centre + (ys.get(c.id) ?? 0) + c.r,
+  }));
+  const labelSide = new Map<string, "right" | "left" | "above" | "below">();
+  for (const c of [...circles].sort((a, b) => b.dot - a.dot).slice(0, 8)) {
+    const p = positions.find((q) => q.owner === c.id)!;
+    const w = (displayName(p.owner).length + (p.cr === maxUint256 || p.cr < BigInt(FLOOR) ? 2 : 0)) * 6.2 + 6;
+    const y = centre + (ys.get(c.id) ?? 0);
+    for (const side of ["right", "left", "above", "below"] as const) {
+      const box =
+        side === "right"
+          ? { id: `${c.id}-label`, l: c.x + c.dot + 3, r: c.x + c.dot + 3 + w, t: y - 8, b: y + 8 }
+          : side === "left"
+            ? { id: `${c.id}-label`, l: c.x - c.dot - 3 - w, r: c.x - c.dot - 3, t: y - 8, b: y + 8 }
+            : side === "above"
+              ? { id: `${c.id}-label`, l: c.x - w / 2, r: c.x + w / 2, t: y - c.dot - 18, b: y - c.dot - 2 }
+              : { id: `${c.id}-label`, l: c.x - w / 2, r: c.x + w / 2, t: y + c.dot + 2, b: y + c.dot + 18 };
+      const fits =
+        box.l >= -60 &&
+        box.r <= plotWidth + 60 &&
+        box.t >= 0 &&
+        box.b <= height &&
+        boxes.every((o) => o.id === c.id || o.r <= box.l || o.l >= box.r || o.b <= box.t || o.t >= box.b);
+      if (fits) {
+        labelSide.set(c.id, side);
+        boxes.push(box);
+        break;
+      }
+    }
+  }
+  const marks = positions.map((p) => {
+    const c = circles.find((q) => q.id === p.owner)!;
+    return {
+      ...p,
+      x: at(p.cr),
+      y: centre + (ys.get(p.owner) ?? 0),
+      radius: c.dot,
+      hit: c.r,
+      side: labelSide.get(p.owner),
+    };
+  });
   return (
     <>
       <div className="book-heading">
@@ -164,7 +212,7 @@ export function LoanBook({
           Collateral ratio
           <Info
             label="Loan book"
-            text={`Every open position on a collateral-ratio axis. Circle area is accrued ${unit()} debt. The bands move with the live minCR and redemption ceiling.`}
+            text={`Every open position by collateral ratio, from 100%. Circle area is accrued ${unit()} debt; circles stack up and down only to stay apart, so height carries no value and a tall cloud is where debt is concentrated. Positions under 100% sit at the left edge. The bands move with the live minCR and redemption ceiling.`}
           />
         </p>
         <span className="muted">
@@ -198,7 +246,7 @@ export function LoanBook({
         <>
           <div className="strip-wrap">
             <div className="strip-labels">
-              <span>0%</span>
+              <span aria-hidden="true" />
               <span className="min-label" style={{ left: `${at(min!)}%` }}>
                 minCR <Ticker text={`${min}%`} />
               </span>
@@ -208,7 +256,7 @@ export function LoanBook({
               >
                 Ceiling <Ticker text={`${ceiling}%`} />
               </span>
-              <span>{maximum}%</span>
+              <span aria-hidden="true" />
             </div>
             <div
               className="strip-plot"
@@ -245,7 +293,7 @@ export function LoanBook({
                   key={p.owner}
                   type="button"
                   className={`loan-mark ${p.cr < min! ? "is-danger" : "is-healthy"}`}
-                  style={{ left: `${p.x}%`, top: p.lane * 48 + 4 }}
+                  style={{ left: `${p.x}%`, top: p.y, width: p.hit * 2, height: p.hit * 2 }}
                   title={`${displayName(p.owner)} · ${p.owner}\n${p.cr}% · ${fmt(p.debt)} ${unit()} · ${stateOf(p.cr, min!, ceiling!)}\n${liquidation(p, s)}`}
                   aria-label={`${displayName(p.owner)}, ${p.owner}, ${p.cr}% collateral ratio, ${fmt(p.debt)} ${unit()}, ${stateOf(p.cr, min!, ceiling!)}, ${liquidation(p, s)}`}
                   aria-pressed={selected === p.owner}
@@ -257,14 +305,19 @@ export function LoanBook({
                     className="loan-dot"
                     style={{ width: p.radius * 2, height: p.radius * 2 }}
                   />
-                  {p.labelled && (
-                    <span className="loan-label">
+                  {p.side && (
+                    <span className={`loan-label is-${p.side}`} style={{ "--dot": `${p.radius}px` } as CSSProperties}>
                       {p.cr === maxUint256 && "→ "}
+                      {p.cr < BigInt(FLOOR) && "← "}
                       {displayName(p.owner)}
                     </span>
                   )}
                 </button>
               ))}
+            </div>
+            <div className="strip-axis">
+              <span>{FLOOR}%</span>
+              <span>{maximum}%</span>
             </div>
           </div>
           <LoanFeed

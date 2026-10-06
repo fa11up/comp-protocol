@@ -754,6 +754,13 @@ dialog [role="status"] {
   margin-bottom: 5px;
   flex-wrap: wrap;
 }
+.strip-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 3px;
+}
 .strip-plot {
   position: relative;
   border-bottom: 1px solid var(--control);
@@ -787,17 +794,14 @@ dialog [role="status"] {
 }
 .loan-mark {
   position: absolute;
-  width: 128px;
-  min-height: 44px;
   padding: 0;
-  transform: translateX(-50%);
+  /* Centred on its ratio and its place in the cloud; sized to at least a 24px touch target. */
+  transform: translate(-50%, -50%);
   border: 0;
+  border-radius: 50%;
   background: var(--clear);
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  justify-content: flex-start;
-  z-index: 1;
+  display: grid;
+  place-items: center;
 }
 .loan-mark.is-danger {
   color: var(--danger);
@@ -809,18 +813,40 @@ dialog [role="status"] {
   display: block;
   border-radius: 50%;
   background: currentColor;
-  position: absolute;
-  top: 14px;
-  transform: translateY(-50%);
+  opacity: 0.85;
+}
+.loan-mark[aria-pressed="true"] .loan-dot {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
 }
 .loan-label {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--text);
   background: var(--surface);
   font-size: 10px;
   line-height: 1.4;
-  margin-top: 27px;
   padding-inline: 2px;
   white-space: nowrap;
+}
+.loan-label.is-right {
+  left: calc(50% + var(--dot) + 3px);
+}
+.loan-label.is-left {
+  right: calc(50% + var(--dot) + 3px);
+}
+.loan-label.is-above,
+.loan-label.is-below {
+  left: 50%;
+  transform: translateX(-50%);
+}
+.loan-label.is-above {
+  top: auto;
+  bottom: calc(50% + var(--dot) + 2px);
+}
+.loan-label.is-below {
+  top: calc(50% + var(--dot) + 2px);
 }
 .loan-mark[aria-pressed="true"] .loan-label {
   text-decoration: underline;

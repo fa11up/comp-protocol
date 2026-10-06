@@ -948,7 +948,8 @@ try {
   s.minCR = 200n;
   await refresh(page);
   await page.waitForFunction(() =>
-    document.querySelector(".liquidatable-band")?.style.width.startsWith("66."),
+    // The axis runs from 100%: a 200% minimum on a 100–300% axis sits halfway.
+    document.querySelector(".liquidatable-band")?.style.width.startsWith("50"),
   );
   assert.ok((await page.locator(".loan-mark.is-danger").count()) >= 2);
   const updatedWidth = await page
