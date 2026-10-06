@@ -100,6 +100,17 @@ contract DeployMainnet is Script, DeployPreflight {
     address internal constant IMD = 0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7;
     address internal constant CHAINLINK_ETH_USD_MAINNET = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
 
+    /// @dev The deployment's cost ceiling (the swarm developer's figure, 2026-10-05) and the gas it is
+    /// checked against: 26.2M measured on the fork rehearsal, plus margin. At the live base fee plus
+    /// MAX_PRIORITY_FEE the whole broadcast must cost at most this, or the script refuses to start —
+    /// wait for a cheaper block. Broadcast with `--priority-gas-price` at or below MAX_PRIORITY_FEE.
+    uint256 internal constant MAX_DEPLOY_COST = 0.05 ether;
+    uint256 internal constant DEPLOY_GAS_BUDGET = 28_000_000;
+    uint256 internal constant MAX_PRIORITY_FEE = 0.1 gwei;
+    /// @dev EIP-7825: no Ethereum transaction may use more than 2^24 gas. The largest here, the vault,
+    /// measured 12.7M; this keeps the script honest if it ever grows.
+    uint256 internal constant TX_GAS_CAP = 16_777_216;
+
     string internal constant BODIES = "deploy/mainnet/bodies/";
     string internal constant OUT = "deploy/mainnet/out/";
 
@@ -181,6 +192,10 @@ contract DeployMainnet is Script, DeployPreflight {
     /// @dev Everything that would make the broadcast wrong, checked before it starts.
     function _refuseUnlessReady(Plan memory p) internal view {
         require(block.chainid == 1, "mainnet only (rehearse on an anvil fork of mainnet, chain id 1)");
+        require(
+            (block.basefee + MAX_PRIORITY_FEE) * DEPLOY_GAS_BUDGET <= MAX_DEPLOY_COST,
+            "gas too expensive: the deployment would cost more than 0.05 ETH; wait for a cheaper block"
+        );
         _preflightPriceLeg();
         require(CHAINLINK_ETH_USD == CHAINLINK_ETH_USD_MAINNET, "CHAINLINK_ETH_USD is not mainnet's ETH/USD");
         require(ATTESTATION_RELAYER == p.relay, "ATTESTATION_RELAYER != planned SwarmRelay: run deploy/mainnet/plan.py");
@@ -209,7 +224,9 @@ contract DeployMainnet is Script, DeployPreflight {
             console2.log("exists, skipped   ", expected);
             return;
         }
+        uint256 before = gasleft();
         (bool ok, bytes memory ret) = CREATE2_FACTORY.call(bytes.concat(salt, initcode));
+        require(before - gasleft() < TX_GAS_CAP, "a deployment exceeds the EIP-7825 per-transaction gas cap");
         require(ok && ret.length == 20 && address(bytes20(ret)) == expected, "CREATE2 did not land at the planned address");
         console2.log("deployed          ", expected);
     }

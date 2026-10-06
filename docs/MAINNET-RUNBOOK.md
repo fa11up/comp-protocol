@@ -246,6 +246,26 @@ FOUND WHILE BUILDING IT: `SwarmWorkOracle`'s constructor compared its creator to
 the factory's initcode contained the factory's own address and no CREATE2 address could ever satisfy it.
 It now accepts any contract creator; `CDPVault._validateOracle` is what binds the oracle to the vault.
 
+### Why the swarm does not deploy this (checked against plane `b5dd2eb`, 2026-10-05)
+
+Mainnet launches are open (chain 1, all four kinds), but a swarm launch cannot run this script. The
+deployer service only calls `ProjectFactory.launchContracts`: up to 8 contracts, **one transaction**,
+each at `CREATE2(factory, contractSalt(launchNumber, i), initcode)`, constructors run as the factory.
+Three things rule it out for this stack:
+
+1. **Gas.** The stack is 26.2M gas; EIP-7825 caps a transaction at 16,777,216 (the plane's own
+   `MAX_TRANSACTION_GAS`). It would take three separate launches.
+2. **Addresses.** Four addresses are compile-time constants read by immutable code. A launch's
+   addresses depend on a launch number the plane assigns at admission, so each launch would need the
+   previous one's numbers compiled in first: three paid, sequential swarm jobs with a recompile and a
+   re-pinned commit between each — or rewriting those constants as constructor arguments, which is the
+   manifest-supplied-authority shape that bricked launch 519.
+3. **Nothing gained on cost.** Our own broadcast is ~0.006 ETH at today's 0.12 gwei.
+
+The dev's ceiling is honoured here instead: `run()` refuses unless (base fee + 0.1 gwei) x 28M gas
+≤ **0.05 ETH** (i.e. base fee ≤ ~1.7 gwei), and checks each deployment stays under the EIP-7825 cap
+(largest, the vault, 12.7M). Broadcast with `--priority-gas-price` ≤ 0.1 gwei.
+
 ### The sequence
 
 1. **Compute** the CREATE2 addresses of `SwarmRelay`, `WorkOracleFactory` and `TreasuryFactory` from their
