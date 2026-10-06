@@ -2556,9 +2556,15 @@ html.app-page body {
   line-height: 1.4;
 }
 .price-status-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 12px;
+}
+.price-status-buttons {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
 }
 .price-status .price-status-actions .buy-update button {
   min-height: 0;

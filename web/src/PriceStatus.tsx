@@ -155,38 +155,41 @@ export function PriceStatus({
               : `${advice.ratio >= 10n ** 18n ? "▲" : "▼"} ${slim ? diff.replace(" vs primary", "") : diff}`}
         </small>
       </div>
-      {headline && (
-        <p className={`price-status-line${advice.warning ? " danger-text" : ""}`}>
-          {headline}
-          {all.length > 1 && <Info label="What an update does" text={all.join(" ")} />}
-        </p>
-      )}
-      {showButtons ? (
-        <div className="price-status-actions">
-          {advice.buy.length > 0 && (
-            <BuyUpdate
-              r={r}
-              s={s}
-              feed={advice.buy[0]}
-              feeds={advice.buy}
-              actions={actions}
-              label={advice.buy.length === 2 ? "Update price" : "Update spot check"}
-              idPrefix={`price-status-${where}`}
-              info={!advice.health}
-            />
-          )}
-          {advice.health && (
-            <BuyUpdate
-              r={r}
-              s={s}
-              feed="NhiFeed"
-              actions={actions}
-              label="Update network health"
-              idPrefix={`price-status-${where}`}
-            />
-          )}
-        </div>
-      ) : null}
+      {/* The button on the left, what it does for you beside it; with no button, the sentence alone. */}
+      <div className={showButtons ? "price-status-actions" : undefined}>
+        {showButtons && (
+          <div className="price-status-buttons">
+            {advice.buy.length > 0 && (
+              <BuyUpdate
+                r={r}
+                s={s}
+                feed={advice.buy[0]}
+                feeds={advice.buy}
+                actions={actions}
+                label={advice.buy.length === 2 ? "Update price" : "Update spot check"}
+                idPrefix={`price-status-${where}`}
+                info={!advice.health}
+              />
+            )}
+            {advice.health && (
+              <BuyUpdate
+                r={r}
+                s={s}
+                feed="NhiFeed"
+                actions={actions}
+                label="Update network health"
+                idPrefix={`price-status-${where}`}
+              />
+            )}
+          </div>
+        )}
+        {headline && (
+          <p className={`price-status-line${advice.warning ? " danger-text" : ""}`}>
+            {headline}
+            {all.length > 1 && <Info label="What an update does" text={all.join(" ")} />}
+          </p>
+        )}
+      </div>
     </section>
   );
 }
