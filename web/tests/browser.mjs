@@ -1439,6 +1439,28 @@ try {
     passed("Amount boxes show the wallet balance and fill the exact amount on click; Disconnected without a wallet");
   }
   {
+    // Repaying a borrower is capped at what they owe: the hint offers the debt (not the larger wallet
+    // balance), and more is refused before anything is sent.
+    const { page } = await setup();
+    await connect(page);
+    await tab(page, "loans");
+    const loansPane = page.locator(".pane-loans");
+    await loansPane.locator(".loan-feed button", { hasText: "keeper.eth" }).click();
+    const opened = page.locator(".pane-keeper");
+    await expectText(opened.getByRole("status"), "Inspected keeper.eth");
+    await opened.getByRole("button", { name: "Act", exact: true }).click();
+    const repay = opened.getByLabel(/^Repay borrower/);
+    const owed = opened.locator(".balance-use").filter({ hasText: /^1,000(\.\d+)? / });
+    await owed.waitFor();
+    await repay.fill("1000.000000000000000001");
+    await opened.getByRole("button", { name: "Review liquidation" }).click();
+    await expectText(opened.getByRole("alert"), "This borrower owes");
+    assert.equal(await page.locator("dialog[open]").count(), 0, "nothing sent");
+    await owed.click();
+    assert.equal(await repay.inputValue(), "1000");
+    passed("Repaying a borrower is capped at their debt: the hint offers it and more is refused before sending");
+  }
+  {
     // Once configured: approve IMD for exactly the two answers, then buy the primary and the spot together in
     // one transaction (askPaidMany) with the pinned bodies.
     const { page, s } = await setup({

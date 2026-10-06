@@ -112,6 +112,8 @@ export type Field = {
   decimals?: number;
   /** The amount this box can take, shown under it and filled in on click. */
   balance?: Balance;
+  /** The most this box accepts; more is refused before anything is sent, with this message. */
+  max?: { value: bigint; message: string };
 };
 export function ActionForm({
   id,
@@ -153,13 +155,16 @@ export function ActionForm({
           const args = fields.map((f) => {
             const t = values[f.name] ?? f.default ?? "";
             try {
-              return f.kind === "address"
-                ? address(t)
-                : f.kind === "amount"
-                  ? amount(t, f.decimals ?? 18)
-                  : f.kind === "amount0"
-                    ? amount(t, 18, true)
-                    : uint(t);
+              const v =
+                f.kind === "address"
+                  ? address(t)
+                  : f.kind === "amount"
+                    ? amount(t, f.decimals ?? 18)
+                    : f.kind === "amount0"
+                      ? amount(t, 18, true)
+                      : uint(t);
+              if (f.max && typeof v === "bigint" && v > f.max.value) throw Error(f.max.message);
+              return v;
             } catch (error) {
               setInvalidField(f.name);
               (

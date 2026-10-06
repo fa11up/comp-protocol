@@ -840,12 +840,23 @@ export function Keeper({
                 fields={[
                   {
                     ...amt(`Repay borrower ${unit()}`),
+                    // At most what this borrower owes: the hint offers the smaller of that and the wallet.
                     balance: {
                       connected: !!actions.account,
-                      amount: s?.v.compBalance,
+                      amount:
+                        position?.debt !== undefined && s?.v.compBalance !== undefined
+                          ? (position.debt < s.v.compBalance ? position.debt : s.v.compBalance)
+                          : s?.v.compBalance,
                       symbol: unit(),
                       decimals: Number(s?.v.compDecimals ?? 18),
                     },
+                    max:
+                      position?.debt !== undefined
+                        ? {
+                            value: position.debt,
+                            message: `This borrower owes ${exact(position.debt)} ${unit()}. You can repay at most that.`,
+                          }
+                        : undefined,
                   },
                 ]}
                 mapArgs={(a) => [address(owner), ...a]}
