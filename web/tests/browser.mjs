@@ -812,6 +812,7 @@ try {
   await red.getByLabel("Redeem COMP", { exact: true }).focus();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.type("12");
+  await page.keyboard.press("Tab"); // the wallet balance button
   await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
@@ -1409,6 +1410,23 @@ try {
     passed(
       "The price panel shows the vault's price, its age, the live market and what an update does; buying waits for the Intake",
     );
+  }
+  {
+    // Amount boxes show what they can take: "Disconnected" with no wallet, the wallet's balance once
+    // connected (a click fills the exact amount, every decimal), "No <symbol>" with none.
+    const { page } = await setup();
+    await tab(page, "position");
+    const field = page.locator(".pane-position .field").first();
+    await expectText(field, "Disconnected");
+    await connect(page);
+    await tab(page, "position");
+    const use = page.locator(".pane-position .balance-use").first();
+    await use.waitFor();
+    assert.match(await use.textContent(), /^Wallet: [\d,.]+ \S+/);
+    const exact = (await use.getAttribute("title")).split(" ")[0];
+    await use.click();
+    assert.equal(await page.locator('.pane-position input[name="deposit-amount"]').inputValue(), exact);
+    passed("Amount boxes show the wallet balance and fill the exact amount on click; Disconnected without a wallet");
   }
   {
     // Once configured: approve IMD for exactly the two answers, then buy the primary and the spot together in

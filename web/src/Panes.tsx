@@ -24,6 +24,7 @@ import {
   Col,
   Info,
   Select,
+  BalanceHint,
   type Actions,
 } from "./actions";
 import type { Failure } from "./explain";
@@ -96,6 +97,10 @@ export function Position({
   const most = sized ? maxDebt(held, v.mat, price) : undefined;
   const keep = sized ? requiredCollateral(debt, v.mat, price) : undefined;
   const worth = g.share ? asImd(held) : undefined;
+  const connected = !!actions.account;
+  const stable = { connected, symbol: unit(), decimals: Number(v.compDecimals ?? 18) };
+  const room = most !== undefined && debt !== undefined ? (most > debt ? most - debt : 0n) : undefined;
+  const free = keep !== undefined && held !== undefined ? (held > keep ? held - keep : 0n) : undefined;
   return (
     <>
       <Col label="Your position">
@@ -184,15 +189,21 @@ export function Position({
                 ]}
               />
             )}
-            <label>
-              Deposit {depositUnit}
-              <input
-                name="deposit-amount"
-                inputMode="decimal"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
+            <div className="field">
+              <label>
+                Deposit {depositUnit}
+                <input
+                  name="deposit-amount"
+                  inputMode="decimal"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                />
+              </label>
+              <BalanceHint
+                b={{ connected, amount: balance, symbol: depositUnit, decimals: depositDecimals }}
+                onUse={setInput}
               />
-            </label>
+            </div>
             <Action
               id={needsApproval ? "approve" : "deposit"}
               label={
@@ -244,7 +255,7 @@ export function Position({
             actions={actions}
             target={t?.ParameterizedVault}
             fn="draw"
-            fields={[amt(`Borrow ${unit()}`)]}
+            fields={[{ ...amt(`Borrow ${unit()}`), balance: { ...stable, amount: room, label: "Available" } }]}
             summary={`Add ${unit()} debt to your position.`}
             disabled={!fresh}
             reason="Fresh, agreeing price feeds are required."
@@ -257,7 +268,7 @@ export function Position({
             actions={actions}
             target={t?.ParameterizedVault}
             fn="wipe"
-            fields={[amt(`Repay ${unit()}`)]}
+            fields={[{ ...amt(`Repay ${unit()}`), balance: { ...stable, amount: v.compBalance } }]}
             summary={`Burn ${unit()} to repay fees first, then principal. No approval required.`}
           />
         )}
@@ -268,7 +279,13 @@ export function Position({
             actions={actions}
             target={t?.ParameterizedVault}
             fn="free"
-            fields={[{ ...amt(`Withdraw ${gemUnit()}`), decimals: g.decimals }]}
+            fields={[
+              {
+                ...amt(`Withdraw ${gemUnit()}`),
+                decimals: g.decimals,
+                balance: { connected, amount: free, symbol: gemUnit(), decimals: g.decimals, label: "Available" },
+              },
+            ]}
             summary={`Remove ${gemUnit()} collateral if the remaining position meets minCR.`}
             disabled={!fresh && v.debtOf !== 0n}
             reason="An indebted position needs fresh feeds to withdraw."
@@ -283,7 +300,11 @@ export function Position({
               target={t && { address: t.gem.address, abi: shareAbi }}
               fn="redeem"
               fields={[
-                { ...amt(`Unstake ${gemUnit()}`), decimals: g.decimals },
+                {
+                  ...amt(`Unstake ${gemUnit()}`),
+                  decimals: g.decimals,
+                  balance: { connected, amount: v.gemBalance, symbol: gemUnit(), decimals: g.decimals },
+                },
               ]}
               mapArgs={(a) => [a[0], actions.account, actions.account]}
               summary={`Unstake ${gemUnit()} in the staking vault and receive ${g.underlyingSymbol} in this wallet.`}
@@ -462,7 +483,18 @@ export function Work({
             actions={actions}
             target={s?.targets.ParameterizedVault}
             fn="earn"
-            fields={[amt(`Mint earned ${unit()}`)]}
+            fields={[
+              {
+                ...amt(`Mint earned ${unit()}`),
+                balance: {
+                  connected: !!actions.account,
+                  amount: v.rights,
+                  symbol: unit(),
+                  decimals: 18,
+                  label: "Available",
+                },
+              },
+            ]}
             summary="Consume work rights permanently. Redemption does not restore them."
             disabled={!feedsReady(s) || !v.rights || w?.mode === "unknown"}
             reason="Fresh feeds, available rights and backing headroom are required."
@@ -805,7 +837,17 @@ export function Keeper({
                 actions={actions}
                 target={s?.targets.ParameterizedVault}
                 fn="bite"
-                fields={[amt(`Repay borrower ${unit()}`)]}
+                fields={[
+                  {
+                    ...amt(`Repay borrower ${unit()}`),
+                    balance: {
+                      connected: !!actions.account,
+                      amount: s?.v.compBalance,
+                      symbol: unit(),
+                      decimals: Number(s?.v.compDecimals ?? 18),
+                    },
+                  },
+                ]}
                 mapArgs={(a) => [address(owner), ...a]}
                 summary={`Burn your ${unit()} to cancel borrower debt and receive ${gemUnit()}, including the liquidation bonus after protocol and marker shares.`}
                 explain={borrower}

@@ -2585,3 +2585,36 @@ html.app-page body {
   font-weight: 600;
 }
 
+
+/* The amount a box can take, on its label's line at the right: tap to fill the box with the exact amount.
+   Positioned over the label row so it adds no height to a pane that has to fit one screen. */
+.field {
+  position: relative;
+}
+.balance-hint {
+  position: absolute;
+  /* The label's own top margin, so the hint sits on the label's text line. */
+  top: 8px;
+  right: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+/* A 24px tap target (WCAG 2.2 target size): 4px above and below the 16px line, moved up by 4px so
+   the text stays on the label's line. */
+button.balance-hint.balance-use {
+  top: 4px;
+  min-height: 24px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

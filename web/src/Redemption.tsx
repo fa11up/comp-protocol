@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { zeroAddress, type Address } from "viem";
 import { type Runtime } from "./config";
 import { type Snapshot, read, feedsReady } from "./state";
-import { Action, Row, Col, Info, type Actions } from "./actions";
+import { Action, Row, Col, Info, BalanceHint, type Actions } from "./actions";
 import {
   amount,
   address,
@@ -273,19 +273,30 @@ export function Redemption({
             }
           }}
         >
-          <label>
-            Redeem {unit()}
-            <input
-              name="redeem-amount"
-              aria-invalid={invalidField === "redeem-amount" || undefined}
-              aria-describedby="redemption-feedback"
-              inputMode="decimal"
-              autoComplete="off"
-              required
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+          <div className="field">
+            <label>
+              Redeem {unit()}
+              <input
+                name="redeem-amount"
+                aria-invalid={invalidField === "redeem-amount" || undefined}
+                aria-describedby="redemption-feedback"
+                inputMode="decimal"
+                autoComplete="off"
+                required
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+              />
+            </label>
+            <BalanceHint
+              b={{
+                connected: !!actions.account,
+                amount: s?.v.compBalance,
+                symbol: unit(),
+                decimals: Number(s?.v.compDecimals ?? 18),
+              }}
+              onUse={setInput}
             />
-          </label>
+          </div>
           <div className="two-col fields">
             <label>
               Slippage (bps)

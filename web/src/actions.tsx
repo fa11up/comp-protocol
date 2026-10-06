@@ -6,10 +6,10 @@ import {
   Children,
   type ReactNode,
 } from "react";
-import { type Address } from "viem";
+import { type Address, formatUnits } from "viem";
 import type { Target } from "./config";
 import { Ticker } from "./motion";
-import { amount, address, uint, message } from "./math";
+import { amount, address, uint, message, fmt } from "./math";
 import type { Failure } from "./explain";
 import { Who } from "./ens";
 export type Request = {
@@ -73,12 +73,45 @@ export function Action({
     </div>
   );
 }
+/** What a box can take from: the wallet's balance of its token, or another available amount. */
+export type Balance = {
+  /** A wallet is connected. */
+  connected: boolean;
+  amount?: bigint;
+  symbol: string;
+  decimals: number;
+  /** "Wallet" unless the amount is something else, such as "Available". */
+  label?: string;
+};
+/**
+ * The balance under an amount box. Connected with some: a button showing it, which fills the box with the
+ * exact amount (every decimal). Otherwise "Disconnected" or "No <symbol>".
+ */
+export function BalanceHint({ b, onUse }: { b: Balance; onUse: (text: string) => void }) {
+  if (!b.connected) return <span className="balance-hint">Disconnected</span>;
+  if (!b.amount) return <span className="balance-hint">{b.label && b.label !== "Wallet" ? `No ${b.symbol} available` : `No ${b.symbol}`}</span>;
+  const label = b.label ?? "Wallet";
+  const exactText = formatUnits(b.amount, b.decimals);
+  return (
+    <button
+      type="button"
+      className="balance-hint balance-use"
+      title={`${exactText} ${b.symbol}`}
+      aria-label={`Use ${label.toLowerCase()} amount: ${exactText} ${b.symbol}`}
+      onClick={() => onUse(exactText)}
+    >
+      {label}: {fmt(b.amount, b.decimals, 4)} {b.symbol}
+    </button>
+  );
+}
 export type Field = {
   name: string;
   kind: "amount" | "amount0" | "address" | "uint";
   default?: string;
   /** Token decimals for an amount; 18 unless the token says otherwise (sIMD has 24). */
   decimals?: number;
+  /** The amount this box can take, shown under it and filled in on click. */
+  balance?: Balance;
 };
 export function ActionForm({
   id,
@@ -150,20 +183,25 @@ export function ActionForm({
       }}
     >
       {fields.map((f) => (
-        <label key={f.name}>
-          {f.name}
-          <input
-            name={`${id}-${f.name}`}
-            aria-invalid={invalidField === f.name || undefined}
-            aria-describedby={`${id}-feedback`}
-            inputMode={f.kind === "address" ? "text" : "decimal"}
-            autoComplete="off"
-            spellCheck={false}
-            required
-            value={values[f.name] ?? f.default ?? ""}
-            onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
-          />
-        </label>
+        <div key={f.name} className="field">
+          <label>
+            {f.name}
+            <input
+              name={`${id}-${f.name}`}
+              aria-invalid={invalidField === f.name || undefined}
+              aria-describedby={`${id}-feedback`}
+              inputMode={f.kind === "address" ? "text" : "decimal"}
+              autoComplete="off"
+              spellCheck={false}
+              required
+              value={values[f.name] ?? f.default ?? ""}
+              onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
+            />
+          </label>
+          {f.balance && (
+            <BalanceHint b={f.balance} onUse={(text) => setValues({ ...values, [f.name]: text })} />
+          )}
+        </div>
       ))}
       <button
         type="submit"
