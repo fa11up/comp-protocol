@@ -89,6 +89,8 @@ contract OracleAsker {
     error NotArmed();
     error PriceTooHigh(uint256 price);
     error NotSold();
+    error EmptyBatch();
+    error NothingToAsk();
     error NotTheIntake();
     error UnknownRequest(bytes32 requestId);
     error IntakeMissing();
@@ -183,6 +185,34 @@ contract OracleAsker {
         payToken.safeTransferFrom(msg.sender, address(this), price);
         requestId = _request(feed, f, body, price);
         emit AskedPaid(feed, requestId, msg.sender, price);
+    }
+
+    /// @notice Buy updates for several feeds in one transaction with the caller's own IMD: each at the Intake's
+    /// price, at most `maxPriceEach`, pulled per request (approve this contract for the total first). The
+    /// terminal uses it to buy the primary and the spot together, because they must agree: refreshing only the
+    /// primary after a move larger than the vault's allowed divergence would pause price actions until the
+    /// spot followed. A feed whose update is already on its way is skipped and not charged, so the caller
+    /// still gets the others; the call reverts only if it bought nothing. Each answer still arrives on its
+    /// own, minutes apart.
+    function askPaidMany(address[] calldata feeds_, bytes[] calldata bodies, uint256 maxPriceEach)
+        external
+        returns (bytes32[] memory requestIds)
+    {
+        if (feeds_.length == 0 || feeds_.length != bodies.length) revert EmptyBatch();
+        uint256 price = _price(maxPriceEach);
+        requestIds = new bytes32[](feeds_.length);
+        uint256 bought;
+        for (uint256 i; i < feeds_.length; ++i) {
+            Feed storage f = _feed(feeds_[i]);
+            if (keccak256(bodies[i]) != f.bodyHash) revert WrongBody();
+            // In flight (including a feed named twice in this batch): skipped, not charged.
+            if (f.inFlight != bytes32(0) && block.timestamp < uint256(f.inFlightAt) + ASK_TIMEOUT) continue;
+            payToken.safeTransferFrom(msg.sender, address(this), price);
+            requestIds[i] = _request(feeds_[i], f, bodies[i], price);
+            ++bought;
+            emit AskedPaid(feeds_[i], requestIds[i], msg.sender, price);
+        }
+        if (bought == 0) revert NothingToAsk();
     }
 
     /// @notice What one update costs right now, in `payToken`: the Intake's listed price. Zero when the

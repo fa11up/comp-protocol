@@ -14,11 +14,6 @@ function remaining(seconds: bigint) {
   return m >= 60n ? `${m / 60n}h ${m % 60n}m` : `${m}m`;
 }
 
-const LABELS: Record<string, string> = {
-  PriceFeed: "Update price",
-  SpotFeed: "Update spot check",
-  NhiFeed: "Update network health",
-};
 
 /**
  * The price the vault is using, when it was last updated, what IMD trades at right now, and what buying
@@ -68,6 +63,7 @@ export function PriceStatus({
     mat: v.mat,
     cost: asker?.price,
     unit: unit(),
+    skewBps: v.skew,
   });
   const open = feedsReady(s);
   // The spot check: the attested spot against the primary (both wei ETH per IMD), in bps, and its USD price.
@@ -101,7 +97,7 @@ export function PriceStatus({
       <span className="danger-text">out of date</span>
     )
   ) : null;
-  const showButtons = advice.needed.length > 0 && (!slim || !open);
+  const showButtons = (advice.buy.length > 0 || advice.health) && (!slim || !open);
   return (
     <section className="price-status" aria-label="IMD price">
       {/* Three prices on one grid (labels, figures, captions in rows, so each lines up with its
@@ -167,18 +163,28 @@ export function PriceStatus({
       )}
       {showButtons ? (
         <div className="price-status-actions">
-          {advice.needed.map((feed, i) => (
+          {advice.buy.length > 0 && (
             <BuyUpdate
-              key={feed}
-              info={i === advice.needed.length - 1}
               r={r}
               s={s}
-              feed={feed}
+              feed={advice.buy[0]}
+              feeds={advice.buy}
               actions={actions}
-              label={LABELS[feed]}
+              label={advice.buy.length === 2 ? "Update price" : "Update spot check"}
+              idPrefix={`price-status-${where}`}
+              info={!advice.health}
+            />
+          )}
+          {advice.health && (
+            <BuyUpdate
+              r={r}
+              s={s}
+              feed="NhiFeed"
+              actions={actions}
+              label="Update network health"
               idPrefix={`price-status-${where}`}
             />
-          ))}
+          )}
         </div>
       ) : null}
     </section>

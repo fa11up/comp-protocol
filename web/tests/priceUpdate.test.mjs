@@ -18,7 +18,8 @@ const base = {
 
 test("in line with the market and fresh: nothing to buy", () => {
   const a = adviseUpdate({ ...base, market: { imdEth: 4n * 10n ** 15n, imdUsd: 10n * WAD } });
-  assert.deepEqual(a.needed, []);
+  assert.deepEqual(a.buy, []);
+  assert.equal(a.health, false);
   assert.match(a.lines[0], /in line with the market/);
 });
 
@@ -31,9 +32,9 @@ test("stale: says price actions are paused, an update reopens them, and buys pri
   });
   assert.match(a.lines[0], /paused/);
   assert.match(a.lines[0], /reopens them for 1 hour/);
-  assert.deepEqual(a.needed, ["PriceFeed", "SpotFeed"]);
-  assert.match(a.lines.at(-1), /0\.5 IMD \(about \$5\.00\)/);
-  assert.match(a.lines.at(-1), /two purchases/);
+  assert.deepEqual(a.buy, ["PriceFeed", "SpotFeed"]);
+  assert.match(a.lines.at(-1), /two answers in one transaction/);
+  assert.match(a.lines.at(-1), /1 IMD \(about \$10\.00\)/);
 });
 
 test("market above: the borrower's ratio and borrowing room rise, in plain numbers", () => {
@@ -46,7 +47,7 @@ test("market above: the borrower's ratio and borrowing room rise, in plain numbe
   assert.match(a.lines[1], /from 200% to 220%/);
   assert.match(a.lines[1], /borrow up to 293\.6 imdUSD \(176 today\)/);
   assert.equal(a.warning, false);
-  assert.deepEqual(a.needed, ["PriceFeed", "SpotFeed"]);
+  assert.deepEqual(a.buy, ["PriceFeed", "SpotFeed"]);
 });
 
 test("market below: warns when the update would put the position under the minimum", () => {
@@ -75,7 +76,25 @@ test("a move bigger than one update can carry says how many it takes", () => {
 test("unreadable market still offers the stale update", () => {
   const a = adviseUpdate({ ...base, price: feed(1n, true), spot: feed(1n, true) });
   assert.match(a.lines.join(" "), /could not be read/);
-  assert.deepEqual(a.needed, ["PriceFeed", "SpotFeed"]);
+  assert.deepEqual(a.buy, ["PriceFeed", "SpotFeed"]);
+});
+
+test("only the spot behind: offers the spot alone, and says why actions are paused", () => {
+  const inLine = { imdEth: 4n * 10n ** 15n, imdUsd: 10n * WAD };
+  const stale = adviseUpdate({ ...base, spot: feed(4n * 10n ** 15n, true), market: inLine });
+  assert.deepEqual(stale.buy, ["SpotFeed"]);
+  assert.match(stale.lines[0], /spot check is out of date/);
+  assert.match(stale.lines.at(-1), /Only the spot check needs updating: 0\.5 IMD/);
+  const breached = adviseUpdate({ ...base, spot: feed(43n * 10n ** 14n), skewBps: 500n, market: inLine });
+  assert.deepEqual(breached.buy, ["SpotFeed"]);
+  assert.match(breached.lines[0], /is 7\.5% off the primary \(5% allowed\)/);
+});
+
+test("network health is a separate daily update, never folded into the price", () => {
+  const a = adviseUpdate({ ...base, nhi: feed(9n * 10n ** 17n, true), market: { imdEth: 4n * 10n ** 15n, imdUsd: 10n * WAD } });
+  assert.deepEqual(a.buy, []);
+  assert.equal(a.health, true);
+  assert.ok(a.lines.some((l) => /separate update, once a day/.test(l)));
 });
 
 test("helpers", () => {

@@ -98,6 +98,35 @@
   },
   {
     "type": "function",
+    "name": "askPaidMany",
+    "inputs": [
+      {
+        "name": "feeds_",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "bodies",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      },
+      {
+        "name": "maxPriceEach",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "requestIds",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "driftBps",
     "inputs": [
       {
@@ -506,6 +535,11 @@
   },
   {
     "type": "error",
+    "name": "EmptyBatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FailedInnerCall",
     "inputs": []
   },
@@ -548,6 +582,11 @@
   {
     "type": "error",
     "name": "NotTheIntake",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToAsk",
     "inputs": []
   },
   {

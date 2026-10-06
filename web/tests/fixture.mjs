@@ -66,6 +66,7 @@ abi.asker = parseAbi([
   "function payToken() view returns (address)",
   "function feeds(address) view returns (bytes32 bodyHash, bool tracksPool, bool keepAlive, uint64 lastAsk, uint64 armedAt, uint64 inFlightAt, bytes32 inFlight)",
   "function askPaid(address feed, bytes body, uint256 maxPrice) returns (bytes32)",
+  "function askPaidMany(address[] feeds, bytes[] bodies, uint256 maxPriceEach) returns (bytes32[])",
 ]);
 /** The request body the fixture's asker pins for every feed, and the price of one update. */
 export const askerBody = "0x7b2271223a2270726963652d756e6976342d7633227d";
@@ -244,7 +245,9 @@ function call(s, params) {
                 0n,
                 "0x" + "00".repeat(32),
               ]
-            : "0x" + "11".repeat(32);
+            : f === "askPaidMany"
+              ? ["0x" + "11".repeat(32), "0x" + "12".repeat(32)]
+              : "0x" + "11".repeat(32);
     return encodeFunctionResult({ abi: a, functionName: f, result: value });
   }
   if (fn.stateMutability === "nonpayable") {

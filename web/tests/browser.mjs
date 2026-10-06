@@ -1405,7 +1405,7 @@ try {
       await panel.getByRole("button", { name: "Update price", exact: true }).isDisabled(),
       true,
     );
-    await panel.getByRole("button", { name: "About Update spot check" }).first().hover();
+    await panel.getByRole("button", { name: "About Update price" }).first().hover();
     await page
       .getByRole("tooltip")
       .filter({ hasText: "on-chain request contract is live" })
@@ -1417,7 +1417,8 @@ try {
     );
   }
   {
-    // Once configured: approve IMD for exactly one update, then askPaid with the pinned body.
+    // Once configured: approve IMD for exactly the two answers, then buy the primary and the spot together in
+    // one transaction (askPaidMany) with the pinned bodies.
     const { page, s } = await setup({
       deployment: (d) => ({
         ...d,
@@ -1434,7 +1435,8 @@ try {
     await connect(page);
     await tab(page, "oracle");
     const panel = page.locator(".pane-oracle .price-status");
-    await panel.getByRole("button", { name: "Approve IMD · Update price", exact: true }).click();
+    assert.equal(await panel.getByRole("button", { name: /Update spot check/ }).count(), 0, "one button, not two");
+    await panel.getByRole("button", { name: "Approve 1 IMD · Update price", exact: true }).click();
     await page.locator("dialog[open]").waitFor();
     await page
       .locator("dialog")
@@ -1444,7 +1446,7 @@ try {
     assert.equal(s.sent.at(-1).name, "payToken");
     assert.deepEqual(s.sent.at(-1).args, [
       "0x0000000000000000000000000000000000000019",
-      askerPrice,
+      2n * askerPrice,
     ]);
     await panel.getByRole("button", { name: "Update price", exact: true }).waitFor();
     await panel.getByRole("button", { name: "Update price", exact: true }).click();
@@ -1455,11 +1457,12 @@ try {
       .click();
     await expectText(page.locator("footer"), "Confirmed on chain.");
     assert.equal(s.sent.at(-1).name, "asker");
-    assert.equal(s.sent.at(-1).functionName, "askPaid");
-    assert.equal(s.sent.at(-1).args[1], askerBody);
+    assert.equal(s.sent.at(-1).functionName, "askPaidMany");
+    assert.equal(s.sent.at(-1).args[0].length, 2, "the primary and the spot");
+    assert.deepEqual(s.sent.at(-1).args[1], [askerBody, askerBody]);
     assert.equal(s.sent.at(-1).args[2], askerPrice);
     passed(
-      "Buy update approves IMD for exactly one update, then pays for it with the pinned request",
+      "Update price approves exactly two answers, then buys the primary and the spot in one transaction with the pinned requests",
     );
   }
   {

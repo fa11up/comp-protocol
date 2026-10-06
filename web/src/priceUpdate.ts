@@ -28,11 +28,16 @@ export type UpdateInput = {
   /** One update's price, in IMD wei. */
   cost?: bigint;
   unit: string;
+  /** The vault's allowed primary/spot divergence, in bps. */
+  skewBps?: bigint;
 };
 
 export type UpdateAdvice = {
-  /** Feeds worth buying now, in the order to buy them. */
-  needed: ("PriceFeed" | "SpotFeed" | "NhiFeed")[];
+  /** The one price purchase worth making now, bought in a single transaction: the primary and the spot
+   * together (they must agree), the spot alone when only it is behind, or nothing. */
+  buy: ("PriceFeed" | "SpotFeed")[];
+  /** Network health is out of date: a separate, daily update. */
+  health: boolean;
   /** Market price relative to the vault's, 1e18 = equal. */
   ratio?: bigint;
   /** Plain sentences, most important first. */
@@ -75,16 +80,30 @@ export function stepsTo(ratio: bigint, capBps: bigint, firstBps: bigint | undefi
 
 export function adviseUpdate(i: UpdateInput): UpdateAdvice {
   const lines: string[] = [];
-  const needed: UpdateAdvice["needed"] = [];
+  let buy: UpdateAdvice["buy"] = [];
   let warning = false;
   const stale = (f?: FeedReading) => !f || f.stale || !f.updated;
-  const pricesStale = stale(i.price) || stale(i.spot);
-  if (pricesStale || stale(i.nhi)) {
-    const life = i.price?.maxAge ? minutes(i.price.maxAge) : "an hour";
+  const priceStale = stale(i.price);
+  const spotStale = stale(i.spot);
+  const health = stale(i.nhi);
+  const apart =
+    i.price?.value && i.spot?.value
+      ? ((i.price.value > i.spot.value ? i.price.value - i.spot.value : i.spot.value - i.price.value) * 10000n) /
+        i.price.value
+      : undefined;
+  const breached = !priceStale && !spotStale && apart !== undefined && i.skewBps !== undefined && apart > i.skewBps;
+  const life = i.price?.maxAge ? minutes(i.price.maxAge) : "an hour";
+  if (priceStale) {
     lines.push(
       `Borrowing, withdrawing against debt, liquidating and redeeming are paused because the vault's price is out of date. An update reopens them for ${life}.`,
     );
+  } else if (spotStale || breached) {
+    lines.push(
+      `Borrowing, withdrawing against debt, liquidating and redeeming are paused because the spot check ${spotStale ? "is out of date" : `is ${pct(apart!)} off the primary (${pct(i.skewBps!)} allowed)`}. Refreshing the spot check reopens them.`,
+    );
   }
+  if (health)
+    lines.push("Network health is out of date, which also pauses those actions. It is a separate update, once a day.");
 
   let ratio: bigint | undefined;
   if (i.market && i.price?.value) {
@@ -121,31 +140,32 @@ export function adviseUpdate(i: UpdateInput): UpdateAdvice {
     if (moved && ratio < WAD)
       lines.push("The protocol's Treasury pays for this kind of update itself once the gap passes 5%.");
     if (moved && i.capBps !== undefined) {
-      const first = pricesStale ? (i.staleMultiple !== undefined ? i.capBps * i.staleMultiple : undefined) : i.capBps;
-      const steps = first === undefined && pricesStale ? 1 : stepsTo(ratio, i.capBps, first);
+      const first = priceStale ? (i.staleMultiple !== undefined ? i.capBps * i.staleMultiple : undefined) : i.capBps;
+      const steps = first === undefined && priceStale ? 1 : stepsTo(ratio, i.capBps, first);
       if (steps !== undefined && steps > 1)
         lines.push(
           `The move is larger than one update can carry (each may move the price at most ${pct(first ?? i.capBps)}${first !== i.capBps ? `, then ${pct(i.capBps)}` : ""}), so it takes ${steps} updates.`,
         );
     }
-    if (moved || pricesStale) needed.push("PriceFeed", "SpotFeed");
+    if (moved || priceStale) buy = ["PriceFeed", "SpotFeed"];
   } else {
     lines.push("The live market price could not be read, so the gap to the market is unknown.");
-    if (pricesStale) needed.push("PriceFeed", "SpotFeed");
+    if (priceStale) buy = ["PriceFeed", "SpotFeed"];
   }
-  if (stale(i.nhi)) needed.push("NhiFeed");
+  if (!buy.length && (spotStale || breached)) buy = ["SpotFeed"];
 
-  if (needed.length && i.cost !== undefined) {
-    const each = `${fmtWad(i.cost)} IMD`;
-    const usd = i.market ? ` (about ${dollars((i.cost * i.market.imdUsd) / WAD)})` : "";
-    const both = needed.includes("PriceFeed")
-      ? " Updating the price takes two purchases, the price and the spot check, because the vault refuses to act while they disagree by more than 5%."
-      : "";
-    lines.push(
-      `Each update costs ${each}${usd} from your wallet and arrives within minutes, once a swarm panel answers. No protocol money is spent.${both}`,
-    );
+  if (i.cost !== undefined) {
+    const cost = (n: bigint) =>
+      `${fmtWad(i.cost! * n)} IMD${i.market ? ` (about ${dollars((i.cost! * n * i.market.imdUsd) / WAD)})` : ""}`;
+    if (buy.length === 2)
+      lines.push(
+        `Updating the price buys two answers in one transaction, the primary and the spot check, because the vault acts only while they agree: ${cost(2n)} from your wallet. Each arrives within minutes. No protocol money is spent.`,
+      );
+    else if (buy.length === 1)
+      lines.push(`Only the spot check needs updating: ${cost(1n)} from your wallet, arriving within minutes.`);
+    if (health) lines.push(`Updating network health costs ${cost(1n)}.`);
   }
-  return { needed, ratio, lines, warning };
+  return { buy, health, ratio, lines, warning };
 }
 
 /** A wad to at most four decimals, trailing zeros trimmed. */

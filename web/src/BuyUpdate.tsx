@@ -13,6 +13,7 @@ export const askerAbi = parseAbi([
   "function payToken() view returns (address)",
   "function feeds(address) view returns (bytes32 bodyHash, bool tracksPool, bool keepAlive, uint64 lastAsk, uint64 armedAt, uint64 inFlightAt, bytes32 inFlight)",
   "function askPaid(address feed, bytes body, uint256 maxPrice) returns (bytes32)",
+  "function askPaidMany(address[] feeds, bytes[] bodies, uint256 maxPriceEach) returns (bytes32[])",
 ]);
 const erc20 = parseAbi([
   "function balanceOf(address) view returns (uint256)",
@@ -85,6 +86,7 @@ export function BuyUpdate({
   r,
   s,
   feed,
+  feeds: group,
   actions,
   label = "Buy update",
   idPrefix = "buy-update",
@@ -93,6 +95,8 @@ export function BuyUpdate({
   r: Runtime;
   s?: Snapshot;
   feed: string;
+  /** Several feeds bought in one transaction (askPaidMany), e.g. the primary and the spot together. */
+  feeds?: string[];
   actions: Actions;
   /** What the button says, e.g. "Update price". */
   label?: string;
@@ -128,25 +132,28 @@ export function BuyUpdate({
         />)}
       </div>
     );
-  const body = cfg.requests?.[feed];
-  const short =
-    a.allowance === undefined || a.allowance < a.price ? true : false;
-  const blocked = !body
+  const all = group ?? [feed];
+  // A feed already on its way is skipped by the asker and not charged, so it is not paid for here either.
+  const toBuy = all.filter((n) => !a.inFlight[n]);
+  const total = a.price * BigInt(toBuy.length || 1);
+  const short = a.allowance === undefined || a.allowance < total;
+  const what = toBuy.length > 1 ? `${toBuy.length} updates` : "an update";
+  const blocked = all.some((n) => !cfg.requests?.[n])
     ? "This deployment lists no request for this feed."
-    : !a.ready[feed]
+    : all.some((n) => !a.ready[n])
       ? "The configured request does not match the question this feed pins. Nothing will be sent."
-      : a.inFlight[feed]
-        ? "An update for this feed is already on its way."
+      : !toBuy.length
+        ? "An update is already on its way."
         : a.price === 0n
           ? "The request contract is not selling updates right now."
-          : a.balance !== undefined && a.balance < a.price
-            ? `An update costs ${fmt(a.price)} IMD; this wallet holds ${fmt(a.balance)}.`
+          : a.balance !== undefined && a.balance < total
+            ? `This costs ${fmt(total)} IMD; this wallet holds ${fmt(a.balance)}.`
             : "";
   return (
     <div className="buy-update">
       <Action
         id={id}
-        label={short && !blocked ? `Approve IMD · ${label}` : label}
+        label={short && !blocked ? `Approve ${fmt(total)} IMD · ${label}` : label}
         actions={actions}
         disabled={!!blocked}
         reason={blocked}
@@ -156,20 +163,27 @@ export function BuyUpdate({
             return {
               target: { address: a.payToken, abi: erc20 },
               fn: "approve",
-              args: [cfg.address, a.price],
-              summary: `Approve exactly ${exact(a.price)} IMD for one ${feed} update. The purchase is a separate transaction.`,
+              args: [cfg.address, total],
+              summary: `Approve exactly ${exact(total)} IMD for ${what}. The purchase is a separate transaction.`,
+            };
+          if (toBuy.length === 1)
+            return {
+              target: { address: cfg.address, abi: askerAbi },
+              fn: "askPaid",
+              args: [s!.targets[toBuy[0]].address, cfg.requests[toBuy[0]], a.price],
+              summary: `Pay ${exact(a.price)} IMD from this wallet for a fresh ${toBuy[0]} answer. It arrives once a swarm panel answers, usually within minutes.`,
             };
           return {
             target: { address: cfg.address, abi: askerAbi },
-            fn: "askPaid",
-            args: [s!.targets[feed].address, body, a.price],
-            summary: `Pay ${exact(a.price)} IMD from this wallet for a fresh ${feed} answer. It arrives once a swarm panel answers, usually within minutes.`,
+            fn: "askPaidMany",
+            args: [toBuy.map((n) => s!.targets[n].address), toBuy.map((n) => cfg.requests[n]), a.price],
+            summary: `Pay ${exact(total)} IMD from this wallet, in one transaction, for fresh ${toBuy.join(" and ")} answers. Each arrives once its swarm panel answers, usually within minutes of each other.`,
           };
         }}
       />
       {info && (<Info
         label={label}
-        text={`Pays ${fmt(a.price)} IMD from your wallet for a fresh answer from a swarm panel, usually within minutes. No protocol funds are spent.`}
+        text={`Pays ${fmt(total)} IMD from your wallet${toBuy.length > 1 ? `, in one transaction, for ${toBuy.length} answers` : " for a fresh answer"} from swarm panels, usually within minutes. No protocol funds are spent.`}
       />)}
     </div>
   );

@@ -379,6 +379,71 @@ contract OracleAskerTest is Test {
         vm.stopPrank();
     }
 
+    /// @dev The terminal's "Update price": primary and spot in one transaction, each a separate request.
+    function test_askPaidManyBuysSeveralFeedsInOneTransaction() public {
+        address borrower = address(0xB0B);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(borrower, 2 ether);
+        address[] memory feeds = new address[](2);
+        (feeds[0], feeds[1]) = (address(priceFeed), address(healthFeed));
+        bytes[] memory bodies = new bytes[](2);
+        (bodies[0], bodies[1]) = (PRICE_BODY, HEALTH_BODY);
+        uint256 treasuryBefore = imd.balanceOf(address(asker));
+        vm.startPrank(borrower);
+        imd.approve(address(asker), 2 * PRICE);
+        uint256 gasBefore = gasleft();
+        bytes32[] memory ids = asker.askPaidMany(feeds, bodies, PRICE);
+        emit log_named_uint("askPaidMany gas, two feeds", gasBefore - gasleft());
+        vm.stopPrank();
+        assertEq(imd.balanceOf(borrower), 2 ether - 2 * PRICE, "the caller paid for both");
+        assertEq(imd.balanceOf(address(asker)), treasuryBefore, "the Treasury's budget is untouched");
+        assertEq(imd.allowance(address(asker), INTAKE), 0);
+        assertEq(asker.feedOf(ids[0]), address(priceFeed));
+        assertEq(asker.feedOf(ids[1]), address(healthFeed));
+        assertTrue(ids[0] != ids[1]);
+
+        // Each is delivered on its own, like any other ask.
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("batch-1"), IMD_ETH * 101 / 100);
+        assertTrue(intake.complete(ids[0], abi.encode(ids[0], a, _sign(priceFeed, a))));
+        (uint256 value,) = priceFeed.latestValue();
+        assertEq(value, IMD_ETH * 101 / 100);
+    }
+
+    /// @dev A feed already on its way is skipped and not charged, a feed named twice is bought once, and a
+    /// batch that buys nothing reverts.
+    function test_askPaidManySkipsWhatIsInFlightAndChargesOnlyWhatItBuys() public {
+        address borrower = address(0xB0B);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(borrower, 3 ether);
+        vm.startPrank(borrower);
+        imd.approve(address(asker), 3 ether);
+        bytes32 first = asker.askPaid(address(priceFeed), PRICE_BODY, PRICE);
+
+        address[] memory feeds = new address[](3);
+        (feeds[0], feeds[1], feeds[2]) = (address(priceFeed), address(healthFeed), address(healthFeed));
+        bytes[] memory bodies = new bytes[](3);
+        (bodies[0], bodies[1], bodies[2]) = (PRICE_BODY, HEALTH_BODY, HEALTH_BODY);
+        uint256 before = imd.balanceOf(borrower);
+        bytes32[] memory ids = asker.askPaidMany(feeds, bodies, PRICE);
+        assertEq(ids[0], bytes32(0), "the primary was already on its way");
+        assertTrue(ids[1] != bytes32(0));
+        assertEq(ids[2], bytes32(0), "named twice, bought once");
+        assertEq(before - imd.balanceOf(borrower), PRICE, "charged for the one it bought");
+        assertTrue(first != ids[1]);
+
+        vm.expectRevert(OracleAsker.NothingToAsk.selector);
+        asker.askPaidMany(feeds, bodies, PRICE);
+
+        bodies[1] = PRICE_BODY;
+        vm.expectRevert(OracleAsker.WrongBody.selector);
+        asker.askPaidMany(feeds, bodies, PRICE);
+        vm.expectRevert(OracleAsker.EmptyBatch.selector);
+        asker.askPaidMany(new address[](0), new bytes[](0), PRICE);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.PriceTooHigh.selector, PRICE));
+        asker.askPaidMany(feeds, bodies, PRICE - 1);
+        vm.stopPrank();
+    }
+
     // --- helpers ----------------------------------------------------------------------------------
 
     function _attestation(bytes32 id, uint256 figure) private view returns (SwarmFeed.OracleAttestation memory a) {
