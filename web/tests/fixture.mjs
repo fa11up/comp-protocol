@@ -122,8 +122,10 @@ export const fixture = () => ({
   sent: [],
   calls: [],
   now: BigInt(Math.floor(Date.now() / 1000)),
-  pendingKind: 5,
+  pendingKind: 4, // Redemption spread (the change kinds start at Economics = 0)
   pendingEta: 1n,
+  /** The encoded pending payload, as Parameters stores it; by default a spread change to 60. */
+  pendingPayload: undefined,
   share: false,
   underlyingAllowance: 0n,
   askerAllowance: 0n,
@@ -359,7 +361,10 @@ function call(s, params) {
       pendingWorkRatio: [2500n, 0n],
       pendingReserveAsset: [zeroAddress, zeroAddress, 0n, 0n],
       pendingSet: [current, 0n],
-      pending: "0x",
+      pending: !s.pendingEta
+        ? "0x"
+        : (s.pendingPayload ??
+          encodeAbiParameters(parseAbiParameters("uint8, uint256"), [s.pendingKind, 60n])),
     }[f];
   } else if (name === "treasury")
     value = {

@@ -45,6 +45,7 @@ import {
 } from "./math";
 import { useEns, ensName, displayName } from "./ens";
 import { PriceStatus } from "./PriceStatus";
+import { describePending, utc, countdown } from "./governance";
 const amt = (name: string) => ({ name, kind: "amount" as const });
 const addr = (name: string) => ({ name, kind: "address" as const });
 const num = (name: string) => ({ name, kind: "uint" as const });
@@ -504,6 +505,10 @@ const feedNames: Record<string, [string, string]> = {
     "Primary feed × Chainlink ETH / USD, computed on chain. It emits no attestations of its own and is stale when either leg is.",
   ],
 };
+/** A feed's lifetime: "1h", "24h", "45m". */
+function lifetime(seconds: bigint) {
+  return seconds % 3600n === 0n ? `${seconds / 3600n}h` : `${seconds / 60n}m`;
+}
 export function Oracle({
   r,
   s,
@@ -532,23 +537,27 @@ export function Oracle({
     (n === "USD" ? s?.targets.usdPriceFeed.address : undefined);
   return (
     <>
-      <PriceStatus r={r} s={s} now={now} actions={actions} where="oracle" />
-      <Row
-        label="Spot check"
-        info="Distance between the primary and spot IMD / ETH feeds, against the vault's allowed divergence. Beyond it, borrowing, marking, liquidation and redemption pause."
-      >
-        {divergence === undefined || allowed === undefined ? (
-          "—"
-        ) : stale ? (
-          <span className="danger-text">Stale</span>
-        ) : divergence > allowed ? (
-          <span className="danger-text">
-            Breached · {percent(divergence)} / {percent(allowed)}
-          </span>
-        ) : (
-          `${percent(divergence)} / ${percent(allowed)} allowed`
-        )}
-      </Row>
+      <PriceStatus r={r} s={s} now={now} actions={actions} where="oracle">
+        <span className="price-spot">
+          Spot check
+          <Info
+            label="Spot check"
+            text="Distance between the primary and spot IMD / ETH feeds, against the vault's allowed divergence. Beyond it, borrowing, marking, liquidation and redemption pause."
+          />
+          {" "}
+          {divergence === undefined || allowed === undefined ? (
+            "—"
+          ) : stale ? (
+            <span className="danger-text">Stale</span>
+          ) : divergence > allowed ? (
+            <span className="danger-text">
+              Breached · {percent(divergence)} / {percent(allowed)}
+            </span>
+          ) : (
+            `${percent(divergence)} apart / ${percent(allowed)} allowed`
+          )}
+        </span>
+      </PriceStatus>
       <div className="section-label">Feeds</div>
       <ul className="feed-list">
         {["NhiFeed", "PriceFeed", "SpotFeed", "USD"].map((n) => {
@@ -580,7 +589,7 @@ export function Oracle({
                     <Row label="About" info={feedNames[n][1]}>
                       {n === "USD" ? "Derived" : "Attested"}
                     </Row>
-                    <Row label="Updated">
+                    <Row label="Updated / lives">
                       {!f[n] ? (
                         "—"
                       ) : (
@@ -588,11 +597,10 @@ export function Oracle({
                           className={f[n].stale ? "danger-text" : undefined}
                         >
                           {f[n].stale ? "Stale · " : ""}
-                          {age(f[n].updated, now)}
+                          {age(f[n].updated, now)} / {lifetime(f[n].maxAge)}
                         </span>
                       )}
                     </Row>
-                    <Row label="Max age">{f[n] ? `${f[n].maxAge}s` : "—"}</Row>
                     {n !== "USD" && <QuestionState q={s?.questions[n]} />}
                     <AddressLink
                       value={contract(n)}
@@ -1028,7 +1036,90 @@ export function Governance({
         "Redemption spread",
       ][Number(pending[0])] ?? String(pending[0]))
     : "—";
-  const pendingBlock = (
+  // Nothing pending: the block as it always was. Something pending: what it changes, current → proposed,
+  // and exactly when anyone may apply it.
+  const proposal = eta
+    ? describePending(
+        v.pending,
+        {
+          set: v.current,
+          earnMat: v.earnMat,
+          wage: v.wage,
+          gap: v.gap,
+          oracleBudget: v.gov_oracleBudget,
+          redemptionDivisor: v.gov_redemptionDivisor,
+          streamPayee: v.gov_streamPayee,
+          streamPerDay: v.gov_streamPerDay,
+          workOracle: v.gov_workOracle,
+        },
+        unit(),
+      )
+    : undefined;
+  const applyForm = (
+    <ActionForm
+      id="apply"
+      label="Review apply pending"
+      actions={actions}
+      target={t}
+      fn="applyPending"
+      summary="Apply the visible pending change after the timelock. Anyone may execute."
+      disabled={!eta || now < eta}
+      reason="A pending proposal must finish its timelock."
+    />
+  );
+  const pendingBlock = eta ? (
+    <div className="gov-pending" role="status" aria-label="Proposed change">
+      <div className="gov-pending-head">
+        <span>Proposed change</span>
+        <strong>{proposal?.title ?? kind}</strong>
+      </div>
+      {proposal &&
+        (proposal.lines.length === 1 && proposal.lines[0].label === proposal.title ? (
+          // One value whose name is the title: just the change itself.
+          <p className="gov-pending-value">
+            <span className="gov-from">{proposal.lines[0].from}</span>
+            <span aria-hidden="true"> → </span>
+            <span className="sr-only"> to </span>
+            <b>{proposal.lines[0].to}</b>
+          </p>
+        ) : (
+          proposal.lines.length > 0 && (
+            <dl className="gov-pending-lines">
+              {proposal.lines
+                .filter((l) => l.changed || !l.from)
+                .map((l) => (
+                  <div key={l.label}>
+                    <dt>{l.label}</dt>
+                    <dd>
+                      {l.from && (
+                        <>
+                          <span className="gov-from">{l.from}</span>
+                          <span aria-hidden="true"> → </span>
+                          <span className="sr-only"> to </span>
+                        </>
+                      )}
+                      <b>{l.to}</b>
+                    </dd>
+                  </div>
+                ))}
+            </dl>
+          )
+        ))}
+      <p className="gov-pending-when">
+        {now >= eta ? (
+          <>
+            <b>Ready.</b> Anyone can apply it now.
+          </>
+        ) : (
+          <>
+            Can be applied from <b>{utc(eta)}</b>, in {countdown(eta - now)}. Until then the governor can still
+            cancel it.
+          </>
+        )}
+      </p>
+      {applyForm}
+    </div>
+  ) : (
     <>
       <Row label="Pending change">{kind}</Row>
       <Row label="Execution">
@@ -1038,16 +1129,7 @@ export function Governance({
             : `${eta - now}s remaining`
           : "No pending change"}
       </Row>
-      <ActionForm
-        id="apply"
-        label="Review apply pending"
-        actions={actions}
-        target={t}
-        fn="applyPending"
-        summary="Apply the visible pending change after the timelock. Anyone may execute."
-        disabled={!eta || now < eta}
-        reason="A pending proposal must finish its timelock."
-      />
+      {applyForm}
     </>
   );
   return (

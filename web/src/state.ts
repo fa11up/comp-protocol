@@ -23,6 +23,11 @@ const optionalAbi = parseAbi([
   "function lastToBlock() view returns (uint64)",
   "function maxDeviationBps() view returns (uint256)",
   "function STALE_DEVIATION_MULTIPLE() view returns (uint256)",
+  "function oracleBudget() view returns (uint256)",
+  "function redemptionDivisor() view returns (uint256)",
+  "function streamPayee() view returns (address)",
+  "function streamPerDay() view returns (uint256)",
+  "function workOracle() view returns (address)",
 ]);
 export type Question =
   | { kind: "pinned"; fingerprint: `0x${string}`; lastToBlock?: bigint }
@@ -227,6 +232,17 @@ export async function snapshot(
   } catch {
     v.staleMultiple = undefined;
   }
+  // Current values for the newer governed settings, so a pending change can read current → proposed. An
+  // older Parameters without them reads "—" for the current side.
+  await Promise.all(
+    ["oracleBudget", "redemptionDivisor", "streamPayee", "streamPerDay", "workOracle"].map(async (fn) => {
+      try {
+        v[`gov_${fn}`] = await optional(targets.parameters.address, fn);
+      } catch {
+        v[`gov_${fn}`] = undefined;
+      }
+    }),
+  );
   try {
     v.backingPerUnit = await optional(vault.address, "backingPerUnit");
   } catch {

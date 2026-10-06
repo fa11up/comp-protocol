@@ -440,6 +440,13 @@ try {
     0,
   );
   await expectText(page.locator(".pane-governance"), "Review apply pending");
+  // A pending change is shown to everyone: what it changes, current → proposed, and when it may apply.
+  const card = page.locator(".pane-governance .gov-pending");
+  await expectText(card, "Redemption spread");
+  await expectText(card, "50 ratio points");
+  await expectText(card, "60 ratio points");
+  await expectText(card, "Anyone can apply it now.");
+  passed("A pending governance change shows its kind, current → proposed values and when anyone may apply it");
   s.governor = account;
   await refresh(page);
   await page.locator(".pane-governance").getByLabel("Operation").waitFor();
@@ -1393,7 +1400,7 @@ try {
       await panel.getByRole("button", { name: "Update price", exact: true }).isDisabled(),
       true,
     );
-    await panel.getByRole("button", { name: "About Update price" }).first().hover();
+    await panel.getByRole("button", { name: "About Update spot check" }).first().hover();
     await page
       .getByRole("tooltip")
       .filter({ hasText: "on-chain request contract is live" })

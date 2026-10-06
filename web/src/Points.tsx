@@ -258,7 +258,7 @@ export function Points({
       </div>
       <div className="desk-col points-board">
         <div className="loan-columns points-columns" aria-hidden="true">
-          <span>Holder</span>
+          <span>Top 10 holders</span>
           <span>Points</span>
           <span>Share</span>
           <span>Per day</span>

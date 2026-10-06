@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import type { Runtime } from "./config";
 import { type Snapshot, feedsReady } from "./state";
-import { Info, Row, type Actions } from "./actions";
+import { Info, type Actions } from "./actions";
 import { BuyUpdate } from "./BuyUpdate";
 import { collateral } from "./collateral";
 import { age, maxDebt } from "./math";
@@ -31,6 +32,7 @@ export function PriceStatus({
   actions,
   where,
   slim = false,
+  children,
 }: {
   r: Runtime;
   s?: Snapshot;
@@ -38,6 +40,8 @@ export function PriceStatus({
   actions: Actions;
   /** Ids stay unique when the panel is shown in more than one pane. */
   where: string;
+  /** A short extra line (the oracle pane's spot check): beside the buttons when they show, else alone. */
+  children?: ReactNode;
   /** Update buttons only while price actions are paused (the position desk, where the oracle pane's own
    * buttons sit beside it on a desktop). */
   slim?: boolean;
@@ -96,23 +100,36 @@ export function PriceStatus({
   const showButtons = advice.needed.length > 0 && (!slim || !open);
   return (
     <section className="price-status" aria-label="IMD price">
-      <Row label="IMD price">
-        {usd?.value ? dollars(usd.value) : "—"}
-        {price?.updated ? ` · ${age(price.updated, now)} · ` : " · never updated"}
-        {freshness}
-        {market ? ` · market ${dollars(market.imdUsd)}${diff ? `, ${diff}` : ""}` : " · market unreadable"}
-      </Row>
+      {/* One grid, three rows: labels, figures, captions, so each lines up with its neighbour. */}
+      <div className="price-hero">
+        <span>IMD price</span>
+        <span className="price-hero-right">Market now</span>
+        <strong className="price-hero-vault">{usd?.value ? dollars(usd.value) : "—"}</strong>
+        <strong className="price-hero-market price-hero-right">{market ? dollars(market.imdUsd) : "—"}</strong>
+        <small>
+          {price?.updated ? <>updated {age(price.updated, now)} · </> : "never updated"}
+          {freshness}
+        </small>
+        <small className="price-hero-right">
+          {!market
+            ? "pool unreadable"
+            : advice.ratio === undefined || !diff
+              ? "live from IMD's pool"
+              : `${advice.ratio >= 10n ** 18n ? "▲" : "▼"} ${diff}`}
+        </small>
+      </div>
       {headline && (
         <p className={`price-status-line${advice.warning ? " danger-text" : ""}`}>
           {headline}
           {all.length > 1 && <Info label="What an update does" text={all.join(" ")} />}
         </p>
       )}
-      {showButtons && (
+      {showButtons ? (
         <div className="price-status-actions">
-          {advice.needed.map((feed) => (
+          {advice.needed.map((feed, i) => (
             <BuyUpdate
               key={feed}
+              info={i === advice.needed.length - 1}
               r={r}
               s={s}
               feed={feed}
@@ -121,7 +138,10 @@ export function PriceStatus({
               idPrefix={`price-status-${where}`}
             />
           ))}
+          {children && <div className="price-status-aside">{children}</div>}
         </div>
+      ) : (
+        children
       )}
     </section>
   );

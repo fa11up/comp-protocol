@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { encodeAbiParameters, parseAbiParameters } from "viem";
 import {
   fixture,
   rpc,
@@ -60,6 +61,12 @@ const s = Object.assign(fixture(), {
   reserve: 250n * 10n ** 18n,
   allowance: 10n ** 30n,
   pendingEta: BigInt(Math.floor(Date.now() / 1000)) + 7n * 3600n,
+  // An economics change: a higher debt ceiling and stability fee, the other three unchanged.
+  pendingKind: 0,
+  pendingPayload: encodeAbiParameters(
+    parseAbiParameters("uint8, (uint256, uint256, uint256, uint256, uint256)"),
+    [0, [2_000_000n * 10n ** 18n, 1000n, 444n, 2000n, 1000n]],
+  ),
   // Three loans in three states: healthy (your own), underwater and unmarked, marked past grace.
   candidateCR: 140n,
   crs: { [extraOwner.toLowerCase()]: 130n },
@@ -99,7 +106,7 @@ await context.route(/^https:\/\//, async (route) => {
 const page = await context.newPage();
 await page.exposeFunction("__sendFixture", (tx) => sent(s, tx));
 await installWallet(page, { chain: `0x${config.chainId.toString(16)}` });
-await page.goto(url);
+await page.goto(`${url}terminal/`);
 await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
 console.log(
   `Demo terminal open at ${url} (fixture data; close the window to stop).`,

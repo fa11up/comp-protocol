@@ -2504,25 +2504,123 @@ html.app-page body {
   }
 }
 
-/* The IMD price panel: the vault's price, the market's, and what an update would do. */
+/* The IMD price panel: the vault's price large, the market beside it, then what an update would do. */
 .price-status {
   display: grid;
-  gap: 0.1rem;
-  padding-block-end: 0.3rem;
+  gap: 4px;
+  padding-block-end: 6px;
   border-bottom: 1px solid var(--rule);
+}
+.price-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 16px;
+}
+.price-hero > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.price-hero-right {
+  text-align: end;
+}
+.price-hero-vault {
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.price-hero-market {
+  font-size: 18px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.price-hero small,
+.price-spot {
+  color: var(--muted);
+  font-size: 10px;
+}
+.price-spot {
+  margin: 0;
+}
+.price-status-aside {
+  margin-inline-start: auto;
+  align-self: center;
 }
 .price-status-line {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: 12px;
   line-height: 1.4;
 }
 .price-status-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 0.5rem;
+  gap: 4px 8px;
 }
 .price-status .price-status-actions .buy-update button {
   min-height: 0;
-  padding: 0.15rem 0.5rem;
-  font-size: 0.72rem;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+/* A pending governance change: what it changes, current → proposed, and when anyone may apply it. */
+.gov-pending {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-block: 2px 4px;
+  border: 1px solid var(--text);
+  background: var(--raised);
+}
+.gov-pending-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.gov-pending-head span {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.gov-pending-head strong {
+  font-size: 14px;
+  text-align: end;
+}
+.gov-pending-lines {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+.gov-pending-lines > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+.gov-pending-lines dt {
+  color: var(--muted);
+}
+.gov-pending-lines dd {
+  margin: 0;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.gov-from {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.gov-pending-value {
+  margin: 0;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.gov-pending-lines dd {
+  white-space: nowrap;
+}
+.gov-pending-when {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
 }

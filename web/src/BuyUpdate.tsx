@@ -88,6 +88,7 @@ export function BuyUpdate({
   actions,
   label = "Buy update",
   idPrefix = "buy-update",
+  info = true,
 }: {
   r: Runtime;
   s?: Snapshot;
@@ -97,6 +98,8 @@ export function BuyUpdate({
   label?: string;
   /** Keeps ids unique when the same feed's button appears in two places. */
   idPrefix?: string;
+  /** Show the info icon (one per group of buttons is enough when they share a reason). */
+  info?: boolean;
 }) {
   const cfg = r.config.oracleAsker;
   const id = `${idPrefix}-${feed}`;
@@ -106,10 +109,10 @@ export function BuyUpdate({
         <button type="button" disabled>
           {label}
         </button>
-        <Info
+        {info && (<Info
           label={label}
           text="The request contract did not answer. Refresh to try again."
-        />
+        />)}
       </div>
     );
   const a = s?.asker === "unreadable" ? undefined : s?.asker;
@@ -119,10 +122,10 @@ export function BuyUpdate({
         <button type="button" disabled>
           {label}
         </button>
-        <Info
+        {info && (<Info
           label={label}
           text="Buying an update from here opens when IdentityMD's on-chain request contract is live. Until then, anyone can buy one from the oracle service and relay it."
-        />
+        />)}
       </div>
     );
   const body = cfg.requests?.[feed];
@@ -164,10 +167,10 @@ export function BuyUpdate({
           };
         }}
       />
-      <Info
+      {info && (<Info
         label={label}
         text={`Pays ${fmt(a.price)} IMD from your wallet for a fresh answer from a swarm panel, usually within minutes. No protocol funds are spent.`}
-      />
+      />)}
     </div>
   );
 }
