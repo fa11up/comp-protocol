@@ -2503,3 +2503,26 @@ html.app-page body {
     text-align: left;
   }
 }
+
+/* The IMD price panel: the vault's price, the market's, and what an update would do. */
+.price-status {
+  display: grid;
+  gap: 0.1rem;
+  padding-block-end: 0.3rem;
+  border-bottom: 1px solid var(--rule);
+}
+.price-status-line {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.price-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+}
+.price-status .price-status-actions .buy-update button {
+  min-height: 0;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.72rem;
+}

@@ -21,6 +21,8 @@ const optionalAbi = parseAbi([
   "function backingPerComp() view returns (uint256)",
   "function expectedQuestionHash(uint64 fromBlock, uint64 toBlock) pure returns (bytes32)",
   "function lastToBlock() view returns (uint64)",
+  "function maxDeviationBps() view returns (uint256)",
+  "function STALE_DEVIATION_MULTIPLE() view returns (uint256)",
 ]);
 export type Question =
   | { kind: "pinned"; fingerprint: `0x${string}`; lastToBlock?: bigint }
@@ -213,6 +215,18 @@ export async function snapshot(
       args: args as never,
       blockNumber: bn,
     }) as Promise<any>;
+  // How far one update may move the price: the cap, and how much wider it is once stale. A feed built
+  // before the stale bound has no multiple, and then a stale feed is unbounded.
+  try {
+    v.priceCapBps = await optional(targets.PriceFeed.address, "maxDeviationBps");
+  } catch {
+    v.priceCapBps = undefined;
+  }
+  try {
+    v.staleMultiple = await optional(targets.PriceFeed.address, "STALE_DEVIATION_MULTIPLE");
+  } catch {
+    v.staleMultiple = undefined;
+  }
   try {
     v.backingPerUnit = await optional(vault.address, "backingPerUnit");
   } catch {

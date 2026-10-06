@@ -1372,27 +1372,36 @@ try {
     passed("The redemption desk speaks sIMD for the reserve and the payout");
   }
   {
-    // Buying an update: disabled with an explanation until the deployment names an asker.
+    // The price panel: the vault's price, when it was updated, the live market and what an update does.
+    // Buying is disabled with an explanation until the deployment names an asker.
     const { page } = await setup();
     await connect(page);
-    await openFeed(page, "IMD / ETH primary");
-    const pane = page.locator(".pane-oracle");
+    await tab(page, "oracle");
+    const panel = page.locator(".pane-oracle .price-status");
+    await expectText(panel, "IMD price");
+    await expectText(panel, "10% above"); // the fixture's pool sits 10% above the primary feed
+    // The sentence shown is the one about the viewer's own position; every sentence is in the info window.
+    // (The info window's hidden text holds every sentence too, so match the visible line itself.)
+    await panel.locator(".price-status-line", { hasText: "Your collateral ratio would go from" }).waitFor();
+    await panel.getByRole("button", { name: "About What an update does" }).hover();
+    await page
+      .getByRole("tooltip")
+      .filter({ hasText: "IMD trades 10% above the vault's price" })
+      .waitFor();
+    await page.mouse.move(0, 0);
     assert.equal(
-      await pane
-        .getByRole("button", { name: "Buy update", exact: true })
-        .isDisabled(),
+      await panel.getByRole("button", { name: "Update price", exact: true }).isDisabled(),
       true,
     );
-    await pane
-      .getByRole("button", { name: "About Buy update" })
-      .first()
-      .hover();
+    await panel.getByRole("button", { name: "About Update price" }).first().hover();
     await page
       .getByRole("tooltip")
       .filter({ hasText: "on-chain request contract is live" })
       .waitFor();
+    await tab(page, "position");
+    await expectText(page.locator(".pane-position .price-status"), "10% above");
     passed(
-      "Buy update is shown disabled, with the reason, before the on-chain Intake exists",
+      "The price panel shows the vault's price, its age, the live market and what an update does; buying waits for the Intake",
     );
   }
   {
@@ -1411,8 +1420,10 @@ try {
       }),
     });
     await connect(page);
-    await openFeed(page, "IMD / ETH primary");
-    await review(page, "Approve IMD for an update");
+    await tab(page, "oracle");
+    const panel = page.locator(".pane-oracle .price-status");
+    await panel.getByRole("button", { name: "Approve IMD · Update price", exact: true }).click();
+    await page.locator("dialog[open]").waitFor();
     await page
       .locator("dialog")
       .getByRole("button", { name: "Confirm in wallet" })
@@ -1423,11 +1434,9 @@ try {
       "0x0000000000000000000000000000000000000019",
       askerPrice,
     ]);
-    await page
-      .locator(".pane-oracle")
-      .getByRole("button", { name: "Buy update", exact: true })
-      .waitFor();
-    await review(page, "Buy update");
+    await panel.getByRole("button", { name: "Update price", exact: true }).waitFor();
+    await panel.getByRole("button", { name: "Update price", exact: true }).click();
+    await page.locator("dialog[open]").waitFor();
     await page
       .locator("dialog")
       .getByRole("button", { name: "Confirm in wallet" })

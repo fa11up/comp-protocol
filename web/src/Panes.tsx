@@ -44,7 +44,7 @@ import {
   nextStep,
 } from "./math";
 import { useEns, ensName, displayName } from "./ens";
-import { BuyUpdate } from "./BuyUpdate";
+import { PriceStatus } from "./PriceStatus";
 const amt = (name: string) => ({ name, kind: "amount" as const });
 const addr = (name: string) => ({ name, kind: "address" as const });
 const num = (name: string) => ({ name, kind: "uint" as const });
@@ -157,6 +157,7 @@ export function Position({
         </p>
       </Col>
       <Col label="Act">
+        <PriceStatus r={r} s={s} now={s?.timestamp ?? 0n} actions={actions} where="position" slim />
         <Choice
           label="Position action"
           value={act}
@@ -531,33 +532,21 @@ export function Oracle({
     (n === "USD" ? s?.targets.usdPriceFeed.address : undefined);
   return (
     <>
+      <PriceStatus r={r} s={s} now={now} actions={actions} where="oracle" />
       <Row
-        label="Divergence / allowed"
-        info="Distance between the primary and spot IMD / ETH feeds, against the vault's maxDivergenceBps. Beyond it, borrowing, marking, liquidation and redemption pause."
+        label="Spot check"
+        info="Distance between the primary and spot IMD / ETH feeds, against the vault's allowed divergence. Beyond it, borrowing, marking, liquidation and redemption pause."
       >
-        {percent(divergence)} / {percent(allowed)}
-      </Row>
-      <Row label="Headroom">
         {divergence === undefined || allowed === undefined ? (
           "—"
         ) : stale ? (
           <span className="danger-text">Stale</span>
         ) : divergence > allowed ? (
-          <span className="danger-text">Breached</span>
+          <span className="danger-text">
+            Breached · {percent(divergence)} / {percent(allowed)}
+          </span>
         ) : (
-          percent(allowed - divergence)
-        )}
-      </Row>
-      <Row
-        label="Price actions"
-        info="Open only while the primary, spot, network health and USD feeds are all fresh and primary agrees with spot."
-      >
-        {!s ? (
-          "—"
-        ) : feedsReady(s) ? (
-          <span className="healthy-text">Open</span>
-        ) : (
-          <span className="danger-text">Paused</span>
+          `${percent(divergence)} / ${percent(allowed)} allowed`
         )}
       </Row>
       <div className="section-label">Feeds</div>
@@ -605,9 +594,6 @@ export function Oracle({
                     </Row>
                     <Row label="Max age">{f[n] ? `${f[n].maxAge}s` : "—"}</Row>
                     {n !== "USD" && <QuestionState q={s?.questions[n]} />}
-                    {n !== "USD" && (
-                      <BuyUpdate r={r} s={s} feed={n} actions={actions} />
-                    )}
                     <AddressLink
                       value={contract(n)}
                       explorer={r.config.network.explorer}

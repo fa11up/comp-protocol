@@ -9,6 +9,7 @@ import {
   zeroAddress,
   maxUint256,
   parseAbi,
+  parseAbiParameters,
   keccak256,
 } from "viem";
 export const config = JSON.parse(
@@ -681,6 +682,13 @@ export const ensNames = {
 const reverseAbi = parseAbi([
   "function reverseWithGateways(bytes reverseName, uint256 coinType, string[] gateways) view returns (string resolvedName, address resolver, address reverseResolver)",
 ]);
+/** The market sits 10% above the fixture's primary feed (1.1e15 wei ETH per IMD against 1e15). */
+const isqrt = (n) => {
+  let x = n, y = (n + 1n) / 2n;
+  while (y < x) [x, y] = [y, (n / y + y) / 2n];
+  return x;
+};
+const marketSqrt = isqrt((10n ** 18n << 192n) / (11n * 10n ** 14n));
 export function ensRpc(body) {
   const reply = (result) => ({ jsonrpc: "2.0", id: body.id, result });
   if (body.method === "eth_chainId") return reply("0x1");
@@ -690,9 +698,19 @@ export function ensRpc(body) {
       id: body.id,
       error: { code: -32601, message: "unsupported" },
     };
+  // IMD's live market for the price panel: the v4 pool's slot0 (extsload) and Chainlink ETH/USD.
+  const data = body.params[0].data;
+  if (data.startsWith("0x1e2eaeaf")) return reply(`0x${marketSqrt.toString(16).padStart(64, "0")}`);
+  if (data.startsWith("0xfeaf968c"))
+    return reply(
+      encodeAbiParameters(
+        parseAbiParameters("uint80, int256, uint256, uint256, uint80"),
+        [1n, 2000n * 10n ** 8n, 0n, 0n, 1n],
+      ),
+    );
   const { args } = decodeFunctionData({
     abi: reverseAbi,
-    data: body.params[0].data,
+    data,
   });
   const name = ensNames[String(args[0]).toLowerCase()];
   if (!name)
