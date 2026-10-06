@@ -27,6 +27,46 @@ export type Actions = {
   run: (id: string, request: Request) => Promise<void>;
   account?: Address;
 };
+/** How long an action's error stays before it slides away. */
+export const ERROR_LIFETIME_MS = 10_000;
+const ERROR_EXIT_MS = 320;
+/**
+ * An error from something the viewer did: shown at once, then after ERROR_LIFETIME_MS it swipes out to the
+ * left (with reduced motion it simply goes) and `onDone` clears it. A new message starts the clock again.
+ * Standing problems with the chain or the wallet do not use this: they stay until they are resolved.
+ */
+export function FadingError({
+  text,
+  onDone,
+  role = "alert",
+}: {
+  text: string;
+  onDone: () => void;
+  /** "none" when the parent is already a live region, so the message is announced once. */
+  role?: "alert" | "status" | "none";
+}) {
+  const [leaving, setLeaving] = useState(false);
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    setLeaving(false);
+    if (!text) return;
+    const out = setTimeout(() => setLeaving(true), ERROR_LIFETIME_MS);
+    const gone = setTimeout(() => done.current(), ERROR_LIFETIME_MS + ERROR_EXIT_MS);
+    return () => {
+      clearTimeout(out);
+      clearTimeout(gone);
+    };
+  }, [text]);
+  if (!text) return null;
+  return (
+    <span className="fading-wrap">
+      <span role={role === "none" ? undefined : role} className={`fading-error${leaving ? " is-leaving" : ""}`}>
+        {text}
+      </span>
+    </span>
+  );
+}
 export function Action({
   id,
   label,
@@ -61,7 +101,7 @@ export function Action({
       </button>
       <p className="action-note">
         {error ? (
-          <span role="alert">{error}</span>
+          <FadingError text={error} onDone={() => setError("")} />
         ) : disabled ? (
           reason
         ) : !actions.ready ? (
@@ -216,7 +256,7 @@ export function ActionForm({
       </button>
       <p id={`${id}-feedback`} className="action-note">
         {error ? (
-          <span role="alert">{error}</span>
+          <FadingError text={error} onDone={() => setError("")} />
         ) : disabled ? (
           reason
         ) : !actions.ready ? (

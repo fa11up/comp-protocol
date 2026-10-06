@@ -25,6 +25,7 @@ import {
   Info,
   Select,
   BalanceHint,
+  FadingError,
   type Actions,
 } from "./actions";
 import type { Failure } from "./explain";
@@ -815,7 +816,9 @@ export function Keeper({
             </div>
           </form>
           <p role="status" className="micro">
-            {error || (
+            {error ? (
+              <FadingError text={error} onDone={() => setError("")} role="none" />
+            ) : (
               // QA-05: success is announced, not shown twice; the summary below already shows it.
               <span className="sr-only">
                 {inspected && position && !loading
@@ -1367,10 +1370,13 @@ function Reporter({
         Check reporter permission
       </button>
       <p className="micro" role="status">
-        {error ||
-          (reporter
-            ? "Reporter permission confirmed."
-            : "Reporter permission has not been confirmed.")}
+        {error ? (
+          <FadingError text={error} onDone={() => setError("")} role="none" />
+        ) : reporter ? (
+          "Reporter permission confirmed."
+        ) : (
+          "Reporter permission has not been confirmed."
+        )}
       </p>
       <ActionForm
         id="report"

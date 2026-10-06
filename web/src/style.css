@@ -2637,3 +2637,23 @@ button.balance-hint.balance-use {
 button.balance-hint.balance-use:hover {
   color: var(--text);
 }
+
+/* An action's error: after ten seconds it swipes out to the left; with reduced motion it simply goes. */
+.fading-wrap {
+  display: block;
+  overflow: hidden;
+}
+.fading-error {
+  display: inline-block;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fading-error.is-leaving {
+    animation: swipe-left 320ms var(--ease) forwards;
+  }
+}
+@keyframes swipe-left {
+  to {
+    transform: translateX(-110%);
+    opacity: 0;
+  }
+}

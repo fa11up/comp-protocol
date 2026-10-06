@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { zeroAddress, type Address } from "viem";
 import { type Runtime } from "./config";
 import { type Snapshot, read, feedsReady } from "./state";
-import { Action, Row, Col, Info, BalanceHint, type Actions } from "./actions";
+import { Action, Row, Col, Info, BalanceHint, FadingError, type Actions } from "./actions";
 import {
   amount,
   address,
@@ -351,7 +351,11 @@ export function Redemption({
           </p>
         </form>
         <div id="redemption-feedback" role="status" aria-live="polite">
-          {error && <p className="notice">{error}</p>}
+          {error && (
+            <p className="notice">
+              <FadingError text={error} onDone={() => setError("")} role="none" />
+            </p>
+          )}
         </div>
         {q && (
           <div className="quote" aria-live="polite">

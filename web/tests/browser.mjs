@@ -1455,10 +1455,20 @@ try {
     await repay.fill("1000.000000000000000001");
     await opened.getByRole("button", { name: "Review liquidation" }).click();
     await expectText(opened.getByRole("alert"), "This borrower owes");
+    const shownAt = Date.now();
     assert.equal(await page.locator("dialog[open]").count(), 0, "nothing sent");
+    // An action's error clears itself after ten seconds, swiping out to the left.
+    let sawLeaving = false;
+    while ((await opened.locator(".fading-error").count()) > 0 && Date.now() - shownAt < 14_000) {
+      if ((await opened.locator(".fading-error.is-leaving").count()) > 0) sawLeaving = true;
+      await page.waitForTimeout(100);
+    }
+    const lived = Date.now() - shownAt;
+    assert.ok(sawLeaving, "it swiped out rather than vanishing");
+    assert.ok(lived >= 9_500 && lived < 12_000, `the error lived ${lived} ms`);
     await owed.click();
     assert.equal(await repay.inputValue(), "1000");
-    passed("Repaying a borrower is capped at their debt: the hint offers it and more is refused before sending");
+    passed("Repaying a borrower is capped at their debt: the hint offers it and more is refused before sending; the error swipes away after 10 s");
   }
   {
     // Once configured: approve IMD for exactly the two answers, then buy the primary and the spot together in
