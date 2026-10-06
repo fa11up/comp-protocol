@@ -79,7 +79,7 @@ export default {
   MAINNET_RPC_URL: "$RPC", VAULT_RPC_URL: "$RPC",
   INDEXER: "rpc",
   POOL: { poolManager: "0x000000000004444c5dc75cb358380d2e3de08a90", poolId: "0xb07d640fd9e2eb9dc81b953c8e4fd006bdfeaf276010fb5418eb763ca15abfb3", invert: false },
-  MAX_GAS_GWEI: 1000, MIN_ETH: 0.02, ASK_PAID_IMD_PER_DAY: 0,
+  MAX_GAS_GWEI: 1000, MIN_ETH: 0.02, ASK_PAID_IMD_PER_DAY: 50, KEEPER_ORACLE_FALLBACK: true,
   INTERVALS: { watchSeconds: 60, relaySeconds: 120, positionsSeconds: 300 },
 };
 EOF
@@ -110,5 +110,24 @@ for i in 1 2 3 4 5; do cast rpc evm_mine --rpc-url $RPC >/dev/null; done
 say "five blocks later"
 node watch.mjs --execute | sed 's/^/  /' || true
 echo "asker IMD after: $(c call $IMD 'balanceOf(address)(uint256)' $ASKER)   intake IMD: $(c call $IMD 'balanceOf(address)(uint256)' 0x0000000000000000000000000000000000000F06)"
+
+say "IMD rises 15% above the feeds: nobody pays for a rise, not the Treasury and not the keeper"
+cast send $IMD "transfer(address,uint256)" $A0 50000000000000000000 --from $PM --unlocked --rpc-url $RPC >/dev/null
+cast rpc evm_increaseTime 7300 --rpc-url $RPC >/dev/null; cast rpc evm_mine --rpc-url $RPC >/dev/null   # earlier asks time out
+LOW=$(python3 -c "print($POOLP*100//115)"); seed $PRICE $LOW; seed $SPOT $LOW; seed $NHI 900000000000000000
+K_IMD0=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
+node watch.mjs --execute | sed 's/^/  /' || true
+K_IMD1=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
+echo "keeper IMD spent on the rise: $(python3 -c "print(($K_IMD0-$K_IMD1)/1e18)") (expect 0.0)"
+
+say "IMD falls ~11% and an update costs more than the Treasury's daily budget: the keeper buys price + spot itself"
+cast send 0x0000000000000000000000000000000000000F06 "setPrice(bytes32,address,uint256)" 0x6f7261636c652e72657175657374406f7261636c652d31000000000000000000 $IMD 20000000000000000000 --private-key $K0 --rpc-url $RPC >/dev/null
+seed $PRICE $HIGH; seed $SPOT $HIGH; seed $NHI 900000000000000000
+node watch.mjs --execute | sed 's/^/  /' || true
+for i in 1 2 3 4 5; do cast rpc evm_mine --rpc-url $RPC >/dev/null; done
+K_IMD2=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
+node watch.mjs --execute | sed 's/^/  /' || true
+K_IMD3=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
+echo "keeper IMD spent as the Treasury's fallback: $(python3 -c "print(($K_IMD2-$K_IMD3)/1e18)") (expect 40.0: price + spot at 20 each)"
 
 [ -f config.js.before-rehearsal ] && mv config.js.before-rehearsal config.js || rm -f config.js
