@@ -2555,6 +2555,9 @@ html.app-page body {
   font-size: 12px;
   line-height: 1.4;
 }
+.price-hero {
+  margin-block-end: 12px;
+}
 .price-status-actions {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2572,64 +2575,13 @@ html.app-page body {
   font-size: 11px;
 }
 
-/* A pending governance change: what it changes, current → proposed, and when anyone may apply it. */
-.gov-pending {
-  display: grid;
-  gap: 6px;
-  padding: 8px 10px;
-  margin-block: 2px 4px;
-  border: 1px solid var(--text);
-  background: var(--raised);
-}
-.gov-pending-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.gov-pending-head span {
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.gov-pending-head strong {
-  font-size: 14px;
-  text-align: end;
-}
-.gov-pending-lines {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-}
-.gov-pending-lines > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 12px;
-}
-.gov-pending-lines dt {
-  color: var(--muted);
-}
-.gov-pending-lines dd {
-  margin: 0;
-  text-align: end;
-  font-variant-numeric: tabular-nums;
-}
+/* A pending governance change, inline in the parameter rows: current (muted) → proposed (bold). */
 .gov-from {
   color: var(--muted);
-  text-decoration: line-through;
 }
-.gov-pending-value {
-  margin: 0;
-  font-size: 15px;
-  font-variant-numeric: tabular-nums;
+.gov-change b,
+.gov-status {
+  color: var(--text);
+  font-weight: 600;
 }
-.gov-pending-lines dd {
-  white-space: nowrap;
-}
-.gov-pending-when {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.4;
-}
+

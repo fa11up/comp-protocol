@@ -440,12 +440,12 @@ try {
     0,
   );
   await expectText(page.locator(".pane-governance"), "Review apply pending");
-  // A pending change is shown to everyone: what it changes, current → proposed, and when it may apply.
-  const card = page.locator(".pane-governance .gov-pending");
-  await expectText(card, "Redemption spread");
-  await expectText(card, "50 ratio points");
-  await expectText(card, "60 ratio points");
-  await expectText(card, "Anyone can apply it now.");
+  // A pending change is shown to everyone, inline: the changing row reads current → proposed, and one
+  // status row says what it is and when it applies.
+  const govPane = page.locator(".pane-governance");
+  await govPane.locator(".gov-change", { hasText: "60 ratio points" }).waitFor();
+  await expectText(govPane.locator(".gov-from"), "50 ratio points");
+  await expectText(govPane.locator(".gov-status"), "Redemption spread · ready to apply");
   passed("A pending governance change shows its kind, current → proposed values and when anyone may apply it");
   s.governor = account;
   await refresh(page);
@@ -1392,15 +1392,9 @@ try {
     await expectText(hero, "$2.20"); // the fixture's pool sits 10% above the primary feed
     await expectText(hero, "0% off");
     await expectText(hero, "10% vs primary");
-    // The sentence shown is the one about the viewer's own position; every sentence is in the info window.
-    // (The info window's hidden text holds every sentence too, so match the visible line itself.)
+    // The sentence shown beside the button is the one about the viewer's own position.
     await panel.locator(".price-status-line", { hasText: "Your collateral ratio would go from" }).waitFor();
-    await panel.getByRole("button", { name: "About What an update does" }).hover();
-    await page
-      .getByRole("tooltip")
-      .filter({ hasText: "IMD trades 10% above the vault's price" })
-      .waitFor();
-    await page.mouse.move(0, 0);
+
     assert.equal(
       await panel.getByRole("button", { name: "Update price", exact: true }).isDisabled(),
       true,

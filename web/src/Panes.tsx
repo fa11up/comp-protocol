@@ -9,7 +9,7 @@ import {
   shareAbi,
   vaultShareAbi,
 } from "./collateral";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { isAddress } from "viem";
 import { WorkChart, SupplyChart, Sparkline, type ChartData } from "./Charts";
 import { Ticker } from "./motion";
@@ -1047,58 +1047,48 @@ export function Governance({
       reason="A pending proposal must finish its timelock."
     />
   );
-  const pendingBlock = eta ? (
-    <div className="gov-pending" role="status" aria-label="Proposed change">
-      <div className="gov-pending-head">
-        <span>Proposed change</span>
-        <strong>{proposal?.title ?? kind}</strong>
-      </div>
-      {proposal &&
-        (proposal.lines.length === 1 && proposal.lines[0].label === proposal.title ? (
-          // One value whose name is the title: just the change itself.
-          <p className="gov-pending-value">
-            <span className="gov-from">{proposal.lines[0].from}</span>
+  // Something pending: the parameter rows show it inline (current → proposed), and one status row says
+  // what it is and when it applies. The apply button appears once it can be used.
+  const ready = !!eta && now >= eta;
+  const changes = new Map(
+    (proposal?.lines ?? []).filter((l) => l.changed || !l.from).map((l) => [l.label, l]),
+  );
+  const listed = ["Stability fee / year", "Debt ceiling", "Max divergence", "Redemption spread"];
+  const shown = (label: string, current: ReactNode) => {
+    const c = changes.get(label);
+    if (!c) return current;
+    return (
+      <span className="gov-change">
+        {c.from && (
+          <>
+            <span className="gov-from">{c.from}</span>
             <span aria-hidden="true"> → </span>
-            <span className="sr-only"> to </span>
-            <b>{proposal.lines[0].to}</b>
-          </p>
-        ) : (
-          proposal.lines.length > 0 && (
-            <dl className="gov-pending-lines">
-              {proposal.lines
-                .filter((l) => l.changed || !l.from)
-                .map((l) => (
-                  <div key={l.label}>
-                    <dt>{l.label}</dt>
-                    <dd>
-                      {l.from && (
-                        <>
-                          <span className="gov-from">{l.from}</span>
-                          <span aria-hidden="true"> → </span>
-                          <span className="sr-only"> to </span>
-                        </>
-                      )}
-                      <b>{l.to}</b>
-                    </dd>
-                  </div>
-                ))}
-            </dl>
-          )
-        ))}
-      <p className="gov-pending-when">
-        {now >= eta ? (
-          <>
-            <b>Ready.</b> Anyone can apply it now.
-          </>
-        ) : (
-          <>
-            Can be applied from <b>{utc(eta)}</b>, in {countdown(eta - now)}. Until then the governor can still
-            cancel it.
+            <span className="sr-only"> proposed </span>
           </>
         )}
-      </p>
-      {applyForm}
-    </div>
+        <b>{c.to}</b>
+      </span>
+    );
+  };
+  const extraRows = [...changes.values()]
+    .filter((l) => !listed.includes(l.label))
+    .map((l) => (
+      <Row key={l.label} label={l.label}>
+        {shown(l.label, null)}
+      </Row>
+    ));
+  const pendingBlock = eta ? (
+    <>
+      <Row
+        label="Pending change"
+        info={`Proposed by the governor and public for the governance delay. Anyone can apply it from ${utc(eta)}; until then the governor can cancel it.`}
+      >
+        <span className="gov-status">
+          {proposal?.title ?? kind} · {ready ? "ready to apply" : `applies in ${countdown(eta - now)}`}
+        </span>
+      </Row>
+      {ready && applyForm}
+    </>
   ) : (
     <>
       <Row label="Pending change">{kind}</Row>
@@ -1115,16 +1105,18 @@ export function Governance({
   return (
     <>
       <Col label="Parameters">
-        <Row label="Stability fee / year">{percent(v.duty)}</Row>
-        <Row label="Debt ceiling">{ceilingText(v.line)}</Row>
+        {isGov && !!eta && pendingBlock}
+        <Row label="Stability fee / year">{shown("Stability fee / year", percent(v.duty))}</Row>
+        <Row label="Debt ceiling">{shown("Debt ceiling", ceilingText(v.line))}</Row>
         <Row label="Governance delay">
           {v.TIMELOCK === undefined ? "—" : `${v.TIMELOCK / 3600n} hours`}
         </Row>
-        <Row label="Max divergence">{percent(v.skew)}</Row>
+        <Row label="Max divergence">{shown("Max divergence", percent(v.skew))}</Row>
         <Row label="Redemption spread">
-          {v.gap === undefined ? "—" : `${v.gap} ratio points`}
+          {shown("Redemption spread", v.gap === undefined ? "—" : `${v.gap} ratio points`)}
         </Row>
-        {isGov && pendingBlock}
+        {extraRows}
+        {isGov && !eta && pendingBlock}
         <AddressLink
           value={v.governor}
           explorer={r.config.network.explorer}

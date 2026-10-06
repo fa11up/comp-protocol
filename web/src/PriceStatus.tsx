@@ -2,7 +2,6 @@ import type { Runtime } from "./config";
 import { type Snapshot, feedsReady } from "./state";
 import { Info, type Actions } from "./actions";
 import { BuyUpdate } from "./BuyUpdate";
-import { collateral } from "./collateral";
 import { age, maxDebt } from "./math";
 import { unit } from "./unit";
 import { useMarket } from "./market";
@@ -81,15 +80,13 @@ export function PriceStatus({
       : advice.ratio >= 10n ** 18n
         ? `${pct(((advice.ratio - 10n ** 18n) * 10000n) / 10n ** 18n)} vs primary`
         : `${pct(((10n ** 18n - advice.ratio) * 10000n) / 10n ** 18n)} vs primary`;
-  const g = collateral();
-  // One sentence on the page, chosen for what matters most to this viewer; every sentence is in the info
-  // window. A warning first, then "actions are paused", then what it does to their own position.
+  // One sentence on the page, chosen for what matters most to this viewer: a warning first, then "actions
+  // are paused", then what it does to their own position.
   const headline =
     (advice.warning && advice.lines.find((l) => /minimum/.test(l))) ||
     advice.lines.find((l) => /paused/.test(l)) ||
     advice.lines.find((l) => /^Your collateral ratio/.test(l)) ||
     advice.lines[0];
-  const all = [...advice.lines, ...(g.share ? [`Collateral is ${g.symbol}, valued through ${g.underlyingSymbol}'s price, so it moves with it.`] : [])];
   const freshness = price?.updated ? (
     open ? (
       <span className="healthy-text">fresh{left !== undefined && left > 0n ? ` ${remaining(left)}` : ""}</span>
@@ -186,7 +183,6 @@ export function PriceStatus({
         {headline && (
           <p className={`price-status-line${advice.warning ? " danger-text" : ""}`}>
             {headline}
-            {all.length > 1 && <Info label="What an update does" text={all.join(" ")} />}
           </p>
         )}
       </div>
