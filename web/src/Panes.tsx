@@ -537,27 +537,7 @@ export function Oracle({
     (n === "USD" ? s?.targets.usdPriceFeed.address : undefined);
   return (
     <>
-      <PriceStatus r={r} s={s} now={now} actions={actions} where="oracle">
-        <span className="price-spot">
-          Spot check
-          <Info
-            label="Spot check"
-            text="Distance between the primary and spot IMD / ETH feeds, against the vault's allowed divergence. Beyond it, borrowing, marking, liquidation and redemption pause."
-          />
-          {" "}
-          {divergence === undefined || allowed === undefined ? (
-            "—"
-          ) : stale ? (
-            <span className="danger-text">Stale</span>
-          ) : divergence > allowed ? (
-            <span className="danger-text">
-              Breached · {percent(divergence)} / {percent(allowed)}
-            </span>
-          ) : (
-            `${percent(divergence)} apart / ${percent(allowed)} allowed`
-          )}
-        </span>
-      </PriceStatus>
+      <PriceStatus r={r} s={s} now={now} actions={actions} where="oracle" />
       <div className="section-label">Feeds</div>
       <ul className="feed-list">
         {["NhiFeed", "PriceFeed", "SpotFeed", "USD"].map((n) => {

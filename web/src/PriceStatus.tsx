@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { Runtime } from "./config";
 import { type Snapshot, feedsReady } from "./state";
 import { Info, type Actions } from "./actions";
@@ -12,7 +11,7 @@ import { adviseUpdate, dollars, pct } from "./priceUpdate";
 /** Time left on a fresh price: "42m more", "23h 57m more". */
 function remaining(seconds: bigint) {
   const m = seconds / 60n;
-  return m >= 60n ? `${m / 60n}h ${m % 60n}m more` : `${m}m more`;
+  return m >= 60n ? `${m / 60n}h ${m % 60n}m` : `${m}m`;
 }
 
 const LABELS: Record<string, string> = {
@@ -32,7 +31,6 @@ export function PriceStatus({
   actions,
   where,
   slim = false,
-  children,
 }: {
   r: Runtime;
   s?: Snapshot;
@@ -40,8 +38,6 @@ export function PriceStatus({
   actions: Actions;
   /** Ids stay unique when the panel is shown in more than one pane. */
   where: string;
-  /** A short extra line (the oracle pane's spot check): beside the buttons when they show, else alone. */
-  children?: ReactNode;
   /** Update buttons only while price actions are paused (the position desk, where the oracle pane's own
    * buttons sit beside it on a desktop). */
   slim?: boolean;
@@ -74,13 +70,21 @@ export function PriceStatus({
     unit: unit(),
   });
   const open = feedsReady(s);
+  // The spot check: the attested spot against the primary (both wei ETH per IMD), in bps, and its USD price.
+  const spot = f.SpotFeed;
+  const skew = v.skew as bigint | undefined;
+  const apart =
+    price?.value && spot?.value
+      ? ((price.value > spot.value ? price.value - spot.value : spot.value - price.value) * 10000n) / price.value
+      : undefined;
+  const spotUsd = usd?.value && price?.value && spot?.value ? (usd.value * spot.value) / price.value : undefined;
   const left = price && !price.stale ? price.updated + price.maxAge - now : undefined;
   const diff =
     advice.ratio === undefined
       ? undefined
       : advice.ratio >= 10n ** 18n
-        ? `${pct(((advice.ratio - 10n ** 18n) * 10000n) / 10n ** 18n)} above`
-        : `${pct(((10n ** 18n - advice.ratio) * 10000n) / 10n ** 18n)} below`;
+        ? `${pct(((advice.ratio - 10n ** 18n) * 10000n) / 10n ** 18n)} vs primary`
+        : `${pct(((10n ** 18n - advice.ratio) * 10000n) / 10n ** 18n)} vs primary`;
   const g = collateral();
   // One sentence on the page, chosen for what matters most to this viewer; every sentence is in the info
   // window. A warning first, then "actions are paused", then what it does to their own position.
@@ -100,22 +104,59 @@ export function PriceStatus({
   const showButtons = advice.needed.length > 0 && (!slim || !open);
   return (
     <section className="price-status" aria-label="IMD price">
-      {/* One grid, three rows: labels, figures, captions, so each lines up with its neighbour. */}
+      {/* Three prices on one grid (labels, figures, captions in rows, so each lines up with its
+          neighbours): what the vault uses, the attested spot check against it, and the live market
+          read straight from IMD's pool, outside the oracle. */}
       <div className="price-hero">
-        <span>IMD price</span>
-        <span className="price-hero-right">Market now</span>
+        <span>
+          Primary
+          <Info
+            label="Primary"
+            text="The price the vault uses: an attested median of IMD's pool over a block window, in USD through Chainlink ETH/USD."
+          />
+        </span>
+        <span>
+          Spot
+          <Info
+            label="Spot"
+            text={`An attested reading of IMD's pool at a single block, checked against the primary. If they are more than ${skew !== undefined ? pct(skew) : "the allowed divergence"} apart, borrowing, marking, liquidation and redemption pause.`}
+          />
+        </span>
+        <span className="price-hero-right">
+          Market
+          <Info
+            label="Market"
+            text="Live, read directly from IMD's Uniswap pool on Ethereum mainnet and Chainlink ETH/USD every 30 seconds. Not attested and not used by the vault: it shows what the next update would move the price toward."
+          />
+        </span>
         <strong className="price-hero-vault">{usd?.value ? dollars(usd.value) : "—"}</strong>
-        <strong className="price-hero-market price-hero-right">{market ? dollars(market.imdUsd) : "—"}</strong>
+        <strong className="price-hero-mid">{spotUsd !== undefined ? dollars(spotUsd) : "—"}</strong>
+        <strong className="price-hero-mid price-hero-right">{market ? dollars(market.imdUsd) : "—"}</strong>
         <small>
-          {price?.updated ? <>updated {age(price.updated, now)} · </> : "never updated"}
+          {price?.updated ? <>{!slim && `${age(price.updated, now)} · `}</> : "never updated"}
           {freshness}
+        </small>
+        <small>
+          {!spot?.updated ? (
+            "never updated"
+          ) : spot.stale ? (
+            <span className="danger-text">Stale</span>
+          ) : apart === undefined || skew === undefined ? (
+            age(spot.updated, now)
+          ) : apart > skew ? (
+            <span className="danger-text">
+              Breached · {pct(apart)} / {pct(skew)}
+            </span>
+          ) : (
+            `${slim ? "" : `${age(spot.updated, now)} · `}${pct(apart)} off`
+          )}
         </small>
         <small className="price-hero-right">
           {!market
             ? "pool unreadable"
             : advice.ratio === undefined || !diff
-              ? "live from IMD's pool"
-              : `${advice.ratio >= 10n ** 18n ? "▲" : "▼"} ${diff}`}
+              ? "live"
+              : `${advice.ratio >= 10n ** 18n ? "▲" : "▼"} ${slim ? diff.replace(" vs primary", "") : diff}`}
         </small>
       </div>
       {headline && (
@@ -138,11 +179,8 @@ export function PriceStatus({
               idPrefix={`price-status-${where}`}
             />
           ))}
-          {children && <div className="price-status-aside">{children}</div>}
         </div>
-      ) : (
-        children
-      )}
+      ) : null}
     </section>
   );
 }

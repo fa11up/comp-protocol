@@ -1385,8 +1385,13 @@ try {
     await connect(page);
     await tab(page, "oracle");
     const panel = page.locator(".pane-oracle .price-status");
-    await expectText(panel, "IMD price");
-    await expectText(panel, "10% above"); // the fixture's pool sits 10% above the primary feed
+    // Three prices: the primary the vault uses, the attested spot check, and the live market.
+    const hero = panel.locator(".price-hero");
+    for (const label of ["Primary", "Spot", "Market"]) await expectText(hero, label);
+    await expectText(hero, "$2.00"); // primary and spot agree in the fixture
+    await expectText(hero, "$2.20"); // the fixture's pool sits 10% above the primary feed
+    await expectText(hero, "0% off");
+    await expectText(hero, "10% vs primary");
     // The sentence shown is the one about the viewer's own position; every sentence is in the info window.
     // (The info window's hidden text holds every sentence too, so match the visible line itself.)
     await panel.locator(".price-status-line", { hasText: "Your collateral ratio would go from" }).waitFor();
@@ -1406,7 +1411,7 @@ try {
       .filter({ hasText: "on-chain request contract is live" })
       .waitFor();
     await tab(page, "position");
-    await expectText(page.locator(".pane-position .price-status"), "10% above");
+    await expectText(page.locator(".pane-position .price-hero"), "▲ 10%");
     passed(
       "The price panel shows the vault's price, its age, the live market and what an update does; buying waits for the Intake",
     );

@@ -2513,13 +2513,19 @@ html.app-page body {
 }
 .price-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
   align-items: baseline;
-  column-gap: 16px;
+  column-gap: 12px;
 }
 .price-hero > span {
   color: var(--muted);
   font-size: 11px;
+}
+.price-hero > small {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .price-hero-right {
   text-align: end;
@@ -2530,7 +2536,7 @@ html.app-page body {
   letter-spacing: -0.04em;
   font-variant-numeric: tabular-nums;
 }
-.price-hero-market {
+.price-hero-mid {
   font-size: 18px;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
@@ -2543,10 +2549,7 @@ html.app-page body {
 .price-spot {
   margin: 0;
 }
-.price-status-aside {
-  margin-inline-start: auto;
-  align-self: center;
-}
+
 .price-status-line {
   margin: 0;
   font-size: 12px;
