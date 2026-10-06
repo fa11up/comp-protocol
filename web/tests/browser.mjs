@@ -1432,7 +1432,7 @@ try {
     await tab(page, "position");
     const use = page.locator(".pane-position .balance-use").first();
     await use.waitFor();
-    assert.match(await use.textContent(), /^Wallet: [\d,.]+ \S+/);
+    assert.match(await use.textContent(), /^[\d,]+(\.\d{1,2})? \S+$/, "the amount to two decimals and the symbol");
     const exact = (await use.getAttribute("title")).split(" ")[0];
     await use.click();
     assert.equal(await page.locator('.pane-position input[name="deposit-amount"]').inputValue(), exact);

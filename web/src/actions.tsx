@@ -84,8 +84,8 @@ export type Balance = {
   label?: string;
 };
 /**
- * The balance under an amount box. Connected with some: a button showing it, which fills the box with the
- * exact amount (every decimal). Otherwise "Disconnected" or "No <symbol>".
+ * The balance on an amount box's label line. Connected with some: a button showing it to two decimals, which
+ * fills the box with the exact amount (every decimal). Otherwise "Disconnected" or "No <symbol>".
  */
 export function BalanceHint({ b, onUse }: { b: Balance; onUse: (text: string) => void }) {
   if (!b.connected) return <span className="balance-hint">Disconnected</span>;
@@ -100,7 +100,7 @@ export function BalanceHint({ b, onUse }: { b: Balance; onUse: (text: string) =>
       aria-label={`Use ${label.toLowerCase()} amount: ${exactText} ${b.symbol}`}
       onClick={() => onUse(exactText)}
     >
-      {label}: {fmt(b.amount, b.decimals, 4)} {b.symbol}
+      {fmt(b.amount, b.decimals, 2)} {b.symbol}
     </button>
   );
 }

@@ -2628,8 +2628,12 @@ button.balance-hint.balance-use {
   padding: 4px 0;
   border: 0;
   background: none;
-  color: var(--text);
+  color: var(--muted);
   text-decoration: underline;
+  text-decoration-color: var(--rule);
   text-underline-offset: 2px;
   cursor: pointer;
+}
+button.balance-hint.balance-use:hover {
+  color: var(--text);
 }
