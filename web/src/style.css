@@ -819,44 +819,36 @@ dialog [role="status"] {
   outline: 2px solid var(--text);
   outline-offset: 2px;
 }
-.loan-label {
+/* A loan's popup: on hover or focus (or when tapped), above its circle, or below near the top. */
+.loan-pop {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text);
+  z-index: 2;
+  transform: translate(-50%, -100%);
+  display: grid;
+  gap: 1px;
+  padding: 5px 8px;
+  border: 1px solid var(--rule);
   background: var(--surface);
+  color: var(--muted);
   font-size: 10px;
   line-height: 1.4;
-  padding-inline: 2px;
   white-space: nowrap;
+  pointer-events: none;
 }
-.loan-label.is-right {
-  left: calc(50% + var(--dot) + 3px);
-}
-.loan-label.is-left {
-  right: calc(50% + var(--dot) + 3px);
-}
-.loan-label.is-above,
-.loan-label.is-below {
-  left: 50%;
+.loan-pop.is-below {
   transform: translateX(-50%);
 }
-.loan-label.is-above {
-  top: auto;
-  bottom: calc(50% + var(--dot) + 2px);
+.loan-pop b {
+  color: var(--text);
+  font-size: 11px;
 }
-.loan-label.is-below {
-  top: calc(50% + var(--dot) + 2px);
-}
-.loan-mark[aria-pressed="true"] .loan-label {
-  text-decoration: underline;
-}
+
 @media (hover: hover) {
   .loan-mark:not(:disabled):hover {
     background: var(--clear);
   }
-  .loan-mark:hover .loan-label {
-    text-decoration: underline;
+  .loan-mark:hover .loan-dot {
+    opacity: 1;
   }
 }
 .loan-ledger {
@@ -1085,9 +1077,6 @@ td span {
   .strip-labels {
     margin-inline: -50px;
     gap: 4px;
-  }
-  .loan-label {
-    font-size: 10px;
   }
   .mini-chart figcaption {
     font-size: 11px;

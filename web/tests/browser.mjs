@@ -872,7 +872,9 @@ try {
   await tab(page, "loans");
   await page.locator(".loan-mark").first().waitFor();
   assert.equal(await page.locator(".loan-mark").count(), 3);
-  const names = await page.locator(".loan-label").allTextContents();
+  // No names on the chart; a loan's name shows in a popup on hover or focus.
+  assert.equal(await page.locator(".strip-plot .loan-label").count(), 0);
+  assert.equal(await page.locator(".loan-pop").count(), 0);
   const dots = await page
     .locator(".loan-dot")
     .evaluateAll((nodes) => nodes.map((n) => parseFloat(n.style.width)));
@@ -881,10 +883,15 @@ try {
     [12, 24, 24],
   );
   await page.locator(".loan-mark").first().hover();
+  await page.locator(".loan-pop").waitFor();
+  const names = [await page.locator(".loan-pop b").textContent()];
+  assert.match(await page.locator(".loan-pop").textContent(), /%.*·/);
   assert.match(
-    await page.locator(".loan-mark").first().getAttribute("title"),
+    await page.locator(".loan-mark").first().getAttribute("aria-label"),
     /0x[0-9a-fA-F]{40}/,
   );
+  await page.mouse.move(0, 0);
+  await page.locator(".loan-pop").waitFor({ state: "detached" });
   await page.locator(".loan-mark").first().focus();
   await page.keyboard.press("Enter");
   assert.match(
@@ -1154,21 +1161,23 @@ try {
       }));
       assert.equal(dims.sw, width);
       assert.equal(dims.sh, height);
-      const labels = await page
-        .locator(".loan-label")
+      // The loan book's circles never overlap, at any size.
+      const circles = await page
+        .locator(".strip-plot .loan-dot")
         .evaluateAll((nodes) =>
           nodes.map((n) => n.getBoundingClientRect().toJSON()),
         );
-      for (let i = 0; i < labels.length; i++)
-        for (let j = i + 1; j < labels.length; j++) {
-          const a = labels[i],
-            b = labels[j];
+      for (let i = 0; i < circles.length; i++)
+        for (let j = i + 1; j < circles.length; j++) {
+          const a = circles[i],
+            b = circles[j];
+          const d = Math.hypot(
+            a.x + a.width / 2 - (b.x + b.width / 2),
+            a.y + a.height / 2 - (b.y + b.height / 2),
+          );
           assert.ok(
-            a.right <= b.left ||
-              b.right <= a.left ||
-              a.bottom <= b.top ||
-              b.bottom <= a.top,
-            `Position labels overlap at ${width}px`,
+            d + 0.5 >= (a.width + b.width) / 2,
+            `Loan circles overlap at ${width}px`,
           );
         }
       if (width === 1440 || width === 1280 || width === 390)

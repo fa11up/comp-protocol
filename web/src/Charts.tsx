@@ -1,6 +1,6 @@
 import { unit } from "./unit";
 import { perImd } from "./collateral";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { swarm, extent } from "./swarm";
 import { formatUnits, maxUint256 } from "viem";
 import type { Runtime } from "./config";
@@ -101,6 +101,8 @@ export function LoanBook({
   const host = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [selected, setSelected] = useState<string>();
+  // The loan a pointer or keyboard is on (a tap focuses it): its popup shows while it stays there.
+  const [hovered, setHovered] = useState<string>();
   const axisCeiling = useRef(300);
   useEffect(() => {
     if (!host.current) return;
@@ -158,42 +160,6 @@ export function LoanBook({
   }
   const height = Math.min(MAX_HEIGHT, Math.max(96, Math.ceil(2 * extent(circles, ys) + 12)));
   const centre = height / 2;
-  // Names beside the biggest circles where there is room (right, else left); the rest read on hover and in
-  // the list below. A label never covers another label or circle.
-  const boxes: { id: string; l: number; r: number; t: number; b: number }[] = circles.map((c) => ({
-    id: c.id,
-    l: c.x - c.r,
-    r: c.x + c.r,
-    t: centre + (ys.get(c.id) ?? 0) - c.r,
-    b: centre + (ys.get(c.id) ?? 0) + c.r,
-  }));
-  const labelSide = new Map<string, "right" | "left" | "above" | "below">();
-  for (const c of [...circles].sort((a, b) => b.dot - a.dot).slice(0, 8)) {
-    const p = positions.find((q) => q.owner === c.id)!;
-    const w = (displayName(p.owner).length + (p.cr === maxUint256 || p.cr < BigInt(FLOOR) ? 2 : 0)) * 6.2 + 6;
-    const y = centre + (ys.get(c.id) ?? 0);
-    for (const side of ["right", "left", "above", "below"] as const) {
-      const box =
-        side === "right"
-          ? { id: `${c.id}-label`, l: c.x + c.dot + 3, r: c.x + c.dot + 3 + w, t: y - 8, b: y + 8 }
-          : side === "left"
-            ? { id: `${c.id}-label`, l: c.x - c.dot - 3 - w, r: c.x - c.dot - 3, t: y - 8, b: y + 8 }
-            : side === "above"
-              ? { id: `${c.id}-label`, l: c.x - w / 2, r: c.x + w / 2, t: y - c.dot - 18, b: y - c.dot - 2 }
-              : { id: `${c.id}-label`, l: c.x - w / 2, r: c.x + w / 2, t: y + c.dot + 2, b: y + c.dot + 18 };
-      const fits =
-        box.l >= -60 &&
-        box.r <= plotWidth + 60 &&
-        box.t >= 0 &&
-        box.b <= height &&
-        boxes.every((o) => o.id === c.id || o.r <= box.l || o.l >= box.r || o.b <= box.t || o.t >= box.b);
-      if (fits) {
-        labelSide.set(c.id, side);
-        boxes.push(box);
-        break;
-      }
-    }
-  }
   const marks = positions.map((p) => {
     const c = circles.find((q) => q.id === p.owner)!;
     return {
@@ -202,7 +168,6 @@ export function LoanBook({
       y: centre + (ys.get(p.owner) ?? 0),
       radius: c.dot,
       hit: c.r,
-      side: labelSide.get(p.owner),
     };
   });
   return (
@@ -294,9 +259,12 @@ export function LoanBook({
                   type="button"
                   className={`loan-mark ${p.cr < min! ? "is-danger" : "is-healthy"}`}
                   style={{ left: `${p.x}%`, top: p.y, width: p.hit * 2, height: p.hit * 2 }}
-                  title={`${displayName(p.owner)} · ${p.owner}\n${p.cr}% · ${fmt(p.debt)} ${unit()} · ${stateOf(p.cr, min!, ceiling!)}\n${liquidation(p, s)}`}
                   aria-label={`${displayName(p.owner)}, ${p.owner}, ${p.cr}% collateral ratio, ${fmt(p.debt)} ${unit()}, ${stateOf(p.cr, min!, ceiling!)}, ${liquidation(p, s)}`}
                   aria-pressed={selected === p.owner}
+                  onMouseEnter={() => setHovered(p.owner)}
+                  onMouseLeave={() => setHovered((h) => (h === p.owner ? undefined : h))}
+                  onFocus={() => setHovered(p.owner)}
+                  onBlur={() => setHovered((h) => (h === p.owner ? undefined : h))}
                   onClick={() =>
                     setSelected(selected === p.owner ? undefined : p.owner)
                   }
@@ -305,15 +273,32 @@ export function LoanBook({
                     className="loan-dot"
                     style={{ width: p.radius * 2, height: p.radius * 2 }}
                   />
-                  {p.side && (
-                    <span className={`loan-label is-${p.side}`} style={{ "--dot": `${p.radius}px` } as CSSProperties}>
+                </button>
+              ))}
+              {(() => {
+                const p = marks.find((m) => m.owner === hovered);
+                if (!p) return null;
+                // Above the circle, or below it when there is no room above.
+                const below = p.y - p.hit < 52;
+                return (
+                  <div
+                    className={`loan-pop${below ? " is-below" : ""}`}
+                    role="tooltip"
+                    style={{ left: `${p.x}%`, top: below ? p.y + p.hit + 6 : p.y - p.hit - 6 }}
+                  >
+                    <b>
                       {p.cr === maxUint256 && "→ "}
                       {p.cr < BigInt(FLOOR) && "← "}
                       {displayName(p.owner)}
+                    </b>
+                    <span>
+                      {p.cr === maxUint256 ? "No debt" : `${p.cr}%`} · {fmt(p.debt)} {unit()} ·{" "}
+                      {stateOf(p.cr, min!, ceiling!)}
                     </span>
-                  )}
-                </button>
-              ))}
+                    <span>{liquidation(p, s)}</span>
+                  </div>
+                );
+              })()}
             </div>
             <div className="strip-axis">
               <span>{FLOOR}%</span>
