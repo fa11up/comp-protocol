@@ -157,19 +157,19 @@ contract CDPVault is ReentrancyGuard {
         return CHIP_BPS;
     }
 
-    /// @notice Annual stability fee on open debt, in basis points, accrued linearly from the last
-    /// index checkpoint.
-    /// @dev Virtual for the same reason line and cut are: a deployment pins
-    /// it in source, and a test can hold it at another value without rewriting the source to do it.
-    /// This contract has no setter, so the rate is permanent unless a subclass reads it from
-    /// somewhere governed — in which case that governor MUST call `drip` in the same
-    /// transaction as the change, or the new rate reaches time that has already elapsed.
     /// @notice Each redemption raises the fee base by redeemed / supply / this. The base vault reads
     /// the source constant; ParameterizedVault reads its governed Parameters.
     function redemptionDivisor() public view virtual returns (uint256) {
         return REDEMPTION_DIVISOR;
     }
 
+    /// @notice Annual stability fee on open debt, in basis points, accrued through the `chi` index from
+    /// its last checkpoint.
+    /// @dev Virtual for the same reason line and cut are: a deployment pins
+    /// it in source, and a test can hold it at another value without rewriting the source to do it.
+    /// This contract has no setter, so the rate is permanent unless a subclass reads it from
+    /// somewhere governed — in which case that governor MUST call `drip` in the same
+    /// transaction as the change, or the new rate reaches time that has already elapsed.
     function duty() public view virtual returns (uint256) {
         return DUTY_BPS;
     }

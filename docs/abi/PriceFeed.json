@@ -69,6 +69,19 @@
   },
   {
     "type": "function",
+    "name": "STALE_DEVIATION_MULTIPLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "attestationAnswerType",
     "inputs": [],
     "outputs": [

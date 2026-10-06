@@ -118,8 +118,11 @@ is immutable and silent** — this is exactly how launch 519 shipped two dead fe
 
 ### Economic, carry over unchanged unless deliberately revised
 
-`SKEW_BPS` 500 · `CHIP_BPS` 1000 · `CUT_BPS` 3333 ·
-`DUTY_BPS` 200 · `ETH_USD_MAX_AGE` 1 day.
+Values as in `src/DeploymentConfig.sol` and `script/DeployMainnet.s.sol` on 2026-10-06 (the source is
+authoritative; this list is checked against it, not the other way round):
+`SKEW_BPS` 500 · `CHIP_BPS` 1000 · `CUT_BPS` 1000 · `DUTY_BPS` 444 · `LINE` $1M · `REDEMPTION_DIVISOR` 2 ·
+`ETH_USD_MAX_AGE` 2 hours · `PRICE_MAX_AGE` / `SPOT_MAX_AGE` 1 hour · `NHI_MAX_AGE` 1 day ·
+feed `maxDeviationBps` 2000 (stale: 2x, `SwarmFeed.STALE_DEVIATION_MULTIPLE`) · `ORACLE_BUDGET_PER_DAY` 15 IMD.
 
 ### The compute channel does not ship in this deployment
 

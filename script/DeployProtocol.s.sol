@@ -34,15 +34,10 @@ contract DeployProtocol is Script, DeployPreflight {
     // pinned in src/DeploymentConfig.sol. This script cannot get them wrong, and neither can a
     // launch manifest — there is no argument to substitute. verify() reads them back off chain.
 
-    // The cap and the update frequency are one knob, not two. A tight cap only works if updates are
-    // frequent enough that the market never moves further than it between them; a feed updated
-    // rarely needs a loose one or it simply cannot follow. At 2000 this feed could not absorb a
-    // real 44.6% move in IMD on 2026-10-02 and had to be walked up by the reporter in three steps —
-    // a path that does not exist on mainnet without a trusted reporter.
-    // 5000 absorbs what we have actually seen with headroom and still bounds a bad attestation to
-    // 1.5x the last value. It is a testnet number: the principled fix is to make the bound a
-    // function of elapsed time, or to trigger updates on price movement rather than on a clock.
-    uint256 constant MAX_DEVIATION_BPS = 5_000;
+    // Same cap as mainnet (script/DeployMainnet.s.sol FEED_MAX_DEVIATION_BPS), so a testnet deployment
+    // exercises the bound that ships. This was 5000 while a trusted reporter could walk the feed; with the
+    // reporter gone, a large real move is followed in steps (a stale feed accepts up to 2x the cap).
+    uint256 constant MAX_DEVIATION_BPS = 2_000;
 
     // Attestation v2 signs panelSize/quorum/agreed, so the CONSUMER sets the real bar. A request can
     // therefore ask for a low quorum — so that it attests at all — while the feed still refuses

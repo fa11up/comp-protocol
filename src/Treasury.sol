@@ -6,7 +6,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
-import {APPROVED_OPERATOR, ORACLE_ASKER} from "./DeploymentConfig.sol";
+import {APPROVED_OPERATOR, ORACLE_ASKER, LAUNCH_FACTORY} from "./DeploymentConfig.sol";
 import {IShareVault} from "./interfaces/IShareVault.sol";
 import {ILaunchFeeShare} from "./interfaces/ILaunchFeeShare.sol";
 
@@ -446,12 +446,12 @@ contract Treasury {
     /// that address may name the next one. Without this function, naming the Treasury would be
     /// permanent: it could receive the fees but never move the role on. Operator-only, the same
     /// authority as `withdraw`, because it redirects revenue. It moves only FUTURE fees; anything
-    /// already paid or owed stays here.
-    function handOffLaunchFees(ILaunchFeeShare factory, uint64 launchNumber, address next) external {
+    /// already paid or owed stays here. The factory is the pinned LAUNCH_FACTORY, never an argument.
+    function handOffLaunchFees(uint64 launchNumber, address next) external {
         if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
         if (next == address(0) || next == address(this)) revert InvalidRecipient();
-        factory.setRequester(launchNumber, next);
-        emit LaunchFeesHandedOff(address(factory), launchNumber, next);
+        ILaunchFeeShare(LAUNCH_FACTORY).setRequester(launchNumber, next);
+        emit LaunchFeesHandedOff(LAUNCH_FACTORY, launchNumber, next);
     }
 
     // --- the oracle budget ----------------------------------------------------------------------

@@ -9,7 +9,7 @@ import {CDPVault} from "../src/CDPVault.sol";
 import {ImdUSD} from "../src/ImdUSD.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
-import {APPROVED_OPERATOR, FEE_RECIPIENT} from "../src/DeploymentConfig.sol";
+import {APPROVED_OPERATOR, FEE_RECIPIENT, LAUNCH_FACTORY} from "../src/DeploymentConfig.sol";
 
 /// @dev A vault that pays the protocol a share, so the treasury has something to receive.
 contract PayingVault is CDPVault {
@@ -297,41 +297,58 @@ contract TreasuryTest is Test {
 
     // --- launch fee share ---------------------------------------------------------------------
 
-    function test_operatorHandsTheLaunchFeeShareOn() public {
-        MockLaunchFactory factory = new MockLaunchFactory();
+    /// @dev The mock, placed at the pinned LAUNCH_FACTORY address the Treasury calls.
+    function _pinnedFactory() private returns (MockLaunchFactory) {
+        vm.etch(LAUNCH_FACTORY, address(new MockLaunchFactory()).code);
+        return MockLaunchFactory(LAUNCH_FACTORY);
+    }
+
+    function test_handOffCallsOnlyThePinnedFactory() public {
+        MockLaunchFactory elsewhere = new MockLaunchFactory();
+        elsewhere.open(7, address(treasury));
+        MockLaunchFactory factory = _pinnedFactory();
         factory.open(7, address(treasury));
         vm.prank(APPROVED_OPERATOR);
-        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, DESTINATION);
+        treasury.handOffLaunchFees(7, DESTINATION);
+        assertEq(factory.requesterOf(7), DESTINATION);
+        assertEq(elsewhere.requesterOf(7), address(treasury), "no other contract is ever called");
+    }
+
+    function test_operatorHandsTheLaunchFeeShareOn() public {
+        MockLaunchFactory factory = _pinnedFactory();
+        factory.open(7, address(treasury));
+        vm.prank(APPROVED_OPERATOR);
+        treasury.handOffLaunchFees(7, DESTINATION);
         assertEq(factory.requesterOf(7), DESTINATION, "future fees now go to the new address");
     }
 
     function test_onlyTheOperatorMayHandOffLaunchFees() public {
-        MockLaunchFactory factory = new MockLaunchFactory();
+        MockLaunchFactory factory = _pinnedFactory();
         factory.open(7, address(treasury));
         vm.prank(STRANGER);
         vm.expectRevert(Treasury.Unauthorized.selector);
-        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, STRANGER);
+        treasury.handOffLaunchFees(7, STRANGER);
         assertEq(factory.requesterOf(7), address(treasury));
     }
 
     function test_handOffRefusesDegenerateDestinations() public {
-        MockLaunchFactory factory = new MockLaunchFactory();
+        MockLaunchFactory factory = _pinnedFactory();
         factory.open(7, address(treasury));
         vm.startPrank(APPROVED_OPERATOR);
         vm.expectRevert(Treasury.InvalidRecipient.selector);
-        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, address(0));
+        treasury.handOffLaunchFees(7, address(0));
         vm.expectRevert(Treasury.InvalidRecipient.selector);
-        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, address(treasury));
+        treasury.handOffLaunchFees(7, address(treasury));
         vm.stopPrank();
     }
 
     /// @dev The factory, not the Treasury, decides who the requester is: a launch the Treasury does not
     /// hold cannot be redirected through it.
     function test_handOffOfALaunchTheTreasuryDoesNotHoldFails() public {
-        MockLaunchFactory factory = new MockLaunchFactory();
+        MockLaunchFactory factory = _pinnedFactory();
         factory.open(7, STRANGER);
         vm.prank(APPROVED_OPERATOR);
         vm.expectRevert(abi.encodeWithSelector(MockLaunchFactory.NotRequester.selector, uint64(7)));
-        treasury.handOffLaunchFees(ILaunchFeeShare(address(factory)), 7, DESTINATION);
+        treasury.handOffLaunchFees(7, DESTINATION);
     }
 }

@@ -127,7 +127,7 @@ abstract contract SwarmFeedTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
         a = _attestation();
         a.requestId = keccak256("request-2");
-        a.figure = 10 ether;
+        a.figure = 1.2 ether; // inside the stale bound: 2 x the 10% cap
         sig = _sign(a, SIGNER_KEY);
         vm.prank(address(0xD00D)); // any caller that is not the pinned relayer
         vm.expectRevert(SwarmFeed.UnauthorizedRelayer.selector);
@@ -329,19 +329,43 @@ abstract contract SwarmFeedTest is Test {
         assertTrue(feed.usedRequests(a.requestId));
     }
 
-    function test_staleValueCanReanchorThroughFreshAttestation() public {
+    /// @dev The internal audit's high finding (2026-10-06): a stale feed used to accept ANY value. Now the
+    /// bound widens to STALE_DEVIATION_MULTIPLE x the cap but never lifts, so a large genuine move is
+    /// followed in steps and a manipulated one moves the price at most that far per attestation.
+    function test_staleValueReanchorsOnlyWithinTheWidenedBound() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        uint256 cap = feed.maxDeviationBps();
         vm.warp(block.timestamp + 1 hours + 1);
         assertTrue(feed.isStale());
+
         a = _attestation();
         a.requestId = keccak256("request-2");
         a.figure = 10 ether;
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        feed.submitAttestation(a, sig);
+
+        uint256 widest = 1 ether + 1 ether * cap * feed.STALE_DEVIATION_MULTIPLE() / 10_000;
+        a.figure = widest + 1;
+        sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        feed.submitAttestation(a, sig);
+
+        a.figure = widest;
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         (uint256 value, uint64 updatedAt) = feed.latestValue();
-        assertEq(value, 10 ether);
+        assertEq(value, widest);
         assertEq(updatedAt, block.timestamp);
         assertFalse(feed.isStale());
+
+        // Now fresh: the next step is bounded by the normal cap, not the widened one.
+        a = _attestation();
+        a.requestId = keccak256("request-3");
+        a.figure = widest + widest * cap / 10_000 + 1;
+        sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        feed.submitAttestation(a, sig);
     }
 
     function test_attestationRejectsOlderIssueTimeWithoutConsumingRequest() public {

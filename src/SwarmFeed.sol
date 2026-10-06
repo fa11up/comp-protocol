@@ -19,9 +19,17 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 ///
 /// There is no admin or setter. Values are scaled by 1e18; consumers enforce any application bounds.
 /// Zero is rejected on both paths: it is never a valid scaled figure and would pin the relative bound at
-/// zero. The deviation bound applies while the last accepted value is fresh; once that value has aged
-/// past maxAge the feed is stale and consumers already fail safe, so the next accepted value re-anchors
-/// the band instead of leaving an immutable feed permanently unable to follow a genuine large move.
+/// zero. While the last accepted value is fresh, a new one may differ from it by at most maxDeviationBps.
+/// Once it has aged past maxAge the feed is stale (consumers already fail safe) and the bound WIDENS to
+/// STALE_DEVIATION_MULTIPLE times that, but never lifts: a genuine large move is followed in steps, each
+/// later step being fresh and so bounded normally.
+///
+/// It used to lift entirely, and that was the internal audit's high finding (2026-10-06). Price feeds live
+/// one hour and are bought on demand, so being stale is their normal state, and the first attestation after
+/// any quiet hour could set any value. The question binding pins the text but the buyer chooses the
+/// window, and the recipe samples fixed blocks inside it, so a buyer who pushes the pool at those blocks has
+/// a manipulated value attested honestly. Bounded at 2x a 20% cap, one re-anchor moves the price at most
+/// 40%, which no longer reaches a profitable over-borrow at a 170% minimum ratio.
 abstract contract SwarmFeed is ISwarmFeed {
     struct OracleAttestation {
         bytes32 requestId;
@@ -73,6 +81,8 @@ abstract contract SwarmFeed is ISwarmFeed {
     uint16 public constant MIN_PANEL_SIZE = 25;
     /// @notice Smallest number of members that must have given the signed answer.
     uint16 public constant MIN_AGREED = 15;
+    /// @notice How much wider the deviation bound is once the current value is stale.
+    uint256 public constant STALE_DEVIATION_MULTIPLE = 2;
 
     bytes32 public constant ATTESTATION_TYPEHASH = keccak256(
         "OracleAttestation(bytes32 requestId,uint256 chainId,bytes32 questionHash,uint8 answerType,bytes answer,uint256 figure,uint64 fromBlock,uint64 toBlock,bytes32 blockHash,bytes32 panelJobId,uint16 panelSize,uint16 quorum,uint16 agreed,uint64 issuedAt,uint64 expiresAt)"
@@ -297,7 +307,8 @@ abstract contract SwarmFeed is ISwarmFeed {
     }
 
     /// @notice Refuse a value this feed should not accept. Zero always; a move larger than
-    /// `maxDeviationBps` while the current value is still fresh.
+    /// `maxDeviationBps` while the current value is fresh, or STALE_DEVIATION_MULTIPLE times that once it
+    /// is stale. The first value ever has no bound: it is the one we buy and check at deployment.
     /// @dev VIRTUAL, and the reason is that the bound assumes the value is a PRICE. It is the right
     /// guard for one: a price moves continuously, so a large jump is evidence of a bad figure rather
     /// than of a fast market. It is the wrong guard for a value with no magnitude — a Merkle root is a
@@ -312,9 +323,10 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// feed that pinned no question.
     function _checkValue(uint256 value) internal view virtual {
         if (value == 0) revert ZeroValue();
-        if (_hasValue && !_tooOld(_updatedAt)) {
+        if (_hasValue) {
+            uint256 bound = _tooOld(_updatedAt) ? maxDeviationBps * STALE_DEVIATION_MULTIPLE : maxDeviationBps;
             uint256 change = value > _value ? value - _value : _value - value;
-            if (change > Math.mulDiv(_value, maxDeviationBps, 10_000)) revert ExcessDeviation();
+            if (change > Math.mulDiv(_value, bound, 10_000)) revert ExcessDeviation();
         }
     }
 

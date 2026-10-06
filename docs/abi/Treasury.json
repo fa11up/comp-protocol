@@ -45,11 +45,6 @@
     "name": "handOffLaunchFees",
     "inputs": [
       {
-        "name": "factory",
-        "type": "address",
-        "internalType": "contract ILaunchFeeShare"
-      },
-      {
         "name": "launchNumber",
         "type": "uint64",
         "internalType": "uint64"

@@ -213,6 +213,11 @@ address constant INTAKE = 0x0000000000000000000000000000000000000F06;
 address constant ORACLE_ASKER = 0x0000000000000000000000000000000000000f07;
 // The Intake's action id: the action, an at sign and its version, right-padded to 32 bytes.
 bytes32 constant ORACLE_ACTION = "oracle.request@oracle-1";
+// The plane's mainnet ProjectFactory: the only contract the Treasury will ever ask to move a launch's
+// LP-fee share (`handOffLaunchFees`). Pinned (internal audit, 2026-10-06, low) so the reserve-holding
+// contract never makes an external call to an address chosen at call time. The custom-token launch whose
+// requester the Treasury becomes must go through this factory; a successor factory needs a source change.
+address constant LAUNCH_FACTORY = 0xfF03410d0Fe5fa8f7F59F743de35E333D9857120;
 // IMD's deepest market, read on chain to decide whether a feed has drifted: the Uniswap v4 PoolManager
 // and the native-ETH/IMD pool. MAINNET ONLY; on a testnet the drift trigger reads as "no drift".
 address constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
