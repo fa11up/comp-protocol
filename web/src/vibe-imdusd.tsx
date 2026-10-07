@@ -1,6 +1,6 @@
 // imdusd.com's backgrounds: the crafts a banknote or a ledger is made with (guilloché, lathe work,
 // contour maps, halftone, hatching), each with its own motion. Drawn by the engine in vibe.tsx.
-import type { Suite, Scene } from "./vibe";
+import type { Scene, Suite } from "./vibe";
 
 export const IMDUSD_SCENES: Scene[] = [
   {

@@ -217,6 +217,25 @@ function inferSite(): Plugin {
 }
 
 /** Static docs pages from web/content/docs, written beside the built docs shell. */
+/**
+ * Holds each page's first paint until its script has run, so the background (vibe.tsx, started as the
+ * script loads) is in that paint: with the browser holding the old page until then, a link to another
+ * page changes the page and not the background. Vite rewrites the entry tag, so it is added here.
+ */
+function renderBlocking(): Plugin {
+  return {
+    name: "imdusd-render-blocking",
+    transformIndexHtml: {
+      order: "post",
+      handler: (html) =>
+        html.replace(
+          /<script type="module" crossorigin/g,
+          '<script type="module" crossorigin blocking="render"',
+        ),
+    },
+  };
+}
+
 function docsPages(terminal: boolean): Plugin {
   return {
     name: "imdusd-docs-pages",
@@ -239,7 +258,7 @@ export default defineConfig(({ mode }) => {
     const infer: UserConfig = {
       root: resolve(import.meta.dirname, "infer"),
       publicDir: resolve(import.meta.dirname, "public"),
-      plugins: [react(), inferSite()],
+      plugins: [react(), renderBlocking(), inferSite()],
       base: "./",
       build: {
         outDir: resolve(import.meta.dirname, "../dist-infer"),
@@ -262,8 +281,8 @@ export default defineConfig(({ mode }) => {
   }
   return {
     plugins: site
-      ? [react(), publicSite(), docsPages(false)]
-      : [react(), docsPages(true)],
+      ? [react(), renderBlocking(), publicSite(), docsPages(false)]
+      : [react(), renderBlocking(), docsPages(true)],
     // The public site reads no chain: swap the live homepage for a stub so viem and the RPC layer
     // are not bundled at all.
     resolve: site

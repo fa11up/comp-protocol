@@ -8,7 +8,6 @@
 // motion, and where WebGL2 is unavailable the page is exactly the page it was. The canvas fills the
 // screen edge to edge, behind the whole page as it scrolls. The choice is remembered per visitor.
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 
 /** A scene: its id, its name, its button glyph, and the body of its fragment shader (main() and any helpers). */
 export type Scene = {
@@ -122,11 +121,9 @@ function store(suite: Suite): Store {
   return s;
 }
 
-/**
- * The header button and the background it controls. The button renders in place; the canvas goes to
- * the end of <body>, outside any header or page box, so no stacking context can lift it above the page.
- */
+/** The header button: shows the current scene's glyph and switches to the next scene. */
 export function Vibe({ suite }: { suite: Suite }) {
+  useEffect(() => startVibe(suite), [suite]);
   const s = store(suite);
   const vibe = useSyncExternalStore(s.subscribe, s.get);
   const i = Math.max(
@@ -155,10 +152,6 @@ export function Vibe({ suite }: { suite: Suite }) {
           {suite.scenes[i].icon}
         </svg>
       </button>
-      {createPortal(
-        <Canvas suite={suite} vibe={vibe} key={vibe} />,
-        document.body,
-      )}
     </>
   );
 }
@@ -179,137 +172,181 @@ function token(name: string): [number, number, number] {
   return [Number(m[0]) / 255, Number(m[1]) / 255, Number(m[2]) / 255];
 }
 
-/** The background itself, fixed behind the page. A fresh canvas per scene (keyed by the caller): a
- * WebGL context keeps its program, so switching scenes swaps the element. */
-function Canvas({ suite, vibe }: { suite: Suite; vibe: string }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
+/**
+ * Draws one scene on one canvas until the returned stop function is called. The first frame is drawn
+ * before this returns, so a page that starts the background as its script loads paints with it.
+ */
+function run(el: HTMLCanvasElement, scene: Scene, suite: Suite): () => void {
+  const gl = el.getContext("webgl2", {
+    antialias: false,
+    alpha: false,
+    premultipliedAlpha: false,
+  });
+  if (!gl) {
+    el.hidden = true; // no WebGL2: the page is the page it was
+    return () => {};
+  }
+  const compile = (type: number, src: string) => {
+    const s = gl.createShader(type)!;
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+      throw Error(gl.getShaderInfoLog(s) ?? "shader");
+    return s;
+  };
+  let program: WebGLProgram;
+  try {
+    program = gl.createProgram()!;
+    gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX));
+    gl.attachShader(program, compile(gl.FRAGMENT_SHADER, HEADER + scene.main));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw Error("link");
+  } catch (e) {
+    console.warn(`vibe ${scene.id}: ${(e as Error).message}`);
+    el.hidden = true;
+    return () => {};
+  }
+  el.hidden = false;
+  gl.useProgram(program);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array([-1, -1, 3, -1, -1, 3]),
+    gl.STATIC_DRAW,
+  );
+  const aPos = gl.getAttribLocation(program, "aPos");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  const u = (n: string) => gl.getUniformLocation(program, n);
+  const uRes = u("uRes"),
+    uTime = u("uTime"),
+    uInk = u("uInk"),
+    uPaper = u("uPaper");
+  const uCenter = u("uCenter"),
+    uScale = u("uScale"),
+    uInk1 = u("uInk1"),
+    uWide = u("uWide");
 
-  useEffect(() => {
-    const el = canvas.current;
-    const scene = suite.scenes.find((s) => s.id === vibe);
-    if (!scene || !el) return;
-    const gl = el.getContext("webgl2", {
-      antialias: false,
-      alpha: false,
-      premultipliedAlpha: false,
-    });
-    if (!gl) {
-      el.hidden = true; // no WebGL2: the page is the page it was
-      return;
-    }
-    const compile = (type: number, src: string) => {
-      const s = gl.createShader(type)!;
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-        throw Error(gl.getShaderInfoLog(s) ?? "shader");
-      return s;
-    };
-    let program: WebGLProgram;
-    try {
-      program = gl.createProgram()!;
-      gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX));
-      gl.attachShader(
-        program,
-        compile(gl.FRAGMENT_SHADER, HEADER + scene.main),
-      );
-      gl.linkProgram(program);
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw Error("link");
-    } catch (e) {
-      console.warn(`vibe ${scene.id}: ${(e as Error).message}`);
-      el.hidden = true;
-      return;
-    }
-    el.hidden = false;
-    gl.useProgram(program);
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(
-      gl.ARRAY_BUFFER,
-      new Float32Array([-1, -1, 3, -1, -1, 3]),
-      gl.STATIC_DRAW,
+  const colours = () => {
+    gl.uniform3fv(uInk, token("--text"));
+    gl.uniform3fv(uPaper, token("--bg"));
+    // Light ink on dark paper reads stronger than dark on light at the same mix: even them out.
+    gl.uniform1f(
+      uInk1,
+      document.documentElement.dataset.theme === "dark" ? 0.13 : 0.18,
     );
-    const aPos = gl.getAttribLocation(program, "aPos");
-    gl.enableVertexAttribArray(aPos);
-    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
-    const u = (n: string) => gl.getUniformLocation(program, n);
-    const uRes = u("uRes"),
-      uTime = u("uTime"),
-      uInk = u("uInk"),
-      uPaper = u("uPaper");
-    const uCenter = u("uCenter"),
-      uScale = u("uScale"),
-      uInk1 = u("uInk1"),
-      uWide = u("uWide");
+  };
+  const size = () => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.round(window.innerWidth * dpr),
+      h = Math.round(window.innerHeight * dpr);
+    if (el.width !== w || el.height !== h) {
+      el.width = w;
+      el.height = h;
+    }
+    gl.viewport(0, 0, w, h);
+    gl.uniform2f(uRes, w, h);
+    const wide = window.innerWidth > 1100;
+    const [fx, fy, fs] = suite.focus(wide);
+    gl.uniform1f(uWide, wide ? 1 : 0);
+    gl.uniform2f(uCenter, w * fx, h * fy);
+    gl.uniform1f(uScale, Math.min(w, h) * fs);
+  };
+  colours();
+  size();
 
-    const colours = () => {
-      gl.uniform3fv(uInk, token("--text"));
-      gl.uniform3fv(uPaper, token("--bg"));
-      // Light ink on dark paper reads stronger than dark on light at the same mix: even them out.
-      gl.uniform1f(
-        uInk1,
-        document.documentElement.dataset.theme === "dark" ? 0.13 : 0.18,
-      );
-    };
-    const size = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.round(window.innerWidth * dpr),
-        h = Math.round(window.innerHeight * dpr);
-      if (el.width !== w || el.height !== h) {
-        el.width = w;
-        el.height = h;
-      }
-      gl.viewport(0, 0, w, h);
-      gl.uniform2f(uRes, w, h);
-      const wide = window.innerWidth > 1100;
-      const [fx, fy, fs] = suite.focus(wide);
-      gl.uniform1f(uWide, wide ? 1 : 0);
-      gl.uniform2f(uCenter, w * fx, h * fy);
-      gl.uniform1f(uScale, Math.min(w, h) * fs);
-    };
-    colours();
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let frame = 0;
+  const draw = () => {
+    gl.uniform1f(uTime, still.matches ? 12 : clock());
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    frame = still.matches || document.hidden ? 0 : requestAnimationFrame(draw);
+  };
+  const restart = () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(draw);
+  };
+  draw();
+
+  const onResize = () => {
     size();
-
-    const still = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const t0 = performance.now();
-    let frame = 0;
-    const draw = () => {
-      gl.uniform1f(uTime, still.matches ? 12 : (performance.now() - t0) / 1000);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-      frame =
-        still.matches || document.hidden ? 0 : requestAnimationFrame(draw);
-    };
-    const restart = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(draw);
-    };
     restart();
+  };
+  const observer = new MutationObserver(() => {
+    colours();
+    restart();
+  });
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+  window.addEventListener("resize", onResize);
+  document.addEventListener("visibilitychange", restart);
+  still.addEventListener("change", restart);
+  return () => {
+    cancelAnimationFrame(frame);
+    observer.disconnect();
+    window.removeEventListener("resize", onResize);
+    document.removeEventListener("visibilitychange", restart);
+    still.removeEventListener("change", restart);
+    gl.deleteBuffer(buf);
+    gl.deleteProgram(program);
+    // Hand the context back now: browsers cap live WebGL contexts per page.
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+  };
+}
 
-    const onResize = () => {
-      size();
-      restart();
-    };
-    const observer = new MutationObserver(() => {
-      colours();
-      restart();
-    });
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    window.addEventListener("resize", onResize);
-    document.addEventListener("visibilitychange", restart);
-    still.addEventListener("change", restart);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      window.removeEventListener("resize", onResize);
-      document.removeEventListener("visibilitychange", restart);
-      still.removeEventListener("change", restart);
-      gl.deleteBuffer(buf);
-      gl.deleteProgram(program);
-    };
-  }, [suite, vibe]);
+// ------------------------------------------------------------------ the clock and the controller
 
-  return <canvas ref={canvas} className="vibe-canvas" aria-hidden="true" />;
+const CLOCK = "vibe-clock";
+let origin = 0;
+/**
+ * Seconds on one clock for the whole tab: each page continues the motion where the last one left it
+ * rather than starting again. Restarted after six hours, before 32-bit shader time loses smoothness.
+ */
+function clock(): number {
+  if (!origin) {
+    origin = Date.now();
+    try {
+      const saved = Number(sessionStorage.getItem(CLOCK));
+      if (saved > 0 && origin - saved < 6 * 3600e3) origin = saved;
+      else sessionStorage.setItem(CLOCK, String(origin));
+    } catch {
+      /* Storage may be disabled: this page keeps its own clock. */
+    }
+  }
+  return (Date.now() - origin) / 1000;
+}
+
+const started = new Set<string>();
+/**
+ * Puts a suite's background behind the page and keeps it on the visitor's choice. Each site calls it
+ * as its script loads, before React renders, so the new page's first paint already shows the
+ * background (the browser holds the old page until then). Safe to call more than once.
+ *
+ * The canvas lives at the end of <body>, outside any header or page box, so no stacking context can
+ * lift it above the page. A scene change draws the new scene on a fresh canvas (a WebGL context keeps
+ * its program) before the old one is removed, so there is no blank frame between them.
+ */
+export function startVibe(suite: Suite) {
+  if (typeof document === "undefined" || started.has(suite.key)) return;
+  started.add(suite.key);
+  const s = store(suite);
+  let current: HTMLCanvasElement | undefined;
+  let stop = () => {};
+  const show = () => {
+    const scene = suite.scenes.find((v) => v.id === s.get()) ?? suite.scenes[0];
+    const el = document.createElement("canvas");
+    el.className = "vibe-canvas";
+    el.setAttribute("aria-hidden", "true");
+    document.body.appendChild(el);
+    const stopNext = run(el, scene, suite);
+    stop();
+    current?.remove();
+    current = el;
+    stop = stopNext;
+  };
+  show();
+  s.subscribe(show);
 }
