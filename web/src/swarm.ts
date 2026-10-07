@@ -37,3 +37,30 @@ export function swarm(circles: Circle[], gap = 2): Map<string, number> {
 export function extent(circles: Circle[], ys: Map<string, number>) {
   return circles.reduce((m, c) => Math.max(m, Math.abs(ys.get(c.id) ?? 0) + c.r), 0);
 }
+
+/** The smallest hit radius a circle is ever packed at: a 24px touch target (WCAG 2.5.8). */
+export const HIT_RADIUS = 12;
+
+export type Dot = { id: string; x: number; dot: number };
+
+/**
+ * Lay a book out: every circle keeps its x, its visible dot shrinks (down to 0.8^5 of its size) while the
+ * cloud would outgrow `maxHeight`, but its HIT circle never shrinks below HIT_RADIUS, so no two touch
+ * targets overlap and none is under 24px whatever the data. When the floor packing is taller than
+ * `maxHeight` the plot takes the height it needs rather than clipping circles at its edge: a terminal's
+ * pane scrolls, a clipped or overlapping target does not work. (An earlier version shrank the hit circle
+ * with the dot and clipped at the cap, and a dense book at some ratios failed the target-size check.)
+ */
+export function pack(dots: Dot[], maxHeight: number, minHeight = 96) {
+  let scale = 1;
+  let circles: (Circle & { dot: number })[] = [];
+  let ys = new Map<string, number>();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    circles = dots.map((d) => ({ id: d.id, x: d.x, dot: d.dot * scale, r: Math.max(d.dot * scale, HIT_RADIUS) }));
+    ys = swarm(circles);
+    if (2 * extent(circles, ys) + HIT_RADIUS <= maxHeight) break;
+    scale *= 0.8;
+  }
+  const height = Math.max(minHeight, Math.ceil(2 * extent(circles, ys) + HIT_RADIUS));
+  return { circles, ys, height, scale };
+}

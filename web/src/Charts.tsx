@@ -1,7 +1,7 @@
 import { unit } from "./unit";
 import { perImd } from "./collateral";
 import { useEffect, useRef, useState } from "react";
-import { swarm, extent } from "./swarm";
+import { pack } from "./swarm";
 import { formatUnits, maxUint256 } from "viem";
 import type { Runtime } from "./config";
 import type { Snapshot } from "./state";
@@ -141,24 +141,19 @@ export function LoanBook({
     Math.max(0, Math.min(100, ((Number(value) - FLOOR) / (maximum - FLOOR)) * 100));
   const maxDebt = positions.reduce((m, p) => (p.debt > m ? p.debt : m), 1n);
   // A bubble cloud: each circle at its exact ratio, nudged up or down only as far as it must to clear the
-  // others (the height carries no value). Circles are packed at no less than a 12px radius so every one keeps
-  // a 24px touch target; area is debt. If the cloud would outgrow MAX_HEIGHT, every circle shrinks and it
-  // packs again.
+  // others (the height carries no value). Area is debt. If the cloud would outgrow MAX_HEIGHT the dots
+  // shrink and it packs again, but every circle's HIT area stays a 24px target and the plot grows rather
+  // than clip (swarm.ts `pack`).
   const MAX_HEIGHT = 200;
   const plotWidth = Math.max(1, width);
-  let scale = 1;
-  let circles: { id: string; x: number; r: number; dot: number }[] = [];
-  let ys = new Map<string, number>();
-  for (let attempt = 0; attempt < 6; attempt++) {
-    circles = positions.map((p) => {
-      const dot = 12 * scale * Math.sqrt(Number(p.debt) / Number(maxDebt));
-      return { id: p.owner, x: (at(p.cr) / 100) * plotWidth, r: Math.max(dot, 12 * scale, 6), dot };
-    });
-    ys = swarm(circles);
-    if (2 * extent(circles, ys) + 12 <= MAX_HEIGHT) break;
-    scale *= 0.8;
-  }
-  const height = Math.min(MAX_HEIGHT, Math.max(96, Math.ceil(2 * extent(circles, ys) + 12)));
+  const { circles, ys, height } = pack(
+    positions.map((p) => ({
+      id: p.owner,
+      x: (at(p.cr) / 100) * plotWidth,
+      dot: 12 * Math.sqrt(Number(p.debt) / Number(maxDebt)),
+    })),
+    MAX_HEIGHT,
+  );
   const centre = height / 2;
   const marks = positions.map((p) => {
     const c = circles.find((q) => q.id === p.owner)!;

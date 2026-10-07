@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { swarm, extent } from "../src/swarm.ts";
+import { swarm, extent, pack, HIT_RADIUS } from "../src/swarm.ts";
 
 // A seeded book of 200 loans clustered near the minimum ratio, the case that drew a staircase before.
 function book(n, seed = 7) {
@@ -39,4 +39,24 @@ test("spread-out loans stay on one line; a cluster stacks around it", () => {
   const ys = swarm(together);
   assert.ok(extent(together, ys) > 12, "a cluster grows up and down");
   assert.ok([...ys.values()].some((y) => y > 0) && [...ys.values()].some((y) => y < 0), "both sides used");
+});
+
+test("pack never shrinks a hit circle below the 24px target and grows the plot instead of clipping", () => {
+  // Forty loans at nearly the same ratio: a column that cannot fit 200px at 24px each.
+  const dots = Array.from({ length: 40 }, (_, i) => ({ id: `p${i}`, x: 100 + (i % 3), dot: 12 }));
+  const { circles, ys, height } = pack(dots, 200);
+  for (const c of circles) assert.ok(c.r >= HIT_RADIUS, `${c.id} hit radius ${c.r}`);
+  for (const a of circles) {
+    for (const b of circles) {
+      if (a === b) continue;
+      const d = Math.hypot(a.x - b.x, (ys.get(a.id) ?? 0) - (ys.get(b.id) ?? 0));
+      assert.ok(d + 1e-6 >= a.r + b.r, `${a.id} and ${b.id} overlap`);
+    }
+  }
+  assert.ok(height >= 2 * extent(circles, ys) + HIT_RADIUS, "nothing is clipped");
+  assert.ok(height > 200, "a column of forty targets is taller than the cap");
+  // A sparse book still fits the cap at full size.
+  const sparse = Array.from({ length: 5 }, (_, i) => ({ id: `s${i}`, x: i * 80, dot: 12 }));
+  assert.equal(pack(sparse, 200).scale, 1);
+  assert.equal(pack(sparse, 200).height, 96);
 });
