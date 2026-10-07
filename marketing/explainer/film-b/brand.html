@@ -69,7 +69,9 @@ function hatch(mask, gap = 9, lw = 3.2, cross = false) {
 
 // 4. film B's end card: the kit card's layout (mark, imdUSD lockup, address, chip) redrawn as an engraving on
 //    the plates' paper: engraved green, hatched fills with firm outlines, a banknote double rule.
-{
+//    Three states of the chip, for the blink from STAGING to LIVE: the chip and "MAINNET ·" are ink so that the
+//    one green word, LIVE, stands out on an otherwise green card.
+for (const status of ["STAGING", "", "LIVE"]) {
   const W = 1920, H = 1080, o = mk(W, H), c = o.getContext("2d");
   c.fillStyle = PAL.ivory; c.fillRect(0, 0, W, H);
   // faint wave field, as on the note's paper
@@ -99,9 +101,15 @@ function hatch(mask, gap = 9, lw = 3.2, cross = false) {
   c.font = `700 ${size}px ${FONT}`; c.strokeText("USD", x0 + w1, base);
   // the address and the chip, in engraved green
   c.fillStyle = PAL.green; c.textAlign = "center"; c.font = `500 46px ${FONT}`; c.fillText("imdusd.com", W / 2, 785);
-  c.font = `500 28px ${FONT}`; const chip = "MAINNET · STAGING", cw = c.measureText(chip).width + 60;
-  c.lineWidth = 2; c.strokeRect(W / 2 - cw / 2, 830, cw, 54); c.fillText(chip, W / 2, 867);
-  out["endcard-etched-1920x1080"] = o;
+  // the chip keeps one width (sized for the longer word) so it does not jump when the status changes
+  c.font = `500 28px ${FONT}`;
+  const lead = "MAINNET · ", cw = c.measureText(lead + "STAGING").width + 60, x0c = W / 2 - cw / 2;
+  c.strokeStyle = PAL.ink; c.lineWidth = 2; c.strokeRect(x0c, 830, cw, 54);
+  const tw = c.measureText(lead + (status || "STAGING")).width, tx = W / 2 - tw / 2;
+  c.textAlign = "left"; c.fillStyle = PAL.ink; c.fillText(lead, tx, 867);
+  if (status) { c.fillStyle = status === "LIVE" ? PAL.green : PAL.ink; if (status === "LIVE") c.font = `700 28px ${FONT}`; c.fillText(status, tx + c.measureText(lead).width, 867); }
+  c.textAlign = "center";
+  out["endcard-etched-1920x1080" + (status === "STAGING" ? "" : status === "LIVE" ? "-live" : "-blank")] = o;
 }
 
 const pre = document.createElement("pre"); pre.id = "out";

@@ -49,15 +49,17 @@ def on_sheet(u, v):
     return (top[0] + (bot[0] - top[0]) * v, top[1] + (bot[1] - top[1]) * v)
 # A freshly printed sheet: two columns by three rows of notes, each cell (u0, u1, v0, v1) on the sheet with a
 # paper gutter. The notes are on the sheet from the first frame of the shot (nothing assembles).
-COLS = ((0.05, 0.485), (0.515, 0.95))
-ROWS = ((0.04, 0.30), (0.33, 0.59), (0.62, 0.88))
+# Sized so the bottom row ends above the lower-third caption card (card top ~y 805; the sheet's left edge
+# reaches y 773 at v 0.65), with cells kept near the note's own 2.33:1 under the sheet's foreshortening.
+COLS = ((0.12, 0.48), (0.52, 0.88))
+ROWS = ((0.03, 0.22), (0.245, 0.435), (0.46, 0.65))
 CELLS = [(u0, u1, v0, v1) for v0, v1 in ROWS for u0, u1 in COLS]
 def cell_corners(c):
     u0, u1, v0, v1 = c
     return tuple(on_sheet(u, v) for u, v in ((u0, v0), (u1, v0), (u0, v1), (u1, v1)))
 SHEET_NOTE_CORNERS = (on_sheet(COLS[0][0], ROWS[0][0]), on_sheet(COLS[1][1], ROWS[0][0]),
                       on_sheet(COLS[0][0], ROWS[-1][1]), on_sheet(COLS[1][1], ROWS[-1][1]))   # the whole printed area
-SHEET_PORTRAIT = on_sheet(0.5, 0.45)                          # the push goes into the middle of the sheet
+SHEET_PORTRAIT = on_sheet(0.5, 0.34)                          # the push goes into the middle of the sheet
 NOTE_MASTER = os.path.join(ROOT, "marketing", "kit", "plates", "note-master.png")
 
 # Our mark on the plates that carry a blank place for one: the bank's pediment cartouche and the raised coin
@@ -123,7 +125,8 @@ ADVANCE = 1233 / 2048 * 72          # DejaVu Sans Mono advance at 72 px; fits th
 # Per aspect, in reference pixels: canvas, scene scale and offset, caption scale and centre y, style.
 ASPECTS = {
     "16x9": dict(ref=(1920, 1080), ground="ivory", scene=1.0, crop=None, at=(0, 0),
-                 cap=1.0, cap_cy=864, style="card", end=os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand", "endcard-etched-1920x1080.png")),
+                 cap=1.0, cap_cy=864, style="card", end=os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand", "endcard-etched-1920x1080.png"),
+                 blink=[("blank", 0.80, 0.95), ("blank", 1.10, 1.25), ("live", 1.25, 99)]),
     "1x1": dict(ref=(1080, 1080), ground="ivory", scene=1.0, crop=SAFE_1x1, at=(0, 0),
                 cap=0.5625, cap_cy=880, style="card", end="endcard-1080x1080.png"),
     "9x16": dict(ref=(1080, 1920), ground="ink", scene=0.5625, crop=None, at=(0, 500),
@@ -434,9 +437,19 @@ def assemble(scene, aspect, kout, work, music, out):
     inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{n_end / FPS}", "-i", os.path.join(ENDCARDS, A["end"])]
     g.append(f"[{cur}]trim=end_frame={HIT_F},setpts=PTS-STARTPTS,format=yuv444p[main]")
     g.append(f"color=c={HEX['ivory']}:s={W}x{H}:r={FPS},trim=end_frame={FLASH_F},format=yuv444p[flash]")
-    g.append(f"[{idx}:v]scale={W}:{H}:flags=lanczos,fps={FPS},trim=end_frame={n_end},setsar=1,format=yuv444p[end]")
-    g.append("[main][flash][end]concat=n=3:v=1:a=0,setsar=1[v]")
+    g.append(f"[{idx}:v]scale={W}:{H}:flags=lanczos,fps={FPS},trim=end_frame={n_end},setsar=1,format=yuv444p[end0]")
     idx += 1
+    # The status chip blinks from STAGING to LIVE: off, on, off, then LIVE for the rest of the card.
+    # Times are seconds into the end card (it starts at 36.567 s).
+    cur_end = "end0"
+    if A.get("blink"):
+        base = os.path.splitext(A["end"])[0]
+        for j, (img, t_on, t_off) in enumerate(A["blink"]):
+            inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{n_end / FPS}", "-i", f"{base}-{img}.png"]
+            g.append(f"[{idx}:v]scale={W}:{H}:flags=lanczos,fps={FPS},trim=end_frame={n_end},setsar=1,format=yuv444p[bk{j}]")
+            g.append(f"[{cur_end}][bk{j}]overlay=0:0:enable='between(t,{t_on},{t_off})'[eb{j}]")
+            cur_end = f"eb{j}"; idx += 1
+    g.append(f"[main][flash][{cur_end}]concat=n=3:v=1:a=0,setsar=1[v]")
     if music:
         inputs += ["-i", music]
         g.append(f"[{idx}:a]aresample=48000,atrim=0:40,asetpts=PTS-STARTPTS[a]")
