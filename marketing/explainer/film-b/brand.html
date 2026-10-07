@@ -5,15 +5,15 @@
 // on a transparent 1024x1024 canvas centred in a circle of radius 0.85 so an affine warp can fit it to any oval.
 const PAL = { ivory: "#F7F5EF", ink: "#16202E", green: "#2F5D50", hair: "#D8D3C7" };
 const S = 1024, C = S / 2, R = S * 0.425;
-const mk = () => { const c = document.createElement("canvas"); c.width = c.height = S; return c; };
+const mk = (w = S, h = w) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; };
 const out = {};
 
 // fill a mask canvas with engraved hatching: horizontal lines, plus a second, finer set where `dense`
 function hatch(mask, gap = 9, lw = 3.2, cross = false) {
-  const h = mk(), c = h.getContext("2d");
+  const W = mask.width, H = mask.height, h = mk(W, H), c = h.getContext("2d");
   c.strokeStyle = PAL.green; c.lineWidth = lw;
-  for (let y = gap / 2; y < S; y += gap) { c.beginPath(); c.moveTo(0, y + 2 * Math.sin(y / 37)); for (let x = 0; x <= S; x += 16) c.lineTo(x, y + 2 * Math.sin((x + y) / 37)); c.stroke(); }
-  if (cross) { c.lineWidth = lw * 0.6; for (let x = -S; x < S; x += gap * 1.4) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x + S, S); c.stroke(); } }
+  for (let y = gap / 2; y < H; y += gap) { c.beginPath(); c.moveTo(0, y + 2 * Math.sin(y / 37)); for (let x = 0; x <= W; x += 16) c.lineTo(x, y + 2 * Math.sin((x + y) / 37)); c.stroke(); }
+  if (cross) { c.lineWidth = lw * 0.6; for (let x = -H; x < W; x += gap * 1.4) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x + H, H); c.stroke(); } }
   c.globalCompositeOperation = "destination-in"; c.drawImage(mask, 0, 0);
   return h;
 }
@@ -65,6 +65,43 @@ function hatch(mask, gap = 9, lw = 3.2, cross = false) {
   c.strokeStyle = PAL.green; c.lineWidth = 6;
   c.strokeRect(ox, oy, 32 * k, 32 * k); c.strokeRect(ox + 3 * k, oy + 3 * k, 26 * k, 26 * k);
   out["imdfun-medallion"] = o;
+}
+
+// 4. film B's end card: the kit card's layout (mark, imdUSD lockup, address, chip) redrawn as an engraving on
+//    the plates' paper: engraved green, hatched fills with firm outlines, a banknote double rule.
+{
+  const W = 1920, H = 1080, o = mk(W, H), c = o.getContext("2d");
+  c.fillStyle = PAL.ivory; c.fillRect(0, 0, W, H);
+  // faint wave field, as on the note's paper
+  c.strokeStyle = PAL.hair; c.lineWidth = 1.2;
+  for (let y = -40; y < H + 40; y += 9) { c.beginPath(); for (let x = 0; x <= W; x += 8) { const yy = y + 6 * Math.sin(x / 80 + y / 45) + 3 * Math.sin(x / 27 - y / 33); x ? c.lineTo(x, yy) : c.moveTo(x, yy); } c.stroke(); }
+  // double rule with a lathe band between, like the note's border
+  const M = 43;
+  c.strokeStyle = PAL.green; c.lineWidth = 5; c.strokeRect(M, M, W - 2 * M, H - 2 * M);
+  c.lineWidth = 2; c.strokeRect(M + 22, M + 22, W - 2 * (M + 22), H - 2 * (M + 22));
+  c.save(); c.beginPath(); c.rect(M + 3, M + 3, W - 2 * M - 6, H - 2 * M - 6); c.rect(M + 20, M + 20, W - 2 * (M + 20), H - 2 * (M + 20)); c.clip("evenodd");
+  c.lineWidth = 1; for (let t = -H; t < W + H; t += 6) { c.beginPath(); c.moveTo(t, 0); c.lineTo(t + H, H); c.stroke(); c.beginPath(); c.moveTo(t + H, 0); c.lineTo(t, H); c.stroke(); }
+  c.restore();
+  // the mark, hatched, centred above the lockup
+  const markCv = out["mark-etched"], ms = 330;
+  c.drawImage(markCv, W / 2 - ms / 2, 210, ms, ms);
+  // imd + bold USD, hatched with a firm outline
+  const FONT = "'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", size = 150;
+  const m = mk(W, H), mc = m.getContext("2d"); mc.textBaseline = "alphabetic"; mc.fillStyle = "#000";
+  mc.font = `400 ${size}px ${FONT}`; const w1 = mc.measureText("imd").width;
+  mc.font = `700 ${size}px ${FONT}`; const w2 = mc.measureText("USD").width;
+  const x0 = W / 2 - (w1 + w2) / 2, base = 690;
+  mc.font = `400 ${size}px ${FONT}`; mc.fillText("imd", x0, base);
+  mc.font = `700 ${size}px ${FONT}`; mc.fillText("USD", x0 + w1, base);
+  c.drawImage(hatch(m, 6, 2.6, true), 0, 0);
+  c.strokeStyle = PAL.green; c.lineWidth = 3.5; c.lineJoin = "round"; c.textBaseline = "alphabetic";
+  c.font = `400 ${size}px ${FONT}`; c.strokeText("imd", x0, base);
+  c.font = `700 ${size}px ${FONT}`; c.strokeText("USD", x0 + w1, base);
+  // the address and the chip, in engraved green
+  c.fillStyle = PAL.green; c.textAlign = "center"; c.font = `500 46px ${FONT}`; c.fillText("imdusd.com", W / 2, 785);
+  c.font = `500 28px ${FONT}`; const chip = "MAINNET · STAGING", cw = c.measureText(chip).width + 60;
+  c.lineWidth = 2; c.strokeRect(W / 2 - cw / 2, 830, cw, 54); c.fillText(chip, W / 2, 867);
+  out["endcard-etched-1920x1080"] = o;
 }
 
 const pre = document.createElement("pre"); pre.id = "out";

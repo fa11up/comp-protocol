@@ -47,12 +47,18 @@ def on_sheet(u, v):
     (ax, ay), (bx, by), (cx, cy), (dx, dy) = SHEET
     top = (ax + (bx - ax) * u, ay + (by - ay) * u); bot = (cx + (dx - cx) * u, cy + (dy - cy) * u)
     return (top[0] + (bot[0] - top[0]) * v, top[1] + (bot[1] - top[1]) * v)
-NOTE_UV = (0.08, 0.92, 0.10, 0.56)                            # the note's extent on the sheet, with paper margin
-SHEET_NOTE_CORNERS = tuple(on_sheet(u, v) for u, v in ((NOTE_UV[0], NOTE_UV[2]), (NOTE_UV[1], NOTE_UV[2]),
-                                                       (NOTE_UV[0], NOTE_UV[3]), (NOTE_UV[1], NOTE_UV[3])))
-_pu = GEOM["portrait"]["innerEllipse"]["cx"] / GEOM["master"]["w"]
-_pv = GEOM["portrait"]["innerEllipse"]["cy"] / GEOM["master"]["h"]
-SHEET_PORTRAIT = on_sheet(NOTE_UV[0] + (NOTE_UV[1] - NOTE_UV[0]) * _pu, NOTE_UV[2] + (NOTE_UV[3] - NOTE_UV[2]) * _pv)
+# A freshly printed sheet: two columns by three rows of notes, each cell (u0, u1, v0, v1) on the sheet with a
+# paper gutter. The notes are on the sheet from the first frame of the shot (nothing assembles).
+COLS = ((0.05, 0.485), (0.515, 0.95))
+ROWS = ((0.04, 0.30), (0.33, 0.59), (0.62, 0.88))
+CELLS = [(u0, u1, v0, v1) for v0, v1 in ROWS for u0, u1 in COLS]
+def cell_corners(c):
+    u0, u1, v0, v1 = c
+    return tuple(on_sheet(u, v) for u, v in ((u0, v0), (u1, v0), (u0, v1), (u1, v1)))
+SHEET_NOTE_CORNERS = (on_sheet(COLS[0][0], ROWS[0][0]), on_sheet(COLS[1][1], ROWS[0][0]),
+                      on_sheet(COLS[0][0], ROWS[-1][1]), on_sheet(COLS[1][1], ROWS[-1][1]))   # the whole printed area
+SHEET_PORTRAIT = on_sheet(0.5, 0.45)                          # the push goes into the middle of the sheet
+NOTE_MASTER = os.path.join(ROOT, "marketing", "kit", "plates", "note-master.png")
 
 # Our mark on the plates that carry a blank place for one: the bank's pediment cartouche and the raised coin
 # (same coin, same place, in K2 and K3). The pixel mark is scaled with nearest-neighbour so it stays crisp.
@@ -60,32 +66,39 @@ SHEET_PORTRAIT = on_sheet(NOTE_UV[0] + (NOTE_UV[1] - NOTE_UV[0]) * _pu, NOTE_UV[
 # placement is (asset, centre, A): A maps the unit circle onto the target oval, fitted from the plate's own
 # ivory blob (its second moments), so a mark on an oval seen at an angle takes that angle.
 BRAND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand")
+# A placement is (asset, centre, window, fill): `window` maps the unit circle onto the plate's measured INNER ivory
+# window (flood-filled and ellipse-fitted on the original plate), and the mark is scaled so the corners of its drawn
+# extent sit at `fill` of that window. Extents are each asset's alpha bounding box, as a fraction of the canvas
+# half-size (measured on brand/*.png); "disc" assets are fitted by their radius instead of their corners.
+EXTENT = {"dollar-etched": (0.455, 0.787), "mark-etched": (0.861, 0.766), "imdfun-medallion": (0.852, 0.852)}
+DISC = {"imdfun-medallion"}
 BRAND = {
-    # before the wipe: the dollar, on the bank's pediment, the raised coin and both hanging banners
-    "k1-bank": [("dollar-etched", (960, 165), ((60, 0), (0, 60)))],
-    "k2-board": [("dollar-etched", (1003.4, 242.4), ((48, 0), (0, 48))),
-                 ("dollar-etched", (369.8, 205.0), ((39.48, 4.46), (4.46, 67.9))),
-                 ("dollar-etched", (1549.2, 205.0), ((39.75, -4.56), (-4.56, 68.23)))],
+    # before the wipe: the dollar, on the bank's pediment (window 103 x 55, a round fit to its height),
+    # the raised coin and both hanging banners
+    "k1-bank": [("dollar-etched", (960, 172), ((55.4, 0), (0, 55.4)), 0.90)],
+    "k2-board": [("dollar-etched", (1003.4, 242.4), ((50.6, 0), (0, 50.6)), 0.86),
+                 ("dollar-etched", (369.8, 205.0), ((39.48, 4.46), (4.46, 67.9)), 0.90),
+                 ("dollar-etched", (1549.2, 205.0), ((39.75, -4.56), (-4.56, 68.23)), 0.90)],
     # after it: our mark on the robot's coin
-    "k3-dissolve": [("mark-etched", (1006.3, 236.2), ((42, 0), (0, 42)))],
+    "k3-dissolve": [("mark-etched", (1006.3, 236.2), ((51.0, 0), (0, 51.0)), 0.84)],
     # the agent wall: the imd.fun medallion over the central disc
-    "k4-swarm": [("imdfun-medallion", (960, 225), ((96, 0), (0, 96)))],
+    "k4-swarm": [("imdfun-medallion", (960, 225), ((96, 0), (0, 96)), 0.85)],
 }
 
 # Shots of the picture track (the scene): (keyframe, film start, film end, zoom from, zoom to, focus x, y)
 SHOTS = [
     (0, 0.0, 9.5, 1.00, 1.10, 960, 600),     # K1: from the first frame, push toward the vault door (b1 typed over it)
-    (1, 8.5, 16.0, 1.00, 1.05, 960, 430),    # K2: push toward the standing figure and the coin
-    (2, 14.0, 20.5, 1.00, 1.03, 960, 540),   # K3: the half-transformed room, barely moving
-    (3, 19.0, 24.0, 1.08, 1.00, 960, 540),   # K4: pull back to show the wall floor to ceiling
+    (1, 8.5, 14.0, 1.00, 1.05, 960, 430),    # K2: push toward the standing figure and the coin (2 s shorter)
+    (2, 12.0, 18.5, 1.00, 1.03, 960, 540),   # K3: machines on both sides, the robot raising the coin
+    (3, 17.0, 22.0, 1.08, 1.00, 960, 540),   # K4: pull back to show the wall floor to ceiling
 ]
-XFADES = [("fade", 8.5, 1.0), ("lines", 14.0, 2.0), ("lines", 19.0, 1.5)]  # into shot i+1
-K5_PUSH = (24.0, 31.0, 1.00, 1.06, 959, 600)
+XFADES = [("fade", 8.5, 1.0), ("lines", 12.0, 2.0), ("lines", 17.0, 1.5)]  # into shot i+1
+K5_PUSH = (22.0, 29.0, 1.00, 1.06, 959, 600)
 K6_PUSH = (34.0, 36.5, 1.00, 1.15) + tuple(SHEET_PORTRAIT)                # the pinned note's portrait, ease-in
 
 # The screen in K5: typed in the caption monospace, 40 ms a character.
-Q_LINES = [("What is one IMD", 24.60), ("worth in dollars?", 25.30)]
-FIGURE = ("$8.86", 28.86)          # last character lands on 29.000 s, the agreement note
+Q_LINES = [("What is one IMD", 22.60), ("worth in dollars?", 23.30)]
+FIGURE = ("$8.86", 26.86)          # last character lands on 29.000 s, the agreement note
 TYPE_DT = 0.04
 Q_FONT, FIG_FONT = 44, 104
 # The broad ivory threshold is y=241..767, while inspection of the accepted
@@ -95,22 +108,22 @@ SCREEN_CX = SCREEN[0] + SCREEN[2] / 2
 def _centred(text, size): return SCREEN_CX - len(text) * (1233 / 2048) * size / 2   # DejaVu Sans Mono advance
 Q_XY = [(_centred(Q_LINES[0][0], 44), 500), (_centred(Q_LINES[1][0], 44), 550)]
 FIG_XY = (_centred(FIGURE[0], 104), 606)
-FLOURISH = (29.10, 0.50, (SCREEN_CX - 200, 716, 400, 34))   # start, length, box
+FLOURISH = (27.10, 0.50, (SCREEN_CX - 200, 716, 400, 34))   # start, length, box
 
 # The note's assembly: stack order, start of each 0.20 s opacity ramp (film time).
-ASSEMBLY = [(name, 31.0 + 0.30 * i) for i, name in enumerate(GEOM["stackOrder"])]
+
 RAMP = 0.20
 
 # Captions: (id, fade-in start, fade-in, fade-out start, fade-out). b1 is typed instead of faded in.
-CAPTIONS = [("b1", 0.40, 0.0, 3.60, 0.40), ("b2", 16.00, 0.40, 22.60, 0.40),
-            ("b3", 27.80, 0.30, 30.70, 0.30), ("b4", 32.60, 0.30, None, 0.0)]  # b4 ends on the cut
+CAPTIONS = [("b1", 0.40, 0.0, 3.60, 0.40), ("b2", 14.00, 0.40, 20.60, 0.40),
+            ("b3", 25.80, 0.30, 28.70, 0.30), ("b4", 30.20, 0.30, None, 0.0)]  # b4 ends on the cut
 B1_TYPE = (0.40, TYPE_DT)
 ADVANCE = 1233 / 2048 * 72          # DejaVu Sans Mono advance at 72 px; fits the plates (see storyboard)
 
 # Per aspect, in reference pixels: canvas, scene scale and offset, caption scale and centre y, style.
 ASPECTS = {
     "16x9": dict(ref=(1920, 1080), ground="ivory", scene=1.0, crop=None, at=(0, 0),
-                 cap=1.0, cap_cy=864, style="card", end="endcard-1920x1080.png"),
+                 cap=1.0, cap_cy=864, style="card", end=os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand", "endcard-etched-1920x1080.png")),
     "1x1": dict(ref=(1080, 1080), ground="ivory", scene=1.0, crop=SAFE_1x1, at=(0, 0),
                 cap=0.5625, cap_cy=880, style="card", end="endcard-1080x1080.png"),
     "9x16": dict(ref=(1080, 1920), ground="ink", scene=0.5625, crop=None, at=(0, 500),
@@ -225,7 +238,7 @@ LINES_EXPR = ("A+(B-A)*clip(((1-P)-(0.8*(1-X/W)+0.05*mod(floor(Y/max(1,H/270)),4
 
 
 def scene_bank(keys, ks, U, out):
-    """0.0 .. 24.0: K1 push (under b1), dissolve to K2, line-by-line to K3 and K4."""
+    """0.0 .. 22.0: K1 push (under b1), dissolve to K2, line-by-line to K3 and K4."""
     inputs, chains = [], []
     for i, (k, t0, t1, z0, z1, fx, fy) in enumerate(SHOTS):
         inputs += still_or_clip(keys[k], t1 - t0) if is_clip(keys[k]) else ["-i", keys[k]]
@@ -235,7 +248,7 @@ def scene_bank(keys, ks, U, out):
         tr = "transition=fade" if kind == "fade" else f"transition=custom:expr='{LINES_EXPR}'"
         chains.append(f"[{cur}][s{i + 1}]xfade={tr}:duration={dur}:offset={t - start0:.3f}[x{i}]")
         cur = f"x{i}"
-    n = round((24.0 - SHOTS[0][1]) * FPS)
+    n = round((SHOTS[-1][2] - SHOTS[0][1]) * FPS)
     ff(*inputs, "-filter_complex", ";".join(chains), "-map", f"[{cur}]", "-frames:v", str(n),
        "-r", str(FPS), "-c:v", "ffv1", "-pix_fmt", "yuv444p", out)
 
@@ -272,7 +285,7 @@ def esc(t):
 
 
 def scene_screen(keys, ks, U, work, out):
-    """24.0 .. 31.0: K5, the question and the figure typed on the empty screen, the flourish, a push."""
+    """22.0 .. 29.0: K5, the question and the figure typed on the empty screen, the flourish, a push."""
     t0, t1, z0, z1, fx, fy = K5_PUSH
     n = round((t1 - t0) * FPS)
     sw, sh, s = even(1920 * ks), even(1080 * ks), ks * U
@@ -301,49 +314,40 @@ def scene_screen(keys, ks, U, work, out):
 
 
 def scene_press(keys, ks, U, work, out):
-    """31.0 .. 36.5: K6, the note corner-pinned to its real sheet, then pushed."""
-    t0, t1 = 31.0, 36.5
+    """29.0 .. 36.5: K6 with a sheet of six notes pinned to its real perspective, then a slow push."""
+    t0, t1 = 29.0, 36.5
     n = round((t1 - t0) * FPS)
     sw, sh, s = even(1920 * ks), even(1080 * ks), ks * U
-    inputs = still_or_clip(keys[5], t1 - t0)
-    g = [f"{clip_head(0, n)},scale={sw * U}:{sh * U}:flags=lanczos,format=rgba[b0]"]
-    # Work in the note's tight bounding box, then put the resulting
-    # corner-pinned quad at its measured sheet position. This retains alpha
-    # outside the note rather than allowing perspective edge extrapolation to
-    # cover the press plate.
-    bx0 = min(x for x, _ in SHEET_NOTE_CORNERS); by0 = min(y for _, y in SHEET_NOTE_CORNERS)
-    bx1 = max(x for x, _ in SHEET_NOTE_CORNERS); by1 = max(y for _, y in SHEET_NOTE_CORNERS)
-    nx, ny = round(bx0 * s), round(by0 * s)
-    nw, nh = even((bx1 - bx0) * s), even((by1 - by0) * s)
     PAD = 8
-    px = [round((x - bx0) * s + PAD, 3) for x, _ in SHEET_NOTE_CORNERS]
-    py = [round((y - by0) * s + PAD, 3) for _, y in SHEET_NOTE_CORNERS]
-    nx, ny = nx - PAD, ny - PAD
-    persp = (f"perspective=x0={px[0]}:y0={py[0]}:x1={px[1]}:y1={py[1]}:"
-             f"x2={px[2]}:y2={py[2]}:x3={px[3]}:y3={py[3]}:"
-             "sense=destination:interpolation=linear")
-    # The pin is static because K6 is locked off. Bake it once per layer so
-    # the 165-frame assembly only blends the already-registered artwork.
-    pinned = {}
-    for name, _ in ASSEMBLY:
-        q = os.path.join(work, "pinned-" + name + ".png")
-        ff("-i", os.path.join(LAYERS, name + ".png"), "-vf",
-           f"scale={nw}:{nh}:flags=lanczos,format=rgba,pad={nw + 2 * PAD}:{nh + 2 * PAD}:{PAD}:{PAD}:color=black@0,"
-           f"{persp},format=rgba",
-           "-frames:v", "1", q)
-        pinned[name] = q
-    for i, (name, ts) in enumerate(ASSEMBLY):
-        inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{t1 - t0}", "-i", pinned[name]]
-        g.append(f"[{i + 1}:v]format=rgba,fade=t=in:st={ts - t0:.3f}:d={RAMP}:alpha=1[l{i}]")
-        g.append(f"[b{i}][l{i}]overlay={nx}:{ny}:format=auto[b{i + 1}]")
+    # Bake the whole sheet once: each note corner-pinned (with a transparent margin, so the warp clamps to
+    # nothing) and laid onto one transparent canvas the size of the plate. K6 is locked off, so it is static.
+    sheet = os.path.join(work, "sheet-of-notes.png")
+    inputs = ["-f", "lavfi", "-i", f"color=c=black@0:s={sw * U}x{sh * U},format=rgba"]
+    g, cur = [], "0:v"
+    for i, c in enumerate(CELLS):
+        q = cell_corners(c)
+        bx0 = min(x for x, _ in q); by0 = min(y for _, y in q)
+        bx1 = max(x for x, _ in q); by1 = max(y for _, y in q)
+        nw, nh = even((bx1 - bx0) * s), even((by1 - by0) * s)
+        px = [round((x - bx0) * s + PAD, 3) for x, _ in q]
+        py = [round((y - by0) * s + PAD, 3) for _, y in q]
+        inputs += ["-i", NOTE_MASTER]
+        g.append(f"[{i + 1}:v]format=rgba,scale={nw}:{nh}:flags=lanczos,"
+                 f"pad={nw + 2 * PAD}:{nh + 2 * PAD}:{PAD}:{PAD}:color=black@0,"
+                 f"perspective=x0={px[0]}:y0={py[0]}:x1={px[1]}:y1={py[1]}:x2={px[2]}:y2={py[2]}:x3={px[3]}:y3={py[3]}:"
+                 f"sense=destination:interpolation=linear,format=rgba[n{i}]")
+        g.append(f"[{cur}][n{i}]overlay={round(bx0 * s) - PAD}:{round(by0 * s) - PAD}:format=auto[s{i}]")
+        cur = f"s{i}"
+    ff(*inputs, "-filter_complex", ";".join(g), "-map", f"[{cur}]", "-frames:v", "1", sheet)
     p0, p1, z0, z1, fx, fy = K6_PUSH
     a, b = round((p0 - t0) * FPS), round((p1 - t0) * FPS) - 1
     z = f"{z0}+({z1}-{z0})*pow(clip((in-{a})/{b - a},0,1),2)"
     px, py = fx * s, fy * s
-    g.append(f"[b{len(ASSEMBLY)}]format=yuv444p,zoompan=z='{z}':x='{px}-{px}/zoom':y='{py}-{py}/zoom':"
-             f"d=1:s={sw}x{sh}:fps={FPS},setsar=1[v]")
-    ff(*inputs, "-filter_complex", ";".join(g), "-map", "[v]", "-frames:v", str(n),
-       "-c:v", "ffv1", "-pix_fmt", "yuv444p", out)
+    g = [f"{clip_head(0, n)},scale={sw * U}:{sh * U}:flags=lanczos,format=rgba[b0]",
+         f"[1:v]format=rgba[sh]", "[b0][sh]overlay=0:0:format=auto[b1]",
+         f"[b1]format=yuv444p,zoompan=z='{z}':x='{px}-{px}/zoom':y='{py}-{py}/zoom':d=1:s={sw}x{sh}:fps={FPS},setsar=1[v]"]
+    ff(*still_or_clip(keys[5], t1 - t0), "-loop", "1", "-framerate", str(FPS), "-t", f"{t1 - t0}", "-i", sheet,
+       "-filter_complex", ";".join(g), "-map", "[v]", "-frames:v", str(n), "-c:v", "ffv1", "-pix_fmt", "yuv444p", out)
 
 
 def build_scene(keys, ks, U, work):
@@ -516,15 +520,15 @@ def check(path, aspect, kout, music):
         g = frame_gray(path, t, W, H)
         px = [g[y * W + x] for y in range(band_y0, band_y1) for x in range(W)]
         return (min(px) < 90) if A["ground"] == "ivory" else (max(px) > 200)
-    for cid, t in (("b1", 2.5), ("b2", 19.5), ("b3", 29.5), ("b4", 35.0)):
+    for cid, t in (("b1", 2.5), ("b2", 17.5), ("b3", 27.5), ("b4", 34.0)):
         req(f"caption_{cid}_present_at_{t}", band_has_caption(t), t)
     # An empty caption band is only measurable over the flat stand-ins; real engravings fill the band.
     if os.environ.get("FILMB_STANDINS") == "1":
-        for t in (0.1, 12.0, 25.0, 31.5):
+        for t in (0.1, 11.0, 23.0, 29.5):
             req(f"no_caption_at_{t}", not band_has_caption(t), t)
     # Beats: count the K-index ticks (ink squares) at one time per keyframe (stand-ins only).
     if os.environ.get("FILMB_STANDINS") == "1" and aspect == "16x9":
-        for k, t in ((1, 6.0), (2, 11.0), (3, 17.5), (4, 22.5), (5, 26.0), (6, 32.0)):
+        for k, t in ((1, 6.0), (2, 10.0), (3, 15.5), (4, 20.5), (5, 24.0), (6, 31.0)):
             g = frame_gray(path, t, W, H)
             rows = [g[y * W:(y + 1) * W] for y in range(0, int(115 * kout))]   # above the note (y >= 120)
             row = max(rows, key=lambda r: sum(1 for p in r if p < 90))   # the ticks' solid middle row
@@ -546,13 +550,11 @@ def check(path, aspect, kout, music):
         y0, y1 = int(my0 * ks + A["at"][1] * kout), int(my1 * ks + A["at"][1] * kout)
         x0, x1 = max(0, x0), min(W, x1)
         return sum(1 for y in range(y0, y1) for x in range(x0, x1) if g[y * W + x] < 170)
-    n_before, n_after = note_pixels(31.0), note_pixels(34.0)
+    n_before, n_after = note_pixels(28.5), note_pixels(29.2)
     # Over the stand-in's blank sheet the note is the only ink; over the real K6 the sheet's engraving is too,
     # so there the test is that the note added ink, not that it multiplied it twenty-fold.
-    if os.environ.get("FILMB_STANDINS") == "1":
-        req("note_assembled_by_34.0", n_after > 20 * n_before + 50, [n_before, n_after])
-    else:
-        req("note_assembled_by_34.0", n_after > 20 * n_before + 50, [n_before, n_after])
+    # 28.5 is the dials screen, 29.2 the press with its sheet of notes: the notes must be there from the start
+    req("notes_present_at_29.2", n_after > 1000 and n_after != n_before, [n_before, n_after])
     if music:
         r = subprocess.run(["ffmpeg", "-hide_banner", "-nostdin", "-i", path, "-af", "atrim=start=39.9,volumedetect",
                             "-vn", "-f", "null", "-"], capture_output=True, text=True)
@@ -565,8 +567,9 @@ def brand(src, name, work):
     """A copy of a keyframe with the etched marks warped onto their ovals (affine, via perspective)."""
     out = os.path.join(work, name + "-branded.png")
     inputs, g, cur = ["-i", src], [], "0:v"
-    for i, (asset, (cx, cy), ((a, b), (c, d))) in enumerate(BRAND[name]):
-        k = 1 / 0.85                              # the canvas edge is at radius 1/0.85 of the drawn circle
+    for i, (asset, (cx, cy), ((a, b), (c, d)), fill) in enumerate(BRAND[name]):
+        hx, hy = EXTENT[asset]
+        k = fill / (max(hx, hy) if asset in DISC else math.hypot(hx, hy))   # canvas half-size -> window units
         corners = [(cx + (a * sx + b * sy) * k, cy + (c * sx + d * sy) * k) for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1))]
         x0, y0 = math.floor(min(x for x, _ in corners)) - 2, math.floor(min(y for _, y in corners)) - 2
         x1, y1 = math.ceil(max(x for x, _ in corners)) + 2, math.ceil(max(y for _, y in corners)) + 2
