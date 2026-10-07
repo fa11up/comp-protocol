@@ -3236,14 +3236,27 @@ button.balance-hint.balance-use:hover {
     width: 100%;
     justify-content: space-between;
   }
+  /* The desk stacks and the PAGE scrolls. The one-screen, no-scroll desk is a desktop arrangement:
+     kept here, its capped height and the panes' min-height 0 sized the grid rows short of their
+     content, and Trade was drawn over Stake (found on a phone, 2026-10-06). */
+  .infer-screen {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
   .infer-screen .infer-desk {
-    grid-template-columns: minmax(0, 1fr);
-    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
   }
   .infer-pane {
+    min-height: auto;
     overflow: visible;
     border-right: 0;
     border-bottom: 1px solid var(--text);
+  }
+  .infer-pane:last-child {
+    border-bottom: 0;
   }
   .infer-columns {
     grid-template-columns: minmax(0, 1fr);
@@ -3257,26 +3270,155 @@ button.balance-hint.balance-use:hover {
   }
 }
 @media (max-width: 640px) {
+  /* The masthead on a phone: two rows, not three. The mark and the tools share the first row and
+     the nav takes the second, scrolling sideways if it must. It stays sticky, so it has to be short. */
+  .infer-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    grid-template-areas:
+      "mark chip theme wallet"
+      "nav nav nav nav";
+    align-items: center;
+    gap: 4px 10px;
+    padding: 8px 16px 0;
+  }
+  .infer-mark {
+    grid-area: mark;
+    font-size: 18px;
+  }
+  /* The tools box dissolves so its three children place themselves beside the mark, and the nav gets
+     the whole second row. */
+  .infer-tools {
+    display: contents;
+  }
+  .infer-tools .theme-toggle {
+    grid-area: theme;
+  }
+  .infer-tools .infer-connect,
+  .infer-tools .infer-account {
+    grid-area: wallet;
+  }
+  .infer-tools .chip {
+    grid-area: chip;
+    white-space: nowrap;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    padding: 2px 6px;
+  }
+  /* Under 480px the first row has no room for the chip beside the wallet button. */
+  @media (max-width: 479px) {
+    .infer-tools .chip {
+      display: none;
+    }
+  }
+  .infer-connect {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .infer-nav {
+    grid-area: nav;
+    gap: 0;
+    margin-left: -16px;
+    padding-left: 10px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .infer-nav a {
+    white-space: nowrap;
+    padding: 8px 5px 10px;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+  }
+  .infer-pane {
+    padding: 18px 16px 16px;
+  }
+  .infer-pane-head h1 {
+    font-size: 26px;
+  }
+  .infer-page main {
+    padding: 24px 16px 48px;
+  }
+  .infer-claim h1,
+  .infer-doc-head h1 {
+    font-size: 36px;
+  }
+
+  /* Tables fold into ledger entries: a row is a small grid, the name and the figure on one line, the
+     bar under them, the note under that. Column headers go; a figure that would be bare keeps its
+     label inline. */
   .infer-table thead {
     display: none;
   }
   .infer-table tr {
-    display: block;
-    padding-block: 8px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 12px;
+    align-items: baseline;
+    padding-block: 10px;
     border-bottom: 1px solid var(--rule);
   }
   .infer-table td {
     display: block;
     border: 0;
-    padding: 3px 0;
+    padding: 0;
+    grid-column: 1 / -1;
   }
   .infer-table td[data-label]:not([data-label=""])::before {
-    content: attr(data-label);
-    display: block;
+    content: attr(data-label) " ";
     font-size: 10px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--muted);
+  }
+  .infer-barcell {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .infer-barcell .infer-bar {
+    flex: 1;
+    margin: 0;
+  }
+  .infer-barcell::before {
+    display: none;
+  }
+  /* Where it goes: bucket | INFER on the first line, share bar, then how it pays. */
+  .infer-alloc td:nth-child(1) {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .infer-alloc td:nth-child(1)::before {
+    display: none;
+  }
+  .infer-alloc td:nth-child(3) {
+    grid-column: 2;
+    grid-row: 1;
+    text-align: end;
+  }
+  .infer-alloc td:nth-child(2) {
+    grid-row: 2;
+  }
+  .infer-alloc td:nth-child(4) {
+    grid-row: 3;
+    max-width: none;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .infer-alloc td:nth-child(4)::before {
+    display: none;
+  }
+  /* Seasons: "Season 1" beside its bar. */
+  .infer-seasons tr {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+  }
+  .infer-seasons td:nth-child(1) {
+    grid-column: 1;
+    white-space: nowrap;
+  }
+  .infer-seasons td:nth-child(2) {
+    grid-column: 2;
   }
   .infer-seasons .infer-barcell {
     width: auto;
