@@ -11,8 +11,7 @@ npm ci --prefix web
 npm run --prefix web typecheck
 npm run --prefix web build
 npm run --prefix web check:export
-node web/scripts/check-package.mjs
-node --test web/tests/math.test.mjs web/tests/history.test.mjs web/tests/theme.test.mjs
+npm test --prefix web
 npm exec --prefix web -- playwright install chromium
 npm run --prefix web test:browser
 npm run --prefix web preview

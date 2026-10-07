@@ -1,0 +1,17 @@
+// whitepaper.imdusd.com: the INFER whitepaper, the same single file infer.miyagod.eth.limo serves from
+// IPFS, served as a static asset by its own Worker. Stage and deploy with `npm run deploy:whitepaper`.
+{
+  "name": "whitepaper-imdusd",
+  "compatibility_date": "2026-10-01",
+  // The same tiny Worker as infer.imdusd.com: http -> https, then the assets.
+  "main": "worker/infer.js",
+  "assets": {
+    "directory": "../dist-whitepaper",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "workers_dev": true,
+  "routes": [{ "pattern": "whitepaper.imdusd.com", "custom_domain": true }]
+}

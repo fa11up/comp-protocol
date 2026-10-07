@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import {
   fixture,
   fixtureLogs,
@@ -11,31 +11,59 @@ import {
   closedOwner,
   extraOwner,
 } from "./fixture.mjs";
-// Node's TS stripping cannot resolve extensionless browser imports. This scratch copy
-// only resolves module paths; the delivered source's behavior is exercised unchanged.
+// history.ts now reaches site.tsx and BuyUpdate.tsx through config and state, so Node's type
+// stripping can no longer load it by rewriting import paths. Vite bundles it for Node instead, with
+// every dependency left external; the delivered source's behavior is exercised unchanged.
 const scratch = new URL(
-  "../../test/scratch/history-module.ts",
+  "../../test/scratch/history-module.mjs",
   import.meta.url,
 );
 await mkdir(new URL(".", scratch), { recursive: true });
-let source = await readFile(
-  new URL("../src/history.ts", import.meta.url),
-  "utf8",
+const { build } = await import("vite");
+// site.tsx pulls in the theme toggle, which reads `window` when loaded; config.ts only calls its
+// appRoot() lazily, so the test stands in a root for it and leaves the rest of the graph as shipped.
+const siteStub = new URL(
+  "../../test/scratch/history-site-stub.mjs",
+  import.meta.url,
 );
-for (const name of ["config", "state"])
-  source = source.replaceAll(
-    `"./${name}"`,
-    JSON.stringify(new URL(`../src/${name}.ts`, import.meta.url).pathname),
-  );
-source = source.replace(
-  '"viem"',
-  JSON.stringify(
-    new URL("../node_modules/viem/_esm/index.js", import.meta.url).pathname,
-  ),
+await writeFile(
+  siteStub,
+  'export const appRoot = () => new URL("http://localhost/");\nexport const href = (p = "") => new URL(p, appRoot()).href;\nexport const TERMINAL = true;\nexport const WHITEPAPER = "";\nexport const SiteHeader = () => null;\n',
 );
-await writeFile(scratch, source);
-const { rangeLogs, explorerLogs, loanBook, acceptedPoints, positionName } =
-  await import(scratch.href);
+// The entry re-exports the interface switch beside history: the fixture is the legacy Sepolia
+// deployment (deployment-source.json), whose events carry the old names.
+const entry = new URL("../../test/scratch/history-entry.ts", import.meta.url);
+await writeFile(
+  entry,
+  `export * from ${JSON.stringify(new URL("../src/history.ts", import.meta.url).pathname)};\n` +
+    `export { setInterface } from ${JSON.stringify(new URL("../src/names.ts", import.meta.url).pathname)};\n`,
+);
+await build({
+  root: new URL("..", import.meta.url).pathname,
+  configFile: false,
+  logLevel: "silent",
+  mode: "test",
+  resolve: { alias: [{ find: /^\.\/site$/, replacement: siteStub.pathname }] },
+  // Everything bundled in, so the module runs from the scratch directory outside web/.
+  ssr: { noExternal: true, target: "node" },
+  build: {
+    ssr: entry.pathname,
+    outDir: new URL(".", scratch).pathname,
+    emptyOutDir: false,
+    minify: false,
+    sourcemap: false,
+    rolldownOptions: { output: { entryFileNames: "history-module.mjs" } },
+  },
+});
+const {
+  rangeLogs,
+  explorerLogs,
+  loanBook,
+  acceptedPoints,
+  positionName,
+  setInterface,
+} = await import(scratch.href);
+setInterface("legacy");
 const t = {
   address: addresses.ParameterizedVault,
   abi: abi.ParameterizedVault,
@@ -95,7 +123,8 @@ test("silent empty RPC falls back to every Blockscout page, and both empty is un
       256n,
     );
     assert.equal(result.source, "Blockscout");
-    assert.equal(result.logs.length, 5);
+    // Both pages together are the fixture's whole vault history.
+    assert.equal(result.logs.length, depositLogs.length);
     assert.equal(urls.length, 2);
     global.fetch = async () => ({
       ok: true,
@@ -144,9 +173,20 @@ test("pagination loops, missing cursor schema and wrong-address logs cannot cert
 });
 test("book discovers distinct deposit owners, reads the same block, drops zero debt, fails on partial reads", async () => {
   const calls = [];
+  // The RPC honours the range it is asked for: a refresh re-reads only the reorg overlap, and the
+  // reader refuses logs from outside the range (so a mock returning everything would fall through to
+  // Blockscout). Blockscout itself is unreachable here; a fall-through fails fast instead of fetching.
+  global.fetch = async () => {
+    throw Error("no network in this test");
+  };
   const r = runtime({
     getCode: async ({ blockNumber }) => (blockNumber >= 16n ? "0x01" : "0x"),
-    getLogs: async () => depositLogs,
+    getLogs: async ({ fromBlock, toBlock }) =>
+      depositLogs.filter(
+        (l) =>
+          BigInt(l.blockNumber) >= fromBlock &&
+          BigInt(l.blockNumber) <= toBlock,
+      ),
     readContract: async ({ functionName, args, blockNumber }) => {
       calls.push({ functionName, args, blockNumber });
       if (functionName === "collateralRatio") return 180n;
@@ -162,10 +202,14 @@ test("book discovers distinct deposit owners, reads the same block, drops zero d
   assert.equal(book.positions.length, 3);
   assert.equal(calls.filter((c) => c.functionName === "positions").length, 4);
   assert.ok(calls.every((c) => c.blockNumber === 256n));
-  r.client.readContract = async () => {
-    throw Error("owner unavailable");
-  };
-  await assert.rejects(loanBook(r, s), /owner unavailable/);
+  try {
+    r.client.readContract = async () => {
+      throw Error("owner unavailable");
+    };
+    await assert.rejects(loanBook(r, s), /owner unavailable/);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 test("accepted points pair the preceding value within the same transaction; reporter values excluded", () => {
   const logs = normalized(fixtureLogs(state, feed.address));

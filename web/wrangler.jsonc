@@ -13,8 +13,9 @@
     "run_worker_first": true,
     // /docs serves /docs/ and the site's relative links keep working.
     "html_handling": "auto-trailing-slash",
-    // An unknown path is a plain 404, never the homepage pretending to be some other page.
-    "not_found_handling": "none"
+    // An unknown path is a 404 with the site's own not-found page (404.html, built from
+    // src/NotFound.tsx), never the homepage pretending to be some other page.
+    "not_found_handling": "404-page"
   },
   "workers_dev": true,
   // Cloudflare creates the DNS records and certificates for custom domains itself.

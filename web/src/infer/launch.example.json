@@ -1,0 +1,114 @@
+{
+  "$comment": "The INFER page's figures and addresses. This example ships in the public repo with every figure unset, and the page renders a dash for each. The real file, launch.json beside it, is gitignored: it is private until the launch request is submitted (infer-token/README.md). Copy this file to launch.json and fill it in. `contracts.pair` is the token INFER is paired with (address(0) for native ETH); `poolKey` is the launch pool's full v4 key, from which the page derives the pool id; `router` names Uniswap's mainnet Universal Router, V4 Quoter and Permit2.",
+  "chainId": 1,
+  "rpc": ["https://ethereum-rpc.publicnode.com", "https://cloudflare-eth.com"],
+  "supply": null,
+  "openingMarketCapImd": null,
+  "pair": "IMD",
+  "allocation": [
+    {
+      "key": "swarm",
+      "label": "Swarm",
+      "bps": null,
+      "note": "Fixed by the launch factory: builders and recent workers."
+    },
+    {
+      "key": "pool",
+      "label": "Launch pool",
+      "bps": null,
+      "note": "Seeded at launch on the IMD side and held by the factory for good."
+    },
+    {
+      "key": "seasons",
+      "label": "Points seasons",
+      "bps": null,
+      "note": "Claimed against genesis points, season by season."
+    },
+    {
+      "key": "miya",
+      "label": "MIYA redemption",
+      "bps": null,
+      "note": "Burn MIYA for INFER at a fixed rate, for one year."
+    },
+    {
+      "key": "mxxn",
+      "label": "MXXN redemption",
+      "bps": null,
+      "note": "Burn MXXN for INFER at a fixed rate, during full-moon windows, for one year."
+    },
+    {
+      "key": "founder",
+      "label": "Founder stream",
+      "bps": null,
+      "note": "A linear stream with a cliff; nothing on day one."
+    },
+    {
+      "key": "treasury",
+      "label": "Treasury reserve",
+      "bps": null,
+      "note": "Spent only by governance, behind the 48-hour delay."
+    }
+  ],
+  "seasons": {
+    "count": 5,
+    "weeks": 13,
+    "amounts": [null, null, null, null, null],
+    "vestWeeks": 13,
+    "decay": null,
+    "pointsRule": "1 point = 1 imdUSD held for 1 day. Liquidity in the imdUSD pool earns more; liquidators and oracle payers earn credit; stakers earn a multiplier."
+  },
+  "redemptions": [
+    {
+      "key": "miya",
+      "symbol": "MIYA",
+      "token": null,
+      "decimals": 18,
+      "rate": null,
+      "allocation": null,
+      "window": "any time, for one year from launch"
+    },
+    {
+      "key": "mxxn",
+      "symbol": "MXXN",
+      "token": null,
+      "decimals": 18,
+      "rate": null,
+      "allocation": null,
+      "window": "during full-moon windows, for one year from launch"
+    }
+  ],
+  "founder": {
+    "amount": null,
+    "months": null,
+    "cliffDays": null
+  },
+  "fees": {
+    "treasuryBps": null
+  },
+  "contracts": {
+    "infer": null,
+    "seasonVault": null,
+    "legacyRedeemer": null,
+    "stakedInfer": null,
+    "founderStream": null,
+    "dripper": null,
+    "poolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+    "pair": "0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7"
+  },
+  "poolKey": null,
+  "router": {
+    "universalRouter": "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af",
+    "quoter": "0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203",
+    "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+  },
+  "slippageBps": 100,
+  "claims": {
+    "files": [],
+    "origins": []
+  },
+  "links": {
+    "swap": null,
+    "pool": null,
+    "launch": null
+  }
+}

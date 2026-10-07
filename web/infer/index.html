@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en" class="app-page">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- infer.imdusd.com is its own build (vite --mode infer, root web/infer), served at its own root. -->
+    <meta name="app-root" content="./" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Per-theme browser chrome. theme.tsx rewrites both to the active --bg when a choice is made. -->
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#f7f5ef"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#111111"
+    />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="INFER" />
+    <script>
+      // Resolve before the first paint; colors themselves stay in the CSS tokens.
+      (() => {
+        let saved;
+        try {
+          saved = localStorage.getItem("comp-terminal-theme");
+        } catch {}
+        document.documentElement.dataset.theme =
+          saved === "light" || saved === "dark"
+            ? saved
+            : matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+      })();
+    </script>
+    <meta
+      name="description"
+      content="Trade and stake INFER, the imdUSD protocol's token: buy and sell on its Uniswap v4 launch pool, stake for sINFER, and see your position."
+    />
+    <title>INFER · Trade and stake</title>
+    <link rel="icon" href="./favicon.svg" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="../src/entry-infer.tsx"></script>
+  </body>
+</html>

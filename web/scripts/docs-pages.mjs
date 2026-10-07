@@ -105,7 +105,12 @@ const linkBetween = (fromDir, toDir) => {
   return r === "" ? "./" : `${r}/`;
 };
 
-export function renderDocs({ outDir, contentDir, terminal }) {
+/**
+ * @param site The public origin (https://imdusd.com) when building the site that is published there:
+ * each page then carries its canonical URL and social-card tags, and a sitemap is written. Omitted
+ * for the full export, whose host is not known.
+ */
+export function renderDocs({ outDir, contentDir, terminal, site }) {
   const files = walk(contentDir).map((f) => f.split("\\").join("/"));
   const pages = files.map((file) => {
     const { meta, body } = frontMatter(readFileSync(resolve(contentDir, file), "utf8"), file);
@@ -155,7 +160,8 @@ export function renderDocs({ outDir, contentDir, terminal }) {
       `<footer class="site-footer"><nav aria-label="Footer">` +
       (terminal ? `<a href="${root}/terminal/">Terminal</a>` : "") +
       `<a href="${linkBetween(currentDir, "docs")}">Docs</a>` +
-      `<a href="https://infer.miyagod.eth.limo" target="_blank" rel="noreferrer">Whitepaper ↗</a>` +
+      `<a href="https://infer.imdusd.com" target="_blank" rel="noreferrer">INFER ↗</a>` +
+      `<a href="https://whitepaper.imdusd.com" target="_blank" rel="noreferrer">Whitepaper ↗</a>` +
       `</nav><span>imdUSD · built on IdentityMD</span></footer>`
     );
   };
@@ -218,16 +224,21 @@ export function renderDocs({ outDir, contentDir, terminal }) {
         // each row becomes a stacked card, labelled from it. Redacted cells become bars.
         table(token) {
           const cell = (c) => (hit(c.text) ? bar(c.text) : this.parser.parseInline(c.tokens));
-          const align = (i) => (token.align[i] ? ` style="text-align:${token.align[i]}"` : "");
+          // Alignment as a class, never an inline style: the public site's Content-Security-Policy
+          // allows no inline styles, and a class is what the stylesheet already speaks.
+          const align = (i) => (token.align[i] ? ` ta-${token.align[i]}` : "");
           const labels = token.header.map((h) => (hit(h.text) ? "" : plainText(h.text)));
           // A column whose every value is short never wraps; the long-prose columns take the squeeze.
           const short = token.header.map((_, i) => token.rows.every((r) => plainText(r[i]?.text ?? "").length <= 30));
-          const cls = (i) => (short[i] ? ' class="nowrap"' : "");
-          const head = token.header.map((h, i) => `<th scope="col"${cls(i)}${align(i)}>${cell(h)}</th>`).join("");
+          const cls = (i) => {
+            const classes = `${short[i] ? "nowrap" : ""}${align(i)}`.trim();
+            return classes ? ` class="${classes}"` : "";
+          };
+          const head = token.header.map((h, i) => `<th scope="col"${cls(i)}>${cell(h)}</th>`).join("");
           const rows = token.rows
             .map(
               (row) =>
-                `<tr>${row.map((c, i) => `<td data-label="${escapeHtml(labels[i] ?? "")}"${cls(i)}${align(i)}>${cell(c)}</td>`).join("")}</tr>`,
+                `<tr>${row.map((c, i) => `<td data-label="${escapeHtml(labels[i] ?? "")}"${cls(i)}>${cell(c)}</td>`).join("")}</tr>`,
             )
             .join("\n");
           return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>\n${rows}\n</tbody></table></div>\n`;
@@ -297,6 +308,7 @@ export function renderDocs({ outDir, contentDir, terminal }) {
         (_, a, b) => `${a}${escapeHtml(description)}${b}`,
       )
       .replace("<!--DOCS-BODY-->", body);
+    if (site) html = html.replace("</head>", `${socialTags(site, `${site}/${dir}/`, title, description)}</head>`);
     mkdirSync(resolve(outDir, dir), { recursive: true });
     writeFileSync(resolve(outDir, dir, "index.html"), html);
   };
@@ -353,5 +365,35 @@ export function renderDocs({ outDir, contentDir, terminal }) {
     `</main>` +
     footer("docs");
   page("docs", "imdUSD docs", "How imdUSD works: borrowing, redemption, liquidation, the swarm oracle and the contracts.", index);
+  if (site) {
+    // Every public page but the redacted one, which is not for crawlers until it has content.
+    const urls = ["", "docs/", ...pages.filter((p) => !(redact && REDACT_WHOLE.has(p.file))).map((p) => `${p.dir}/`)];
+    writeFileSync(
+      resolve(outDir, "sitemap.xml"),
+      `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+        urls.map((u) => `  <url><loc>${site}/${u}</loc></url>`).join("\n") +
+        `\n</urlset>\n`,
+    );
+  }
   return pages.length;
+}
+
+/** Canonical URL and the social-card tags for one page, for the <head> of a published page. */
+export function socialTags(site, url, title, description, { type = "article" } = {}) {
+  const e = escapeHtml;
+  return (
+    `<link rel="canonical" href="${e(url)}" />` +
+    `<meta property="og:type" content="${type}" />` +
+    `<meta property="og:site_name" content="imdUSD" />` +
+    `<meta property="og:url" content="${e(url)}" />` +
+    `<meta property="og:title" content="${e(title)}" />` +
+    `<meta property="og:description" content="${e(description)}" />` +
+    `<meta property="og:image" content="${e(site)}/icon-512.png" />` +
+    `<meta property="og:image:width" content="512" />` +
+    `<meta property="og:image:height" content="512" />` +
+    `<meta name="twitter:card" content="summary" />` +
+    `<meta name="twitter:title" content="${e(title)}" />` +
+    `<meta name="twitter:description" content="${e(description)}" />` +
+    `<meta name="twitter:image" content="${e(site)}/icon-512.png" />`
+  );
 }

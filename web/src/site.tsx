@@ -15,7 +15,17 @@ export const href = (path = "") => new URL(path, appRoot()).href;
  * that is not served.
  */
 export const TERMINAL = import.meta.env.MODE !== "public";
-export const WHITEPAPER = "https://infer.miyagod.eth.limo";
+export const WHITEPAPER = "https://whitepaper.imdusd.com";
+export const INFER_SITE = "https://infer.imdusd.com";
+
+/** imdusd.com's header chip: "Mainnet · staging", the last word pulsing. Shared with infer.imdusd.com. */
+export function StagingChip() {
+  return (
+    <span className="chip">
+      Mainnet · <span className="chip-pulse">staging</span>
+    </span>
+  );
+}
 
 type Page = "home" | "terminal" | "docs";
 /** One header for every page: brand, network chip, navigation, theme, and a page-specific end. */
@@ -39,18 +49,17 @@ export function SiteHeader({
         <a className="wordmark" href={href()} aria-label="imdUSD home">
           imd<b>USD</b>
         </a>
-        <span className="chip">
-          {TERMINAL ? (
-            `${network ?? "Sepolia"} · testnet`
-          ) : (
-            <>
-              Mainnet · <span className="chip-pulse">staging</span>
-            </>
-          )}
-        </span>
+        {TERMINAL ? (
+          <span className="chip">{`${network ?? "Sepolia"} · testnet`}</span>
+        ) : (
+          <StagingChip />
+        )}
         <nav className="site-nav" aria-label="Site">
           {TERMINAL && link("terminal", "terminal/", "Terminal")}
           {link("docs", "docs/", "Docs")}
+          <a href={INFER_SITE} target="_blank" rel="noreferrer">
+            INFER ↗
+          </a>
           <a href={WHITEPAPER} target="_blank" rel="noreferrer">
             Whitepaper ↗
           </a>

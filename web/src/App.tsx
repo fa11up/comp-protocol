@@ -392,7 +392,6 @@ function Terminal({ r }: { r: Runtime }) {
           </button>
         )}
       </SiteHeader>
-      <h1 className="sr-only">imdUSD terminal</h1>
       {walletError || readError || s?.errors.length ? (
         <div className="global-notice" role="alert">
           {walletError ||
@@ -421,6 +420,8 @@ function Terminal({ r }: { r: Runtime }) {
         data-monitor={view}
         tabIndex={-1}
       >
+        {/* Inside the main landmark, so the page heading belongs to a region. */}
+        <h1 className="sr-only">imdUSD terminal</h1>
         <div className="monitor">
           <Tabs
             label="Monitor"

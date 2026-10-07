@@ -1,0 +1,410 @@
+// /claim: the minimal page. Connect, see what is yours, take it.
+import { useEffect, useState } from "react";
+import { formatUnits, parseUnits, type Address } from "viem";
+import { LAUNCH, LIVE, whole } from "./config";
+import {
+  ERC20,
+  LEGACY_REDEEMER,
+  SEASON_VAULT,
+  client,
+  leafFile,
+  message,
+  wallet,
+} from "./chain";
+import {
+  Line,
+  Shell,
+  TxStatus,
+  tokens,
+  useTx,
+  useWallet,
+  Balance,
+  Vanishing,
+  notice,
+  parseAmount,
+  useBalances,
+  type Notice,
+} from "./ui";
+
+const ZERO_ROOT = `0x${"0".repeat(64)}`;
+type SeasonView = {
+  index: number;
+  end: bigint;
+  hasRoot: boolean;
+  amount: bigint;
+  paid: bigint;
+  releasable: bigint;
+};
+
+export function Claim() {
+  const w = useWallet();
+  const [tick, setTick] = useState(0);
+  const refresh = () => setTick((t) => t + 1);
+  // Live state is re-read every twelve seconds, Ethereum's block time, so a new block (the end of
+  // the one-block hold, a drip, a trade by someone else) shows without a reload.
+  useEffect(() => {
+    if (!LIVE) return;
+    const t = setInterval(refresh, 12_000);
+    return () => clearInterval(t);
+  }, []);
+  const { tx, send, clear } = useTx(refresh);
+  const [readError, setReadError] = useState<Notice | null>(null);
+  const c = LAUNCH.contracts;
+  const [seasons, setSeasons] = useState<SeasonView[] | null>(null);
+  const [legacy, setLegacy] = useState<
+    Record<string, { balance: bigint; allowance: bigint; left: bigint }>
+  >({});
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  // The chain's clock, read with the seasons: a season has ended when the chain says so, not the browser.
+  const [now, setNow] = useState<bigint>(0n);
+  // Each redemption box's balance, read whenever a wallet is connected and the legacy token is known.
+  const legacyBalances = useBalances(
+    w.account,
+    LAUNCH.redemptions.map((r) => r.token),
+    tick,
+  );
+
+  useEffect(() => {
+    if (!LIVE || !c.seasonVault) return;
+    const vault = c.seasonVault,
+      account = w.account;
+    let stale = false;
+    (async () => {
+      const { timestamp } = await client.getBlock({ blockTag: "latest" });
+      const count = Number(
+        await client.readContract({
+          address: vault,
+          abi: SEASON_VAULT,
+          functionName: "SEASONS",
+        }),
+      );
+      const views: SeasonView[] = [];
+      for (let s = 0; s < count; s++) {
+        const [end, season] = await Promise.all([
+          client.readContract({
+            address: vault,
+            abi: SEASON_VAULT,
+            functionName: "endOf",
+            args: [BigInt(s)],
+          }),
+          client.readContract({
+            address: vault,
+            abi: SEASON_VAULT,
+            functionName: "season",
+            args: [BigInt(s)],
+          }),
+        ]);
+        let amount = 0n,
+          paid = 0n,
+          releasable = 0n;
+        if (account) {
+          [[amount, paid], releasable] = await Promise.all([
+            client.readContract({
+              address: vault,
+              abi: SEASON_VAULT,
+              functionName: "entitlements",
+              args: [BigInt(s), account],
+            }),
+            client.readContract({
+              address: vault,
+              abi: SEASON_VAULT,
+              functionName: "releasable",
+              args: [BigInt(s), account],
+            }),
+          ]);
+        }
+        views.push({
+          index: s,
+          end,
+          hasRoot: season.root !== ZERO_ROOT,
+          amount,
+          paid,
+          releasable,
+        });
+      }
+      if (!stale) {
+        setNow(timestamp);
+        setSeasons(views);
+      }
+    })().catch((e) => {
+      if (!stale)
+        setReadError(notice(`Could not read the chain: ${message(e)}`));
+    });
+    return () => {
+      stale = true;
+    };
+  }, [w.account, tick, c.seasonVault]);
+
+  useEffect(() => {
+    if (!LIVE || !c.legacyRedeemer || !w.account) return;
+    const redeemer = c.legacyRedeemer,
+      account = w.account;
+    let stale = false;
+    (async () => {
+      const out: typeof legacy = {};
+      for (const r of LAUNCH.redemptions) {
+        if (!r.token) continue;
+        const [balance, allowance, redeemed] = await Promise.all([
+          client.readContract({
+            address: r.token,
+            abi: ERC20,
+            functionName: "balanceOf",
+            args: [account],
+          }),
+          client.readContract({
+            address: r.token,
+            abi: ERC20,
+            functionName: "allowance",
+            args: [account, redeemer],
+          }),
+          client.readContract({
+            address: redeemer,
+            abi: LEGACY_REDEEMER,
+            functionName: "redeemed",
+            args: [r.token],
+          }),
+        ]);
+        const allocation = parseUnits(r.allocation ?? "0", 18);
+        out[r.key] = {
+          balance,
+          allowance,
+          left: allocation > redeemed ? allocation - redeemed : 0n,
+        };
+      }
+      if (!stale) setLegacy(out);
+    })().catch((e) => {
+      if (!stale)
+        setReadError(notice(`Could not read the chain: ${message(e)}`));
+    });
+    return () => {
+      stale = true;
+    };
+  }, [w.account, tick, c.legacyRedeemer]);
+
+  async function claimSeason(s: SeasonView) {
+    if (!w.account || !c.seasonVault) return;
+    const account = w.account,
+      vault = c.seasonVault,
+      p = window.ethereum!;
+    await send(
+      s.amount === 0n
+        ? `Claim season ${s.index + 1}`
+        : `Release season ${s.index + 1}`,
+      async () => {
+        if (s.amount === 0n) {
+          const file = await leafFile(s.index);
+          const leaf = file?.claims[account.toLowerCase()];
+          if (!leaf)
+            throw Error("No entitlement for this address in that season.");
+          const { request } = await client.simulateContract({
+            account,
+            address: vault,
+            abi: SEASON_VAULT,
+            functionName: "claim",
+            args: [BigInt(s.index), account, BigInt(leaf.amount), leaf.proof],
+          });
+          return wallet(p).writeContract(request);
+        }
+        const { request } = await client.simulateContract({
+          account,
+          address: vault,
+          abi: SEASON_VAULT,
+          functionName: "release",
+          args: [BigInt(s.index), account],
+        });
+        return wallet(p).writeContract(request);
+      },
+    );
+  }
+
+  async function redeem(key: string) {
+    const r = LAUNCH.redemptions.find((x) => x.key === key)!;
+    if (!w.account || !c.legacyRedeemer || !r.token) return;
+    const account = w.account,
+      redeemer = c.legacyRedeemer,
+      token = r.token,
+      p = window.ethereum!;
+    const amount = parseAmount(amounts[key] ?? "", r.decimals);
+    if (amount === 0n) return;
+    const st = legacy[key];
+    if (st && st.allowance < amount) {
+      await send(`Approve ${r.symbol}`, async () => {
+        const { request } = await client.simulateContract({
+          account,
+          address: token,
+          abi: ERC20,
+          functionName: "approve",
+          args: [redeemer, amount],
+        });
+        return wallet(p).writeContract(request);
+      });
+      return;
+    }
+    await send(`Redeem ${r.symbol}`, async () => {
+      const { request } = await client.simulateContract({
+        account,
+        address: redeemer,
+        abi: LEGACY_REDEEMER,
+        functionName: "redeem",
+        args: [token, amount],
+      });
+      return wallet(p).writeContract(request);
+    });
+    setAmounts((a) => ({ ...a, [key]: "" }));
+  }
+
+  const toAddress: Address | null = w.account;
+  return (
+    <Shell page="claim" depth={1} wallet={w} className="infer-page">
+      <main className="infer-claim">
+        <h1>Claim</h1>
+        <p className="infer-lede">
+          What INFER is yours, and the one button that gives it. Season points
+          vest over the season after the claim; redemptions pay at once.
+        </p>
+
+        <section
+          className="infer-ticket infer-claim-block"
+          aria-labelledby="seasons-h"
+        >
+          <h2 id="seasons-h">Season points</h2>
+          {!LIVE || !c.seasonVault ? (
+            <p className="infer-fine">Season 1 opens with the token.</p>
+          ) : !toAddress ? (
+            <p className="infer-fine">Connect a wallet to see your seasons.</p>
+          ) : seasons === null ? (
+            <p className="infer-fine">Reading…</p>
+          ) : (
+            <dl className="infer-lines">
+              {seasons.map((s) => (
+                <Line
+                  key={s.index}
+                  k={
+                    <>
+                      Season {s.index + 1}
+                      <small>
+                        {" "}
+                        ·{" "}
+                        {s.hasRoot
+                          ? s.amount === 0n
+                            ? "claimable"
+                            : `${tokens(s.paid)} of ${tokens(s.amount)} released`
+                          : now < s.end
+                            ? "running"
+                            : "root pending"}
+                      </small>
+                    </>
+                  }
+                  v={
+                    <button
+                      className="infer-small"
+                      disabled={
+                        !s.hasRoot ||
+                        now < s.end ||
+                        tx.status === "pending" ||
+                        (s.amount !== 0n && s.releasable === 0n)
+                      }
+                      onClick={() => claimSeason(s)}
+                    >
+                      {s.amount === 0n
+                        ? "Claim"
+                        : `Release ${tokens(s.releasable)}`}
+                    </button>
+                  }
+                />
+              ))}
+            </dl>
+          )}
+        </section>
+
+        {LAUNCH.redemptions.map((r, i) => {
+          const st = legacy[r.key];
+          const amount = parseAmount(amounts[r.key] ?? "", r.decimals);
+          const out = r.rate
+            ? (amount * parseUnits(r.rate, 18)) / 10n ** 18n
+            : 0n;
+          return (
+            <section
+              className="infer-ticket infer-claim-block"
+              aria-labelledby={`${r.key}-h`}
+              key={r.key}
+            >
+              <h2 id={`${r.key}-h`}>Redeem {r.symbol}</h2>
+              <p className="infer-fine">
+                {r.rate
+                  ? `${whole(r.rate, 6)} INFER per ${r.symbol}`
+                  : "Rate published at launch"}
+                , {r.window}.
+              </p>
+              {!LIVE || !c.legacyRedeemer || !r.token ? (
+                <p className="infer-fine">Opens at launch.</p>
+              ) : (
+                <form
+                  className="infer-redeem"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    redeem(r.key);
+                  }}
+                >
+                  <div className="infer-field">
+                    <span className="infer-field-k">
+                      {r.symbol} to burn
+                      <Balance
+                        account={toAddress}
+                        value={legacyBalances[i]}
+                        symbol={r.symbol}
+                        decimals={r.decimals}
+                        onUse={(v) => setAmounts((a) => ({ ...a, [r.key]: v }))}
+                      />
+                    </span>
+                    <span className="infer-field-row">
+                      <input
+                        inputMode="decimal"
+                        value={amounts[r.key] ?? ""}
+                        onChange={(e) =>
+                          setAmounts((a) => ({ ...a, [r.key]: e.target.value }))
+                        }
+                        placeholder="0"
+                        aria-label={`${r.symbol} to burn`}
+                      />
+                      <b>{r.symbol}</b>
+                    </span>
+                  </div>
+                  <dl className="infer-lines">
+                    <Line k="You receive" v={`${tokens(out, 4)} INFER`} />
+                    <Line
+                      k="Left to redeem"
+                      v={`${tokens(st?.left, 0)} INFER`}
+                    />
+                  </dl>
+                  <button
+                    className="infer-go"
+                    disabled={
+                      !toAddress || amount === 0n || tx.status === "pending"
+                    }
+                  >
+                    {!toAddress
+                      ? "Connect a wallet"
+                      : st && st.allowance < amount
+                        ? `Approve ${r.symbol}`
+                        : "Redeem"}
+                  </button>
+                </form>
+              )}
+            </section>
+          );
+        })}
+        <TxStatus tx={tx} onDone={clear} />
+        {readError && (
+          <Vanishing
+            key={readError.id}
+            className="infer-warn"
+            onDone={() => setReadError(null)}
+          >
+            {readError.text}
+          </Vanishing>
+        )}
+      </main>
+    </Shell>
+  );
+}

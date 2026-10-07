@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { SiteHeader, href, WHITEPAPER, TERMINAL } from "./site";
+import { SiteHeader, href, WHITEPAPER, INFER_SITE, TERMINAL } from "./site";
 // The live homepage (chain reads, viem, the deployment file) lives in its own module. The public
 // build aliases it to an empty stub (vite.config.ts), so no chain code ships on imdusd.com.
 import { LiveLanding } from "./landing-live";
@@ -200,6 +200,9 @@ export function Page({
         <nav aria-label="Footer">
           {TERMINAL && <a href={href("terminal/")}>Terminal</a>}
           <a href={href("docs/")}>Docs</a>
+          <a href={INFER_SITE} target="_blank" rel="noreferrer">
+            INFER ↗
+          </a>
           <a href={WHITEPAPER} target="_blank" rel="noreferrer">
             Whitepaper ↗
           </a>

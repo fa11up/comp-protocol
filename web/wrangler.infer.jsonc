@@ -1,0 +1,18 @@
+// infer.imdusd.com: the INFER token page (claim, swap, stake, tokenomics), served as static assets by
+// its own Worker. It is a separate deployment from imdusd.com because, unlike the public site, it
+// talks to a chain: its Content-Security-Policy admits the configured RPCs and claim-file origins.
+// Build with `npm run build:infer`; deploy with `npm run deploy:infer`.
+{
+  "name": "infer-imdusd",
+  "compatibility_date": "2026-10-01",
+  "main": "worker/infer.js",
+  "assets": {
+    "directory": "../dist-infer",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "workers_dev": true,
+  "routes": [{ "pattern": "infer.imdusd.com", "custom_domain": true }]
+}

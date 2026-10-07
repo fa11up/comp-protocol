@@ -35,12 +35,26 @@ test("both themes define identical color roles and light uses exactly the seven 
   assert.equal(dark["--rule"], "#3A3A3A");
   assert.equal(dark["--raised"], "#202020");
 });
-test("component paint has no literal colors, gradients or missing custom properties", () => {
+test("component paint has no literal colors or missing custom properties", () => {
   const components = css.replace(/--[a-z-]+:\s*[^;]+;/g, "");
-  assert.doesNotMatch(
-    components,
-    /#[\da-f]{3,8}\b|rgba?\(|hsla?\(|gradient\(|:\s*transparent/i,
-  );
+  assert.doesNotMatch(components, /#[\da-f]{3,8}\b|rgba?\(|hsla?\(/i);
+  // `transparent` is the absence of paint, not a colour, so it may appear on its own and as a
+  // gradient stop; every other stop in a gradient must be a token.
+  for (const [, args] of components.matchAll(
+    /gradient\(((?:[^()]|\([^()]*\))*)\)/g,
+  )) {
+    const stops = args.split(/,(?![^(]*\))/).map((s) => s.trim());
+    if (
+      /^(?:to\s|circle|ellipse|at\s|-?[\d.]+(?:deg|turn|rad)$)/.test(stops[0])
+    )
+      stops.shift();
+    for (const stop of stops)
+      assert.match(
+        stop,
+        /^(?:var\(--[a-z-]+\)|transparent)(?:\s+[\d.]+(?:%|px|em))?(?:\s+[\d.]+(?:%|px|em))?$/,
+        `gradient stop ${stop}`,
+      );
+  }
   const defined = new Set([...css.matchAll(/(--[a-z-]+):/g)].map((m) => m[1]));
   for (const [, token] of css.matchAll(/var\((--[a-z-]+)/g))
     assert.ok(defined.has(token), token);

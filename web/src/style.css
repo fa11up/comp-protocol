@@ -1859,7 +1859,8 @@ html.app-page body {
   align-items: center;
 }
 .hero h1,
-.docs-placeholder h1 {
+.docs-placeholder h1,
+.not-found h1 {
   font-size: clamp(34px, 5.4vw, 64px);
   line-height: 1.04;
   letter-spacing: -0.045em;
@@ -2050,11 +2051,35 @@ html.app-page body {
   gap: 18px;
 }
 .site-footer a {
+  /* Inline-block with vertical padding, so an 11px link is still a 24px-plus target. */
+  display: inline-block;
+  padding-block: 6px;
   color: var(--text);
 }
-.docs-placeholder {
+.docs-placeholder,
+.not-found {
   padding-block: 72px;
   max-width: 760px;
+}
+.not-found nav {
+  display: flex;
+  gap: 18px;
+  margin-top: 24px;
+}
+.not-found nav a {
+  display: inline-block;
+  padding: 6px 0;
+  color: var(--text);
+}
+/* Column alignment from a table's Markdown markers, as classes so the page needs no inline styles. */
+.doc .ta-left {
+  text-align: left;
+}
+.doc .ta-center {
+  text-align: center;
+}
+.doc .ta-right {
+  text-align: right;
 }
 @media (max-width: 1100px) {
   .hero {
@@ -2149,17 +2174,19 @@ html.app-page body {
   text-align: end;
 }
 
-/* "staging" in the public header chip fades slowly in and out. Still for reduced motion. */
+/* "staging" in the public header chip breathes slowly between the muted and the full text colour.
+   Colour rather than opacity, so the word never drops below the muted token's contrast (an opacity
+   fade read as 1.4:1 at its trough). Still for reduced motion. */
 .chip-pulse {
   animation: chip-pulse 2.4s ease-in-out infinite;
 }
 @keyframes chip-pulse {
   0%,
   100% {
-    opacity: 1;
+    color: var(--muted);
   }
   50% {
-    opacity: 0.25;
+    color: var(--text);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2656,4 +2683,705 @@ button.balance-hint.balance-use:hover {
     transform: translateX(-110%);
     opacity: 0;
   }
+}
+
+/* ============================================================================================
+   INFER (infer.imdusd.com). Same ink and ivory as the rest of the site, a different hand: a ledger
+   printed on ruled stock. Serif display type, dotted leaders, perforated tickets, a dot-grid sheet,
+   hatching where a figure is pending. Tokens only; no new colour anywhere.
+   ============================================================================================ */
+.infer {
+  --serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg);
+  background-image: radial-gradient(circle at 1px 1px, var(--rule) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+}
+.infer h1,
+.infer h2,
+.infer-doc-head h1,
+.infer-stat strong {
+  font-family: var(--serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+/* The masthead: an inked rule above and below, the mark set in serif with a pilcrow. */
+.infer-top {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 10px 20px;
+  border-bottom: 2px solid var(--text);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.infer-mark {
+  font-family: var(--serif);
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.infer-mark-glyph {
+  color: var(--text);
+  align-self: center;
+}
+.infer-nav {
+  display: flex;
+  gap: 2px;
+}
+.infer-nav a {
+  padding: 6px 10px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.infer-nav a:hover,
+.infer-nav a[aria-current="page"] {
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+.infer-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.infer-chip {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  padding: 3px 8px;
+}
+.infer-connect {
+  background: var(--text);
+  color: var(--bg);
+  border: 1px solid var(--text);
+  letter-spacing: 0.04em;
+}
+.infer-account {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--text);
+  padding: 5px 9px;
+}
+
+/* --- the desk: two panes, one screen, no page scroll ------------------------------------- */
+/* A definite height, so the panes get a bounded box to scroll inside on short screens. */
+.infer-screen {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.infer-screen .infer-desk {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.infer-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: 22px 24px 18px;
+  border-right: 1px solid var(--text);
+}
+.infer-pane:last-child {
+  border-right: 0;
+}
+.infer-pane-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.infer-pane-head h1 {
+  font-size: 30px;
+  margin: 0;
+}
+.infer-switch {
+  display: inline-flex;
+  border: 1px solid var(--text);
+}
+.infer-switch button {
+  min-height: 0;
+  padding: 6px 14px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 0;
+  border-right: 1px solid var(--text);
+  background: var(--bg);
+  color: var(--muted);
+}
+.infer-switch button:last-child {
+  border-right: 0;
+}
+.infer-switch button[aria-selected="true"],
+.infer-switch button[aria-pressed="true"] {
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* --- the ticket: a bordered slip with a perforated tear line between pay and receive ------ */
+.infer-ticket {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--text);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.infer-ticket::before,
+.infer-ticket::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--text);
+  pointer-events: none;
+}
+.infer-ticket::before {
+  top: -1px;
+  left: -1px;
+  border-right: 0;
+  border-bottom: 0;
+  margin: -4px 0 0 -4px;
+}
+.infer-ticket::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: 0;
+  border-top: 0;
+  margin: 0 -4px -4px 0;
+}
+.infer-perforation {
+  height: 0;
+  border-top: 1px dashed var(--rule);
+  margin: 2px -18px;
+}
+.infer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.infer-field-k {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.infer-max {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+.infer-field-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.infer-field-row input,
+.infer-field-row output {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--serif);
+  font-size: 30px;
+  line-height: 1.1;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.infer-field-row input:focus-visible {
+  outline: none;
+  border-bottom-color: var(--text);
+}
+.infer-field-row input:disabled {
+  color: var(--muted);
+}
+.infer-field-row b {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.infer-lines {
+  margin: 0;
+  padding: 0;
+}
+.infer-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-block: 5px;
+  font-size: 12px;
+}
+.infer-line dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.infer-line dt small {
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* The dotted leader: a border on a flexible spacer drawn between the two sides. */
+.infer-line::after {
+  content: "";
+  flex: 1;
+  order: 1;
+  border-bottom: 1px dotted var(--rule);
+  margin: 0 2px 4px;
+  min-width: 16px;
+}
+.infer-line dd {
+  order: 2;
+  margin: 0;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.infer-line.strong dd {
+  font-family: var(--serif);
+  font-size: 18px;
+}
+.infer-slippage {
+  display: inline-flex;
+  gap: 4px;
+}
+.infer-slippage button {
+  min-height: 0;
+  padding: 2px 7px;
+  font-size: 11px;
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--muted);
+}
+.infer-slippage button[aria-checked="true"] {
+  border-color: var(--text);
+  color: var(--text);
+}
+.infer-go {
+  width: 100%;
+  min-height: 44px;
+  background: var(--text);
+  color: var(--bg);
+  border: 1px solid var(--text);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.infer-go:disabled {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--rule);
+  background-image: repeating-linear-gradient(45deg, transparent 0px, transparent 6px, var(--rule) 6px, var(--rule) 7px);
+  opacity: 1;
+}
+.infer-small {
+  min-height: 0;
+  padding: 3px 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.infer-warn {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+.infer-tx {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.infer-tx[data-state="failed"] {
+  color: var(--danger);
+}
+.infer-tx[data-state="mined"] {
+  color: var(--healthy);
+}
+.infer-pane-foot {
+  margin-top: auto;
+  padding-top: 18px;
+}
+.infer-fine {
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* --- the stake pane's figures: four engraved tiles ------------------------------------------ */
+.infer-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin-bottom: 16px;
+}
+.infer-stat {
+  background: var(--bg);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.infer-stat.big {
+  grid-column: 1 / -1;
+  background: var(--surface);
+}
+.infer-stat span {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.infer-stat strong {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.infer-stat.big strong {
+  font-size: 40px;
+  line-height: 1;
+}
+.infer-stat small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* --- the two document pages: claim (narrow, quiet) and tokenomics (ruled columns) ----------- */
+.infer-page main {
+  width: 100%;
+  margin: 0 auto;
+  padding: 36px 20px 64px;
+  box-sizing: border-box;
+}
+.infer-claim {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.infer-claim h1,
+.infer-doc-head h1 {
+  font-size: 44px;
+  margin: 0;
+  line-height: 1;
+}
+.infer-lede {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0;
+}
+.infer-claim-block h2 {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+.infer-redeem {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.infer-doc {
+  max-width: 1040px;
+}
+.infer-doc-head {
+  padding-bottom: 24px;
+  border-bottom: 2px solid var(--text);
+  margin-bottom: 28px;
+}
+.infer-kicker {
+  margin: 0 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.infer-doc-head h1 {
+  font-size: clamp(40px, 7vw, 72px);
+  margin-bottom: 14px;
+}
+.infer-doc-head h1 span {
+  font-size: 0.4em;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+.infer-doc-head .infer-lede {
+  max-width: 760px;
+}
+.infer-doc section {
+  margin-bottom: 32px;
+}
+.infer-doc h2 {
+  font-size: 24px;
+  margin: 0 0 10px;
+}
+.infer-doc p {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--muted);
+  max-width: 68ch;
+}
+.infer-doc a {
+  color: var(--text);
+}
+.infer-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 40px;
+}
+.infer-columns {
+  align-items: start;
+}
+.infer-column > section {
+  padding-top: 20px;
+  border-top: 1px solid var(--text);
+}
+
+/* --- tables with one-series bars (identity by label, one hue, 4px data end) ---------------- */
+.infer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.infer-table th,
+.infer-table td {
+  padding: 9px 16px 9px 0;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+.infer-table th:last-child,
+.infer-table td:last-child {
+  padding-right: 0;
+}
+.infer-table thead th {
+  padding-block: 0 8px;
+  border-bottom-color: var(--text);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.infer-table td b {
+  font-weight: 600;
+}
+.infer-barcell {
+  min-width: 160px;
+}
+.infer-bar {
+  display: block;
+  height: 8px;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  margin-bottom: 4px;
+}
+.infer-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--text);
+  border-radius: 0 4px 4px 0;
+  min-width: 2px;
+}
+.infer-alloc td:nth-child(4) {
+  color: var(--muted);
+  max-width: 420px;
+}
+.infer-seasons .infer-barcell {
+  width: 60%;
+}
+
+@media (max-width: 860px) {
+  .infer-top {
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
+  .infer-tools {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .infer-screen .infer-desk {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: auto;
+  }
+  .infer-pane {
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--text);
+  }
+  .infer-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .infer-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* Three small tiles on two columns: the last one spans, so no cell stays empty. */
+  .infer-stat:last-child {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 640px) {
+  .infer-table thead {
+    display: none;
+  }
+  .infer-table tr {
+    display: block;
+    padding-block: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .infer-table td {
+    display: block;
+    border: 0;
+    padding: 3px 0;
+  }
+  .infer-table td[data-label]:not([data-label=""])::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .infer-seasons .infer-barcell {
+    width: auto;
+  }
+  .infer-field-row input,
+  .infer-field-row output {
+    font-size: 24px;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .infer-go:not(:disabled):hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 2px 2px 0 var(--muted);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+}
+/* sINFER keeps its lower-case s wherever a label is set in capitals. */
+.infer .infer-case {
+  text-transform: none;
+}
+/* The balance on an input box: plain words when there is nothing to use, a quiet link when there is.
+   Set in normal case, so a token keeps its own spelling (sINFER). */
+.infer .infer-bal {
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.infer .infer-bal-use {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.infer .infer-bal-use:hover {
+  text-decoration-style: solid;
+}
+
+/* No paragraph ends on a word or two by itself: the browser rebalances the last lines, and short
+   blocks (ledes, captions, notes) are balanced across all their lines. */
+.infer p,
+.infer td,
+.infer .infer-fine,
+.infer .infer-tx {
+  text-wrap: pretty;
+}
+.infer .infer-lede,
+.infer .infer-fine,
+.infer-stat small,
+.infer h1,
+.infer h2 {
+  text-wrap: balance;
+}
+/* Table notes are a few lines each: balance them outright. Long paragraphs get `pretty`, which
+   Chromium applies at any length; `balance` gives up past a few lines. */
+.infer td {
+  text-wrap: balance;
+}
+.infer-doc p {
+  text-wrap: pretty;
+}
+/* A ledger line's small print never wraps on its own; below phone width the line itself may. */
+.infer-line dt small {
+  white-space: nowrap;
+  text-wrap: nowrap;
+}
+@media (max-width: 640px) {
+  .infer-line {
+    flex-wrap: wrap;
+  }
+  .infer-line dt {
+    white-space: normal;
+  }
+}
+/* Errors leave by themselves after ten seconds (ui.tsx Vanishing): a swipe off to the left. */
+.infer-vanish {
+  overflow: hidden;
+}
+.infer .infer-tx-failed {
+  color: var(--danger);
+}
+.infer-vanish[data-phase="leaving"] {
+  animation: infer-swipe-left 420ms cubic-bezier(0.5, 0, 0.75, 0) forwards;
+}
+@keyframes infer-swipe-left {
+  to {
+    transform: translateX(-110%);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .infer-vanish[data-phase="leaving"] {
+    animation-duration: 1ms;
+  }
+}
+.infer-notfound-nav {
+  display: flex;
+  gap: 18px;
+}
+.infer-notfound-nav a {
+  color: var(--text);
+  padding: 6px 0;
 }
