@@ -39,6 +39,7 @@ const jobs = [
   ["logo/mark-transparent-1024.png", 1024, 1024, logo("mark-transparent.svg", "transparent"), true],
   ["endcard/endcard-1920x1080.png", 1920, 1080, endcard(1920, 1080), false],
   ["endcard/endcard-1080x1080.png", 1080, 1080, endcard(1080, 1080), false],
+  ["endcard/endcard-1080x1920.png", 1080, 1920, endcard(1080, 1920), false],
 ];
 
 const browser = await chromium.launch();
