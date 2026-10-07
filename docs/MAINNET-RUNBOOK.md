@@ -37,7 +37,7 @@ Each step assumes the previous one is merged and green. Steps 2 and 3 are indepe
 |---|---|---|
 | 1 | Rename COMP → imdUSD | the token's identity is immutable once deployed |
 | 2 | sIMD as the collateral token (wrap on deposit) — **built** | decides what collateral *is*. Deploy the vault with `StakedIMD` `0x9Efa934D9fAd4AE28c998a40195646b965a97247` as its collateral token: it then prices collateral through a `SharePriceFeed` it creates, and `lockIMD` wraps plain IMD on deposit. Fork-tested against the live vault (`test/ShareCollateralFork.t.sol`). |
-| 2b | Oracle paid from the Treasury (`OracleAsker` + `Treasury.fundOracle`) — **built, waits on upstream** | without it every price update is bought by hand in a browser. `OracleAsker` buys through the IdentityMD Intake only when the chain shows a need (a feed 75% of the way to stale, or IMD's v4 pool armed-and-still >half the deviation cap away) and delivers through SwarmRelay inside the Intake's 200k-gas callback stipend (measured 76,807). `fundOracle` streams at most `Parameters.oracleBudget` IMD per UTC day to it — keyless, unwrapping sIMD on the way. **Blocked on Intake PR #66 merging and deploying:** `INTAKE` and `ORACLE_ASKER` are placeholders (`0x…F06`/`0x…f07`) and the asker's constructor refuses an `INTAKE` with no code. |
+| 2b | Oracle paid from the Treasury (`OracleAsker` + `Treasury.fundOracle`) — **built, waits on upstream** | without it every price update is bought by hand in a browser. `OracleAsker` buys through the IdentityMD Intake only when the chain shows a need (a feed 75% of the way to stale, or IMD's v4 pool armed-and-still a quarter of the deviation cap BELOW it, or any feed whose allowance has widened with staleness) and delivers through SwarmRelay inside the Intake's 200k-gas callback stipend (measured 76,807). `fundOracle` streams at most `Parameters.oracleBudget` IMD per UTC day to it — keyless, unwrapping sIMD on the way. **Blocked on Intake PR #66 merging and deploying:** `INTAKE` and `ORACLE_ASKER` are placeholders (`0x…F06`/`0x…f07`) and the asker's constructor refuses an `INTAKE` with no code. |
 | 3 | **Delete the reporter fallback** | a single key can otherwise re-anchor the price — see §4 |
 | 4 | CREATE2 deployment script with address assertions — **built** (`script/DeployMainnet.s.sol`, `deploy/mainnet/`), rehearsed on a fork | removes the silent-misconfiguration failure mode — see §6 |
 | 5 | Independent audit of this configuration — **done** (three panels + adversarial + gas, `docs/AUDIT-*-2026-10-05.md`, fixes through `9dd2149`). **Still owed, by decision (2026-10-05): one scoped `adversarial-review` of everything after `03e8d0c`, sent right before the deploy commit is frozen** | the phase-2 fixes (notably the always-lagged redemption cap) have had no outside review |
@@ -77,7 +77,8 @@ Three separate balances, and they are not interchangeable:
 * **ETH** for gas.
 * **imdUSD inventory** — `bite` burns the *caller's* stablecoin. A keeper with no imdUSD cannot
   bite anything. This is working capital, not an expense.
-* **IMD** for oracle requests, 0.5 IMD each.
+* **IMD** for oracle requests, 0.5 IMD each — on day one the keeper is the oracle's budget (below and
+  section 7 step 4), capped by `ASK_PAID_IMD_PER_DAY`.
 
 Oracle requests are no longer the keeper's to fund: `Treasury.fundOracle()` streams up to
 `Parameters.oracleBudget` IMD a day to `OracleAsker`, which pays the Intake (prereq 2b). That is the
@@ -325,8 +326,16 @@ deploy.** Deploy, verify, and only then announce.
 3. **List the reserve assets** through `Parameters.proposeReserveAsset` — each needs a price source
    and a haircut, and each waits 48 hours. Until the register is non-empty, `reserveValueUsd()` is
    zero and so is the first term of `earnLine`.
-4. **Start the keeper** before announcing. An unattended protocol with live positions and no
-   liquidator accumulates bad debt.
+4. **Start the keeper** before announcing, **funded with IMD, because on day one it IS the oracle's
+   budget.** `Treasury.fundOracle` pays only from sIMD the Treasury holds, and the Treasury's only sIMD
+   income is the liquidation cut — so until revenue lands it cannot fund the asker, and nothing in this
+   sequence would keep NHI alive: 24 hours after the hand-seeded value every price action would refuse
+   `StaleFeed` (final review 2026-10-07, medium). The keeper covers that gap with its own IMD
+   (`KEEPER_ORACLE_FALLBACK`, within `ASK_PAID_IMD_PER_DAY`): NHI near stale first, then falls, then a
+   primary whose allowance has widened. It prints `FUNDING …` on every run while the Treasury cannot
+   pay. Once revenue lands (launch-pool fees in IMD arrive through `handOffLaunchFees`; liquidation
+   cuts in sIMD) the Treasury takes over and the fallback can be switched off. An unattended protocol
+   with live positions and no liquidator accumulates bad debt.
 5. **Only then** open deposits.
 
 ---

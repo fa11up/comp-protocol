@@ -97,6 +97,30 @@ contract OracleAskerTest is Test {
         assertEq(intake.bodyOf(id), HEALTH_BODY, "the pinned body went to the Intake");
     }
 
+    /// @dev Final review 2026-10-07: the allowance widens with staleness (SwarmFeed), so a feed left
+    /// silent long enough would accept a value far from its anchor in one purchase. Once it reads
+    /// WIDE_ALLOWANCE_BPS the Treasury refreshes it whatever its policy, no arming, and the honest value
+    /// resets the allowance to the cap.
+    function test_aFeedWhoseAllowanceHasWidenedIsRefreshedWithoutArming() public {
+        // Two lifetimes (days here) stale: 42.5% of a 2,000 bps cap, under the 6,000 threshold.
+        vm.warp(block.timestamp + 2 days + 1);
+        assertFalse(asker.wideOpen(address(priceFeed)));
+        vm.expectRevert(OracleAsker.NotArmed.selector);
+        asker.ask(address(priceFeed), PRICE_BODY);
+        // Nine lifetimes: 40% + 8 x 2.5% = 60%.
+        vm.warp(block.timestamp + 7 days);
+        assertTrue(asker.wideOpen(address(priceFeed)));
+        uint256 before = imd.balanceOf(address(asker));
+        bytes32 id = asker.ask(address(priceFeed), PRICE_BODY);
+        assertTrue(id != bytes32(0));
+        assertEq(before - imd.balanceOf(address(asker)), PRICE, "the Treasury's IMD paid for the refresh");
+    }
+
+    function test_anUnseededFeedReadsWideOpen() public {
+        ConfigurableSwarmFeed fresh = new ConfigurableSwarmFeed(vm.addr(ATTESTER_KEY), ATTESTATION_RELAYER, 1, 3, 1 days, 2000);
+        assertTrue(asker.wideOpen(address(fresh)), "no value yet: the first attestation may sit anywhere");
+    }
+
     function test_aFreshFeedThatHasNotDriftedIsNotPaidFor() public {
         vm.expectRevert(OracleAsker.NotArmed.selector);
         asker.ask(address(priceFeed), PRICE_BODY);

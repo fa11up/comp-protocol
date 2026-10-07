@@ -21,9 +21,14 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// Zero is rejected on both paths: it is never a valid scaled figure and would pin the relative bound at
 /// zero. The deviation bound is PER UNIT OF TIME, not per attestation: every value accepted within one
 /// maxAge of an epoch's start must lie within the epoch's allowance of the ANCHOR, the value the feed held
-/// when the epoch began. The allowance is maxDeviationBps when that value was fresh and
-/// STALE_DEVIATION_MULTIPLE times it when it was stale (consumers already fail safe then), and it never
-/// lifts: a genuine large move is followed one epoch at a time.
+/// when the epoch began. The allowance is maxDeviationBps when that value was fresh; once it is stale,
+/// STALE_DEVIATION_MULTIPLE times that, widening by an eighth of the cap for every further lifetime of
+/// staleness (`_allowanceNow`). It never lifts outright, but it does not stay shut either: the final
+/// pre-launch review (docs/AUDIT-FINAL-2026-10-07.md, high) showed that a bound which never widens
+/// cannot follow a single-step market move larger than itself — the pinned recipes read the pool, and a
+/// step has no intermediate medians — so the feed, and every vault pinned to it, would halt for good
+/// after one such gap. Widening with staleness turns a gap into a delay of hours and makes a far
+/// re-anchor cost an attacker those same hours of silence, during which anyone can refresh the feed.
 ///
 /// Two revisions from the internal audit of 2026-10-06, the high finding. The bound used to lift entirely
 /// once stale. Price feeds live one hour and are bought on demand, so being stale is their normal state,
@@ -87,6 +92,12 @@ abstract contract SwarmFeed is ISwarmFeed {
     uint16 public constant MIN_AGREED = 15;
     /// @notice How much wider an epoch's allowance is when it opens on a stale value.
     uint256 public constant STALE_DEVIATION_MULTIPLE = 2;
+    /// @notice How much further the allowance widens for every further whole lifetime the value has
+    /// been stale, in basis points of maxDeviationBps: an eighth of the cap per lifetime.
+    uint256 public constant STALE_GROWTH_OF_CAP_BPS = 1_250;
+    /// @notice The allowance never exceeds this (a value a hundred times the anchor); it also keeps the
+    /// packed uint32 exact.
+    uint256 public constant MAX_ALLOWANCE_BPS = 1_000_000;
 
     bytes32 public constant ATTESTATION_TYPEHASH = keccak256(
         "OracleAttestation(bytes32 requestId,uint256 chainId,bytes32 questionHash,uint8 answerType,bytes answer,uint256 figure,uint64 fromBlock,uint64 toBlock,bytes32 blockHash,bytes32 panelJobId,uint16 panelSize,uint16 quorum,uint16 agreed,uint64 issuedAt,uint64 expiresAt)"
@@ -320,7 +331,8 @@ abstract contract SwarmFeed is ISwarmFeed {
 
     /// @notice Refuse a value this feed should not accept. Zero always; a value further from the current
     /// epoch's anchor than its allowance: `maxDeviationBps` for an epoch opened on a fresh value,
-    /// STALE_DEVIATION_MULTIPLE times that for one opened on a stale value. The first value ever has no
+    /// STALE_DEVIATION_MULTIPLE times that for one opened on a stale value, and wider the longer it was
+    /// stale (`_allowanceNow`). The first value ever has no
     /// bound: it is the one we buy and check at deployment, and it anchors the first epoch.
     /// @dev VIRTUAL, and the reason is that the bound assumes the value is a PRICE. It is the right
     /// guard for one: a price moves continuously, so a large jump is evidence of a bad figure rather
@@ -352,7 +364,23 @@ abstract contract SwarmFeed is ISwarmFeed {
             // An empty anchor slot means the first epoch has seen only its first value, which is `_value`.
             return (_anchorValue == 0 ? _value : _anchorValue, _anchorBound);
         }
-        return (_value, _tooOld(_updatedAt) ? maxDeviationBps * STALE_DEVIATION_MULTIPLE : maxDeviationBps);
+        return (_value, _allowanceNow());
+    }
+
+    /// @dev The allowance an epoch opened now would carry: the cap on a fresh value; on a stale one,
+    /// STALE_DEVIATION_MULTIPLE times the cap plus an eighth of the cap for every further whole lifetime
+    /// the value has been stale, up to MAX_ALLOWANCE_BPS. At a 2,000 bps cap and a one-hour lifetime:
+    /// 40% after one hour stale, 45% after three, 50% after five, 60% after nine, 100% after twenty-five.
+    /// So a genuine gap larger than the stale allowance is followed once the feed has been stale long
+    /// enough — a delay, not a halt for good — while a re-anchor far from the market costs an attacker
+    /// that same silence, during which anyone can refresh the feed honestly for one request (the
+    /// Treasury does, through OracleAsker, once the allowance reaches WIDE_ALLOWANCE_BPS).
+    function _allowanceNow() private view returns (uint256) {
+        if (!_tooOld(_updatedAt)) return maxDeviationBps;
+        uint256 lifetimes = (block.timestamp - _updatedAt) / maxAge; // at least 1 once too old
+        uint256 bound = maxDeviationBps * STALE_DEVIATION_MULTIPLE
+            + Math.mulDiv(maxDeviationBps, STALE_GROWTH_OF_CAP_BPS, 10_000) * (lifetimes - 1);
+        return bound > MAX_ALLOWANCE_BPS ? MAX_ALLOWANCE_BPS : bound;
     }
 
     /// @notice The current bounding epoch: its anchor value, when it opened, and the allowance in bps that
@@ -380,7 +408,7 @@ abstract contract SwarmFeed is ISwarmFeed {
         _checkValue(value);
         // Open a new epoch from the value being replaced once the old one has run its maxAge. Written
         // before `_value` moves, so the anchor is where the feed stood, never where the new value puts it.
-        // Bounds are at most 2 x 10,000 bps (the constructor caps maxDeviationBps), so uint32 is exact.
+        // Bounds are at most MAX_ALLOWANCE_BPS, so uint32 is exact.
         if (!_hasValue) {
             // The first value anchors the first epoch and is `_value` itself, so the anchor slot stays
             // empty until a second value arrives: the first delivery pays no extra storage write, which is

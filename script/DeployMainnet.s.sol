@@ -43,6 +43,9 @@ import {
     EARN_MAT_BPS,
     WAGE_WAD,
     REDEMPTION_DIVISOR,
+    ASK_MAX_PRICE,
+    DRIFT_FALL_TRIGGER_OF_CAP_BPS,
+    WIDE_ALLOWANCE_BPS,
     ORACLE_BUDGET_PER_DAY,
     STREAM_PAYEE,
     STREAM_PER_DAY
@@ -91,8 +94,10 @@ contract DeployMainnet is Script, DeployPreflight {
     bytes32 internal constant SALT_TREASURY_FACTORY = keccak256("infer-protocol/mainnet/v1/TreasuryFactory");
     bytes32 internal constant SALT_VAULT = keccak256("infer-protocol/mainnet/v1/ParameterizedVault");
 
-    /// @dev Largest move a fresh feed accepts in one attestation. OracleAsker asks on pool drift at
-    /// HALF of this, so 2000 means a Treasury-paid update at 10% drift and a refusal past 20%.
+    /// @dev Largest move a fresh feed accepts within one epoch (a lifetime from the epoch's anchor), and
+    /// the base of the stale allowance: twice this once the value is stale, an eighth more per further
+    /// lifetime (SwarmFeed._allowanceNow). OracleAsker asks on a FALL of a quarter of this (5% at 2000),
+    /// never on a rise, and on any feed whose allowance has reached WIDE_ALLOWANCE_BPS.
     uint256 internal constant FEED_MAX_DEVIATION_BPS = 2_000;
 
     /// @dev The collateral: StakedIMD (ERC-4626 over IMD), and IMD, which the Intake is paid in.
@@ -305,7 +310,20 @@ contract DeployMainnet is Script, DeployPreflight {
             (bytes32 bodyHash, bool tracksPool, bool keepAlive,,,,) = asker.feeds(feeds[i]);
             require(bodyHash == keccak256(bodies[i]), "asker: body hash mismatch");
             require(tracksPool == tracks[i] && keepAlive == alive[i], "asker: wrong trigger policy");
+            // The trigger is a property of the feed's cap, not of the policy: a quarter of it on a fall, never a rise.
+            (uint256 fall, uint256 rise) = asker.triggerBps(feeds[i]);
+            require(fall == FEED_MAX_DEVIATION_BPS * DRIFT_FALL_TRIGGER_OF_CAP_BPS / 10_000 && rise == 0, "asker: wrong drift trigger (falls only, a quarter of the cap)");
         }
+        // The two external links the Treasury-paid path hangs on, which no contract this script deploys
+        // can vouch for (final review 2026-10-07, low): the Intake must sell oracle.request for IMD at or
+        // under ASK_MAX_PRICE, or every ask() reverts and the NHI keep-alive never fires; and the pool slot
+        // must read a price, or drift reads as zero and the Treasury never pays for a fall.
+        require(asker.price() != 0 && asker.price() <= ASK_MAX_PRICE, "asker: the Intake does not sell oracle.request for IMD at or under ASK_MAX_PRICE");
+        require(asker.poolPrice() != 0, "asker: the pool slot reads empty (POOL_MANAGER or IMD_POOL_ID wrong)");
+        require(asker.wideOpen(p.price) && asker.wideOpen(p.nhi) && asker.wideOpen(p.spot), "asker: an unseeded feed must read wide open");
+        require(WIDE_ALLOWANCE_BPS > FEED_MAX_DEVIATION_BPS * 2, "wide allowance must exceed the stale base");
+        require(parameters.workOracle() == address(0), "work-oracle slot is not empty");
+        require(vault.gap() == 50, "gap drifted from the Parameters default");
     }
 
     function _record(Plan memory p) internal {

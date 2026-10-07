@@ -395,6 +395,25 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "wideOpen",
+    "inputs": [
+      {
+        "name": "feed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "Armed",
     "inputs": [

@@ -118,6 +118,8 @@ contract CDPVault is ReentrancyGuard {
     /// @dev One half-life of the base rate. Cancelling principal younger than this does not move the
     /// rate; see `_redeemPosition`.
     uint256 private constant FRESH_DEBT_WINDOW = 12 hours;
+    /// @dev `cover` sweeps collateral worth less than this fraction of the position's debt (`_coverDust`).
+    uint256 private constant COVER_DUST_DIVISOR = 1_000_000;
     /// @notice Last redemption's base fee as a fraction scaled by 1e18, capped at 4.5%.
     uint256 public redemptionBaseRate;
     uint256 public lastRedemptionAt = block.timestamp;
@@ -505,7 +507,8 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Cover a drained position's realized bad debt with the protocol's own surplus imdUSD.
     /// @dev Maker's Vow.heal, under a name that is not one letter from `heel`. Anyone may call it: it
     /// only ever cancels debt that no reachable collateral stands behind — a drained position, or one
-    /// holding dust below the seizure for one wei of debt, which is swept to the surplus account first —
+    /// holding dust worth under a millionth of its debt (at least the seizure for one wei), which is
+    /// swept to the surplus account first —
     /// so it raises backing per imdUSD for every holder. The surplus is the Treasury's imdUSD (the stability fees it collected), and
     /// it is spent through the same repayment path as `wipe`, so fees are retired first and the
     /// position's recorded bad debt, totalBadDebt and totalDebt all move together. Reverts on a
@@ -525,7 +528,7 @@ contract CDPVault is ReentrancyGuard {
             _requireFreshFeeds();
             _requirePriceAgreement();
             uint256 price = _price();
-            if (position.collateral >= _oneWeiSeizure(price)) revert NoRealizedBadDebt();
+            if (position.collateral >= _coverDust(owner, price)) revert NoRealizedBadDebt();
             uint256 dust = position.collateral;
             position.collateral = 0;
             _resecure(position, price);
@@ -564,6 +567,16 @@ contract CDPVault is ReentrancyGuard {
     /// never be reached by `bite` through the formula.
     function _oneWeiSeizure(uint256 price) private pure returns (uint256) {
         return Math.mulDiv(1, (100 + CHOP_PERCENT) * 1e16, price);
+    }
+
+    /// @dev The largest collateral `cover` sweeps as dust: the seizure for one wei of debt, or for a
+    /// millionth of what the position owes if that is more. Final review 2026-10-07, low: at exactly
+    /// the one-wei seizure plus one raw unit (about 1e-20 sIMD, worth nothing) a drained borrower could
+    /// re-lock for free after every bite and keep its bad debt uncoverable for a mark-and-grace cycle at
+    /// a time. Collateral worth under a millionth of the debt is dust in every economic sense.
+    function _coverDust(address owner, uint256 price) private view returns (uint256) {
+        uint256 slice = (_positions[owner].debt + _stabilityFees[owner]) / COVER_DUST_DIVISOR;
+        return Math.mulDiv(slice > 1 ? slice : 1, (100 + CHOP_PERCENT) * 1e16, price);
     }
 
     /// @notice Burn exactly `amount` caller imdUSD for feed-priced IMD, less the capped fee.

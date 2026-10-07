@@ -35,6 +35,8 @@ for i in $(seq 1 60); do cast chain-id --rpc-url $RPC >/dev/null 2>&1 && break; 
 cd $R
 python3 deploy/mainnet/plan.py --write --operator 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --intake 0x0000000000000000000000000000000000000F06
 cast rpc anvil_setCode 0x0000000000000000000000000000000000000F06 "$(forge inspect MockIntake deployedBytecode | tail -1)" --rpc-url $RPC >/dev/null
+# The deploy script now verifies the Intake sells oracle.request for IMD at or under ASK_MAX_PRICE, so the mock is priced BEFORE the deploy.
+cast send 0x0000000000000000000000000000000000000F06 "setPrice(bytes32,address,uint256)" 0x6f7261636c652e72657175657374406f7261636c652d31000000000000000000 $IMD 500000000000000000 --private-key $K0 --rpc-url $RPC >/dev/null
 ETHUSD=$(cast call $CL "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url $RPC 2>/dev/null | sed -n 2p | awk '{print $1}')
 echo "live ETH/USD answer $ETHUSD"
 rm -rf deploy/mainnet/out/*.json
@@ -129,5 +131,16 @@ K_IMD2=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
 node watch.mjs --execute | sed 's/^/  /' || true
 K_IMD3=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
 echo "keeper IMD spent as the Treasury's fallback: $(python3 -c "print(($K_IMD2-$K_IMD3)/1e18)") (expect 40.0: price + spot at 20 each)"
+
+say "the feeds have been silent nine hours: their allowance has widened to 60% (WIDE_ALLOWANCE_BPS) and the Treasury refreshes them, no arming (keeper pays gas)"
+cast send 0x0000000000000000000000000000000000000F06 "setPrice(bytes32,address,uint256)" 0x6f7261636c652e72657175657374406f7261636c652d31000000000000000000 $IMD 500000000000000000 --private-key $K0 --rpc-url $RPC >/dev/null
+cast rpc evm_increaseTime 32500 --rpc-url $RPC >/dev/null; cast rpc evm_mine --rpc-url $RPC >/dev/null
+echo "price feed epoch (anchor, openedAt, allowanceBps): $(cast call $PRICE 'epoch()(uint256,uint64,uint256)' --rpc-url $RPC | tr '\n' ' ')  (expect allowance 6000)"
+I_IMD0=$(c call $IMD 'balanceOf(address)(uint256)' 0x0000000000000000000000000000000000000F06)
+K_IMD4=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
+node watch.mjs --execute | sed 's/^/  /' || true
+I_IMD1=$(c call $IMD 'balanceOf(address)(uint256)' 0x0000000000000000000000000000000000000F06)
+K_IMD5=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
+echo "intake IMD received for the wide-open refresh: $(python3 -c "print(($I_IMD1-$I_IMD0)/1e18)") (expect 1.0: price + spot, paid by the Treasury's asker)   keeper IMD spent: $(python3 -c "print(($K_IMD4-$K_IMD5)/1e18)") (expect 0.0)"
 
 [ -f config.js.before-rehearsal ] && mv config.js.before-rehearsal config.js || rm -f config.js

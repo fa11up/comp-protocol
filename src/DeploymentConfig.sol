@@ -239,6 +239,12 @@ uint256 constant ASK_MAX_PRICE = 1 ether;
 uint256 constant ARM_DELAY_BLOCKS = 5;
 uint256 constant ARM_WINDOW_BLOCKS = 100;
 uint256 constant STALE_AT_BPS = 7_500;
+// A feed whose allowance has widened with staleness to this many basis points (a value that far from
+// its anchor would now be accepted) is refreshed by the Treasury whatever its trigger policy, so the
+// allowance is reset for one request before a single purchase could re-anchor the price far from the
+// market (final review 2026-10-07, high + medium). 6,000 at a 2,000 bps cap is nine lifetimes of
+// silence. The keeper does the same with its own IMD when the Treasury cannot pay.
+uint256 constant WIDE_ALLOWANCE_BPS = 6_000;
 // The drift that justifies a Treasury-paid update, as a share (bps) of the feed's own deviation cap, and
 // DIFFERENT BY DIRECTION. A fall (pool below the feed) over-values collateral — over-borrowing, late
 // liquidation — so it is bought early, at a quarter of the cap (5% at a 20% cap). A rise only

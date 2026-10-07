@@ -33,11 +33,15 @@ lifetimes, so it becomes one hour.
 The protocol does not keep prices fresh on a clock. At one update per hour per feed, at $4.25 each,
 that would cost about $37,000 a year per feed; at a ten-minute lifetime it would be about $298,000.
 
-- **Treasury, on price movement.** `OracleAsker.ask` pays when IMD's pool has drifted more than half a
-  feed's deviation bound from it, armed and still present a few blocks later. Cost scales with
-  volatility; a crash triggers it.
+- **Treasury, on a fall.** `OracleAsker.ask` pays when IMD's pool has FALLEN more than a quarter of a
+  feed's deviation cap (5% at a 20% cap) below the feed, armed and still present five blocks later.
+  Never for a rise (decided 2026-10-06). Cost scales with volatility; a crash triggers it.
 - **Treasury, to keep NHI alive.** NHI moves slowly and is daily; staleness asks apply to it alone
   (`keepAlive`).
+- **Treasury, when a feed's allowance has widened.** A feed's allowance grows the longer it is stale
+  (below). Once it reaches `WIDE_ALLOWANCE_BPS` (60%), the Treasury refreshes the feed whatever its
+  policy, so a single purchase can never re-anchor the price far from the market. Only a market that
+  has been silent for nine hours triggers it.
 - **Anyone, with their own IMD.** `OracleAsker.askPaid(feed, body, maxPrice)` buys an update for any
   feed at any time, with no need check, because no protocol money is spent. A borrower who finds the
   price stale pays about $4.25 instead of waiting.
@@ -163,27 +167,39 @@ trigger, NHI keep-alive at 75% of its lifetime, `ASK_MIN_INTERVAL` 10 min, `ASK_
 deviation cap of 2,000 bps (`script/DeployMainnet.s.sol`), was walked through and confirmed by the operator
 on 2026-10-06 as the launch set. Minting from work ships OFF (`WAGE_WAD` 0); the founder stream ships off.
 
-### No rolling (per-epoch) deviation bound — decided 2026-10-06
+### The per-epoch deviation bound SHIPS, widening with staleness — decided 2026-10-07
 
-The bound stays per attestation: 20% from the last accepted value, 40% once that value is older than the
-feed's lifetime (`SwarmFeed.STALE_DEVIATION_MULTIPLE`). A per-epoch variant — every value accepted within
-one lifetime measured against the value the feed held when the hour began — was built and tested
-(branch `feat/epoch-bound`) and deliberately NOT shipped.
+On 2026-10-06 the per-epoch bound was built and parked (branch `feat/epoch-bound`): the chained walk it
+closes looked uneconomic at launch parameters. The final pre-launch review
+(`docs/AUDIT-FINAL-2026-10-07.md`) corrected both halves of that call, and the bound now ships.
 
-What it would have closed: six attestations bought over an hour and relayed in one block walk a 20% cap
-from 1.0 to 3.48. What that attack costs at launch parameters: the primary feed is the median of 13 samples
-across a 2-hour window, so each 20% rung needs the pool (841 ETH + 207,881 IMD, 1% fee, full range) pushed
-at 7 sampled blocks and unpushed after each. Round-trip fees alone: about $58k for the 1.4x stale step
-(which exists with or without the epoch bound), then $93k, $130k, $174k, $221k and $273k per rung — about
-$950k for the full walk — with real ETH held across block boundaries, not a flash loan. The gain only begins
-above 1.7x (`mat`) and is capped by `line` at $1M: at most ~$150k at 2.0x, ~$510k at 3.48x. Negative at
-every rung. The window-recency rule (`WindowTooOld`, `WindowNotAdvancing`) already makes the chain hard to
-assemble; the epoch bound would only have made it slow as well.
+**What the review showed.** (1) The never-widening stale bound from `ce39fc6` could not follow a
+single-step market move larger than itself: the pinned recipes read the pool and a step has no
+intermediate medians, so after one gap over 40% every honest attestation was refused for ever and every
+vault pinned to the feed halted for good (high). (2) The walk's cost model counted seven round trips per
+rung; one ramp-and-hold does it in a single round trip — push the pool 20% a block for six blocks, hold
+3.48x for 150 blocks (about 30 minutes), and six windows ending one block apart have their CENTRE sample,
+which is the median, at each rung. About $39k of pool fees against $300k–$500k of gain at the $1M line,
+with only the attacker's exposure to holders selling into a 3.5x pump standing in the way (medium). The
+per-epoch bound makes that walk 40% per hour, so 3.48x takes five hours of visible manipulation.
 
-**Revisit rule.** The arithmetic flips when the debt ceiling grows relative to the pool: at today's depth a
-$5M line makes the 3.48x walk worth ~$2.5M against ~$950k of fees. Any `proposeLine` above roughly HALF the
-pool's depth (about $2M today) must re-run this arithmetic first, and ship the epoch bound (a feed redeploy)
-if it no longer holds. This is the one safety condition attached to raising `line`.
+**What ships (`SwarmFeed`).** Every value accepted within one lifetime of an epoch's start must lie
+within the epoch's allowance of the ANCHOR, the value the feed held when the epoch opened. The allowance
+is the cap (20%) when that value was fresh; once it is stale, twice the cap, widening by an eighth of the
+cap for every further whole lifetime of silence: 40% after one hour, 45% after three, 50% after five, 60%
+after nine, 100% after twenty-five, capped at 100x. A genuine gap is therefore a delay of a few hours, not
+a halt; a far re-anchor costs an attacker those same hours of silence.
+
+**And the refresh that closes the silence (`OracleAsker`).** Once any feed's allowance reaches
+`WIDE_ALLOWANCE_BPS` (60%, nine silent hours), the Treasury refreshes it whatever its trigger policy, so
+the next accepted value can never sit more than 60% from the anchor — below the 1.7x (`mat`) at which a
+single-shot re-anchor would pay. In a dead market that is at most two refreshes per feed per day; in a
+moving one the fall trigger refreshes first and it never fires. The keeper does the same for the primary
+with its own IMD while the Treasury cannot pay.
+
+**Revisit rule, restated.** Raising `line` no longer changes the walk's speed, only its prize; the hold
+model above is the one to re-run before any `proposeLine`, and the epoch bound is what keeps the answer
+"five hours in the open".
 
 ### The keeper and the oracle — decided 2026-10-06
 

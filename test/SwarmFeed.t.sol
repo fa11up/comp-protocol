@@ -421,6 +421,93 @@ abstract contract SwarmFeedTest is Test {
         assertEq(got, 1 ether + 1 ether * cap * feed.STALE_DEVIATION_MULTIPLE() / 10_000);
     }
 
+    /// @dev Final review 2026-10-07, high: a bound that never widened could not follow a single-step
+    /// market move larger than itself. The pinned recipes read the pool and a step has no intermediate
+    /// medians, so after a 45% gap every honest attestation was refused for ever and every vault pinned
+    /// to the feed halted for good. The allowance now widens by an eighth of the cap for every further
+    /// lifetime stale: the gap becomes a delay of a few lifetimes, and a far re-anchor costs an attacker
+    /// those same lifetimes of silence.
+    function test_theAllowanceWidensWithStalenessSoAGenuineGapIsFollowed() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        uint256 t0 = block.timestamp;
+        uint256 stale = feed.maxDeviationBps() * feed.STALE_DEVIATION_MULTIPLE();
+        uint256 growth = feed.maxDeviationBps() * feed.STALE_GROWTH_OF_CAP_BPS() / 10_000;
+        assertGt(growth, 0);
+
+        // Fresh: the cap. One lifetime stale: the stale base. Each further whole lifetime: an eighth more.
+        assertEq(_allowance(), feed.maxDeviationBps());
+        vm.warp(t0 + 1 hours + 1);
+        assertEq(_allowance(), stale);
+        vm.warp(t0 + 3 hours + 1);
+        assertEq(_allowance(), stale + 2 * growth);
+
+        // The market gapped down by exactly the three-lifetime allowance. At one and two lifetimes the
+        // honest figure is refused; at three it is accepted, and the feed reads the market again.
+        uint256 honest = 1 ether - 1 ether * (stale + 2 * growth) / 10_000;
+        vm.warp(t0 + 1 hours + 1);
+        _expectRefused("gap-1", honest);
+        vm.warp(t0 + 2 hours + 1);
+        _expectRefused("gap-2", honest);
+        vm.warp(t0 + 3 hours + 1);
+        _submit("gap-followed", honest);
+        (uint256 value,) = feed.latestValue();
+        assertEq(value, honest, "the feed follows the market after three lifetimes");
+        // The epoch it opened carries that widened allowance from the OLD value, and nothing beyond it.
+        (uint256 anchor,, uint256 opened) = feed.epoch();
+        assertEq(anchor, 1 ether);
+        assertEq(opened, stale + 2 * growth);
+    }
+
+    function test_aRallyIsFollowedTheSameWay() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        uint256 t0 = block.timestamp;
+        uint256 stale = feed.maxDeviationBps() * feed.STALE_DEVIATION_MULTIPLE();
+        uint256 growth = feed.maxDeviationBps() * feed.STALE_GROWTH_OF_CAP_BPS() / 10_000;
+        // Five lifetimes of silence buy a four-eighths-wider allowance; four do not.
+        uint256 rally = 1 ether + 1 ether * (stale + 4 * growth) / 10_000;
+        vm.warp(t0 + 4 hours + 1);
+        _expectRefused("rally-early", rally);
+        vm.warp(t0 + 5 hours + 1);
+        _submit("rally-followed", rally);
+        (uint256 value,) = feed.latestValue();
+        assertEq(value, rally);
+    }
+
+    function _allowance() private view returns (uint256 allowance) {
+        (,, allowance) = feed.epoch();
+    }
+
+    function _submit(bytes32 id, uint256 figure) private {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        a.requestId = id;
+        a.figure = figure;
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+    }
+
+    function _expectRefused(bytes32 id, uint256 figure) private {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        a.requestId = id;
+        a.figure = figure;
+        bytes memory sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        feed.submitAttestation(a, sig);
+    }
+
+    function test_theAllowanceIsCappedHoweverLongTheSilence() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        vm.warp(block.timestamp + 100_000 hours);
+        (,, uint256 allowance) = feed.epoch();
+        assertEq(allowance, feed.MAX_ALLOWANCE_BPS());
+        // And an epoch opened on it stores that bound exactly (it is packed into a uint32).
+        _submit("after-the-silence", 1 ether * 50);
+        (uint256 anchor,, uint256 stored) = feed.epoch();
+        assertEq(anchor, 1 ether);
+        assertEq(stored, feed.MAX_ALLOWANCE_BPS());
+    }
+
     function test_attestationRejectsOlderIssueTimeWithoutConsumingRequest() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));

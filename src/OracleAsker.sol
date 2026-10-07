@@ -19,6 +19,7 @@ import {
     ARM_DELAY_BLOCKS,
     ARM_WINDOW_BLOCKS,
     STALE_AT_BPS,
+    WIDE_ALLOWANCE_BPS,
     DRIFT_FALL_TRIGGER_OF_CAP_BPS,
     DRIFT_RISE_TRIGGER_OF_CAP_BPS
 } from "./DeploymentConfig.sol";
@@ -144,7 +145,8 @@ contract OracleAsker {
     }
 
     /// @notice Buy an update for `feed`, paying the Intake from this contract's IMD. Anyone may call it;
-    /// it pays only when the feed is near stale, or when an armed drift is still present.
+    /// it pays only when a keep-alive feed is near stale, when any feed's allowance has widened with
+    /// staleness to WIDE_ALLOWANCE_BPS (`wideOpen`), or when an armed drift is still present.
     function ask(address feed, bytes calldata body) external returns (bytes32 requestId) {
         Feed storage f = _feed(feed);
         if (keccak256(body) != f.bodyHash) revert WrongBody();
@@ -154,7 +156,7 @@ contract OracleAsker {
         if (f.lastAsk != 0 && block.timestamp < uint256(f.lastAsk) + ASK_MIN_INTERVAL) {
             revert TooSoon(uint256(f.lastAsk) + ASK_MIN_INTERVAL);
         }
-        bool forStaleness = f.keepAlive && nearStale(feed);
+        bool forStaleness = (f.keepAlive && nearStale(feed)) || wideOpen(feed);
         if (!forStaleness) {
             if (!f.tracksPool) revert NotNeeded();
             uint256 armedAt = f.armedAt;
@@ -286,6 +288,15 @@ contract OracleAsker {
         if (value == 0 || updatedAt == 0) return true;
         uint256 age = block.timestamp > updatedAt ? block.timestamp - updatedAt : 0;
         return age * 10_000 >= SwarmFeed(feed).maxAge() * STALE_AT_BPS;
+    }
+
+    /// @notice True once a feed's allowance has widened with staleness to WIDE_ALLOWANCE_BPS or more, so
+    /// the next accepted value could sit that far from its anchor (or it has no value yet). Such a feed
+    /// may be asked for without arming, whatever its policy: the honest refresh resets the allowance
+    /// before a single purchase could re-anchor the price (final review 2026-10-07).
+    function wideOpen(address feed) public view returns (bool) {
+        (,, uint256 allowance) = SwarmFeed(feed).epoch();
+        return allowance >= WIDE_ALLOWANCE_BPS;
     }
 
     /// @notice How far IMD's v4 pool sits from the feed, in basis points of the feed's value. Zero when
