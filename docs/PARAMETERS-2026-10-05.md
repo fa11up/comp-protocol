@@ -100,9 +100,11 @@ ten minutes at a sixth of the cost of keeping it fresh.
 
 ## Not changed, worth a look
 
-- The redemption divisor and the stability fee: analysed below, awaiting a decision.
-- The debt ceiling `line` starts unlimited. The pool absorbs about $290k per profitable liquidation,
-  so an initial ceiling near $1M is worth considering.
+- The redemption divisor and the stability fee: analysed below. DECIDED 2026-10-05 (`223c66a`): divisor
+  **2** (the user's call, overruling the "keep 4" recommendation below — a run on the reserve is slowed
+  harder, at the cost of a slightly wider peg band only while a run is under way), stability fee **444 bps**.
+- The debt ceiling `line` starts at **$1M** (same commit). The pool absorbs about $290k per profitable
+  liquidation. See "Final confirmation" below for why raising it is a safety decision, not just a growth one.
 
 ## Treasury exits (decided 2026-10-05)
 
@@ -129,7 +131,8 @@ A lower divisor protects the positions being redeemed against and slows a run; a
 peg floor tighter, because redeemers keep arbitraging at a lower fee (imdUSD can sit at about
 $1 × (1 − fee) − 1.5% before they step in). Liquity uses 2 because it redeems against every borrower.
 Here redemption only reaches the reserve and positions already within `gap` of `mat`, and a
-candidate's ratio may not worsen, so borrowers need less protection. **Recommendation: keep 4.**
+candidate's ratio may not worsen, so borrowers need less protection. Recommendation at the time: keep 4.
+**Decided 2026-10-05: 2** (`223c66a`), reconfirmed 2026-10-06.
 
 ## Analysis: the stability fee
 
@@ -151,3 +154,49 @@ governed between 0 and 10% behind the 48-hour timelock, so the launch value is a
 sIMD collateral earns about 1.8% a year (the staking drip's cap over 1.72M IMD staked), so a borrower's
 net carry is the fee minus 1.8 points. **Recommendation: launch at 4%**, revisit with real debt and peg
 data.
+
+## Final confirmation (2026-10-06)
+
+Every value in the Decisions table above, plus the oracle and Treasury settings in
+`src/DeploymentConfig.sol` (`ORACLE_BUDGET_PER_DAY` 15 IMD, `ASK_MAX_PRICE` 1 IMD, fall trigger 5%, no rise
+trigger, NHI keep-alive at 75% of its lifetime, `ASK_MIN_INTERVAL` 10 min, `ASK_TIMEOUT` 2 h) and the feed
+deviation cap of 2,000 bps (`script/DeployMainnet.s.sol`), was walked through and confirmed by the operator
+on 2026-10-06 as the launch set. Minting from work ships OFF (`WAGE_WAD` 0); the founder stream ships off.
+
+### No rolling (per-epoch) deviation bound — decided 2026-10-06
+
+The bound stays per attestation: 20% from the last accepted value, 40% once that value is older than the
+feed's lifetime (`SwarmFeed.STALE_DEVIATION_MULTIPLE`). A per-epoch variant — every value accepted within
+one lifetime measured against the value the feed held when the hour began — was built and tested
+(branch `feat/epoch-bound`) and deliberately NOT shipped.
+
+What it would have closed: six attestations bought over an hour and relayed in one block walk a 20% cap
+from 1.0 to 3.48. What that attack costs at launch parameters: the primary feed is the median of 13 samples
+across a 2-hour window, so each 20% rung needs the pool (841 ETH + 207,881 IMD, 1% fee, full range) pushed
+at 7 sampled blocks and unpushed after each. Round-trip fees alone: about $58k for the 1.4x stale step
+(which exists with or without the epoch bound), then $93k, $130k, $174k, $221k and $273k per rung — about
+$950k for the full walk — with real ETH held across block boundaries, not a flash loan. The gain only begins
+above 1.7x (`mat`) and is capped by `line` at $1M: at most ~$150k at 2.0x, ~$510k at 3.48x. Negative at
+every rung. The window-recency rule (`WindowTooOld`, `WindowNotAdvancing`) already makes the chain hard to
+assemble; the epoch bound would only have made it slow as well.
+
+**Revisit rule.** The arithmetic flips when the debt ceiling grows relative to the pool: at today's depth a
+$5M line makes the 3.48x walk worth ~$2.5M against ~$950k of fees. Any `proposeLine` above roughly HALF the
+pool's depth (about $2M today) must re-run this arithmetic first, and ship the epoch bound (a feed redeploy)
+if it no longer holds. This is the one safety condition attached to raising `line`.
+
+### The keeper and the oracle — decided 2026-10-06
+
+The Treasury pays for falls only. The keeper buys an update with its own IMD only as the Treasury's fallback:
+a fall past the trigger, armed and still present five blocks later, when the asker cannot cover one update
+even after `fundOracle`. Never for a rise, never to refresh a quiet stale price. Capped at **2 IMD per UTC
+day** (`ASK_PAID_IMD_PER_DAY`, shared with the liquidation loop's buy-a-price step). Once the Treasury carries
+the oracle, `KEEPER_ORACLE_FALLBACK = false` makes the keeper liquidation-only.
+
+### Minting from work — deferred without blocking
+
+The vault knows only `IWorkOracle` (rights in imdUSD units). The wage is 0 at launch and
+`Parameters.proposeWorkOracle` can replace the oracle wholesale while it stays 0, so the pay-per-job-type
+design (a governed tariff per skill with a default for skills that do not exist yet) is a later deployment,
+not a launch decision. Its one dependency is evidence that carries the job type: an upstream per-skill leaf
+in the daily receipt (the same shape as the agent tally already merged in PR #332).
