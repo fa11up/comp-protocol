@@ -38,7 +38,7 @@ cast rpc anvil_setCode 0x0000000000000000000000000000000000000F06 "$(forge inspe
 ETHUSD=$(cast call $CL "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url $RPC 2>/dev/null | sed -n 2p | awk '{print $1}')
 echo "live ETH/USD answer $ETHUSD"
 rm -rf deploy/mainnet/out/*.json
-OPERATOR=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 forge script script/DeployMainnet.s.sol --rpc-url $RPC --broadcast --slow --private-key $K0 2>&1 | grep -E "deployed|skipped|Deployed|Error|FAIL" 
+FOUNDRY_PROFILE=deploy OPERATOR=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 forge script script/DeployMainnet.s.sol --rpc-url $RPC --broadcast --slow --private-key $K0 2>&1 | grep -E "deployed|skipped|Deployed|Error|FAIL" 
 D=$R/deploy/mainnet/out/deployment.json
 j() { python3 -c "import json;print(json.load(open('$D'))['$1'])"; }
 VAULT=$(j vault); PRICE=$(j priceFeed); NHI=$(j nhiFeed); SPOT=$(j spotFeed); STABLE=$(j stablecoin); ASKER=$(j oracleAsker)

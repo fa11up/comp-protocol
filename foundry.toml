@@ -8,10 +8,13 @@ evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
 bytecode_hash = "none"
-# DeployMainnet reads the Intake body templates and writes the deployment record. bytecode_hash "none" is
-# load-bearing there: with a metadata hash, editing any DeploymentConfig constant would move every
-# CREATE2 address that imports it, and the planned addresses would never converge.
-fs_permissions = [{ access = "read", path = "./deploy/mainnet/bodies" }, { access = "read-write", path = "./deploy/mainnet/out" }]
+# DeployMainnet reads the Intake body templates. bytecode_hash "none" is load-bearing there: with a
+# metadata hash, editing any DeploymentConfig constant would move every CREATE2 address that imports
+# it, and the planned addresses would never converge.
+# Read-only here, deliberately: the swarm's workers refuse to build a repository whose default
+# profile grants any write permission (a job at 6dca690+ was refused before an agent started,
+# reason local_build_failed). Writing the deployment record lives in the `deploy` profile below.
+fs_permissions = [{ access = "read", path = "./deploy/mainnet/bodies" }]
 
 # Each top-level call is its own transaction, which is what clears transient storage between them.
 # ParameterizedVault.backedDebt() reads the debt a transaction STARTED at, held in transient storage,
@@ -30,3 +33,10 @@ fail_on_revert = true
 
 [fmt]
 line_length = 120
+
+# The broadcast only: `FOUNDRY_PROFILE=deploy forge script script/DeployMainnet.s.sol ...` writes the
+# deployment record to deploy/mainnet/out/ (see deploy/mainnet/rehearse-fork.sh and the runbook).
+# Every other setting is inherited from the default profile, so the bytecode, and with it every
+# planned CREATE2 address, is identical under either profile.
+[profile.deploy]
+fs_permissions = [{ access = "read", path = "./deploy/mainnet/bodies" }, { access = "read-write", path = "./deploy/mainnet/out" }]

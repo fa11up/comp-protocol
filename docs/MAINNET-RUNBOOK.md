@@ -228,7 +228,7 @@ python3 deploy/mainnet/plan.py --write --operator <cold governance> --intake <th
 #   ORACLE_ASKER, TREASURY_FACTORY and CHAINLINK_ETH_USD on the CREATE2 plan (4 passes from the Sepolia config)
 forge test && <suites> ; git commit                      # THIS commit is what the scoped review and the broadcast use
 KEEPER_DIR=../imd-keeper deploy/mainnet/rehearse-fork.sh # full rehearsal on an anvil fork (does not touch the tree)
-OPERATOR=<cold governance> forge script script/DeployMainnet.s.sol --rpc-url $MAINNET_RPC_URL \
+FOUNDRY_PROFILE=deploy OPERATOR=<cold governance> forge script script/DeployMainnet.s.sol --rpc-url $MAINNET_RPC_URL \
     --broadcast --slow --account <throwaway deployer>
 ```
 
