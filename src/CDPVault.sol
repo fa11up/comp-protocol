@@ -521,8 +521,8 @@ contract CDPVault is ReentrancyGuard {
         Position storage position = _positions[owner];
         _accrue(owner);
         if (position.collateral != 0) {
-            // Dust no bite can reach (below the seizure for one wei of debt) does not make the debt
-            // behind it any less bad: it goes to the surplus account and the shortfall is realized here,
+            // Dust (worth under a millionth of the debt, and at least below the seizure for one wei of
+            // it: `_coverDust`) does not make the debt behind it any less bad: it goes to the surplus account and the shortfall is realized here,
             // so re-locking one raw unit onto a drained position cannot keep its bad debt uncoverable.
             // Anything larger must go through mark, grace and bite like any other position.
             _requireFreshFeeds();

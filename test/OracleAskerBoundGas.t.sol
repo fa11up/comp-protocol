@@ -70,6 +70,19 @@ contract OracleAskerBoundGasTest is Test {
         assertLt(used, 150_000);
     }
 
+    /// @dev The heaviest delivery since the review of cc4103f: one that opens a WIDE epoch on a long-stale
+    /// value, writing the anchor and recording the epoch's first value (packed into the slot every
+    /// acceptance writes, so it adds no storage write).
+    function test_aDeliveryThatOpensAWideEpochFitsTheStipendWithHeadroom() public {
+        feed.seed(0.9 ether);
+        vm.warp(block.timestamp + 1 days + 9 hours); // stale, and its allowance past the cap
+        uint256 used = _deliver(keccak256("wide"), 0.6 ether);
+        emit log_named_uint("wide-epoch callback gas (stipend 200000)", used);
+        assertLt(used, 150_000);
+        (,, uint256 allowance) = feed.epoch();
+        assertGt(allowance, feed.maxDeviationBps(), "the delivery opened a wide epoch");
+    }
+
     function _deliver(bytes32 panel, uint256 figure) private returns (uint256 used) {
         bytes32 id = asker.ask(address(feed), BODY);
         SwarmFeed.OracleAttestation memory a;

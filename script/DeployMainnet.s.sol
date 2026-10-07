@@ -96,7 +96,7 @@ contract DeployMainnet is Script, DeployPreflight {
 
     /// @dev Largest move a fresh feed accepts within one epoch (a lifetime from the epoch's anchor), and
     /// the base of the stale allowance: twice this once the value is stale, an eighth more per further
-    /// lifetime (SwarmFeed._allowanceNow). OracleAsker asks on a FALL of a quarter of this (5% at 2000),
+    /// hour stale (SwarmFeed._allowanceNow). OracleAsker asks on a FALL of a quarter of this (5% at 2000),
     /// never on a rise, and on any feed whose allowance has reached WIDE_ALLOWANCE_BPS.
     uint256 internal constant FEED_MAX_DEVIATION_BPS = 2_000;
 

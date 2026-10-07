@@ -22,8 +22,10 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// zero. The deviation bound is PER UNIT OF TIME, not per attestation: every value accepted within one
 /// maxAge of an epoch's start must lie within the epoch's allowance of the ANCHOR, the value the feed held
 /// when the epoch began. The allowance is maxDeviationBps when that value was fresh; once it is stale,
-/// STALE_DEVIATION_MULTIPLE times that, widening by an eighth of the cap for every further lifetime of
-/// staleness (`_allowanceNow`). It never lifts outright, but it does not stay shut either: the final
+/// STALE_DEVIATION_MULTIPLE times that, widening by an eighth of the cap for every further hour of
+/// staleness (`_allowanceNow`). An epoch opened that wide closes behind its first value: every later
+/// value in it must also lie within the cap of that first one (`_epochFirst`), so an honest refresh of
+/// a long-silent feed leaves an attacker the cap around the market, not the stale allowance. It never lifts outright, but it does not stay shut either: the final
 /// pre-launch review (docs/AUDIT-FINAL-2026-10-07.md, high) showed that a bound which never widens
 /// cannot follow a single-step market move larger than itself — the pinned recipes read the pool, and a
 /// step has no intermediate medians — so the feed, and every vault pinned to it, would halt for good
@@ -92,9 +94,14 @@ abstract contract SwarmFeed is ISwarmFeed {
     uint16 public constant MIN_AGREED = 15;
     /// @notice How much wider an epoch's allowance is when it opens on a stale value.
     uint256 public constant STALE_DEVIATION_MULTIPLE = 2;
-    /// @notice How much further the allowance widens for every further whole lifetime the value has
-    /// been stale, in basis points of maxDeviationBps: an eighth of the cap per lifetime.
+    /// @notice How much further the allowance widens for every further STALE_GROWTH_PERIOD the value has
+    /// been stale, in basis points of maxDeviationBps: an eighth of the cap per period.
     uint256 public constant STALE_GROWTH_OF_CAP_BPS = 1_250;
+    /// @notice The step the allowance widens on: an hour, whatever the feed's lifetime. A one-hour feed
+    /// widens once per lifetime; the one-day NHI feed widens hourly too, so a gap in the index is followed
+    /// within hours rather than days (review of cc4103f, 2026-10-07: a 50% NHI step took 120 hours, with the
+    /// vault halted from hour 24).
+    uint256 public constant STALE_GROWTH_PERIOD = 1 hours;
     /// @notice The allowance never exceeds this (a value a hundred times the anchor); it also keeps the
     /// packed uint32 exact.
     uint256 public constant MAX_ALLOWANCE_BPS = 1_000_000;
@@ -126,6 +133,12 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// from the value then current. See `_epoch`.
     uint64 private _anchorAt;
     uint32 private _anchorBound;
+    /// @dev The first value accepted in the current epoch if that epoch opened wider than the cap (on a
+    /// stale value), else zero; see `_checkValue`. Packed into the same slot as `_updatedAt` and the epoch,
+    /// which every acceptance writes anyway, so it adds no storage write to a delivery inside the Intake's
+    /// stipend. A value too large for 88 bits (above 3e26, far beyond any figure the shipped feeds carry)
+    /// is not recorded, and that epoch is then bounded from its anchor alone.
+    uint88 private _epochFirst;
     uint256 private _anchorValue;
 
     /// @param relayer_ Sole attestation submitter, or zero for permissionless relay.
@@ -352,6 +365,15 @@ abstract contract SwarmFeed is ISwarmFeed {
             (uint256 anchor, uint256 bound) = _epoch();
             uint256 change = value > anchor ? value - anchor : anchor - value;
             if (change > Math.mulDiv(anchor, bound, 10_000)) revert ExcessDeviation();
+            // Inside a wide epoch, once its first value has landed, the rest of the epoch is held to the
+            // cap around that value. Whoever lands first after a silence gets the stale allowance; an
+            // honest refresh therefore closes it for everyone after (review of cc4103f, 2026-10-07: a
+            // +55% value was accepted an hour after the Treasury's honest refresh).
+            uint256 first = _epochFirst;
+            if (first != 0 && block.timestamp - _anchorAt < maxAge) {
+                uint256 drift = value > first ? value - first : first - value;
+                if (drift > Math.mulDiv(first, maxDeviationBps, 10_000)) revert ExcessDeviation();
+            }
         }
     }
 
@@ -368,18 +390,19 @@ abstract contract SwarmFeed is ISwarmFeed {
     }
 
     /// @dev The allowance an epoch opened now would carry: the cap on a fresh value; on a stale one,
-    /// STALE_DEVIATION_MULTIPLE times the cap plus an eighth of the cap for every further whole lifetime
-    /// the value has been stale, up to MAX_ALLOWANCE_BPS. At a 2,000 bps cap and a one-hour lifetime:
-    /// 40% after one hour stale, 45% after three, 50% after five, 60% after nine, 100% after twenty-five.
+    /// STALE_DEVIATION_MULTIPLE times the cap plus an eighth of the cap for every whole STALE_GROWTH_PERIOD
+    /// (an hour) it has been stale beyond its lifetime, up to MAX_ALLOWANCE_BPS. At a 2,000 bps cap and a
+    /// one-hour lifetime: 40% after one hour stale, 45% after three, 50% after five, 60% after nine, 100%
+    /// after twenty-five. A one-day feed reaches the same steps a day later: 40% at 24 hours, 50% at 28.
     /// So a genuine gap larger than the stale allowance is followed once the feed has been stale long
     /// enough — a delay, not a halt for good — while a re-anchor far from the market costs an attacker
     /// that same silence, during which anyone can refresh the feed honestly for one request (the
     /// Treasury does, through OracleAsker, once the allowance reaches WIDE_ALLOWANCE_BPS).
     function _allowanceNow() private view returns (uint256) {
         if (!_tooOld(_updatedAt)) return maxDeviationBps;
-        uint256 lifetimes = (block.timestamp - _updatedAt) / maxAge; // at least 1 once too old
+        uint256 steps = (block.timestamp - _updatedAt - maxAge) / STALE_GROWTH_PERIOD; // 0 in the first hour
         uint256 bound = maxDeviationBps * STALE_DEVIATION_MULTIPLE
-            + Math.mulDiv(maxDeviationBps, STALE_GROWTH_OF_CAP_BPS, 10_000) * (lifetimes - 1);
+            + Math.mulDiv(maxDeviationBps, STALE_GROWTH_OF_CAP_BPS, 10_000) * steps;
         return bound > MAX_ALLOWANCE_BPS ? MAX_ALLOWANCE_BPS : bound;
     }
 
@@ -417,6 +440,9 @@ abstract contract SwarmFeed is ISwarmFeed {
         } else if (block.timestamp - _anchorAt >= maxAge) {
             (uint256 anchor, uint256 bound) = _epoch();
             (_anchorValue, _anchorBound, _anchorAt) = (anchor, uint32(bound), uint64(block.timestamp));
+            // A wide epoch remembers its first value (`_checkValue` holds the rest to the cap around it);
+            // a fresh-opened one clears any left from an earlier wide epoch, and otherwise writes nothing.
+            _epochFirst = bound > maxDeviationBps && value <= type(uint88).max ? uint88(value) : 0;
         } else if (_anchorValue == 0) {
             _anchorValue = _value; // the first epoch's anchor, materialised before the value moves
         }

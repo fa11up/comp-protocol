@@ -372,21 +372,28 @@ abstract contract SwarmFeedTest is Test {
         assertEq(anchor, 1 ether);
         assertEq(openedAt, block.timestamp);
         assertEq(allowance, cap * feed.STALE_DEVIATION_MULTIPLE());
-        // A move back inside the band is fine.
+        // The epoch opened wide (on a stale value), so it closed behind its first value: a move back to the
+        // anchor is inside the band but more than the cap from `widest`, and is refused; one within the cap
+        // of `widest` is fine (review of cc4103f, 2026-10-07).
         a.figure = 1 ether;
+        sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        feed.submitAttestation(a, sig);
+        uint256 back = widest - widest * cap / 10_000;
+        a.figure = back;
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         // An hour on, the next acceptance opens a new epoch from the current value with the plain cap.
         vm.warp(block.timestamp + 1 hours);
         a = _attestation();
         a.requestId = keccak256("request-4");
-        a.figure = 1 ether + 1 ether * cap / 10_000 + 1;
+        a.figure = back + back * cap / 10_000 + 1;
         sig = _sign(a, SIGNER_KEY);
         vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
         feed.submitAttestation(a, sig);
-        a.figure = 1 ether + 1 ether * cap / 10_000;
+        a.figure = back + back * cap / 10_000;
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         (anchor, openedAt, allowance) = feed.epoch();
-        assertEq(anchor, 1 ether, "the new epoch is anchored where the feed stood, not at the new value");
+        assertEq(anchor, back, "the new epoch is anchored where the feed stood, not at the new value");
         assertEq(openedAt, block.timestamp);
         assertEq(allowance, cap);
     }
@@ -425,8 +432,8 @@ abstract contract SwarmFeedTest is Test {
     /// market move larger than itself. The pinned recipes read the pool and a step has no intermediate
     /// medians, so after a 45% gap every honest attestation was refused for ever and every vault pinned
     /// to the feed halted for good. The allowance now widens by an eighth of the cap for every further
-    /// lifetime stale: the gap becomes a delay of a few lifetimes, and a far re-anchor costs an attacker
-    /// those same lifetimes of silence.
+    /// hour stale (here, with a one-hour feed, every further lifetime): the gap becomes a delay of a few
+    /// hours, and a far re-anchor costs an attacker those same hours of silence.
     function test_theAllowanceWidensWithStalenessSoAGenuineGapIsFollowed() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
@@ -435,7 +442,7 @@ abstract contract SwarmFeedTest is Test {
         uint256 growth = feed.maxDeviationBps() * feed.STALE_GROWTH_OF_CAP_BPS() / 10_000;
         assertGt(growth, 0);
 
-        // Fresh: the cap. One lifetime stale: the stale base. Each further whole lifetime: an eighth more.
+        // Fresh: the cap. One lifetime stale: the stale base. Each further hour: an eighth more.
         assertEq(_allowance(), feed.maxDeviationBps());
         vm.warp(t0 + 1 hours + 1);
         assertEq(_allowance(), stale);
@@ -473,6 +480,44 @@ abstract contract SwarmFeedTest is Test {
         _submit("rally-followed", rally);
         (uint256 value,) = feed.latestValue();
         assertEq(value, rally);
+    }
+
+    /// @dev Review of cc4103f, 2026-10-07: a wide epoch used to keep its stale allowance for a whole
+    /// lifetime after an honest value landed, so the Treasury's refresh of a long-silent feed opened an
+    /// hour in which anyone could re-anchor the price the full allowance from the market. A wide epoch now
+    /// closes behind its first value: the rest of it is held to the cap around that value.
+    function test_anHonestValueClosesAWideEpochBehindIt() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        uint256 cap = feed.maxDeviationBps();
+        vm.warp(block.timestamp + 9 hours + 1); // 2x cap + 8 eighths: three times the cap
+        assertEq(_allowance(), cap * 3);
+        // The honest refresh lands first, at the market.
+        _submit("honest-refresh", 1 ether);
+        (, , uint256 opened) = feed.epoch();
+        assertEq(opened, cap * 3, "the epoch opened wide");
+        // Within the anchor's wide band, but further than the cap from the honest value: refused.
+        vm.warp(block.timestamp + 30 minutes);
+        _expectRefused("pushed", 1 ether + 1 ether * cap * 3 / 10_000);
+        _expectRefused("pushed-just-over", 1 ether + 1 ether * cap / 10_000 + 1);
+        // Within the cap of the honest value: accepted.
+        _submit("within-cap", 1 ether + 1 ether * cap / 10_000);
+        (uint256 value,) = feed.latestValue();
+        assertEq(value, 1 ether + 1 ether * cap / 10_000);
+    }
+
+    /// @dev And whoever lands first after the silence takes the stale allowance, no more: the epoch is
+    /// still bounded from its anchor, and the rest of it from that first value.
+    function test_theFirstValueOfAWideEpochGetsTheAllowanceAndNoMore() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        uint256 cap = feed.maxDeviationBps();
+        vm.warp(block.timestamp + 1 hours + 1);
+        uint256 far = 1 ether + 1 ether * cap * 2 / 10_000;
+        _submit("first-far", far);
+        // A further step within the cap of the first value is still capped by the anchor's band.
+        _expectRefused("beyond-the-band", far + 1);
+        _submit("back-within-cap", far - far * cap / 10_000);
     }
 
     function _allowance() private view returns (uint256 allowance) {

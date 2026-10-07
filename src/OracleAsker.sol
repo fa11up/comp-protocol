@@ -290,11 +290,18 @@ contract OracleAsker {
         return age * 10_000 >= SwarmFeed(feed).maxAge() * STALE_AT_BPS;
     }
 
-    /// @notice True once a feed's allowance has widened with staleness to WIDE_ALLOWANCE_BPS or more, so
-    /// the next accepted value could sit that far from its anchor (or it has no value yet). Such a feed
-    /// may be asked for without arming, whatever its policy: the honest refresh resets the allowance
-    /// before a single purchase could re-anchor the price (final review 2026-10-07).
+    /// @notice True while a feed's value is STALE and its allowance has widened with that staleness to
+    /// WIDE_ALLOWANCE_BPS or more, so the next accepted value could sit that far from its anchor (or it
+    /// has no value yet). Such a feed may be asked for without arming, whatever its policy: the honest
+    /// value lands first and the epoch it opens holds every later value to the cap around it (final
+    /// review 2026-10-07; SwarmFeed._epochFirst).
+    /// @dev Stale, not merely wide: the epoch an honest refresh opens keeps its wide allowance for a
+    /// lifetime, and reading that alone kept this true after the refresh, letting anyone make the
+    /// Treasury pay every ASK_MIN_INTERVAL for the rest of the hour — about fourteen of the fifteen IMD
+    /// a day in a quiet market (review of cc4103f, 2026-10-07). Once a value has landed it is fresh, and
+    /// the feed is not wide open again until it has been silent long enough to be.
     function wideOpen(address feed) public view returns (bool) {
+        if (!SwarmFeed(feed).isStale()) return false;
         (,, uint256 allowance) = SwarmFeed(feed).epoch();
         return allowance >= WIDE_ALLOWANCE_BPS;
     }

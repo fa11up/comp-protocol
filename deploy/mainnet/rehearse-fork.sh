@@ -74,6 +74,9 @@ echo "keeper imdUSD inventory $(c call $STABLE 'balanceOf(address)(uint256)' $A0
 if [ -z "$K" ]; then say "deploy verified; set KEEPER_DIR to rehearse the keeper"; exit 0; fi
 cd $K
 [ -f config.js ] && cp config.js config.js.before-rehearsal
+# The keeper's own-IMD ledger is per UTC day: a second rehearsal the same day would start over budget,
+# and a rehearsal must not leave its spending in a real keeper's ledger. Set aside, restored at the end.
+[ -f state/spend.json ] && mv state/spend.json state/spend.json.before-rehearsal
 cat > config.js <<EOF
 export default {
   API_BASE: "https://api.imd.fun",
@@ -143,4 +146,16 @@ I_IMD1=$(c call $IMD 'balanceOf(address)(uint256)' 0x000000000000000000000000000
 K_IMD5=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
 echo "intake IMD received for the wide-open refresh: $(python3 -c "print(($I_IMD1-$I_IMD0)/1e18)") (expect 1.0: price + spot, paid by the Treasury's asker)   keeper IMD spent: $(python3 -c "print(($K_IMD4-$K_IMD5)/1e18)") (expect 0.0)"
 
+say "the refreshes are delivered (re-dated by storage write: the mock Intake does not deliver); two hours on, past ASK_TIMEOUT, nobody is paid again (review of cc4103f)"
+POOLNOW=$(c call $ASKER "poolPrice()(uint256)")
+seed $PRICE $POOLNOW; seed $SPOT $POOLNOW; seed $NHI 900000000000000000   # at the market, so no fall and no keep-alive is due
+echo "price feed wideOpen after delivery: $(cast call $ASKER 'wideOpen(address)(bool)' $PRICE --rpc-url $RPC)  (expect false: fresh)"
+cast rpc evm_increaseTime 7300 --rpc-url $RPC >/dev/null; cast rpc evm_mine --rpc-url $RPC >/dev/null
+echo "two hours on, price feed wideOpen: $(cast call $ASKER 'wideOpen(address)(bool)' $PRICE --rpc-url $RPC)  (expect false: stale, but its allowance is 42.5%)"
+node watch.mjs --execute | sed 's/^/  /' || true
+I_IMD2=$(c call $IMD 'balanceOf(address)(uint256)' 0x0000000000000000000000000000000000000F06)
+K_IMD6=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
+echo "intake IMD received on the second pass: $(python3 -c "print(($I_IMD2-$I_IMD1)/1e18)") (expect 0.0)   keeper IMD spent: $(python3 -c "print(($K_IMD5-$K_IMD6)/1e18)") (expect 0.0)"
+
 [ -f config.js.before-rehearsal ] && mv config.js.before-rehearsal config.js || rm -f config.js
+[ -f state/spend.json.before-rehearsal ] && mv state/spend.json.before-rehearsal state/spend.json || rm -f state/spend.json

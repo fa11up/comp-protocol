@@ -99,21 +99,59 @@ contract OracleAskerTest is Test {
 
     /// @dev Final review 2026-10-07: the allowance widens with staleness (SwarmFeed), so a feed left
     /// silent long enough would accept a value far from its anchor in one purchase. Once it reads
-    /// WIDE_ALLOWANCE_BPS the Treasury refreshes it whatever its policy, no arming, and the honest value
-    /// resets the allowance to the cap.
+    /// WIDE_ALLOWANCE_BPS the Treasury refreshes it whatever its policy, no arming; the honest value then
+    /// holds the rest of that epoch to the cap around it (test_aDeliveredRefreshClosesWideOpen).
     function test_aFeedWhoseAllowanceHasWidenedIsRefreshedWithoutArming() public {
-        // Two lifetimes (days here) stale: 42.5% of a 2,000 bps cap, under the 6,000 threshold.
-        vm.warp(block.timestamp + 2 days + 1);
+        // A lifetime (a day here) and an hour stale: 42.5% of a 2,000 bps cap, under the 6,000 threshold.
+        // The allowance widens hourly whatever the lifetime (SwarmFeed.STALE_GROWTH_PERIOD).
+        vm.warp(block.timestamp + 1 days + 1 hours + 1);
         assertFalse(asker.wideOpen(address(priceFeed)));
         vm.expectRevert(OracleAsker.NotArmed.selector);
         asker.ask(address(priceFeed), PRICE_BODY);
-        // Nine lifetimes: 40% + 8 x 2.5% = 60%.
-        vm.warp(block.timestamp + 7 days);
+        // Eight hours past the lifetime: 40% + 8 x 2.5% = 60%.
+        vm.warp(block.timestamp + 7 hours);
         assertTrue(asker.wideOpen(address(priceFeed)));
         uint256 before = imd.balanceOf(address(asker));
         bytes32 id = asker.ask(address(priceFeed), PRICE_BODY);
         assertTrue(id != bytes32(0));
         assertEq(before - imd.balanceOf(address(asker)), PRICE, "the Treasury's IMD paid for the refresh");
+    }
+
+    /// @dev Review of cc4103f, 2026-10-07: wideOpen read the stored epoch allowance, which an honest
+    /// refresh keeps wide for a lifetime, so it stayed true after the refresh and anyone could make the
+    /// Treasury pay every ASK_MIN_INTERVAL for the rest of it. Once the refresh lands the feed is fresh
+    /// and not wide open; a second Treasury-paid ask is refused.
+    function test_aDeliveredRefreshClosesWideOpen() public {
+        vm.warp(block.timestamp + 1 days + 8 hours + 1);
+        assertTrue(asker.wideOpen(address(priceFeed)));
+        bytes32 id = asker.ask(address(priceFeed), PRICE_BODY);
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("wide-refresh"), IMD_ETH);
+        assertTrue(intake.complete(id, abi.encode(id, a, _sign(priceFeed, a))));
+        (uint256 value, uint64 at) = priceFeed.latestValue();
+        assertEq(value, IMD_ETH);
+        assertEq(at, block.timestamp, "the honest refresh landed");
+        (,, uint256 allowance) = priceFeed.epoch();
+        assertGe(allowance, 6_000, "its epoch is still wide on paper");
+        assertFalse(asker.wideOpen(address(priceFeed)), "but the feed is fresh, so not wide open");
+        vm.warp(block.timestamp + ASK_MIN_INTERVAL);
+        uint256 before = imd.balanceOf(address(asker));
+        vm.expectRevert(OracleAsker.NotArmed.selector);
+        asker.ask(address(priceFeed), PRICE_BODY);
+        assertEq(imd.balanceOf(address(asker)), before, "the Treasury paid once");
+    }
+
+    /// @dev Review of cc4103f, 2026-10-07: the allowance widened once per LIFETIME, so the one-day NHI
+    /// feed took 120 hours to follow a 50% step, with the vault halted from hour 24. It widens hourly now.
+    function test_aOneDayFeedFollowsAFiftyPercentStepWithinHoursOfGoingStale() public {
+        uint256 t0 = block.timestamp; // healthFeed was seeded at 0.9 in setUp
+        uint256 half = 0.45 ether;
+        vm.warp(t0 + 1 days + 3 hours + 1); // 40% + 3 x 2.5% = 47.5%
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        healthFeed.seed(half);
+        vm.warp(t0 + 1 days + 4 hours + 1); // 50%
+        healthFeed.seed(half);
+        (uint256 value,) = healthFeed.latestValue();
+        assertEq(value, half);
     }
 
     function test_anUnseededFeedReadsWideOpen() public {
@@ -351,7 +389,8 @@ contract OracleAskerTest is Test {
 
     /// @dev A price feed is not kept alive: once stale, the Treasury still pays only for drift.
     function test_aStalePriceFeedIsNotRefreshedWithTreasuryMoney() public {
-        vm.warp(block.timestamp + 2 days);
+        // Stale and near stale, but six hours past its lifetime its allowance (55%) is not yet wide open.
+        vm.warp(block.timestamp + 1 days + 6 hours);
         assertTrue(asker.nearStale(address(priceFeed)));
         vm.expectRevert(OracleAsker.NotArmed.selector);
         asker.ask(address(priceFeed), PRICE_BODY);
