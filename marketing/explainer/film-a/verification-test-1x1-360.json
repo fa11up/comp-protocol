@@ -1,0 +1,71 @@
+{
+ "file": "test/scratch/out/animatic-1x1.mp4",
+ "bytes": 4111313,
+ "width": 360,
+ "height": 360,
+ "video_codec": "h264",
+ "profile": "High",
+ "pix_fmt": "yuv420p",
+ "r_frame_rate": "30/1",
+ "frames_counted": 1200,
+ "frames_pts": 1200,
+ "video_duration": 40.0,
+ "container_duration": 40.0,
+ "audio_codec": "aac",
+ "audio_rate": "48000",
+ "audio_channels": 2,
+ "audio_duration": 40.0,
+ "pts_1094_1097": [
+  36.466667,
+  36.5,
+  36.533333,
+  36.566667
+ ],
+ "mean_rgb": {
+  "1094": [
+   131.2,
+   142.9,
+   143.0
+  ],
+  "1095": [
+   245.0,
+   244.0,
+   237.0
+  ],
+  "1096": [
+   245.0,
+   244.0,
+   237.0
+  ],
+  "1097": [
+   238.0,
+   237.2,
+   231.0
+  ],
+  "1199": [
+   238.0,
+   237.2,
+   231.0
+  ]
+ },
+ "top_level_boxes": [
+  "ftyp",
+  "moov",
+  "free",
+  "mdat"
+ ],
+ "audio_max_dB": "-91.0",
+ "checks": {
+  "h264 yuv420p": true,
+  "aac": true,
+  "30 fps": true,
+  "1200 frames": true,
+  "40.000 s": true,
+  "cut at 36.500 s": true,
+  "flash frames 1095-1096 ivory": true,
+  "frame 1094 is not the flash": true,
+  "end card from 1097 to 1199": true,
+  "faststart (moov before mdat)": true,
+  "silent audio": true
+ }
+}
