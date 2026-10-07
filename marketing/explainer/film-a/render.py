@@ -329,7 +329,7 @@ def main():
         g = (f'[0:v]{sc}[c0];[1:v]{sc}[b];[2:v]{sc}[l];[b]split[b1][b2];'
              "[c0][b1]overlay=0:0:enable='between(t,0.80,0.95)'[c1];"
              "[c1][b2]overlay=0:0:enable='between(t,1.10,1.25)'[c2];"
-             "[c2][l]overlay=0:0:enable='gte(t,1.25)'[v]")
+             "[c2][l]overlay=0:0:enable='gte(t,1.25)',format=gbrp[v]")   # same pixel format as the segments (concat)
         run(['-loop', 1, '-framerate', FPS, '-i', endcard, '-loop', 1, '-framerate', FPS, '-i', blank,
              '-loop', 1, '-framerate', FPS, '-i', live, '-filter_complex', g, '-map', '[v]',
              '-frames:v', NFRAMES - HIT_FRAME - 2, '-c:v', 'ffv1', card])
