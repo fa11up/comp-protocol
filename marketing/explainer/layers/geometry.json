@@ -102,7 +102,14 @@
   },
   "captions": {
     "a1": {
-      "text": "Lock IMD. Borrow dollars.",
+      "text": "Deposit IMD. It is staked as sIMD.",
+      "w": 1920,
+      "h": 154,
+      "font": "500 72px mono",
+      "lineHeight": 93.6
+    },
+    "a1b": {
+      "text": "Borrow dollars against it.",
       "w": 1920,
       "h": 154,
       "font": "500 72px mono",
@@ -123,9 +130,9 @@
       "lineHeight": 93.6
     },
     "a4": {
-      "text": "Fall short, and the swarm collects.",
+      "text": "Fall below the line,\nand keepers liquidate it.",
       "w": 1920,
-      "h": 154,
+      "h": 247,
       "font": "500 72px mono",
       "lineHeight": 93.6
     },

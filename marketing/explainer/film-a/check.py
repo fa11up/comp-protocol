@@ -18,7 +18,7 @@ def probe(path):
 
 def frame_means(path, w, h, idx):
     sel = '+'.join(f'eq(n\\,{i})' for i in idx)
-    raw = sp.check_output([FF, '-v', 'error', '-i', path, '-vf', f'select={sel}', '-vsync', '0',
+    raw = sp.check_output([FF, '-v', 'error', '-i', path, '-vf', f'select={sel}', '-fps_mode', 'passthrough',
                            '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'])
     n = w * h * 3; out = []
     for k in range(len(idx)):

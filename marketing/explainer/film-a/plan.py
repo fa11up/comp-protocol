@@ -130,6 +130,7 @@ def framings(aspect):
             OVAL=fit(*OVAL_C, 1593, .5, .40, ar),            # oval 0.58 H tall, upper frame
             WIDEC=fit(1632, 700, 2160, .5, .42, ar),         # whole note, lifted over the caption
             ROS=(1231, 700, 1385), FULL=(1632, 700, 1400), SEAL=(2033, 700, 1385),
+            STRIP=(905, 1120, 560),                          # the serial strip, close, while the figure types
             ROW=fit(1632, 700, 4050, .5, .25, ar),
             END=(1632, 764, 683 * 9 / 16))                  # the launch cut's end framing
     if aspect == '1x1':
@@ -137,11 +138,13 @@ def framings(aspect):
             WIDE0=(1632, 700, 3627), OVAL=fit(*OVAL_C, 1540, .5, .40, ar),
             WIDEC=fit(1632, 700, 3627, .5, .42, ar),
             ROS=(724, 775, 1250), FULL=(1632, 700, 1400), SEAL=(2540, 775, 1250),
+            STRIP=(905, 950, 900),
             ROW=fit(1632, 700, 4600, .5, .33, ar), END=(1632, 764, 577.5))
     return dict(
         WIDE0=(1632, 700, 6307), OVAL=fit(*OVAL_C, 1682, .5, .42, ar),
         WIDEC=fit(1632, 700, 6307, .5, .42, ar),
         ROS=(724, 700, 1400), FULL=(1632, 700, 1400), SEAL=(2540, 700, 1400),
+        STRIP=(905, 760, 1780),
         ROW=fit(1632, 700, 7600, .5, .36, ar), END=(1632, 764, 1244))
 
 def stage4(aspect):
@@ -167,8 +170,9 @@ def build(aspect, kicker='a5'):
         (0.0, F['WIDE0'], 'linear'), (3.0, F['WIDE0'], 'linear'),
         (4.3, F['OVAL'], 'inOut'), (6.5, F['OVAL'], 'linear'),
         (8.6, F['WIDEC'], 'inOut'), (11.0, F['WIDEC'][:2] + (F['WIDEC'][2] * .972,), 'linear'),
-        (12.0, F['ROS'], 'inOut'), (19.2, F['ROS'][:2] + (F['ROS'][2] * .982,), 'linear'),
-        (20.0, F['FULL'], 'inOut'),
+        (12.0, F['ROS'], 'inOut'), (16.6, F['ROS'][:2] + (F['ROS'][2] * .99,), 'linear'),
+        (17.4, F['STRIP'], 'inOut'), (18.5, F['STRIP'][:2] + (F['STRIP'][2] * .97,), 'linear'),   # follow the medallion along the strip
+        (19.6, F['FULL'], 'inOut'), (20.0, F['FULL'], 'linear'),
         (21.0, F['SEAL'], 'inOut'), (26.8, F['SEAL'][:2] + (F['SEAL'][2] * .98,), 'linear'),
         (28.0, F['WIDEC'], 'inOut'), (28.9, F['WIDEC'], 'linear'),
         (30.0, F['ROW'], 'inOut'), (33.5, F['ROW'][:2] + (F['ROW'][2] * .985,), 'linear'),
@@ -317,7 +321,7 @@ def build(aspect, kicker='a5'):
             band_alpha(name), EYE[2:], rect=(204 + EYE[0], 24 + EYE[1], EYE[2], EYE[3]))
 
     # --- captions (screen space): fade in 0.5 s with a 12 px rise, fade out 0.5 s in place
-    caps = [('a1', 3.8, 10.2, 'ivory'), ('a2', 11.7, 16.4, 'ink'), ('a3', 21.0, 26.3, 'ink'),
+    caps = [('a1', 3.8, 6.5, 'ivory'), ('a1b', 7.0, 10.2, 'ivory'), ('a2', 11.7, 16.4, 'ink'), ('a3', 21.0, 26.3, 'ink'),
             ('a4', 28.3, 31.1, 'ivory'), (kicker, 31.65, 34.35, 'ivory')]
     for cid, t_in, t_out, tone in caps:
         info = GEO['captions'][cid]; lines = info['text'].count('\n') + 1
