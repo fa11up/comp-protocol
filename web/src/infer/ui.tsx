@@ -11,6 +11,8 @@ import {
 } from "viem";
 export { parseAmount } from "./amount";
 import { ThemeToggle } from "../theme";
+import { Vibe } from "../vibe";
+import { INFER_VIBES } from "./vibes";
 import { StagingChip } from "../site";
 import { LAUNCH, LIVE } from "./config";
 import { ERC20, client, message } from "./chain";
@@ -374,6 +376,7 @@ export function Shell({
         <div className="infer-tools">
           {LIVE ? <span className="chip">Mainnet</span> : <StagingChip />}
           <ThemeToggle />
+          <Vibe suite={INFER_VIBES} />
           {wallet.account ? (
             <span className="infer-account" title={wallet.account}>
               {short(wallet.account)}

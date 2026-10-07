@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { ThemeToggle } from "./theme";
+import { Vibe } from "./vibe";
+import { IMDUSD_VIBES } from "./vibe-imdusd";
 
 // The site is three static pages (/, /terminal/, /docs/), so any host serves it with no routing
 // rules. Each page names the site root relative to itself in <meta name="app-root">; every shared
@@ -28,7 +30,7 @@ export function StagingChip() {
 }
 
 type Page = "home" | "terminal" | "docs";
-/** One header for every page: brand, network chip, navigation, theme, and a page-specific end. */
+/** One header for every page: brand, network chip, navigation, theme, background, and a page-specific end. */
 export function SiteHeader({
   page,
   network,
@@ -67,6 +69,7 @@ export function SiteHeader({
       </div>
       <div className="wallet-bar">
         <ThemeToggle />
+        <Vibe suite={IMDUSD_VIBES} />
         {children}
       </div>
     </header>

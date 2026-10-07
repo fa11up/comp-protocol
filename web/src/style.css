@@ -3274,10 +3274,10 @@ button.balance-hint.balance-use:hover {
      the nav takes the second, scrolling sideways if it must. It stays sticky, so it has to be short. */
   .infer-top {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto auto auto;
     grid-template-areas:
-      "mark chip theme wallet"
-      "nav nav nav nav";
+      "mark chip theme vibe wallet"
+      "nav nav nav nav nav";
     align-items: center;
     gap: 4px 10px;
     padding: 8px 16px 0;
@@ -3293,6 +3293,9 @@ button.balance-hint.balance-use:hover {
   }
   .infer-tools .theme-toggle {
     grid-area: theme;
+  }
+  .infer-tools .vibe-toggle {
+    grid-area: vibe;
   }
   .infer-tools .infer-connect,
   .infer-tools .infer-account {
@@ -3526,4 +3529,42 @@ button.balance-hint.balance-use:hover {
 .infer-notfound-nav a {
   color: var(--text);
   padding: 6px 0;
+}
+
+/* The vibe (vibe.tsx): an engraved background fixed behind every page of both sites, and its button
+   beside the theme toggle. The canvas paints the paper itself, so while it shows, the grounds that
+   would be painted over it step aside (the body's, and the INFER sheet's dot grid); where WebGL is
+   unavailable and the canvas is hidden, every page keeps its own ground. */
+body:has(> .vibe-canvas:not([hidden])),
+body:has(> .vibe-canvas:not([hidden])) .infer {
+  background: var(--clear);
+}
+.vibe-canvas[hidden] {
+  display: none;
+}
+/* Full screen, fixed behind the whole page as it scrolls. */
+.vibe-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  pointer-events: none;
+}
+@media (max-width: 760px) {
+  .topbar .vibe-toggle {
+    position: absolute;
+    top: 13px;
+    right: 44px;
+  }
+  /* Room for both buttons beside the first row (wordmark and chip); the nav's row sits below the
+     buttons, so it gives that extra room back rather than widening the brand. */
+  .topbar .brand {
+    padding-inline-end: 96px;
+  }
+  .topbar .brand .site-nav {
+    margin-inline-end: -44px;
+    /* Four links do not fit a 320px phone on one line: let them wrap rather than push the page wide. */
+    flex-wrap: wrap;
+  }
 }
