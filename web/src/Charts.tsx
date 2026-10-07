@@ -139,18 +139,21 @@ export function LoanBook({
   const FLOOR = 100;
   const at = (value: bigint) =>
     Math.max(0, Math.min(100, ((Number(value) - FLOOR) / (maximum - FLOOR)) * 100));
-  const maxDebt = positions.reduce((m, p) => (p.debt > m ? p.debt : m), 1n);
   // A bubble cloud: each circle at its exact ratio, nudged up or down only as far as it must to clear the
-  // others (the height carries no value). Area is debt. If the cloud would outgrow MAX_HEIGHT the dots
-  // shrink and it packs again, but every circle's HIT area stays a 24px target and the plot grows rather
-  // than clip (swarm.ts `pack`).
+  // others (the height carries no value). Area is debt, sized against the MEDIAN loan rather than the
+  // largest: the typical loan is a 20px circle, a tenth of it 7px, ten times it 32px and no more, so one
+  // whale cannot shrink every other loan to a speck, and nothing is under 8px. If the cloud would outgrow
+  // MAX_HEIGHT the dots shrink and it packs again, but every circle's HIT area stays a 24px target and the
+  // plot grows rather than clip (swarm.ts `pack`).
+  const debts = positions.map((p) => Number(p.debt)).sort((a, b) => a - b);
+  const typical = Math.max(1, debts[Math.floor(debts.length / 2)] ?? 1);
   const MAX_HEIGHT = 200;
   const plotWidth = Math.max(1, width);
   const { circles, ys, height } = pack(
     positions.map((p) => ({
       id: p.owner,
       x: (at(p.cr) / 100) * plotWidth,
-      dot: 12 * Math.sqrt(Number(p.debt) / Number(maxDebt)),
+      dot: Math.min(16, Math.max(4, 10 * Math.sqrt(Number(p.debt) / typical))),
     })),
     MAX_HEIGHT,
   );

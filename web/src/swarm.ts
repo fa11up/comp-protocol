@@ -52,15 +52,19 @@ export type Dot = { id: string; x: number; dot: number };
  * with the dot and clipped at the cap, and a dense book at some ratios failed the target-size check.)
  */
 export function pack(dots: Dot[], maxHeight: number, minHeight = 96) {
-  let scale = 1;
-  let circles: (Circle & { dot: number })[] = [];
-  let ys = new Map<string, number>();
-  for (let attempt = 0; attempt < 6; attempt++) {
-    circles = dots.map((d) => ({ id: d.id, x: d.x, dot: d.dot * scale, r: Math.max(d.dot * scale, HIT_RADIUS) }));
-    ys = swarm(circles);
-    if (2 * extent(circles, ys) + HIT_RADIUS <= maxHeight) break;
-    scale *= 0.8;
+  const layout = (scale: number) => {
+    const circles = dots.map((d) => ({ id: d.id, x: d.x, dot: d.dot * scale, r: Math.max(d.dot * scale, HIT_RADIUS) }));
+    const ys = swarm(circles);
+    return { circles, ys, scale, reach: extent(circles, ys) };
+  };
+  let best = layout(1);
+  // Shrink the dots only while it actually lowers the cloud: once the hit floor sets the height, smaller
+  // dots buy nothing and would only make the loans harder to read.
+  for (let attempt = 1; attempt < 6 && 2 * best.reach + HIT_RADIUS > maxHeight; attempt++) {
+    const next = layout(0.8 ** attempt);
+    if (next.reach >= best.reach - 0.5) break;
+    best = next;
   }
-  const height = Math.max(minHeight, Math.ceil(2 * extent(circles, ys) + HIT_RADIUS));
-  return { circles, ys, height, scale };
+  const height = Math.max(minHeight, Math.ceil(2 * best.reach + HIT_RADIUS));
+  return { circles: best.circles, ys: best.ys, height, scale: best.scale };
 }
