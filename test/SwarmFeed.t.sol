@@ -330,8 +330,9 @@ abstract contract SwarmFeedTest is Test {
     }
 
     /// @dev The internal audit's high finding (2026-10-06): a stale feed used to accept ANY value. Now the
-    /// bound widens to STALE_DEVIATION_MULTIPLE x the cap but never lifts, so a large genuine move is
-    /// followed in steps and a manipulated one moves the price at most that far per attestation.
+    /// epoch that opens on a stale value allows STALE_DEVIATION_MULTIPLE x the cap from it, and nothing
+    /// accepted for the next maxAge may leave that band, so a large genuine move is followed one epoch at
+    /// a time and a manipulated one moves the price at most the allowance per hour.
     function test_staleValueReanchorsOnlyWithinTheWidenedBound() public {
         SwarmFeed.OracleAttestation memory a = _attestation();
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
@@ -359,13 +360,65 @@ abstract contract SwarmFeedTest is Test {
         assertEq(updatedAt, block.timestamp);
         assertFalse(feed.isStale());
 
-        // Now fresh: the next step is bounded by the normal cap, not the widened one.
+        // The epoch's allowance is spent: within the hour nothing above `widest` is accepted, not even by
+        // one wei, because the bound is measured from the anchor (1 ether), not from the last value.
         a = _attestation();
         a.requestId = keccak256("request-3");
-        a.figure = widest + widest * cap / 10_000 + 1;
+        a.figure = widest + 1;
         sig = _sign(a, SIGNER_KEY);
         vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
         feed.submitAttestation(a, sig);
+        (uint256 anchor, uint64 openedAt, uint256 allowance) = feed.epoch();
+        assertEq(anchor, 1 ether);
+        assertEq(openedAt, block.timestamp);
+        assertEq(allowance, cap * feed.STALE_DEVIATION_MULTIPLE());
+        // A move back inside the band is fine.
+        a.figure = 1 ether;
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        // An hour on, the next acceptance opens a new epoch from the current value with the plain cap.
+        vm.warp(block.timestamp + 1 hours);
+        a = _attestation();
+        a.requestId = keccak256("request-4");
+        a.figure = 1 ether + 1 ether * cap / 10_000 + 1;
+        sig = _sign(a, SIGNER_KEY);
+        vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+        feed.submitAttestation(a, sig);
+        a.figure = 1 ether + 1 ether * cap / 10_000;
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        (anchor, openedAt, allowance) = feed.epoch();
+        assertEq(anchor, 1 ether, "the new epoch is anchored where the feed stood, not at the new value");
+        assertEq(openedAt, block.timestamp);
+        assertEq(allowance, cap);
+    }
+
+    /// @dev Internal audit 2026-10-06, follow-up: measured against the LAST value, six attestations
+    /// relayed back to back (one relayMany call) walked a 20% cap from 1.0 to 3.48 in one block. Against
+    /// the anchor, the second one is refused: an hour moves the price by the allowance and no more,
+    /// however many attestations are bought.
+    function test_chainedAttestationsCannotWalkPastTheEpochBound() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        uint256 cap = feed.maxDeviationBps();
+        vm.warp(block.timestamp + 1 hours + 1);
+        assertTrue(feed.isStale());
+
+        uint256 value = 1 ether + 1 ether * cap * feed.STALE_DEVIATION_MULTIPLE() / 10_000;
+        a = _attestation();
+        a.requestId = keccak256("chain-1");
+        a.figure = value;
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        // Every further step in the same block, each within the cap of the LAST value, is refused.
+        for (uint256 i = 2; i <= 6; ++i) {
+            value += value * cap / 10_000;
+            a = _attestation();
+            a.requestId = keccak256(abi.encode("chain", i));
+            a.figure = value;
+            bytes memory sig = _sign(a, SIGNER_KEY);
+            vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
+            feed.submitAttestation(a, sig);
+        }
+        (uint256 got,) = feed.latestValue();
+        assertEq(got, 1 ether + 1 ether * cap * feed.STALE_DEVIATION_MULTIPLE() / 10_000);
     }
 
     function test_attestationRejectsOlderIssueTimeWithoutConsumingRequest() public {

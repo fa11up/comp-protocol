@@ -63,8 +63,11 @@ contract RelayBundlingTest is Test {
     /// position becomes liquidatable immediately instead of after a six-hour wait.
     function _makeLiquidatable() private {
         // Walked in two steps: 0.9 straight to 0.6 is a 33% move and the feed's own deviation bound
-        // is 20%, which is exactly the constraint that forced us to walk the live Sepolia feeds.
+        // is 20%, which is exactly the constraint that forced us to walk the live Sepolia feeds. Since
+        // the bound became per epoch (internal audit 2026-10-06), the second step needs the next epoch:
+        // one maxAge on, which leaves the three feeds exactly at, not past, their lifetime.
         _report(nhiFeed, 0.74 ether);
+        vm.warp(block.timestamp + 1 days);
         _report(nhiFeed, 0.6 ether);
     }
 
@@ -170,6 +173,7 @@ contract RelayBundlingTest is Test {
     /// for a liquidation priced off a feed that did not update.
     function test_aRefusedAttestationRevertsTheWholeBundle() public {
         _makeLiquidatable();
+        uint256 debtBefore = vault.debtOf(BORROWER); // fees accrue over the walk, so compare, do not pin
         _mark(MARKER);
         uint256 debt = 10 ether;
         _fundKeeper(KEEPER, debt);
@@ -187,7 +191,7 @@ contract RelayBundlingTest is Test {
         assertEq(comp.balanceOf(KEEPER), debt, "the keeper's stablecoin never left");
         assertEq(comp.balanceOf(address(relay)), 0);
         assertEq(imd.balanceOf(address(relay)), 0);
-        assertEq(vault.debtOf(BORROWER), 550 ether, "and the position is untouched");
+        assertEq(vault.debtOf(BORROWER), debtBefore, "and the position is untouched");
     }
 
     /// @dev A donation cannot be stolen by the next liquidator and cannot brick the function for
