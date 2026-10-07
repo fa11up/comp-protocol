@@ -234,7 +234,10 @@ contract OracleAsker {
         private
         returns (bytes32 requestId)
     {
-        if (f.inFlight != bytes32(0)) delete feedOf[f.inFlight]; // a timed-out request no longer counts
+        // A timed-out request keeps its feedOf entry: the Intake may still deliver it, and that paid answer
+        // is relayed like any other (the feed refuses it itself if its window no longer advances). Deleting
+        // the entry here made the late delivery revert UnknownRequest and the answer was lost (second-half
+        // review 2026-10-07, low). The in-flight slot below is what a superseded request no longer holds.
         f.inFlightAt = uint64(block.timestamp);
         payToken.forceApprove(INTAKE, price);
         requestId = IIntake(INTAKE).request(
@@ -258,7 +261,9 @@ contract OracleAsker {
         if (feed == address(0)) revert UnknownRequest(requestId);
         delete feedOf[requestId];
         Feed storage f = feeds[feed];
-        if (f.inFlight == requestId) {
+        // The live request, or one that timed out and was replaced; the latter clears nothing.
+        bool live = f.inFlight == requestId;
+        if (live) {
             f.inFlight = bytes32(0);
             f.inFlightAt = 0;
         }
@@ -274,8 +279,9 @@ contract OracleAsker {
             // ten minutes later, and again, until the day's budget is gone: the next Treasury-paid ask for
             // this feed waits the full ASK_TIMEOUT. Written into lastAsk, which shares the storage slot
             // cleared just above, so the refusal path costs no extra slot. askPaid is unaffected: its
-            // caller pays.
-            f.lastAsk = uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL);
+            // caller pays. A superseded request's refusal says nothing about the feed's state now (its
+            // window has been overtaken), so it does not hold the Treasury back.
+            if (live) f.lastAsk = uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL);
         }
         emit Delivered(feed, requestId, relayed);
     }
@@ -290,20 +296,25 @@ contract OracleAsker {
         return age * 10_000 >= SwarmFeed(feed).maxAge() * STALE_AT_BPS;
     }
 
-    /// @notice True while a feed's value is STALE and its allowance has widened with that staleness to
-    /// WIDE_ALLOWANCE_BPS or more, so the next accepted value could sit that far from its anchor (or it
-    /// has no value yet). Such a feed may be asked for without arming, whatever its policy: the honest
-    /// value lands first and the epoch it opens holds every later value to the cap around it (final
-    /// review 2026-10-07; SwarmFeed._epochFirst).
-    /// @dev Stale, not merely wide: the epoch an honest refresh opens keeps its wide allowance for a
-    /// lifetime, and reading that alone kept this true after the refresh, letting anyone make the
-    /// Treasury pay every ASK_MIN_INTERVAL for the rest of the hour — about fourteen of the fifteen IMD
-    /// a day in a quiet market (review of cc4103f, 2026-10-07). Once a value has landed it is fresh, and
-    /// the feed is not wide open again until it has been silent long enough to be.
+    /// @notice True while a feed has been silent for a whole lifetime — its value stale and no epoch
+    /// live — and its allowance has widened with that silence to WIDE_ALLOWANCE_BPS or more, so the next
+    /// accepted value could sit that far from its anchor (or it has no value yet). Such a feed may be
+    /// asked for without arming, whatever its policy: the honest value lands first and the epoch it opens
+    /// holds every later value to the cap around it (final review 2026-10-07; SwarmFeed._epochFirst).
+    /// @dev Silent, not merely wide, and not merely stale. The epoch an honest refresh opens keeps its
+    /// wide allowance for a lifetime, and reading that alone kept this true after the refresh, letting
+    /// anyone make the Treasury pay every ASK_MIN_INTERVAL for the rest of the hour (review of cc4103f,
+    /// 2026-10-07). Staleness alone was not enough either: it runs from the attestation's signed issuedAt,
+    /// the epoch from the block it was relayed in, so inside the refresh's own epoch the value could read
+    /// stale while the wide bound still stood, and the Treasury paid once more per silence (second-half
+    /// review, docs/AUDIT-FINAL-2-2026-10-07.md, low). `epoch()` reports openedAt == block.timestamp
+    /// exactly when no stored epoch is live, which is what "silent for a lifetime" means on chain; an
+    /// unseeded feed reads that way too.
     function wideOpen(address feed) public view returns (bool) {
-        if (!SwarmFeed(feed).isStale()) return false;
-        (,, uint256 allowance) = SwarmFeed(feed).epoch();
-        return allowance >= WIDE_ALLOWANCE_BPS;
+        SwarmFeed f = SwarmFeed(feed);
+        if (!f.isStale()) return false;
+        (, uint64 openedAt, uint256 allowance) = f.epoch();
+        return openedAt == block.timestamp && allowance >= WIDE_ALLOWANCE_BPS;
     }
 
     /// @notice How far IMD's v4 pool sits from the feed, in basis points of the feed's value. Zero when

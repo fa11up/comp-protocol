@@ -336,6 +336,18 @@ deploy.** Deploy, verify, and only then announce.
    pay. Once revenue lands (launch-pool fees in IMD arrive through `handOffLaunchFees`; liquidation
    cuts in sIMD) the Treasury takes over and the fallback can be switched off. An unattended protocol
    with live positions and no liquidator accumulates bad debt.
+
+   **Two things that path needs (second-half review 2026-10-07, low).** (a) A refused answer still
+   costs the full price (`askPaid` pulls it before the request), and NHI carries the same 20% cap as
+   the price feeds against a one-day epoch: if the live index has moved more than the feed's allowance
+   from its anchor, every purchase before the allowance widens (25 hours after the last value for 40%)
+   is refused and charged, and four of them are the keeper's whole day. The keeper therefore reads the
+   live index (`api.imd.fun/swarm`, the NHI body's own formula) against `NhiFeed.epoch()` before every
+   NHI purchase and waits, saying how long, rather than buying an answer the feed will refuse; it holds
+   its budget for the first purchase that lands. (b) Transfer IMD straight to `ORACLE_ASKER` right
+   after the deploy (one day's budget, `ORACLE_BUDGET_PER_DAY` = 15 IMD, is a reasonable seed), so the
+   Treasury-paid path is not dead on day one and the keeper's own IMD is the second line, not the only
+   one. `fundOracle` tops the asker up only to the budget, so prefunding it is harmless.
 5. **Only then** open deposits.
 
 ---
@@ -356,6 +368,13 @@ no agent's tasks are spent for nothing). Turning it on later is a governance act
 2. ~~The deferred audit finding needs code.~~ **DONE.** D1's lagged capital is built (`laggedNow`,
    `BACKING_WARMUP`): the redemption cap reads it at every wage, `backedDebt` once the wage is nonzero.
    Nothing about minting from work needs a new vault.
+3. **The work oracle can be replaced only until the first mint, with what ships.** Once anything has
+   been minted from work, `Parameters.proposeWorkOracle` requires the successor to answer
+   `predecessor()` with the current oracle, and `SwarmWorkOracle` has no such function, so no oracle
+   the shipped code can create qualifies (second-half review 2026-10-07, info). Replacing it after the
+   first mint means a new contract type that carries the old tallies, then a 48-hour proposal; before
+   the first mint, a fresh `SwarmWorkOracle` from `WorkOracleFactory.create` is proposable, and
+   `address(0)` (back to the vault's own) is too.
 
 ## 8. Open decisions this runbook does not make
 

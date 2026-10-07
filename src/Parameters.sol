@@ -242,7 +242,11 @@ contract Parameters is Governed {
     /// current oracle as its `predecessor`, so it can start from the tallies already credited instead of
     /// crediting them a second time; before that, there is nothing to carry over.
     /// @dev Adds no trust: a governor who could mint through a hostile oracle can already raise the wage.
-    /// The 48-hour delay applies like every other change.
+    /// The 48-hour delay applies like every other change. `SwarmWorkOracle` answers no `predecessor()`,
+    /// so once anything has been minted the successor has to be a new contract type that does (and that
+    /// carries the old tallies): until one exists the oracle cannot be replaced after the first mint,
+    /// which is the documented position, not an accident (second-half review 2026-10-07, info). Before
+    /// the first mint a fresh `SwarmWorkOracle` (through `WorkOracleFactory.create`) qualifies.
     function proposeWorkOracle(address next) external {
         _propose(abi.encode(Change.WorkOracle, next));
     }

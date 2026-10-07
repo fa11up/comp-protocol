@@ -124,7 +124,7 @@ abstract contract SwarmFeedTest is Test {
         assertTrue(feed.usedRequests(a.requestId));
         assertFalse(feed.isStale());
 
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.warp(block.timestamp + 2 hours + 1); // a whole hour stale: the stale base applies
         a = _attestation();
         a.requestId = keccak256("request-2");
         a.figure = 1.2 ether; // inside the stale bound: 2 x the 10% cap
@@ -337,7 +337,7 @@ abstract contract SwarmFeedTest is Test {
         SwarmFeed.OracleAttestation memory a = _attestation();
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         uint256 cap = feed.maxDeviationBps();
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.warp(block.timestamp + 2 hours + 1); // stale for a whole hour, so the widened bound applies
         assertTrue(feed.isStale());
 
         a = _attestation();
@@ -406,7 +406,7 @@ abstract contract SwarmFeedTest is Test {
         SwarmFeed.OracleAttestation memory a = _attestation();
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         uint256 cap = feed.maxDeviationBps();
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.warp(block.timestamp + 2 hours + 1);
         assertTrue(feed.isStale());
 
         uint256 value = 1 ether + 1 ether * cap * feed.STALE_DEVIATION_MULTIPLE() / 10_000;
@@ -442,24 +442,28 @@ abstract contract SwarmFeedTest is Test {
         uint256 growth = feed.maxDeviationBps() * feed.STALE_GROWTH_OF_CAP_BPS() / 10_000;
         assertGt(growth, 0);
 
-        // Fresh: the cap. One lifetime stale: the stale base. Each further hour: an eighth more.
+        // Fresh: the cap. Stale for less than a whole hour: still the cap (the stale base is earned by a
+        // whole hour of silence past the lifetime, second-half review). Then the stale base, and an
+        // eighth more for each further hour.
         assertEq(_allowance(), feed.maxDeviationBps());
         vm.warp(t0 + 1 hours + 1);
+        assertEq(_allowance(), feed.maxDeviationBps());
+        vm.warp(t0 + 2 hours + 1);
         assertEq(_allowance(), stale);
-        vm.warp(t0 + 3 hours + 1);
+        vm.warp(t0 + 4 hours + 1);
         assertEq(_allowance(), stale + 2 * growth);
 
-        // The market gapped down by exactly the three-lifetime allowance. At one and two lifetimes the
-        // honest figure is refused; at three it is accepted, and the feed reads the market again.
+        // The market gapped down by exactly the four-hour allowance. Through three hours of silence the
+        // honest figure is refused; at four it is accepted, and the feed reads the market again.
         uint256 honest = 1 ether - 1 ether * (stale + 2 * growth) / 10_000;
-        vm.warp(t0 + 1 hours + 1);
-        _expectRefused("gap-1", honest);
         vm.warp(t0 + 2 hours + 1);
-        _expectRefused("gap-2", honest);
+        _expectRefused("gap-1", honest);
         vm.warp(t0 + 3 hours + 1);
+        _expectRefused("gap-2", honest);
+        vm.warp(t0 + 4 hours + 1);
         _submit("gap-followed", honest);
         (uint256 value,) = feed.latestValue();
-        assertEq(value, honest, "the feed follows the market after three lifetimes");
+        assertEq(value, honest, "the feed follows the market after four hours of silence");
         // The epoch it opened carries that widened allowance from the OLD value, and nothing beyond it.
         (uint256 anchor,, uint256 opened) = feed.epoch();
         assertEq(anchor, 1 ether);
@@ -472,11 +476,11 @@ abstract contract SwarmFeedTest is Test {
         uint256 t0 = block.timestamp;
         uint256 stale = feed.maxDeviationBps() * feed.STALE_DEVIATION_MULTIPLE();
         uint256 growth = feed.maxDeviationBps() * feed.STALE_GROWTH_OF_CAP_BPS() / 10_000;
-        // Five lifetimes of silence buy a four-eighths-wider allowance; four do not.
+        // Six hours of silence buy a four-eighths-wider allowance; five do not.
         uint256 rally = 1 ether + 1 ether * (stale + 4 * growth) / 10_000;
-        vm.warp(t0 + 4 hours + 1);
-        _expectRefused("rally-early", rally);
         vm.warp(t0 + 5 hours + 1);
+        _expectRefused("rally-early", rally);
+        vm.warp(t0 + 6 hours + 1);
         _submit("rally-followed", rally);
         (uint256 value,) = feed.latestValue();
         assertEq(value, rally);
@@ -490,7 +494,7 @@ abstract contract SwarmFeedTest is Test {
         SwarmFeed.OracleAttestation memory a = _attestation();
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         uint256 cap = feed.maxDeviationBps();
-        vm.warp(block.timestamp + 9 hours + 1); // 2x cap + 8 eighths: three times the cap
+        vm.warp(block.timestamp + 10 hours + 1); // 2x cap + 8 eighths: three times the cap
         assertEq(_allowance(), cap * 3);
         // The honest refresh lands first, at the market.
         _submit("honest-refresh", 1 ether);
@@ -512,12 +516,38 @@ abstract contract SwarmFeedTest is Test {
         SwarmFeed.OracleAttestation memory a = _attestation();
         feed.submitAttestation(a, _sign(a, SIGNER_KEY));
         uint256 cap = feed.maxDeviationBps();
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.warp(block.timestamp + 2 hours + 1);
         uint256 far = 1 ether + 1 ether * cap * 2 / 10_000;
         _submit("first-far", far);
         // A further step within the cap of the first value is still capped by the anchor's band.
         _expectRefused("beyond-the-band", far + 1);
         _submit("back-within-cap", far - far * cap / 10_000);
+    }
+
+    /// @dev Second-half review 2026-10-07, medium. The stale base used to apply one second past the
+    /// lifetime, so a buyer relaying one step an hour and a second after the last opened every epoch on
+    /// a stale anchor and compounded at 2x the cap per hour (3.84x in three hours at the launch cap). The
+    /// stale base is now earned by a whole hour of silence past the lifetime: an hour and a second after
+    /// the last value the allowance is still the cap, so a run of steps compounds at the cap per hour.
+    function test_relayingAnHourApartNeverEarnsTheStaleBase() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        uint256 cap = feed.maxDeviationBps();
+        uint256 value = 1 ether;
+        for (uint256 i = 1; i <= 6; ++i) {
+            vm.warp(block.timestamp + 1 hours + 1);
+            assertTrue(feed.isStale(), "stale by a second");
+            assertEq(_allowance(), cap, "but the allowance is still the cap");
+            _expectRefused(keccak256(abi.encode("over", i)), value + value * cap / 10_000 + 1);
+            value += value * cap / 10_000;
+            _submit(keccak256(abi.encode("step", i)), value);
+        }
+        (uint256 got,) = feed.latestValue();
+        assertEq(got, value, "six hourly steps: 1.1^6 at this cap, not 1.2^6");
+        // Two hours and a second after the last step the stale base is earned, and the walk may take it:
+        // 2x the cap over two hours, which is still no faster than the cap per hour.
+        vm.warp(block.timestamp + 2 hours + 1);
+        assertEq(_allowance(), cap * feed.STALE_DEVIATION_MULTIPLE());
     }
 
     function _allowance() private view returns (uint256 allowance) {

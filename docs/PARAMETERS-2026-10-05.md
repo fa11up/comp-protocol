@@ -40,9 +40,9 @@ that would cost about $37,000 a year per feed; at a ten-minute lifetime it would
   (`keepAlive`).
 - **Treasury, when a feed's allowance has widened.** A feed's allowance grows the longer it is stale
   (below). Once it reaches `WIDE_ALLOWANCE_BPS` (60%), the Treasury refreshes the feed whatever its
-  policy, once, while it is stale: the honest value lands first and closes the epoch behind it, so a
-  single purchase cannot then re-anchor the price far from the market. Only a price feed silent for
-  nine hours (NHI: 32) triggers it.
+  policy, once, while it has been silent a whole lifetime: the honest value lands first and closes the
+  epoch behind it, so a single purchase cannot then re-anchor the price far from the market. Only a
+  price feed silent for ten hours (NHI: 33) triggers it.
 - **Anyone, with their own IMD.** `OracleAsker.askPaid(feed, body, maxPrice)` buys an update for any
   feed at any time, with no need check, because no protocol money is spent. A borrower who finds the
   price stale pays about $4.25 instead of waiting.
@@ -182,45 +182,62 @@ rung; one ramp-and-hold does it in a single round trip — push the pool 20% a b
 3.48x for 150 blocks (about 30 minutes), and six windows ending one block apart have their CENTRE sample,
 which is the median, at each rung. About $39k of pool fees against $300k–$500k of gain at the $1M line,
 with only the attacker's exposure to holders selling into a 3.5x pump standing in the way (medium). The
-per-epoch bound makes that walk 40% per hour, so 3.48x takes five hours of visible manipulation.
+per-epoch bound slows that walk to one step an hour. (3) The second-half review
+(`docs/AUDIT-FINAL-2-2026-10-07.md`, medium) then showed the step was 40%, not 20%: with the stale base
+applying one second past the lifetime, a buyer relaying each step an hour and a second after the last
+opened every epoch on a stale anchor and compounded at 1.4 an hour, 3.84x in three hours. The stale base is
+now earned by a whole hour of silence past the lifetime (`_allowanceNow`), so a feed anyone keeps alive
+moves at most the cap, 20%, per hour.
 
 **What ships (`SwarmFeed`).** Every value accepted within one lifetime of an epoch's start must lie
 within the epoch's allowance of the ANCHOR, the value the feed held when the epoch opened. The allowance
-is the cap (20%) when that value was fresh; once it is stale, twice the cap, widening by an eighth of the
-cap for every further HOUR of silence (`STALE_GROWTH_PERIOD`, whatever the feed's lifetime): for the
-one-hour price feeds 40% after one hour, 45% after three, 50% after five, 60% after nine, 100% after
-twenty-five, capped at 100x; for the one-day NHI feed the same steps a day later (40% at 24 hours, 50% at
-28). A genuine gap is therefore a delay of a few hours, not a halt; a far re-anchor costs an attacker those
-same hours of silence. An epoch opened that wide closes behind its first value: every later value in it
-must also sit within the cap of that first one (`_epochFirst`), so whoever lands first after a silence
-gets the stale allowance and nobody after them does.
+is the cap (20%) when that value was fresh and through the first hour it is stale; after a whole hour
+of staleness, twice the cap, widening by an eighth of the cap for every further HOUR of silence
+(`STALE_GROWTH_PERIOD`, whatever the feed's lifetime): for the one-hour price feeds 20% through the
+second hour of silence, 40% after two hours, 45% after four, 50% after six, 60% after ten, 100% after
+twenty-six, capped at 100x; for the one-day NHI feed the same steps a day later (40% at 25 hours, 50% at
+29, 60% at 33). A genuine gap is therefore a delay of a few hours, not a halt; a far re-anchor costs an
+attacker those same hours of silence. An epoch opened that wide closes behind its first value: every
+later value in it must also sit within the cap of that first one (`_epochFirst`), so whoever lands first
+after a silence gets the stale allowance and nobody after them does.
 
-What the delay costs (review of cc4103f, 2026-10-07). While a feed cannot follow, it goes stale and the
-vault refuses price actions, liquidations included. Hours from the feed's last accepted value until a
-value at the new level is accepted:
+**The walk, at the committed constants.** A run of steps compounds at the cap per hour after the first
+step, whose size is whatever the silence before it bought: from a fresh feed 1.2 an hour (2x in four
+steps, three hours; 3.48x in seven, six hours); from a feed two hours silent 1.4 then 1.2 an hour (3.48x
+in six steps, five hours); from a feed ten hours silent the first step is 60%, racing the Treasury's
+refresh, and then 1.2 an hour. Each hour of it is a pool held at the rung for the whole hour (one
+ramp-and-hold round trip, about $40k in fees to 3.48x) with the attacker's position exposed to every
+holder selling into it. `test_relayingAnHourApartNeverEarnsTheStaleBase` pins the rate.
+
+What the delay costs (review of cc4103f, 2026-10-07; one hour longer since the second-half review, the
+price of the rate above). While a feed cannot follow, it goes stale and the vault refuses price actions,
+liquidations included. Hours from the feed's last accepted value until a value at the new level is
+accepted:
 
 | Move the market makes in one step | Price/spot feeds (1-hour life) | NHI (1-day life) |
 |---|---|---|
 | up to 20% | at once (fresh cap) | at once |
-| 40% | 1 | 24 |
-| 45% fall | 3 | 26 |
-| 50% | 5 | 28 |
-| 70% fall | 13 | 36 |
-| 100% rise | 25 | 48 |
+| 40% | 2 | 25 |
+| 45% fall | 4 | 27 |
+| 50% | 6 | 29 |
+| 70% fall | 14 | 37 |
+| 100% rise | 26 | 49 |
 
 During a crash larger than 40% that is hours with no liquidation, so the positions it reaches are
 liquidated late and some bad debt is the price of not accepting a single far value at once. That is the
 trade this bound makes on purpose: a halt for good was the alternative, an instant re-anchor the attack.
 
-**And the refresh that closes the silence (`OracleAsker`).** Once a STALE feed's allowance reaches
-`WIDE_ALLOWANCE_BPS` (60%, nine silent hours for a price feed), the Treasury refreshes it whatever its
-trigger policy, so no accepted value can sit more than 60% from the anchor — below the 1.7x (`mat`) at
-which a single-shot re-anchor would pay — and once the honest value lands, the rest of that epoch is held
-to the cap around it. `wideOpen` requires the value to be stale, so the refresh is bought once: reading
-the epoch's stored allowance alone kept it true for the hour after the refresh and let anyone make the
-Treasury pay every ten minutes, about 14 of the 15 IMD a day in a quiet market (review of cc4103f). In a
-dead market that is at most about two and a half refreshes per price feed per day; in a moving one the
-fall trigger refreshes first and it never fires. The keeper does the same for the primary
+**And the refresh that closes the silence (`OracleAsker`).** Once a feed silent for a whole lifetime
+has an allowance of `WIDE_ALLOWANCE_BPS` (60%, ten silent hours for a price feed, 33 for NHI), the
+Treasury refreshes it whatever its trigger policy, so no accepted value can sit more than 60% from the
+anchor — below the 1.7x (`mat`) at which a single-shot re-anchor would pay — and once the honest value
+lands, the rest of that epoch is held to the cap around it. `wideOpen` requires the value to be stale
+AND no epoch to be live, so the refresh is bought once per silence: reading the epoch's stored allowance
+alone kept it true for the hour after the refresh and let anyone make the Treasury pay every ten minutes,
+about 14 of the 15 IMD a day in a quiet market (review of cc4103f); staleness alone, which runs from the
+signed issue time rather than the relay, reopened it for the gap between the two, one more purchase per
+silence (second-half review, low). In a dead market that is at most about two refreshes per price feed
+per day; in a moving one the fall trigger refreshes first and it never fires. The keeper does the same for the primary
 with its own IMD while the Treasury cannot pay.
 
 **Revisit rule, restated.** Raising `line` no longer changes the walk's speed, only its prize; the hold

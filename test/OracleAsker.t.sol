@@ -102,14 +102,14 @@ contract OracleAskerTest is Test {
     /// WIDE_ALLOWANCE_BPS the Treasury refreshes it whatever its policy, no arming; the honest value then
     /// holds the rest of that epoch to the cap around it (test_aDeliveredRefreshClosesWideOpen).
     function test_aFeedWhoseAllowanceHasWidenedIsRefreshedWithoutArming() public {
-        // A lifetime (a day here) and an hour stale: 42.5% of a 2,000 bps cap, under the 6,000 threshold.
+        // A lifetime (a day here) and an hour stale: 40% of a 2,000 bps cap, under the 6,000 threshold.
         // The allowance widens hourly whatever the lifetime (SwarmFeed.STALE_GROWTH_PERIOD).
         vm.warp(block.timestamp + 1 days + 1 hours + 1);
         assertFalse(asker.wideOpen(address(priceFeed)));
         vm.expectRevert(OracleAsker.NotArmed.selector);
         asker.ask(address(priceFeed), PRICE_BODY);
-        // Eight hours past the lifetime: 40% + 8 x 2.5% = 60%.
-        vm.warp(block.timestamp + 7 hours);
+        // Nine whole hours past the lifetime: 40% + 8 x 2.5% = 60%.
+        vm.warp(block.timestamp + 8 hours);
         assertTrue(asker.wideOpen(address(priceFeed)));
         uint256 before = imd.balanceOf(address(asker));
         bytes32 id = asker.ask(address(priceFeed), PRICE_BODY);
@@ -122,7 +122,7 @@ contract OracleAskerTest is Test {
     /// Treasury pay every ASK_MIN_INTERVAL for the rest of it. Once the refresh lands the feed is fresh
     /// and not wide open; a second Treasury-paid ask is refused.
     function test_aDeliveredRefreshClosesWideOpen() public {
-        vm.warp(block.timestamp + 1 days + 8 hours + 1);
+        vm.warp(block.timestamp + 1 days + 9 hours + 1);
         assertTrue(asker.wideOpen(address(priceFeed)));
         bytes32 id = asker.ask(address(priceFeed), PRICE_BODY);
         SwarmFeed.OracleAttestation memory a = _attestation(keccak256("wide-refresh"), IMD_ETH);
@@ -145,10 +145,10 @@ contract OracleAskerTest is Test {
     function test_aOneDayFeedFollowsAFiftyPercentStepWithinHoursOfGoingStale() public {
         uint256 t0 = block.timestamp; // healthFeed was seeded at 0.9 in setUp
         uint256 half = 0.45 ether;
-        vm.warp(t0 + 1 days + 3 hours + 1); // 40% + 3 x 2.5% = 47.5%
+        vm.warp(t0 + 1 days + 4 hours + 1); // 40% + 3 x 2.5% = 47.5%
         vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
         healthFeed.seed(half);
-        vm.warp(t0 + 1 days + 4 hours + 1); // 50%
+        vm.warp(t0 + 1 days + 5 hours + 1); // 50%
         healthFeed.seed(half);
         (uint256 value,) = healthFeed.latestValue();
         assertEq(value, half);
@@ -236,7 +236,71 @@ contract OracleAskerTest is Test {
         // Undelivered past its timeout, the slot frees; the interval has long passed.
         vm.warp(block.timestamp + ASK_TIMEOUT);
         asker.ask(address(healthFeed), HEALTH_BODY);
-        assertEq(asker.feedOf(first), address(0), "the timed-out request no longer counts");
+        assertEq(asker.feedOf(first), address(healthFeed), "the timed-out request keeps its entry: a late delivery still lands");
+    }
+
+    /// @dev Second-half review 2026-10-07, low. A request that timed out and was replaced had its feedOf
+    /// deleted, so the Intake's late delivery of it reverted UnknownRequest and the paid answer was lost.
+    function test_aTimedOutRequestsLateDeliveryStillLands() public {
+        address payer = address(0xB0B);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(payer, 1 ether);
+        vm.startPrank(payer);
+        imd.approve(address(asker), PRICE * 2);
+        bytes32 r1 = asker.askPaid(address(priceFeed), PRICE_BODY, PRICE);
+        vm.warp(block.timestamp + ASK_TIMEOUT);
+        bytes32 r2 = asker.askPaid(address(priceFeed), PRICE_BODY, PRICE);
+        vm.stopPrank();
+        SwarmFeed.OracleAttestation memory a = _attestation(r1, IMD_ETH * 101 / 100);
+        assertTrue(intake.complete(r1, abi.encode(r1, a, _sign(priceFeed, a))), "the late callback completes");
+        (uint256 value,) = priceFeed.latestValue();
+        assertEq(value, IMD_ETH * 101 / 100, "and the paid answer landed");
+        (,,,,,, bytes32 inFlight) = asker.feeds(address(priceFeed));
+        assertEq(inFlight, r2, "the live request is untouched");
+        assertEq(asker.feedOf(r1), address(0), "and the delivered one is forgotten");
+    }
+
+    /// @dev And a superseded request's REFUSED delivery does not back the Treasury off: it says nothing
+    /// about the feed now.
+    function test_aSupersededRefusalDoesNotHoldTheTreasuryBack() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 r1 = asker.ask(address(healthFeed), HEALTH_BODY);
+        vm.warp(block.timestamp + ASK_TIMEOUT);
+        asker.ask(address(healthFeed), HEALTH_BODY);
+        uint64 askedAt = uint64(block.timestamp);
+        assertTrue(intake.complete(r1, abi.encode(r1, _attestation(r1, 0.9 ether), hex"00")), "refused, not reverted");
+        (,,, uint64 lastAsk,,,) = asker.feeds(address(healthFeed));
+        assertEq(lastAsk, askedAt, "no back-off written for a superseded request");
+    }
+
+    /// @dev Second-half review 2026-10-07, low. Staleness runs from the attestation's signed issuedAt,
+    /// the epoch from the block it was relayed in, so inside the epoch an honest refresh opened the value
+    /// went stale before the epoch expired and wideOpen read true again: one more Treasury purchase per
+    /// silence, up to a whole lifetime of it for an answer relayed by hand an hour after it was signed.
+    /// wideOpen now also requires that no epoch is live.
+    function test_wideOpenStaysClosedInsideTheRefreshsEpochWhateverTheIssuedAt() public {
+        vm.warp(block.timestamp + 1 days + 9 hours + 1);
+        bytes32 id = asker.ask(address(priceFeed), PRICE_BODY);
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("late-signed"), IMD_ETH);
+        a.issuedAt = uint64(block.timestamp - 5 minutes);
+        assertTrue(intake.complete(id, abi.encode(id, a, _sign(priceFeed, a))));
+        (, uint64 at) = priceFeed.latestValue();
+        assertEq(at, block.timestamp - 5 minutes);
+        // The value goes stale five minutes before the epoch it opened runs out.
+        vm.warp(block.timestamp + 1 days - 5 minutes + 1);
+        assertTrue(priceFeed.isStale());
+        (, uint64 openedAt, uint256 allowance) = priceFeed.epoch();
+        assertLt(openedAt, block.timestamp, "the wide epoch is still live");
+        assertGe(allowance, 6_000);
+        assertFalse(asker.wideOpen(address(priceFeed)), "not wide open while the epoch is live");
+        vm.expectRevert(OracleAsker.NotArmed.selector);
+        asker.ask(address(priceFeed), PRICE_BODY);
+        // Once the epoch has run out the silence counts from the refresh: the allowance is the cap again.
+        vm.warp(block.timestamp + 5 minutes);
+        (, openedAt, allowance) = priceFeed.epoch();
+        assertEq(openedAt, block.timestamp);
+        assertEq(allowance, priceFeed.maxDeviationBps());
+        assertFalse(asker.wideOpen(address(priceFeed)));
     }
 
     function test_theIntervalHoldsEvenAfterADelivery() public {

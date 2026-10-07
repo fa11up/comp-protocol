@@ -21,11 +21,16 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// Zero is rejected on both paths: it is never a valid scaled figure and would pin the relative bound at
 /// zero. The deviation bound is PER UNIT OF TIME, not per attestation: every value accepted within one
 /// maxAge of an epoch's start must lie within the epoch's allowance of the ANCHOR, the value the feed held
-/// when the epoch began. The allowance is maxDeviationBps when that value was fresh; once it is stale,
-/// STALE_DEVIATION_MULTIPLE times that, widening by an eighth of the cap for every further hour of
-/// staleness (`_allowanceNow`). An epoch opened that wide closes behind its first value: every later
-/// value in it must also lie within the cap of that first one (`_epochFirst`), so an honest refresh of
-/// a long-silent feed leaves an attacker the cap around the market, not the stale allowance. It never lifts outright, but it does not stay shut either: the final
+/// when the epoch began. The allowance is maxDeviationBps when that value was fresh, and still
+/// maxDeviationBps for the first STALE_GROWTH_PERIOD (an hour) it is stale; after a whole hour of
+/// staleness, STALE_DEVIATION_MULTIPLE times the cap, widening by an eighth of the cap for every further
+/// hour (`_allowanceNow`). The stale base is earned by silence, never by timing: measured from one second
+/// past the lifetime, a buyer relaying one step an hour and a second after the last opened every epoch on
+/// the stale base and compounded at it (second-half review, docs/AUDIT-FINAL-2-2026-10-07.md, medium);
+/// now a feed anyone keeps alive moves at most the cap per hour however it is driven. An epoch opened
+/// wider than the cap closes behind its first value: every later value in it must also lie within the
+/// cap of that first one (`_epochFirst`), so an honest refresh of a long-silent feed leaves an attacker
+/// the cap around the market, not the stale allowance. It never lifts outright, but it does not stay shut either: the final
 /// pre-launch review (docs/AUDIT-FINAL-2026-10-07.md, high) showed that a bound which never widens
 /// cannot follow a single-step market move larger than itself — the pinned recipes read the pool, and a
 /// step has no intermediate medians — so the feed, and every vault pinned to it, would halt for good
@@ -40,7 +45,10 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// then shown insufficient: measured against the LAST value, six attestations relayed in one block walked a
 /// 20% cap from 1.0 to 3.48 (test/SwarmFeed.t.sol, `test_chainedAttestationsCannotWalkPastTheEpochBound`).
 /// Measured against the anchor, an hour moves the price by at most the allowance however many attestations
-/// are bought, and a 3x walk takes five hours of sustained, visible manipulation of the pool.
+/// are bought; with the stale base earned only by a whole hour of silence past the lifetime, a run of
+/// steps compounds at no more than the cap per hour after the first: from a fresh feed 2x is four steps
+/// (three hours of sustained, visible manipulation of the pool) and 3.48x seven (six hours); from a feed
+/// two hours silent, whose first step is the stale 40%, 3.48x is six steps, five hours.
 abstract contract SwarmFeed is ISwarmFeed {
     struct OracleAttestation {
         bytes32 requestId;
@@ -389,20 +397,25 @@ abstract contract SwarmFeed is ISwarmFeed {
         return (_value, _allowanceNow());
     }
 
-    /// @dev The allowance an epoch opened now would carry: the cap on a fresh value; on a stale one,
-    /// STALE_DEVIATION_MULTIPLE times the cap plus an eighth of the cap for every whole STALE_GROWTH_PERIOD
-    /// (an hour) it has been stale beyond its lifetime, up to MAX_ALLOWANCE_BPS. At a 2,000 bps cap and a
-    /// one-hour lifetime: 40% after one hour stale, 45% after three, 50% after five, 60% after nine, 100%
-    /// after twenty-five. A one-day feed reaches the same steps a day later: 40% at 24 hours, 50% at 28.
+    /// @dev The allowance an epoch opened now would carry: the cap on a fresh value, and on one stale for
+    /// less than a whole STALE_GROWTH_PERIOD (an hour); after that, STALE_DEVIATION_MULTIPLE times the cap
+    /// plus an eighth of the cap for every further whole hour stale, up to MAX_ALLOWANCE_BPS. At a 2,000 bps
+    /// cap and a one-hour lifetime: 20% through the first hour stale, 40% after two hours of silence, 45%
+    /// after four, 50% after six, 60% after ten, 100% after twenty-six. A one-day feed reaches the same
+    /// steps a day later: 40% at 25 hours of silence, 50% at 29, 60% at 33.
     /// So a genuine gap larger than the stale allowance is followed once the feed has been stale long
     /// enough — a delay, not a halt for good — while a re-anchor far from the market costs an attacker
     /// that same silence, during which anyone can refresh the feed honestly for one request (the
     /// Treasury does, through OracleAsker, once the allowance reaches WIDE_ALLOWANCE_BPS).
     function _allowanceNow() private view returns (uint256) {
         if (!_tooOld(_updatedAt)) return maxDeviationBps;
-        uint256 steps = (block.timestamp - _updatedAt - maxAge) / STALE_GROWTH_PERIOD; // 0 in the first hour
+        // Whole periods stale beyond the lifetime. None yet: still the cap. The stale base and its growth
+        // are earned by silence, a whole period of it at least, so a value relayed an hour and a second
+        // after the last cannot open an epoch on the stale base (second-half review 2026-10-07, medium).
+        uint256 periods = (block.timestamp - _updatedAt - maxAge) / STALE_GROWTH_PERIOD;
+        if (periods == 0) return maxDeviationBps;
         uint256 bound = maxDeviationBps * STALE_DEVIATION_MULTIPLE
-            + Math.mulDiv(maxDeviationBps, STALE_GROWTH_OF_CAP_BPS, 10_000) * steps;
+            + Math.mulDiv(maxDeviationBps, STALE_GROWTH_OF_CAP_BPS, 10_000) * (periods - 1);
         return bound > MAX_ALLOWANCE_BPS ? MAX_ALLOWANCE_BPS : bound;
     }
 

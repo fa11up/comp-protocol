@@ -118,8 +118,10 @@ contract CDPVault is ReentrancyGuard {
     /// @dev One half-life of the base rate. Cancelling principal younger than this does not move the
     /// rate; see `_redeemPosition`.
     uint256 private constant FRESH_DEBT_WINDOW = 12 hours;
-    /// @dev `cover` sweeps collateral worth less than this fraction of the position's debt (`_coverDust`).
+    /// @dev `cover` sweeps collateral worth less than this fraction of the position's debt (`_coverDust`),
+    /// and at least less than the seizure for COVER_DUST_MIN_DEBT of it (or a hundredth of the debt, if less).
     uint256 private constant COVER_DUST_DIVISOR = 1_000_000;
+    uint256 private constant COVER_DUST_MIN_DEBT = 1e18;
     /// @notice Last redemption's base fee as a fraction scaled by 1e18, capped at 4.5%.
     uint256 public redemptionBaseRate;
     uint256 public lastRedemptionAt = block.timestamp;
@@ -521,8 +523,8 @@ contract CDPVault is ReentrancyGuard {
         Position storage position = _positions[owner];
         _accrue(owner);
         if (position.collateral != 0) {
-            // Dust (worth under a millionth of the debt, and at least below the seizure for one wei of
-            // it: `_coverDust`) does not make the debt behind it any less bad: it goes to the surplus account and the shortfall is realized here,
+            // Dust (worth under a millionth of the debt, or under about 1.2 imdUSD: `_coverDust`) does not
+            // make the debt behind it any less bad: it goes to the surplus account and the shortfall is realized here,
             // so re-locking one raw unit onto a drained position cannot keep its bad debt uncoverable.
             // Anything larger must go through mark, grace and bite like any other position.
             _requireFreshFeeds();
@@ -569,13 +571,18 @@ contract CDPVault is ReentrancyGuard {
         return Math.mulDiv(1, (100 + CHOP_PERCENT) * 1e16, price);
     }
 
-    /// @dev The largest collateral `cover` sweeps as dust: the seizure for one wei of debt, or for a
-    /// millionth of what the position owes if that is more. Final review 2026-10-07, low: at exactly
-    /// the one-wei seizure plus one raw unit (about 1e-20 sIMD, worth nothing) a drained borrower could
-    /// re-lock for free after every bite and keep its bad debt uncoverable for a mark-and-grace cycle at
-    /// a time. Collateral worth under a millionth of the debt is dust in every economic sense.
+    /// @dev The largest collateral `cover` sweeps as dust: the seizure for the larger of a millionth of
+    /// what the position owes and one imdUSD of it (a hundredth of the debt, for a debt under 100 imdUSD).
+    /// Final review 2026-10-07, low: at the one-wei seizure plus one raw unit (about 1e-20 sIMD, worth
+    /// nothing) a drained borrower could re-lock for free after every bite and keep its bad debt
+    /// uncoverable for a mark-and-grace cycle at a time. A millionth of the debt alone left that re-lock
+    /// free in capital too, about $0.001 on a $1,000 debt (second-half review 2026-10-07, low); blocking
+    /// cover now costs collateral worth about 1.2 imdUSD every cycle, which goes to the surplus account.
     function _coverDust(address owner, uint256 price) private view returns (uint256) {
-        uint256 slice = (_positions[owner].debt + _stabilityFees[owner]) / COVER_DUST_DIVISOR;
+        uint256 debt = _positions[owner].debt + _stabilityFees[owner];
+        uint256 floor_ = debt / 100 < COVER_DUST_MIN_DEBT ? debt / 100 : COVER_DUST_MIN_DEBT;
+        uint256 slice = debt / COVER_DUST_DIVISOR;
+        if (slice < floor_) slice = floor_;
         return Math.mulDiv(slice > 1 ? slice : 1, (100 + CHOP_PERCENT) * 1e16, price);
     }
 

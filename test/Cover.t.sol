@@ -242,11 +242,17 @@ contract CoverTest is WorkBackingFixture {
         return debt * (100 + backedVault.CHOP_PERCENT()) * 1e16 / price;
     }
 
+    /// @dev The debt `cover` treats as dust: a millionth of it, or one imdUSD (a hundredth, under 100 imdUSD).
+    function _dustSlice(uint256 debt) private pure returns (uint256) {
+        uint256 floor_ = debt / 100 < 1e18 ? debt / 100 : 1e18;
+        return debt / 1_000_000 > floor_ ? debt / 1_000_000 : floor_;
+    }
+
     function test_coverStillRefusesAPositionWithRealCollateral() public {
         _drain();
         _setVaultPrice(SIMD_SCALE_PRICE);
-        // Twice the dust floor (the seizure for a millionth of the debt): a bite reaches it, so cover must not.
-        uint256 real = 2 * _seizureFor(backedVault.debtOf(BORROWER) / 1_000_000, SIMD_SCALE_PRICE);
+        // Twice the dust floor: a bite reaches it, so cover must not.
+        uint256 real = 2 * _seizureFor(_dustSlice(backedVault.debtOf(BORROWER)), SIMD_SCALE_PRICE);
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(BORROWER, real);
         vm.startPrank(BORROWER);
@@ -280,6 +286,31 @@ contract CoverTest is WorkBackingFixture {
         assertEq(held, 0, "the dust was swept");
         assertEq(collateral.balanceOf(address(reserve)), treasuryGem + griefing, "to the surplus account");
         assertEq(backedVault.badDebtOf(BORROWER), 0, "and the bad debt covered in the same call");
+    }
+
+    /// @dev Second-half review 2026-10-07, low. A millionth of the debt was still free in capital (about
+    /// $0.001 on a $1,000 debt), so the re-lock griefing kept its cadence at the price of gas. The floor
+    /// is now at least the seizure for one imdUSD of debt (a hundredth of a smaller debt): what used to be
+    /// "real collateral" at twice the millionth is swept, and blocking cover costs real money every cycle.
+    function test_coverSweepsAReLockWorthUnderOneImdUSD() public {
+        uint256 bad = _drain();
+        _setVaultPrice(SIMD_SCALE_PRICE);
+        uint256 debt = backedVault.debtOf(BORROWER);
+        uint256 griefing = 2 * _seizureFor(debt / 1_000_000, SIMD_SCALE_PRICE);
+        assertLt(griefing, _seizureFor(_dustSlice(debt), SIMD_SCALE_PRICE), "under the new floor");
+        vm.prank(APPROVED_OPERATOR);
+        collateral.mint(BORROWER, griefing);
+        vm.startPrank(BORROWER);
+        collateral.approve(address(backedVault), griefing);
+        backedVault.lock(griefing);
+        vm.stopPrank();
+        _fundTreasury(bad);
+        uint256 treasuryGem = collateral.balanceOf(address(reserve));
+        backedVault.cover(BORROWER, bad);
+        (uint256 held,) = backedVault.positions(BORROWER);
+        assertEq(held, 0, "swept");
+        assertEq(collateral.balanceOf(address(reserve)), treasuryGem + griefing, "to the surplus account");
+        assertEq(backedVault.badDebtOf(BORROWER), 0);
     }
 
     // --- bookkeeping (launch audit, governance panel, low) ----------------------------------------

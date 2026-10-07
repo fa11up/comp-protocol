@@ -46,6 +46,7 @@ import {
     ASK_MAX_PRICE,
     DRIFT_FALL_TRIGGER_OF_CAP_BPS,
     WIDE_ALLOWANCE_BPS,
+    IMD_POOL_ID,
     ORACLE_BUDGET_PER_DAY,
     STREAM_PAYEE,
     STREAM_PER_DAY
@@ -95,8 +96,8 @@ contract DeployMainnet is Script, DeployPreflight {
     bytes32 internal constant SALT_VAULT = keccak256("infer-protocol/mainnet/v1/ParameterizedVault");
 
     /// @dev Largest move a fresh feed accepts within one epoch (a lifetime from the epoch's anchor), and
-    /// the base of the stale allowance: twice this once the value is stale, an eighth more per further
-    /// hour stale (SwarmFeed._allowanceNow). OracleAsker asks on a FALL of a quarter of this (5% at 2000),
+    /// the base of the stale allowance: twice this once the value has been stale a whole hour, an eighth
+    /// more per further hour (SwarmFeed._allowanceNow). OracleAsker asks on a FALL of a quarter of this (5% at 2000),
     /// never on a rise, and on any feed whose allowance has reached WIDE_ALLOWANCE_BPS.
     uint256 internal constant FEED_MAX_DEVIATION_BPS = 2_000;
 
@@ -324,6 +325,28 @@ contract DeployMainnet is Script, DeployPreflight {
         require(WIDE_ALLOWANCE_BPS > FEED_MAX_DEVIATION_BPS * 2, "wide allowance must exceed the stale base");
         require(parameters.workOracle() == address(0), "work-oracle slot is not empty");
         require(vault.gap() == 50, "gap drifted from the Parameters default");
+        // poolPrice() != 0 proves IMD_POOL_ID is SOME initialised pool; the pool the asker measures drift
+        // against must be the one the pinned price and spot bodies name in their text, or the Treasury
+        // pays for falls that did not happen and never for ones that did (second-half review, info).
+        bytes memory poolId = bytes(vm.toString(IMD_POOL_ID));
+        require(_contains(p.priceBody, poolId) && _contains(p.spotBody, poolId), "asker: IMD_POOL_ID is not the pool the price and spot bodies name");
+        // The fourth SwarmFeed, read back like the other three (same review).
+        require(work.expectedQuestionHash(1, 2) != bytes32(0), "work oracle: binds no question");
+        require(work.attestationChainId() == ATTESTATION_CHAIN_ID && work.attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "work oracle: wrong data chain or answer type");
+        // The Chainlink leg: the broadcast preflight checks it, and a later `--sig verify(...)` must too, or
+        // a dead ETH/USD aggregator (every price action StaleFeed) reads as verified (same review).
+        _preflightPriceLeg();
+    }
+
+    /// @dev Whether `needle` occurs in `hay`. `vm.contains` is not a view, and verify() is.
+    function _contains(bytes memory hay, bytes memory needle) internal pure returns (bool) {
+        if (needle.length == 0 || needle.length > hay.length) return needle.length == 0;
+        for (uint256 i; i + needle.length <= hay.length; ++i) {
+            uint256 j;
+            while (j < needle.length && hay[i + j] == needle[j]) ++j;
+            if (j == needle.length) return true;
+        }
+        return false;
     }
 
     function _record(Plan memory p) internal {

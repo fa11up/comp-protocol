@@ -3,6 +3,7 @@
 #
 #   deploy/mainnet/rehearse-fork.sh                      deploy + verify only
 #   KEEPER_DIR=../imd-keeper deploy/mainnet/rehearse-fork.sh   + bark, bite and a Treasury-paid ask
+#   ANVIL_ARGS="--base-fee 1000000000" ...                   when mainnet gas would trip the deploy's ceiling
 #
 # It never touches this working tree: the repo is copied to a temp directory, plan.py converges the
 # copy's DeploymentConfig with a throwaway operator, and the stand-ins it needs on a fork are put there
@@ -29,7 +30,10 @@ c1() { cast "$@" --rpc-url $RPC 2>/dev/null | grep -v Warning | sed -n 1p | awk 
 
 say() { echo; echo "=== $*"; }
 say "fork + deploy"
-anvil --fork-url "$FORK_URL" --port ${PORT:-8546} --silent > "$R/../anvil.log" 2>&1 &
+# ANVIL_ARGS passes extra flags to anvil, e.g. ANVIL_ARGS="--base-fee 1000000000" when mainnet's base fee
+# at the fork block would trip the deploy's own gas ceiling (a rehearsal is about the deployment, not the
+# price of gas that minute; the real deploy still waits for a cheaper block).
+anvil --fork-url "$FORK_URL" --port ${PORT:-8546} --silent ${ANVIL_ARGS:-} > "$R/../anvil.log" 2>&1 &
 ANVIL=$!; trap 'kill $ANVIL 2>/dev/null' EXIT
 for i in $(seq 1 60); do cast chain-id --rpc-url $RPC >/dev/null 2>&1 && break; sleep 1; done
 cd $R
@@ -135,9 +139,9 @@ node watch.mjs --execute | sed 's/^/  /' || true
 K_IMD3=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
 echo "keeper IMD spent as the Treasury's fallback: $(python3 -c "print(($K_IMD2-$K_IMD3)/1e18)") (expect 40.0: price + spot at 20 each)"
 
-say "the feeds have been silent nine hours: their allowance has widened to 60% (WIDE_ALLOWANCE_BPS) and the Treasury refreshes them, no arming (keeper pays gas)"
+say "the feeds have been silent ten hours: their allowance has widened to 60% (WIDE_ALLOWANCE_BPS) and the Treasury refreshes them, no arming (keeper pays gas)"
 cast send 0x0000000000000000000000000000000000000F06 "setPrice(bytes32,address,uint256)" 0x6f7261636c652e72657175657374406f7261636c652d31000000000000000000 $IMD 500000000000000000 --private-key $K0 --rpc-url $RPC >/dev/null
-cast rpc evm_increaseTime 32500 --rpc-url $RPC >/dev/null; cast rpc evm_mine --rpc-url $RPC >/dev/null
+cast rpc evm_increaseTime 36100 --rpc-url $RPC >/dev/null; cast rpc evm_mine --rpc-url $RPC >/dev/null
 echo "price feed epoch (anchor, openedAt, allowanceBps): $(cast call $PRICE 'epoch()(uint256,uint64,uint256)' --rpc-url $RPC | tr '\n' ' ')  (expect allowance 6000)"
 I_IMD0=$(c call $IMD 'balanceOf(address)(uint256)' 0x0000000000000000000000000000000000000F06)
 K_IMD4=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
@@ -151,7 +155,7 @@ POOLNOW=$(c call $ASKER "poolPrice()(uint256)")
 seed $PRICE $POOLNOW; seed $SPOT $POOLNOW; seed $NHI 900000000000000000   # at the market, so no fall and no keep-alive is due
 echo "price feed wideOpen after delivery: $(cast call $ASKER 'wideOpen(address)(bool)' $PRICE --rpc-url $RPC)  (expect false: fresh)"
 cast rpc evm_increaseTime 7300 --rpc-url $RPC >/dev/null; cast rpc evm_mine --rpc-url $RPC >/dev/null
-echo "two hours on, price feed wideOpen: $(cast call $ASKER 'wideOpen(address)(bool)' $PRICE --rpc-url $RPC)  (expect false: stale, but its allowance is 42.5%)"
+echo "two hours on, price feed wideOpen: $(cast call $ASKER 'wideOpen(address)(bool)' $PRICE --rpc-url $RPC)  (expect false: stale, but its allowance is 40%)"
 node watch.mjs --execute | sed 's/^/  /' || true
 I_IMD2=$(c call $IMD 'balanceOf(address)(uint256)' 0x0000000000000000000000000000000000000F06)
 K_IMD6=$(c call $IMD 'balanceOf(address)(uint256)' $A0)
