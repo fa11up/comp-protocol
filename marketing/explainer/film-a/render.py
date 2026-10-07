@@ -156,7 +156,7 @@ def plan_segment(film, f0, f1, Wr, Hr, Wf):
     """What is visible in frames f0..f1-1, the native box of each sprite that can be seen, and its
     largest on-screen scale (render px per native px)."""
     n = f1 - f0
-    ts = [(f0 + i) / FPS for i in range(n)]
+    ts = [plan.plan_time((f0 + i) / FPS) for i in range(n)]
     layers = []
     for s in film['sprites']:
         al = [max(0.0, min(1.0, s.alpha(t))) for t in ts]
@@ -225,7 +225,7 @@ def frame_graph(layers, i, f, Wr, Hr, W, H, kinds):
             pre = f'[{k}:v]format=gbrap'
         elif kind == 'seq':
             first, count = s.src[3], s.src[2]
-            ins += ['-i', kinds[s.src[1]] / f'{min(max(0, f - first), count - 1):04d}.png']
+            ins += ['-i', kinds[s.src[1]] / f'{min(max(0, round(plan.plan_time(f / FPS) * FPS) - first), count - 1):04d}.png']
             pre = f'[{k}:v]crop={cw}:{ch}:{cx}:{cy},scale={sw}:{sh}:flags=lanczos,format=gbrap'
         else:
             ins += ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', f'{sw}x{sh}', '-i', L['raw']]
@@ -263,8 +263,8 @@ def segments_for(film, Wr, Hr, W):
     def ratio(a, b):
         worst = 1.0
         for s in film['sprites']:
-            sc = [max_scale(frame_matrix(film, s, t / FPS, Wr, Hr, W)) for t in range(a, b)
-                  if s.alpha(t / FPS) > .002]
+            sc = [max_scale(frame_matrix(film, s, plan.plan_time(t / FPS), Wr, Hr, W)) for t in range(a, b)
+                  if s.alpha(plan.plan_time(t / FPS)) > .002]
             sc = [x for x in sc if x > 1e-4]
             if len(sc) > 1: worst = max(worst, max(sc) / min(sc))
         return worst

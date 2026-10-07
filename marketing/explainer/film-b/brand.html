@@ -1,0 +1,73 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0">
+<script>
+// Etched marks for film B's plates: the $ (before the wipe), our pixel I (after it) and the imd.fun mark (the
+// agent wall), drawn the way the plates are drawn: engraved green, a firm outline and fine hatching inside,
+// on a transparent 1024x1024 canvas centred in a circle of radius 0.85 so an affine warp can fit it to any oval.
+const PAL = { ivory: "#F7F5EF", ink: "#16202E", green: "#2F5D50", hair: "#D8D3C7" };
+const S = 1024, C = S / 2, R = S * 0.425;
+const mk = () => { const c = document.createElement("canvas"); c.width = c.height = S; return c; };
+const out = {};
+
+// fill a mask canvas with engraved hatching: horizontal lines, plus a second, finer set where `dense`
+function hatch(mask, gap = 9, lw = 3.2, cross = false) {
+  const h = mk(), c = h.getContext("2d");
+  c.strokeStyle = PAL.green; c.lineWidth = lw;
+  for (let y = gap / 2; y < S; y += gap) { c.beginPath(); c.moveTo(0, y + 2 * Math.sin(y / 37)); for (let x = 0; x <= S; x += 16) c.lineTo(x, y + 2 * Math.sin((x + y) / 37)); c.stroke(); }
+  if (cross) { c.lineWidth = lw * 0.6; for (let x = -S; x < S; x += gap * 1.4) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x + S, S); c.stroke(); } }
+  c.globalCompositeOperation = "destination-in"; c.drawImage(mask, 0, 0);
+  return h;
+}
+
+// 1. the $: a serif glyph, outlined and hatched
+{
+  const m = mk(), mc = m.getContext("2d");
+  mc.font = `700 ${S * 0.82}px Georgia, 'Times New Roman', serif`; mc.textAlign = "center"; mc.textBaseline = "middle";
+  mc.fillStyle = "#000"; mc.fillText("$", C, C + S * 0.04);
+  const o = mk(), c = o.getContext("2d");
+  c.drawImage(hatch(m, 8, 3.4, true), 0, 0);
+  c.font = mc.font; c.textAlign = "center"; c.textBaseline = "middle";
+  c.lineWidth = 14; c.strokeStyle = PAL.green; c.lineJoin = "round"; c.strokeText("$", C, C + S * 0.04);
+  out["dollar-etched"] = o;
+}
+
+// 2. our pixel I (the site mark, 16x16 grid): each rect hatched by its coverage, all outlined
+{
+  const MARK = [[5,4,7,1,1],[8,4,1,8,1],[5,11,7,1,1],[4,4,1,1,.5],[12,4,1,1,.5],[4,11,1,1,.5],[12,11,1,1,.5],[5,7,3,2,.5],[9,7,3,2,.5],[4,7,1,2,.25],[12,7,1,2,.25]];
+  const u = (2 * R) / 9, x0 = C - 4.5 * u - 4 * u, y0 = C - 4.0 * u - 4 * u;   // mark spans x 4..13, y 4..12
+  const o = mk(), c = o.getContext("2d");
+  for (const [level, gap, cross] of [[1, 7, true], [.5, 10, false], [.25, 16, false]]) {
+    const m = mk(), mc = m.getContext("2d"); mc.fillStyle = "#000";
+    for (const [x, y, w, h, a] of MARK) if (a === level) mc.fillRect(x0 + x * u, y0 + y * u, w * u, h * u);
+    c.drawImage(hatch(m, gap, 3.2, cross), 0, 0);
+  }
+  c.strokeStyle = PAL.green; c.lineWidth = 10;
+  for (const [x, y, w, h] of MARK) c.strokeRect(x0 + x * u, y0 + y * u, w * u, h * u);
+  out["mark-etched"] = o;
+}
+
+// 3. the imd.fun mark (a square frame with a diamond inside, from imd.fun/icon.svg) set in an ivory medallion
+//    with engraved rings, so it reads as an emblem at the centre of the agent wall
+{
+  const o = mk(), c = o.getContext("2d");
+  c.fillStyle = PAL.ivory; c.beginPath(); c.arc(C, C, R, 0, 7); c.fill();
+  c.strokeStyle = PAL.green;
+  for (const [r, w] of [[R - 6, 12], [R - 30, 4], [R - 44, 2]]) { c.lineWidth = w; c.beginPath(); c.arc(C, C, r, 0, 7); c.stroke(); }
+  // a fine guilloché ring between the outer rings
+  c.lineWidth = 1.6;
+  for (let j = 0; j < 24; j++) { c.beginPath(); for (let i = 0; i <= 720; i++) { const t = i / 720 * Math.PI * 2, r = R - 18 + 9 * Math.sin(24 * t + j * 0.26); const x = C + r * Math.cos(t), y = C + r * Math.sin(t); i ? c.lineTo(x, y) : c.moveTo(x, y); } c.stroke(); }
+  const k = (R - 62) / (16 * Math.SQRT2), ox = C - 16 * k, oy = C - 16 * k;   // the 32-unit icon, its corners inside the inner ring
+  const m = mk(), mc = m.getContext("2d"); mc.fillStyle = "#000";
+  mc.fillRect(ox + 0 * k, oy + 0 * k, 32 * k, 3 * k); mc.fillRect(ox, oy + 29 * k, 32 * k, 3 * k);
+  mc.fillRect(ox, oy, 3 * k, 32 * k); mc.fillRect(ox + 29 * k, oy, 3 * k, 32 * k);
+  mc.lineWidth = 2.6 * k; mc.lineJoin = "miter"; mc.strokeStyle = "#000";
+  mc.beginPath(); mc.moveTo(ox + 16 * k, oy + 8.5 * k); mc.lineTo(ox + 23.5 * k, oy + 16 * k); mc.lineTo(ox + 16 * k, oy + 23.5 * k); mc.lineTo(ox + 8.5 * k, oy + 16 * k); mc.closePath(); mc.stroke();
+  c.drawImage(hatch(m, 7, 3.2, true), 0, 0);
+  c.strokeStyle = PAL.green; c.lineWidth = 6;
+  c.strokeRect(ox, oy, 32 * k, 32 * k); c.strokeRect(ox + 3 * k, oy + 3 * k, 26 * k, 26 * k);
+  out["imdfun-medallion"] = o;
+}
+
+const pre = document.createElement("pre"); pre.id = "out";
+pre.textContent = Object.entries(out).map(([n, cv]) => n + "\t" + cv.toDataURL("image/png").split(",")[1]).join("\n");
+document.body.appendChild(pre);
+</script>

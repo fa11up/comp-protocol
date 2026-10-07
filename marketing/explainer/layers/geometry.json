@@ -130,21 +130,21 @@
       "lineHeight": 93.6
     },
     "a4": {
-      "text": "Fall below the line,\nand keepers liquidate it.",
+      "text": "Fall below the credit line\nand you risk liquidation.",
       "w": 1920,
       "h": 247,
       "font": "500 72px mono",
       "lineHeight": 93.6
     },
     "a5": {
-      "text": "Minted by agents. Redeemable by anyone.",
+      "text": "Priced by agents. Backed by IMD.",
       "w": 1920,
       "h": 154,
       "font": "500 72px mono",
       "lineHeight": 93.6
     },
     "a5-alt": {
-      "text": "A dollar with a panel behind it.",
+      "text": "The swarm's dollar.",
       "w": 1920,
       "h": 154,
       "font": "500 72px mono",
@@ -165,14 +165,14 @@
       "lineHeight": 93.6
     },
     "b3": {
-      "text": "The answer is signed.\nAnyone may submit it.",
+      "text": "The answer is signed.\nAnyone may request it.",
       "w": 1920,
       "h": 247,
       "font": "500 72px mono",
       "lineHeight": 93.6
     },
     "b4": {
-      "text": "Every note redeems for a dollar of IMD.",
+      "text": "Every note redeems for one dollar of IMD.",
       "w": 1920,
       "h": 154,
       "font": "500 72px mono",

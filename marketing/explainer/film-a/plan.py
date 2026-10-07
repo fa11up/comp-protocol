@@ -122,6 +122,22 @@ GLYPHS = [(727, 747), (752, 775), (780, 802), (832, 854), (859, 881), (885, 907)
           (938, 960), (965, 987), (991, 1013), (1019, 1040), (1069, 1094)]   # measured, left strip
 STRIP2_DX = 2171 - 727                            # the right strip's text is the left one + 1444
 
+# ------------------------------------------------------------------ pacing (review 2026-10-07)
+# The plan's own times stay as written; the film plays them through this warp. Knots are (plan time,
+# film time): the frozen open goes from 3.0 s to 1.0 s, the long holds lose a little, and that time goes
+# to the transitions (18.5-20.0, the reassembly from the strip, gains the most: 1.5 s -> 2.5 s). From
+# 33.5 s on, the push, the blink and the hit are untouched.
+WARP = [(0.0, 0.0), (3.0, 1.0), (4.3, 2.6), (6.5, 4.8), (8.6, 7.3), (11.0, 9.1), (12.2, 10.7),
+        (16.6, 15.1), (18.5, 17.0), (20.0, 19.5), (21.0, 20.9), (22.3, 22.2), (25.6, 24.5),
+        (28.0, 27.4), (30.0, 29.7), (31.6, 31.6), (33.5, 33.5), (40.0, 40.0)]
+
+def plan_time(t):
+    """Film time -> plan time (piecewise linear through WARP)."""
+    for (p0, f0), (p1, f1) in zip(WARP, WARP[1:]):
+        if t <= f1:
+            return p0 + (p1 - p0) * (t - f0) / (f1 - f0)
+    return t
+
 def framings(aspect):
     W, H = ASPECTS[aspect]; ar = W / H
     if aspect == '16x9':

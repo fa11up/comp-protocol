@@ -56,8 +56,21 @@ SHEET_PORTRAIT = on_sheet(NOTE_UV[0] + (NOTE_UV[1] - NOTE_UV[0]) * _pu, NOTE_UV[
 
 # Our mark on the plates that carry a blank place for one: the bank's pediment cartouche and the raised coin
 # (same coin, same place, in K2 and K3). The pixel mark is scaled with nearest-neighbour so it stays crisp.
-MARK = os.path.join(ROOT, "marketing", "kit", "logo", "mark-transparent-1024.png")
-BRAND = {"k1-bank": [(960, 165, 96)], "k2-board": [(1003, 242, 64)], "k3-dissolve": [(1002, 242, 64)]}
+# Etched green marks (brand.html -> brand/), each drawn inside a circle of radius 0.85 of its 1024 canvas. A
+# placement is (asset, centre, A): A maps the unit circle onto the target oval, fitted from the plate's own
+# ivory blob (its second moments), so a mark on an oval seen at an angle takes that angle.
+BRAND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand")
+BRAND = {
+    # before the wipe: the dollar, on the bank's pediment, the raised coin and both hanging banners
+    "k1-bank": [("dollar-etched", (960, 165), ((60, 0), (0, 60)))],
+    "k2-board": [("dollar-etched", (1003.4, 242.4), ((48, 0), (0, 48))),
+                 ("dollar-etched", (369.8, 205.0), ((39.48, 4.46), (4.46, 67.9))),
+                 ("dollar-etched", (1549.2, 205.0), ((39.75, -4.56), (-4.56, 68.23)))],
+    # after it: our mark on the robot's coin
+    "k3-dissolve": [("mark-etched", (1006.3, 236.2), ((42, 0), (0, 42)))],
+    # the agent wall: the imd.fun medallion over the central disc
+    "k4-swarm": [("imdfun-medallion", (960, 225), ((96, 0), (0, 96)))],
+}
 
 # Shots of the picture track (the scene): (keyframe, film start, film end, zoom from, zoom to, focus x, y)
 SHOTS = [
@@ -549,13 +562,21 @@ def check(path, aspect, kout, music):
 
 
 def brand(src, name, work):
-    """A copy of a keyframe with our mark set into its blank cartouche or coin, in the plate's ink."""
+    """A copy of a keyframe with the etched marks warped onto their ovals (affine, via perspective)."""
     out = os.path.join(work, name + "-branded.png")
     inputs, g, cur = ["-i", src], [], "0:v"
-    for i, (cx, cy, size) in enumerate(BRAND[name]):
-        inputs += ["-i", MARK]
-        g.append(f"[{i + 1}:v]scale={size}:{size}:flags=neighbor,format=rgba[m{i}]")
-        g.append(f"[{cur}][m{i}]overlay={round(cx - size / 2)}:{round(cy - size / 2)}:format=auto[o{i}]")
+    for i, (asset, (cx, cy), ((a, b), (c, d))) in enumerate(BRAND[name]):
+        k = 1 / 0.85                              # the canvas edge is at radius 1/0.85 of the drawn circle
+        corners = [(cx + (a * sx + b * sy) * k, cy + (c * sx + d * sy) * k) for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1))]
+        x0, y0 = math.floor(min(x for x, _ in corners)) - 2, math.floor(min(y for _, y in corners)) - 2
+        x1, y1 = math.ceil(max(x for x, _ in corners)) + 2, math.ceil(max(y for _, y in corners)) + 2
+        w, h = x1 - x0, y1 - y0
+        q = [(round(x - x0, 2), round(y - y0, 2)) for x, y in corners]
+        inputs += ["-i", os.path.join(BRAND_DIR, asset + ".png")]
+        g.append(f"[{i + 1}:v]format=rgba,scale={w}:{h}:flags=lanczos,"
+                 f"perspective=x0={q[0][0]}:y0={q[0][1]}:x1={q[1][0]}:y1={q[1][1]}:x2={q[2][0]}:y2={q[2][1]}:"
+                 f"x3={q[3][0]}:y3={q[3][1]}:sense=destination:interpolation=cubic,format=rgba[m{i}]")
+        g.append(f"[{cur}][m{i}]overlay={x0}:{y0}:format=auto[o{i}]")
         cur = f"o{i}"
     ff(*inputs, "-filter_complex", ";".join(g), "-map", f"[{cur}]", "-frames:v", "1", out)
     return out
