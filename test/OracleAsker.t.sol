@@ -220,7 +220,7 @@ contract OracleAskerTest is Test {
         asker.arm(address(priceFeed));
         _setPool(IMD_ETH * 9_490 / 10_000); // a 5.1% fall
         asker.arm(address(priceFeed));
-        (,,,, uint64 armedAt,,) = asker.feeds(address(priceFeed));
+        (,,,, uint64 armedAt,,,) = asker.feeds(address(priceFeed));
         assertEq(armedAt, block.number);
     }
 
@@ -255,7 +255,7 @@ contract OracleAskerTest is Test {
         assertTrue(intake.complete(r1, abi.encode(r1, a, _sign(priceFeed, a))), "the late callback completes");
         (uint256 value,) = priceFeed.latestValue();
         assertEq(value, IMD_ETH * 101 / 100, "and the paid answer landed");
-        (,,,,,, bytes32 inFlight) = asker.feeds(address(priceFeed));
+        (,,,,,,, bytes32 inFlight) = asker.feeds(address(priceFeed));
         assertEq(inFlight, r2, "the live request is untouched");
         assertEq(asker.feedOf(r1), address(0), "and the delivered one is forgotten");
     }
@@ -269,7 +269,7 @@ contract OracleAskerTest is Test {
         asker.ask(address(healthFeed), HEALTH_BODY);
         uint64 askedAt = uint64(block.timestamp);
         assertTrue(intake.complete(r1, abi.encode(r1, _attestation(r1, 0.9 ether), hex"00")), "refused, not reverted");
-        (,,, uint64 lastAsk,,,) = asker.feeds(address(healthFeed));
+        (,,, uint64 lastAsk,,,,) = asker.feeds(address(healthFeed));
         assertEq(lastAsk, askedAt, "no back-off written for a superseded request");
     }
 
@@ -348,7 +348,7 @@ contract OracleAskerTest is Test {
         (uint256 value,) = healthFeed.latestValue();
         assertEq(value, 0.88 ether, "the feed holds the attested figure");
         assertEq(asker.feedOf(id), address(0));
-        (,,,,, uint64 inFlightAt, bytes32 inFlight) = asker.feeds(address(healthFeed));
+        (,,,,, uint64 inFlightAt,, bytes32 inFlight) = asker.feeds(address(healthFeed));
         assertEq(inFlight, bytes32(0));
         assertEq(inFlightAt, 0);
         emit log_named_uint("callback gas used (stipend 200000)", intake.lastCallbackGasUsed());
@@ -381,7 +381,7 @@ contract OracleAskerTest is Test {
         assertTrue(intake.complete(id, abi.encode(id, a, hex"00")), "the callback itself succeeds");
         (uint256 value,) = healthFeed.latestValue();
         assertEq(value, before, "a bad signature changed nothing");
-        (,,,,, uint64 inFlightAt, bytes32 inFlight) = asker.feeds(address(healthFeed));
+        (,,,,, uint64 inFlightAt,, bytes32 inFlight) = asker.feeds(address(healthFeed));
         assertEq(inFlight, bytes32(0), "the in-flight slot is free");
         assertEq(inFlightAt, 0);
         vm.prank(STRANGER);
@@ -439,7 +439,7 @@ contract OracleAskerTest is Test {
         vm.expectEmit(true, true, false, true, address(asker));
         emit OracleAsker.Delivered(address(healthFeed), id, false);
         assertTrue(intake.complete(id, abi.encode(id, a, sig)), "the duplicate delivery does not revert");
-        (,,,,,, bytes32 inFlight) = asker.feeds(address(healthFeed));
+        (,,,,,,, bytes32 inFlight) = asker.feeds(address(healthFeed));
         assertEq(inFlight, bytes32(0), "the feed can be asked for again without waiting ASK_TIMEOUT");
         vm.prank(APPROVED_OPERATOR);
         imd.mint(STRANGER, 1 ether);
@@ -477,7 +477,7 @@ contract OracleAskerTest is Test {
         vm.prank(attacker);
         SwarmRelay(ATTESTATION_RELAYER).relay(priceFeed, a, sig);
         assertTrue(intake.complete(id, abi.encode(id, a, sig)), "the callback completes, refused as a replay");
-        (,,, uint64 lastAsk,,,) = asker.feeds(address(priceFeed));
+        (,,, uint64 lastAsk,,,,) = asker.feeds(address(priceFeed));
         assertEq(lastAsk, 0, "the Treasury is not backed off by a request it did not pay for");
     }
 
@@ -486,8 +486,33 @@ contract OracleAskerTest is Test {
         vm.warp(block.timestamp + 20 hours);
         bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
         assertTrue(intake.complete(id, abi.encode(id, _attestation(id, 0.9 ether), hex"00")), "refused");
-        (,,, uint64 lastAsk,,,) = asker.feeds(address(healthFeed));
+        (,,, uint64 lastAsk,,,,) = asker.feeds(address(healthFeed));
         assertEq(lastAsk, uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL), "backed off");
+    }
+
+    /// @dev Sweep panel audit (oracle, low). Inferring "the Treasury paid" from lastAsk == inFlightAt was
+    /// forged: a back-off writes lastAsk to a future second, and an askPaid mined in exactly that second
+    /// satisfied the test, so its refusal extended the back-off again and again. It is a recorded flag now.
+    function test_anAskPaidInTheBackOffSecondCannotPassAsTreasuryPaid() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 r1 = asker.ask(address(healthFeed), HEALTH_BODY);
+        assertTrue(intake.complete(r1, abi.encode(r1, _attestation(r1, 0.9 ether), hex"00")), "refused");
+        (,,, uint64 lastAsk,,,,) = asker.feeds(address(healthFeed));
+        assertEq(lastAsk, uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL));
+        vm.warp(lastAsk); // the second the back-off wrote: a slot boundary on mainnet
+        address attacker = address(0xA77);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(attacker, 1 ether);
+        vm.startPrank(attacker);
+        imd.approve(address(asker), PRICE);
+        bytes32 r2 = asker.askPaid(address(healthFeed), HEALTH_BODY, PRICE);
+        vm.stopPrank();
+        (,,,,, uint64 inFlightAt, bool treasuryPaid,) = asker.feeds(address(healthFeed));
+        assertEq(inFlightAt, lastAsk, "the timestamps coincide");
+        assertFalse(treasuryPaid, "but the flag says who paid");
+        assertTrue(intake.complete(r2, abi.encode(r2, _attestation(r2, 0.9 ether), hex"00")), "refused");
+        (,,, uint64 after_,,,,) = asker.feeds(address(healthFeed));
+        assertEq(after_, lastAsk, "the caller-paid refusal did not extend the back-off");
     }
 
     function test_askPaidSpendsTheCallersIMDNotTheTreasurys() public {
@@ -503,7 +528,7 @@ contract OracleAskerTest is Test {
         assertEq(imd.balanceOf(address(asker)), treasuryBefore, "the asker's budget is untouched");
         assertEq(imd.allowance(address(asker), INTAKE), 0);
         assertEq(asker.feedOf(id), address(priceFeed));
-        (,, , uint64 lastAsk,,,) = asker.feeds(address(priceFeed));
+        (,,, uint64 lastAsk,,,,) = asker.feeds(address(priceFeed));
         assertEq(lastAsk, 0, "a paid ask does not use up the Treasury's interval");
 
         // It is delivered exactly like a Treasury ask.

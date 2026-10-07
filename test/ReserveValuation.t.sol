@@ -93,6 +93,35 @@ contract ReturndataBombFeed {
     }
 }
 
+/// @dev Answers like a healthy feed until told to burn every unit of gas it is given.
+contract GasBurnFeed {
+    uint256 private immutable price;
+    bool public burning;
+
+    constructor(uint256 price_) {
+        price = price_;
+    }
+
+    function arm() external {
+        burning = true;
+    }
+
+    function isStale() external view returns (bool) {
+        if (burning) _burn();
+        return false;
+    }
+
+    function latestValue() external view returns (uint256, uint64) {
+        if (burning) _burn();
+        return (price, uint64(block.timestamp));
+    }
+
+    function _burn() private pure {
+        uint256 x;
+        while (true) x = x + 1;
+    }
+}
+
 contract ReserveValuationTest is WorkBackingFixture {
     function test_vaultOwnsItsReserveAndUsesTheSameTreasuryForFeesAndCeiling() public view {
         assertEq(reserve.vault(), address(backedVault));
@@ -197,6 +226,24 @@ contract ReserveValuationTest is WorkBackingFixture {
         uint256 value = reserve.reserveValueUsd{gas: 16_000_000}();
         assertEq(value, 10 ether, "the bombing feed counts for nothing, the other asset still counts");
         assertEq(backedVault.reserveValue(), 10 ether, "and the vault's reads do not revert");
+    }
+
+    /// @dev Sweep panel audit (governance, low). The bounded reads forwarded all gas, so one listed source
+    /// that burned what it was given put a multi-million-gas floor under every cash and earn. Each read now
+    /// gets at most RESERVE_READ_GAS, and a burner counts for nothing.
+    function test_aGasBurningFeedCostsAtMostTheReadStipend() public {
+        ReserveTestToken second = new ReserveTestToken(18);
+        GasBurnFeed burner = new GasBurnFeed(ASSET_USD);
+        _fundReserve(10 ether);
+        _register(second, ISwarmFeed(address(burner)), 10_000);
+        second.mint(address(reserve), 10 ether);
+        assertEq(reserve.reserveValueUsd(), 20 ether);
+        burner.arm();
+        uint256 before = gasleft();
+        uint256 value = reserve.reserveValueUsd{gas: 2_000_000}();
+        uint256 used = before - gasleft();
+        assertEq(value, 10 ether, "the burner counts for nothing, the other asset still counts");
+        assertLt(used, 700_000, "and it cost at most a few read stipends");
     }
 
     function test_sourceThatDiesAfterListingCountsForNothingInsteadOfRevertingTheCeiling() public {

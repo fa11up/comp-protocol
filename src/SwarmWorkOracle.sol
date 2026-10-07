@@ -84,6 +84,10 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
     /// re-granted work already minted against and cutting it made the total fall below what had been
     /// consumed. Same defect as an accrual index recomputed from deployment; same shape of fix.
     mapping(address account => uint256 rights) public creditedRights;
+    /// @notice Rights ever credited by claims, consumed or not. Parameters reads it: a successor oracle must
+    /// carry a predecessor once anything was CREDITED here, not only once anything was minted, or rights
+    /// priced at claim would be stranded by a replacement (sweep panel audit, governance, low).
+    uint256 public totalCredited;
 
     /// @notice imdUSD already minted against work, per address.
     mapping(address account => uint256 amount) public consumedRights;
@@ -170,6 +174,7 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
         rights = (cumulative - already) * wage();
         creditedTasks[agentId] = cumulative;
         creditedRights[msg.sender] += rights;
+        totalCredited += rights;
         emit TallyClaimed(agentId, msg.sender, cumulative, rights);
     }
 

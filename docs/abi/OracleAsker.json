@@ -205,6 +205,11 @@
         "internalType": "uint64"
       },
       {
+        "name": "treasuryPaid",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "inFlight",
         "type": "bytes32",
         "internalType": "bytes32"

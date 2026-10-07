@@ -11,7 +11,7 @@ import { exact, fmt } from "./math";
 export const askerAbi = parseAbi([
   "function price() view returns (uint256)",
   "function payToken() view returns (address)",
-  "function feeds(address) view returns (bytes32 bodyHash, bool tracksPool, bool keepAlive, uint64 lastAsk, uint64 armedAt, uint64 inFlightAt, bytes32 inFlight)",
+  "function feeds(address) view returns (bytes32 bodyHash, bool tracksPool, bool keepAlive, uint64 lastAsk, uint64 armedAt, uint64 inFlightAt, bool treasuryPaid, bytes32 inFlight)",
   "function askPaid(address feed, bytes body, uint256 maxPrice) returns (bytes32)",
   "function askPaidMany(address[] feeds, bytes[] bodies, uint256 maxPriceEach) returns (bytes32[])",
 ]);
@@ -58,7 +58,7 @@ export async function readAsker(
         blockNumber,
       });
       ready[name] = f[0] === keccak256(body);
-      inFlight[name] = !/^0x0+$/.test(f[6]);
+      inFlight[name] = !/^0x0+$/.test(f[7]); // inFlight is the eighth member since treasuryPaid was added
     }),
   );
   const state: AskerState = { price, payToken, ready, inFlight };

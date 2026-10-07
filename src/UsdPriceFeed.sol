@@ -87,6 +87,11 @@ contract UsdPriceFeed is ISwarmFeed {
         // used for anything, so they must not be able to fail.
         (, int256 answer,, uint256 at,) = abi.decode(data, (uint256, int256, uint256, uint256, uint256));
         if (answer <= 0 || at == 0 || at > type(uint64).max) return (0, 0, 0);
+        // An answer this large is malformed, not a price (1e36 is a dollar price of 1e28 per ETH at 8
+        // places), and multiplied by the IMD leg it would overflow the product and REVERT, reaching the
+        // ungated lock and wipe through _priceOrZero instead of reading as the documented zero (sweep panel
+        // audit, oracle, low).
+        if (uint256(answer) > 1e36) return (0, 0, 0);
         (ok, data) = address(ETH_USD).staticcall(abi.encodeCall(IAggregatorV3.decimals, ()));
         if (!ok || data.length < 32) return (0, 0, 0);
         uint256 places = abi.decode(data, (uint256));

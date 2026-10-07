@@ -35,7 +35,8 @@ interface IPoolManagerExtsload {
 ///
 ///   - STALENESS, for feeds configured to be kept alive (NHI: daily, and cheap). A feed whose value is
 ///     STALE_AT_BPS of the way to its maxAge (or has none yet) may be asked for. This needs no arming:
-///     nobody can make a feed age faster. Price feeds are NOT kept fresh on a clock; their one-hour
+///     a relayed attestation can only land already aged (up to a lifetime, one for one with what its
+///     buyer paid), never age a value faster. Price feeds are NOT kept fresh on a clock; their one-hour
 ///     life would cost ~$37k a year per feed. Between updates price actions pause, never misprice.
 ///   - DRIFT. A feed that quotes IMD/ETH may be asked for when IMD's own Uniswap v4 pool has FALLEN
 ///     below the feed by more than a quarter of the feed's deviation cap (DRIFT_FALL_TRIGGER_OF_CAP_BPS):
@@ -52,7 +53,8 @@ interface IPoolManagerExtsload {
 ///
 /// Treasury spending is bounded four ways: one request in flight per feed (until delivered or ASK_TIMEOUT), at most
 /// one paid request per feed per ASK_MIN_INTERVAL, a price ceiling per request, and the Treasury's
-/// daily budget, which is all this contract can ever hold. Exhausting the budget does NOT freeze the
+/// daily budget, which is all the Treasury ever streams here (whatever else this contract is given,
+/// by the operator's seed or anyone's transfer, is spent the same way). Exhausting the budget does NOT freeze the
 /// oracle: anyone can still buy an attestation off chain and relay it through SwarmRelay.
 ///
 /// Delivery goes through SwarmRelay, so each feed keeps its one relayer and a keeper can still bundle
@@ -69,6 +71,7 @@ contract OracleAsker {
         uint64 lastAsk; // timestamp of the last paid request
         uint64 armedAt; // block a drift was armed at; zero when unarmed
         uint64 inFlightAt; // timestamp the request in flight was sent; zero when none
+        bool treasuryPaid; // the request in flight was bought with the Treasury's IMD (`ask`)
         bytes32 inFlight; // the Intake's id for that request
     }
 
@@ -126,7 +129,7 @@ contract OracleAsker {
             if (feeds_[i].code.length == 0 || bodyHashes[i] == bytes32(0) || feeds[feeds_[i]].bodyHash != 0) {
                 revert BadConfiguration();
             }
-            feeds[feeds_[i]] = Feed(bodyHashes[i], tracksPool[i], keepAlive[i], 0, 0, 0, bytes32(0));
+            feeds[feeds_[i]] = Feed(bodyHashes[i], tracksPool[i], keepAlive[i], 0, 0, 0, false, bytes32(0));
         }
     }
 
@@ -169,6 +172,7 @@ contract OracleAsker {
         // Effects before the external calls; the request id is only known after `request` returns.
         f.lastAsk = uint64(block.timestamp);
         f.armedAt = 0;
+        f.treasuryPaid = true;
         requestId = _request(feed, f, body, price);
         emit Asked(feed, requestId, price, forStaleness);
     }
@@ -185,6 +189,7 @@ contract OracleAsker {
         }
         uint256 price = _price(maxPrice);
         payToken.safeTransferFrom(msg.sender, address(this), price);
+        f.treasuryPaid = false;
         requestId = _request(feed, f, body, price);
         emit AskedPaid(feed, requestId, msg.sender, price);
     }
@@ -210,6 +215,7 @@ contract OracleAsker {
             // In flight (including a feed named twice in this batch): skipped, not charged.
             if (f.inFlight != bytes32(0) && block.timestamp < uint256(f.inFlightAt) + ASK_TIMEOUT) continue;
             payToken.safeTransferFrom(msg.sender, address(this), price);
+            f.treasuryPaid = false;
             requestIds[i] = _request(feeds_[i], f, bodies[i], price);
             ++bought;
             emit AskedPaid(feeds_[i], requestIds[i], msg.sender, price);
@@ -263,14 +269,14 @@ contract OracleAsker {
         Feed storage f = feeds[feed];
         // The live request, or one that timed out and was replaced; the latter clears nothing.
         bool live = f.inFlight == requestId;
-        // Whether the live request was the Treasury's own purchase: `ask` writes lastAsk and inFlightAt in
-        // the same call, `askPaid` and `askPaidMany` write only inFlightAt, and no request can follow an
-        // `ask` within its second (it is in flight). Read from the slot this callback clears anyway, so it
-        // costs the stipend nothing. Only a refusal of the Treasury's own purchase backs the Treasury off:
-        // a caller-paid answer can be relayed by hand before the callback lands, so its refusal says
-        // nothing about the feed and, counted, let anyone hold the Treasury off for two hours at a time
-        // for 0.5 IMD (final panel audit, oracle, low).
-        bool treasuryPaid = live && f.lastAsk == f.inFlightAt;
+        // Whether the live request was the Treasury's own purchase, recorded by `ask` in the slot this
+        // callback clears anyway. Only a refusal of the Treasury's own purchase backs the Treasury off: a
+        // caller-paid answer can be relayed by hand before the callback lands, so its refusal says nothing
+        // about the feed and, counted, let anyone hold the Treasury off for two hours at a time for 0.5 IMD
+        // (final panel audit, oracle, low). It is a flag and not an inference from timestamps: inferring it
+        // from lastAsk == inFlightAt was forged by an askPaid mined in the second a prior back-off had
+        // written into lastAsk, a slot boundary on mainnet (sweep panel audit, oracle, low).
+        bool treasuryPaid = live && f.treasuryPaid;
         if (live) {
             f.inFlight = bytes32(0);
             f.inFlightAt = 0;

@@ -17,7 +17,11 @@ export FOUNDRY_DISABLE_NIGHTLY_WARNING=1
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 FORK_URL=${FORK_URL:-https://eth.drpc.org}
 R=$(mktemp -d)/rehearse; K=${KEEPER_DIR:-}; [ -n "$K" ] && K=$(cd "$K" && pwd)
-rsync -a --exclude web/node_modules --exclude /cache --exclude /broadcast --exclude /out "$SRC/" "$R/"
+# Only what the deploy needs: the render scratch under test/scratch (tens of gigabytes), the marketing tree,
+# the launch artifacts, the built sites and the git history are not it.
+rsync -a --exclude web/node_modules --exclude /cache --exclude /broadcast --exclude /out --exclude /test/scratch \
+  --exclude /artifacts --exclude /marketing --exclude /web/dist --exclude /web/dist-public --exclude /web/dist-infer \
+  --exclude /dist --exclude /dist-public --exclude /dist-infer --exclude /.git "$SRC/" "$R/"
 RPC=http://127.0.0.1:${PORT:-8546}
 K0=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80   # deployer + keeper (acct 0)
 A0=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -46,10 +50,10 @@ cast send 0x0000000000000000000000000000000000000F06 "setPrice(bytes32,address,u
 ETHUSD=$(cast call $CL "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url $RPC 2>/dev/null | sed -n 2p | awk '{print $1}')
 echo "live ETH/USD answer $ETHUSD"
 rm -rf deploy/mainnet/out/*.json
-FOUNDRY_PROFILE=deploy OPERATOR=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 forge script script/DeployMainnet.s.sol --rpc-url $RPC --broadcast --slow --private-key $K0 2>&1 | grep -E "deployed|skipped|Deployed|Error|FAIL" 
+FOUNDRY_PROFILE=deploy OPERATOR=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 forge script script/DeployMainnet.s.sol --rpc-url $RPC --broadcast --slow --private-key $K0 2>&1 | grep -E "deployed|skipped|Stage one|Error|FAIL" 
 D=$R/deploy/mainnet/out/deployment.json
 j() { python3 -c "import json;print(json.load(open('$D'))['$1'])"; }
-VAULT=$(j vault); PRICE=$(j priceFeed); NHI=$(j nhiFeed); SPOT=$(j spotFeed); STABLE=$(j stablecoin); ASKER=$(j oracleAsker)
+PRICE=$(j priceFeed); NHI=$(j nhiFeed); SPOT=$(j spotFeed); ASKER=$(j oracleAsker)
 cast rpc anvil_setCode $CL "$(forge inspect FixedEthUsd deployedBytecode | tail -1)" --rpc-url $RPC >/dev/null
 cast rpc anvil_setStorageAt $CL 0x0 $(cast to-uint256 $ETHUSD) --rpc-url $RPC >/dev/null
 
@@ -62,8 +66,12 @@ POOLP=$(c call $ASKER "poolPrice()(uint256)")
 say "seed feeds at the pool price $POOLP (storage writes: the attester's key is not ours)"
 seed $PRICE $POOLP; seed $SPOT $POOLP; seed $NHI 900000000000000000
 echo "stale? price $(c call $PRICE 'isStale()(bool)') nhi $(c call $NHI 'isStale()(bool)') spot $(c call $SPOT 'isStale()(bool)')"
-# Runbook 7.1: the first values must sit on the pool before deposits open (DeployMainnet.verifySeeded).
-FOUNDRY_PROFILE=deploy forge script script/DeployMainnet.s.sol --sig "verifySeeded()" --rpc-url $RPC 2>&1 | grep -E "Seeded and verified|seeded:|Error" | sed 's/^/  /'
+# Runbook 7.1: the first values must sit on the pool AND on a reference price the pool cannot be held
+# against (DeployMainnet.verifySeeded) before stage two deploys the vault.
+say "verifySeeded against the pool and a reference price, then stage two: the vault"
+REFERENCE_IMD_ETH_WEI=$POOLP FOUNDRY_PROFILE=deploy forge script script/DeployMainnet.s.sol --sig "verifySeeded()" --rpc-url $RPC 2>&1 | grep -E "Seeded and verified|seeded:|Error" | sed 's/^/  /'
+REFERENCE_IMD_ETH_WEI=$POOLP FOUNDRY_PROFILE=deploy OPERATOR=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 forge script script/DeployMainnet.s.sol --sig "runVault()" --rpc-url $RPC --broadcast --slow --private-key $K0 2>&1 | grep -E "deployed|skipped|Deployed|seeded:|Error|FAIL"
+VAULT=$(j vault); STABLE=$(j stablecoin)
 
 say "borrower: 10,000 IMD from the PoolManager, lockIMD (wraps to sIMD), draw at ~175%"
 cast rpc anvil_impersonateAccount $PM --rpc-url $RPC >/dev/null

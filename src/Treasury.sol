@@ -109,6 +109,15 @@ contract Treasury {
     error OracleAskerMissing();
     error NativeTransferFailed();
     error ReserveProtected(IERC20 token);
+    /// @dev Gas a reserve read may spend; see `_boundedCall`.
+    uint256 private constant RESERVE_READ_GAS = 200_000;
+    /// @dev Gas the best-effort share unwrap in `fundOracle` is given, and the floor the caller must bring
+    /// for it. A caught call must get a FIXED stipend: given whatever is left, a transaction sent at an
+    /// estimated gas limit starves the unwrap (eth_estimateGas finds the smallest limit at which the outer
+    /// call does not revert, and with the unwrap's out-of-gas caught that limit is one at which it fails),
+    /// so the keeper's fundOracle unwrapped nothing on the fork rehearsal. sIMD's withdraw is about 95k.
+    uint256 private constant UNWRAP_GAS = 300_000;
+    error InsufficientGasForUnwrap(uint256 needed, uint256 left);
     error BadDebtFirst(uint256 outstanding);
     error NoStream();
 
@@ -269,12 +278,16 @@ contract Treasury {
     /// or token answering megabytes made the copy itself run out of gas and reverted reserveValueUsd, and
     /// with it earnLine, earn, backingPerUnit and every cash, for the two days a delisting takes (final
     /// panel audit, governance, low). Here the copy is fixed-size; `success` is false when the call failed
-    /// or returned fewer than 32 bytes, and `second` is meaningful only when 64 or more came back.
+    /// or returned fewer than 32 bytes, and `second` is meaningful only when 64 or more came back. The call
+    /// gets at most RESERVE_READ_GAS: forwarded everything, one listed source that burned what it was given
+    /// put a multi-million-gas floor under every cash, earn and backingPerUnit, and three such listings
+    /// made the sum itself run out of gas (sweep panel audit, governance, low). A healthy read is a few
+    /// thousand gas; SharePriceFeed, the heaviest shipped source, well under a hundred thousand.
     function _boundedCall(address target, bytes memory data) private view returns (bool success, uint256 first, uint256 second) {
         uint256 size;
         assembly ("memory-safe") {
             let out := mload(0x40)
-            success := staticcall(gas(), target, add(data, 32), mload(data), out, 64)
+            success := staticcall(RESERVE_READ_GAS, target, add(data, 32), mload(data), out, 64)
             size := returndatasize()
             first := mload(out)
             second := mload(add(out, 32))
@@ -525,14 +538,29 @@ contract Treasury {
             uint256 available = share ? IShareVault(token).maxWithdraw(address(this)) : IERC20(token).balanceOf(address(this));
             fromShares = want - plain < available ? want - plain : available;
         }
+        if (plain + fromShares == 0) return 0;
+        if (plain != 0) _withdraw(IERC20(imd), ORACLE_ASKER, plain);
+        if (fromShares != 0) {
+            if (!share) {
+                _withdraw(IERC20(token), ORACLE_ASKER, fromShares);
+            } else {
+                // Best effort: sIMD refuses a withdrawal in any block the Treasury received shares (its
+                // same-block hold), and that must not take the plain IMD already sent with it, or anyone
+                // sending one raw share unit a block could hold the oracle's funding off (sweep panel
+                // audit, governance, info). An external self-call, so the unwrap's revert is caught, with a
+                // fixed stipend it must be given in full (UNWRAP_GAS): refused outright when the caller
+                // brought less, so an estimated gas limit cannot starve it.
+                uint256 needed = UNWRAP_GAS + UNWRAP_GAS / 63 + 30_000;
+                if (gasleft() < needed) revert InsufficientGasForUnwrap(needed, gasleft());
+                try this.unwrapForOracle{gas: UNWRAP_GAS}(IERC20(token), fromShares) {}
+                catch {
+                    fromShares = 0;
+                }
+            }
+        }
         sent = plain + fromShares;
         if (sent == 0) return 0;
         oracleSpent += sent;
-        if (plain != 0) _withdraw(IERC20(imd), ORACLE_ASKER, plain);
-        if (fromShares != 0) {
-            if (share) _withdrawUnderlying(IERC20(token), fromShares);
-            else _withdraw(IERC20(token), ORACLE_ASKER, fromShares);
-        }
         emit OracleFunded(ORACLE_ASKER, sent, oracleSpent);
     }
 
@@ -549,6 +577,12 @@ contract Treasury {
     function _isShare(address token) private view returns (bool) {
         (bool ok, bytes memory data) = token.staticcall(abi.encodeCall(IShareVault.asset, ()));
         return ok && data.length == 32 && abi.decode(data, (address)) != address(0);
+    }
+
+    /// @notice `fundOracle`'s share leg, callable only by this contract (so a refused unwrap can be caught).
+    function unwrapForOracle(IERC20 shares, uint256 assets) external {
+        if (msg.sender != address(this)) revert InvalidRecipient();
+        _withdrawUnderlying(shares, assets);
     }
 
     /// @dev `_withdraw`'s accounting for a share token whose UNDERLYING leaves: credit what arrived

@@ -202,9 +202,9 @@ later value in it must also sit within the cap of that first one (`_epochFirst`)
 after a silence gets the stale allowance and nobody after them does.
 
 **The walk, at the committed constants.** A run of steps compounds at the cap per hour after the first
-step, whose size is whatever the silence before it bought: from a fresh feed 1.2 an hour (2x in four
-steps, three hours; 3.48x in seven, six hours); from a feed two hours silent 1.4 then 1.2 an hour (3.48x
-in six steps, five hours); from a feed ten hours silent the first step is 60%, racing the Treasury's
+step, whose size is whatever the silence before it bought: from a fresh feed 1.2 an epoch (2x in four
+steps, three hours; 3.58x in seven, six hours, 3.48x falling between the sixth and seventh); from a feed
+two hours silent 1.4 then 1.2 an hour (3.48x in six steps, five hours); from a feed ten hours silent the first step is 60%, racing the Treasury's
 refresh, and then 1.2 an hour. Each hour of it is a pool held at the rung for the whole hour (one
 ramp-and-hold round trip, about $40k in fees to 3.48x) with the attacker's position exposed to every
 holder selling into it. `test_relayingAnHourApartNeverEarnsTheStaleBase` pins the rate. Silence is

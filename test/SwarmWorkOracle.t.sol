@@ -254,6 +254,24 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         work.claim(AGENT_A, 10, 10, proofA, root);
     }
 
+    /// @dev Sweep panel audit (governance, low). "Nothing to carry over" was keyed on totalEarned alone, so a
+    /// replacement between a claim and its mint stranded rights priced at the old wage. A successor without
+    /// predecessor() is refused once anything has been CREDITED.
+    function test_aReplacementAfterAClaimMustCarryAPredecessor() public {
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(root);
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.prank(CONTROLLER_A);
+        work.claim(AGENT_A, 10, 10, proofA, root);
+        assertEq(work.totalCredited(), 10 * RATE);
+        assertEq(attestedVault.totalEarned(), 0, "claimed, not minted");
+        _setWage(governance, 0);
+        SwarmWorkOracle successor = new SwarmWorkOracle(address(attestedVault), 1 days);
+        vm.prank(APPROVED_OPERATOR);
+        vm.expectRevert(Parameters.InvalidWorkOracle.selector);
+        governance.proposeWorkOracle(address(successor));
+    }
+
     // --- minting from work is off at launch -------------------------------------------------------
 
     /// @dev WAGE_WAD ships as zero. A claim then would mark the agent's tasks credited for nothing and

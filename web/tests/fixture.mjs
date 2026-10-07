@@ -64,7 +64,7 @@ abi.ParameterizedVault = [
 abi.asker = parseAbi([
   "function price() view returns (uint256)",
   "function payToken() view returns (address)",
-  "function feeds(address) view returns (bytes32 bodyHash, bool tracksPool, bool keepAlive, uint64 lastAsk, uint64 armedAt, uint64 inFlightAt, bytes32 inFlight)",
+  "function feeds(address) view returns (bytes32 bodyHash, bool tracksPool, bool keepAlive, uint64 lastAsk, uint64 armedAt, uint64 inFlightAt, bool treasuryPaid, bytes32 inFlight)",
   "function askPaid(address feed, bytes body, uint256 maxPrice) returns (bytes32)",
   "function askPaidMany(address[] feeds, bytes[] bodies, uint256 maxPriceEach) returns (bytes32[])",
 ]);
@@ -245,6 +245,7 @@ function call(s, params) {
                 0n,
                 0n,
                 0n,
+                false, // treasuryPaid
                 "0x" + "00".repeat(32),
               ]
             : f === "askPaidMany"

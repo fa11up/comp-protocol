@@ -316,19 +316,28 @@ deploy.** Deploy, verify, and only then announce.
 
 ## 7. First operational acts, in order
 
-1. **Buy one attestation per feed** and relay it. Until each feed holds a value it is stale and the
-   vault refuses every action. Three requests, 1.5 IMD. Order matters: walk the feeds to the live
-   market *before* pinning any guards — a request bought with guards around a stale level was refused
-   by a panel when IMD moved 44.6% in a day.
-2. **Verify on chain** that each feed's value is the attested figure and not a reporter value, that
-   `usedRequests[requestId]` is true, and that divergence between primary and spot is inside
-   `SKEW_BPS`. Then run `forge script script/DeployMainnet.s.sol --sig "verifySeeded()" --rpc-url
-   $MAINNET_RPC_URL`: a feed's first
-   value is bounded by nothing on chain and the relay is permissionless, so a value someone raced in
-   off a pumped pool would anchor the feed (final panel audit, oracle, low). It refuses a price or spot
-   value more than 5% from IMD's pool. **If it fails, do not open deposits**: the feed follows the market
-   once its allowance has widened (two hours of silence for 40%, longer for more), so relay honest
-   values and run it again.
+The deploy itself is `run()` (everything but the vault), then steps 1 and 2 below, then `runVault()`.
+
+The deploy is TWO stages (`DeployMainnet.run`, then `runVault`), and the first values go between them:
+the vault is live from its constructor, so deployed in one go it could price a draw against a first value
+somebody else raced in off a pumped pool before any check ran (sweep panel audit, oracle, low). With no
+vault until the first values are checked, a raced first value prices nothing.
+
+1. **Buy one attestation per feed** and relay it (stage one has deployed the feeds and the asker, not
+   the vault). Until each feed holds a value it is stale. Three requests, 1.5 IMD. Order matters: walk
+   the feeds to the live market *before* pinning any guards — a request bought with guards around a
+   stale level was refused by a panel when IMD moved 44.6% in a day.
+2. **Verify on chain** that each feed's value is the attested figure, that `usedRequests[requestId]` is
+   true, and that divergence between primary and spot is inside `SKEW_BPS`. Then run
+   `REFERENCE_IMD_ETH_WEI=<market> forge script script/DeployMainnet.s.sol --sig "verifySeeded()"
+   --rpc-url $MAINNET_RPC_URL`, where `<market>` is IMD's price in wei of ETH per 1e18 IMD taken from
+   somewhere the pool cannot be held against (the day's observed market, the explorer's history): a
+   feed's first value is bounded by nothing on chain and the relay is permissionless, and the pool itself
+   can be held at a pumped level through the check. It refuses a pool more than 5% from the reference,
+   and a price or spot value more than 5% from the pool. **If it fails, do not deploy the vault**: the
+   feed follows the market once its allowance has widened (two hours of silence for 40%, longer for
+   more), so relay honest values and run it again. Then `runVault()` (same environment plus the
+   reference) deploys the vault and runs `verify`.
 3. **List the reserve assets** through `Parameters.proposeReserveAsset` — each needs a price source
    and a haircut, and each waits 48 hours. Until the register is non-empty, `reserveValueUsd()` is
    zero and so is the first term of `earnLine`.

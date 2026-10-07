@@ -331,13 +331,15 @@ contract CoverTest is WorkBackingFixture {
         assertEq(backedVault.badDebtOf(BORROWER), 0);
     }
 
-    /// @dev Final panel audit (vault, low). A re-lock worth more than the dust floor kept cover off until
-    /// someone paid a mark, six hours of grace and an exactly sized bite. Collateral on a drained position
-    /// worth less than its realized bad debt cannot make it good, and is swept to the surplus account.
-    function test_coverSweepsCollateralWorthLessThanTheBadDebt() public {
+    /// @dev Final panel audit (vault, low) and sweep panel audit (vault, medium). A re-lock worth more than
+    /// the dust floor used to hold cover off until someone paid a mark, six hours of grace and an exactly
+    /// sized bite; a sweep of anything worth less than the bad debt (8756817) then took a re-collateralised
+    /// borrower's whole collateral for one wei of cover. Now cover refuses it and a drained position is
+    /// bitten with no mark and no grace, so the re-lock is seized at once and cover follows.
+    function test_aReLockOnADrainedPositionIsBittenAtOnceAndNeverSwept() public {
         uint256 bad = _drain();
         _setVaultPrice(SIMD_SCALE_PRICE);
-        uint256 half = bad / 2 * 1e18 / SIMD_SCALE_PRICE; // worth half the bad debt
+        uint256 half = bad / 2 * 1e18 / SIMD_SCALE_PRICE; // worth half the bad debt: real collateral
         assertGt(half, _seizureFor(_dustSlice(backedVault.debtOf(BORROWER)), SIMD_SCALE_PRICE), "far above the dust floor");
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(BORROWER, half);
@@ -346,11 +348,17 @@ contract CoverTest is WorkBackingFixture {
         backedVault.lock(half);
         vm.stopPrank();
         _fundTreasury(bad);
-        uint256 treasuryGem = collateral.balanceOf(address(reserve));
-        backedVault.cover(BORROWER, bad);
+        vm.expectRevert(CDPVault.NoRealizedBadDebt.selector);
+        backedVault.cover(BORROWER, 1);
+        // No mark, no grace: the keeper bites the re-lock in one transaction and is paid like any liquidator.
+        uint256 keeperGem = collateral.balanceOf(KEEPER);
+        uint256 repay = half * SIMD_SCALE_PRICE / 1.2e18; // the debt the seizure of `half` repays
+        vm.prank(KEEPER);
+        backedVault.bite(BORROWER, repay);
+        assertGt(collateral.balanceOf(KEEPER), keeperGem, "the liquidator took the re-lock");
         (uint256 held,) = backedVault.positions(BORROWER);
-        assertEq(held, 0, "swept");
-        assertEq(collateral.balanceOf(address(reserve)), treasuryGem + half, "to the surplus account, not a liquidator");
+        assertLt(held, _seizureFor(1, SIMD_SCALE_PRICE), "nothing a bite could reach is left");
+        backedVault.cover(BORROWER, backedVault.badDebtOf(BORROWER));
         assertEq(backedVault.badDebtOf(BORROWER), 0);
     }
 

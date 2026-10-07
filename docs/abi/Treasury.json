@@ -362,6 +362,24 @@
   },
   {
     "type": "function",
+    "name": "unwrapForOracle",
+    "inputs": [
+      {
+        "name": "shares",
+        "type": "address",
+        "internalType": "contract IERC20"
+      },
+      {
+        "name": "assets",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "validateReserveAsset",
     "inputs": [
       {
@@ -657,6 +675,22 @@
     "inputs": [
       {
         "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientGasForUnwrap",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "left",
         "type": "uint256",
         "internalType": "uint256"
       }

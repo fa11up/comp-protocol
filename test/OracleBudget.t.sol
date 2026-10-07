@@ -22,6 +22,22 @@ import {
 
 /// @notice The Treasury's keyless way out: a governed daily stream of IMD to the oracle asker,
 /// unwrapped from sIMD on the way so the asker only ever holds what the Intake is paid in.
+/// @dev A share that refuses withdrawals while held, the way sIMD does in a block it received shares.
+contract HeldShare is MockShareVault {
+    bool public hold;
+
+    constructor(MockIMD imd_, uint256 rate_) MockShareVault(IERC20(address(imd_)), rate_) {}
+
+    function setHold(bool on) external {
+        hold = on;
+    }
+
+    function withdraw(uint256 assets, address receiver, address owner) public override returns (uint256) {
+        if (hold) revert("SameBlockRedeem");
+        return super.withdraw(assets, receiver, owner);
+    }
+}
+
 contract OracleBudgetTest is Test {
     address private constant STRANGER = address(0x5174);
     uint256 private constant IMD_ETH = 0.001 ether;
@@ -152,6 +168,28 @@ contract OracleBudgetTest is Test {
         assertEq(treasury.fundOracle(), ORACLE_BUDGET_PER_DAY);
         assertEq(imd.balanceOf(ORACLE_ASKER), ORACLE_BUDGET_PER_DAY);
         assertEq(imd.balanceOf(address(treasury)), 0, "all the plain IMD first");
+    }
+
+    /// @dev Sweep panel audit (governance, info). The plain-IMD leg was all-or-nothing with the sIMD unwrap
+    /// that followed it: in a block the Treasury received shares (sIMD's same-block hold) the unwrap
+    /// reverted and took the plain IMD with it. The unwrap is best effort now.
+    function test_aHeldShareLegDoesNotTakeThePlainIMDWithIt() public {
+        HeldShare held = new HeldShare(imd, RATE);
+        ParameterizedVault v = _vault(address(held));
+        Treasury t = v.treasury();
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(t), 10 ether);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(this), 50 ether);
+        imd.approve(address(held), 50 ether);
+        held.deposit(50 ether, address(t));
+        vm.roll(block.number + 1);
+        held.setHold(true);
+        uint256 sent = t.fundOracle();
+        assertEq(sent, 10 ether, "the plain IMD went, the unwrap was refused and did not revert the call");
+        assertEq(imd.balanceOf(ORACLE_ASKER), 10 ether);
+        held.setHold(false);
+        assertEq(t.fundOracle(), ORACLE_BUDGET_PER_DAY - 10 ether, "a block later the unwrap makes up the rest");
     }
 
     function test_refusesAnAskerWithNoCode() public {

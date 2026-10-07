@@ -55,11 +55,15 @@ interface IWorkOracleSuccessor {
 /// mint. It lists any token the Treasury holds as a reserve asset against any price source that answers
 /// in shape (`proposeReserveAsset`), which sets the reserve term of `earnLine` up to MAX_RESERVE_VALUE per
 /// asset; and while the wage is zero it can install a work oracle it controls (`proposeWorkOracle`).
-/// Together, after 96 hours of public proposals, that is minting with no collateral and no attested
-/// work, diluting every imdUSD holder and lowering the redemption backing. The bounds are the 48-hour
-/// delay on each step, the per-asset cap, and that `earn` is refused while the wage is zero, so the oracle
-/// step alone mints nothing until a wage proposal has also been public for 48 hours. The governor is a
-/// cold key for this reason (docs/MAINNET-RUNBOOK.md section 3).
+/// Together that is minting with no collateral and no attested work, diluting every imdUSD holder. One
+/// proposal slot and a 48-hour delay on each step put the full path (listing, oracle, wage) at 144 hours
+/// of public proposals from the launch state, 192 from a running wage (which must first go to zero); the
+/// oracle and wage pair alone (96 hours) mints only against the ratio term, a quarter of the warmed
+/// collateral-backed debt. The listing step by itself, with neither oracle nor wage, already moves money:
+/// the listed value raises the redemption backing, so `cash` pays redeemers more from the reserve. The
+/// per-listing cap (Treasury.MAX_RESERVE_VALUE, $1e18) is an overflow bound and not a limit on damage,
+/// and the register's length is unbounded. `earn` is refused while the wage is zero. The governor is a
+/// cold key for all of this (docs/MAINNET-RUNBOOK.md section 3).
 contract Parameters is Governed {
     struct ParamSet {
         uint256 line;
@@ -250,9 +254,10 @@ contract Parameters is Governed {
     /// from work is ON — at proposal and again at application — so no rights are ever CONSUMABLE in two
     /// oracles at once: the vault reads one oracle, `earn` is refused at wage 0, and a superseded
     /// `SwarmWorkOracle` refuses claims once it is no longer the vault's oracle. Once anything has ever
-    /// been minted from work, the replacement must name the current oracle as its `predecessor`, so it
-    /// can start from the tallies already credited instead of crediting them a second time; before that,
-    /// there is nothing to carry over.
+    /// been minted from work, or CREDITED by a claim and not yet minted (`SwarmWorkOracle.totalCredited`),
+    /// the replacement must name the current oracle as its `predecessor`, so it can start from the tallies
+    /// already credited instead of crediting them a second time; before that, there is nothing to carry
+    /// over.
     /// @dev A governed power, not a neutral one: see the trust assumption on this contract. The 48-hour
     /// delay applies like every other change. `SwarmWorkOracle` answers no `predecessor()`, so once
     /// anything has been minted the successor has to be a new contract type that does (and that carries
@@ -381,6 +386,16 @@ contract Parameters is Governed {
         return Treasury(payable(vault.treasury()));
     }
 
+    function _predecessor(address oracle) private view returns (address) {
+        (bool ok, bytes memory data) = oracle.staticcall(abi.encodeWithSignature("predecessor()"));
+        return ok && data.length == 32 ? abi.decode(data, (address)) : address(0);
+    }
+
+    function _credited(address oracle) private view returns (uint256) {
+        (bool ok, bytes memory data) = oracle.staticcall(abi.encodeWithSignature("totalCredited()"));
+        return ok && data.length == 32 ? abi.decode(data, (uint256)) : 0;
+    }
+
     function _checkDivisor(uint256 divisor) private pure {
         if (divisor < MIN_REDEMPTION_DIVISOR || divisor > MAX_REDEMPTION_DIVISOR) {
             revert RedemptionDivisorOutOfRange(divisor);
@@ -397,7 +412,11 @@ contract Parameters is Governed {
         if (kind == Change.WorkOracle) {
             (, address replacement) = abi.decode(payload, (Change, address));
             if (_wage != 0) revert WorkMintingOn();
-            bool minted = vault.totalEarned() != 0;
+            // Anything to carry over: rights minted, or rights CREDITED by claims and not yet minted. Keyed
+            // on totalEarned alone, a replacement between a claim and its mint stranded rights priced at
+            // the old wage (sweep panel audit, governance, low). Probed, so an oracle without the view (the
+            // test faucet) answers nothing to carry.
+            bool minted = vault.totalEarned() != 0 || _credited(address(vault.oracle())) != 0;
             if (replacement == address(0)) {
                 if (minted) revert InvalidWorkOracle();
                 return;
@@ -405,7 +424,9 @@ contract Parameters is Governed {
             IWorkOracleSuccessor successor = IWorkOracleSuccessor(replacement);
             if (replacement.code.length == 0 || successor.vault() != address(vault)) revert InvalidWorkOracle();
             successor.mintingRights(address(vault));
-            if (minted && successor.predecessor() != vault.oracle()) revert InvalidWorkOracle();
+            // Probed, so a successor without the view (SwarmWorkOracle) is refused with this contract's own
+            // error rather than an empty revert from the typed call.
+            if (minted && _predecessor(replacement) != address(vault.oracle())) revert InvalidWorkOracle();
             return;
         }
         if (kind == Change.RedemptionDivisor) {

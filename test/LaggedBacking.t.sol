@@ -39,12 +39,36 @@ contract Churner {
         vault.lock(amount);
     }
 
+    function wipeCashDraw(uint256 repay, uint256 redeem) external {
+        vault.wipe(repay);
+        vault.cash(redeem, 0, address(0));
+        vault.draw(repay);
+    }
+
     function wipe(uint256 amount) external {
         vault.wipe(amount);
     }
 
     function draw(uint256 amount) external {
         vault.draw(amount);
+    }
+}
+
+/// @dev The sweep panel's attacker: cancels another borrower's warm debt and draws the same amount in one call.
+contract Swapper {
+    ParameterizedVault private immutable vault;
+    MockIMD private immutable imd;
+
+    constructor(ParameterizedVault vault_, MockIMD imd_) {
+        vault = vault_;
+        imd = imd_;
+        imd_.approve(address(vault_), type(uint256).max);
+    }
+
+    function swap(address candidate, uint256 cancel, uint256 collateral, uint256 debt) external {
+        vault.cash(cancel, 0, candidate);
+        vault.lock(collateral);
+        vault.draw(debt);
     }
 }
 
@@ -324,10 +348,45 @@ contract LaggedBackingTest is Test {
         assertEq(vault.backingPerUnit(), backingBefore, "and redeemers are paid against the same backing");
         churner.freeAndRelock(100 ether);
         assertEq(vault.laggedSecured(), securedBefore, "free-and-relock in one transaction likewise");
-        // Across two transactions it is a decrease that lasted, and it re-warms as before.
+        // Across two transactions the same position's return is credited from its bank too (within a day).
         churner.wipe(500 ether);
+        assertLt(vault.laggedDebt(), debtBefore, "a decrease counts at once");
         churner.draw(500 ether);
-        assertLt(vault.laggedDebt(), debtBefore, "a decrease across transactions still counts at once");
+        assertEq(vault.laggedDebt(), debtBefore, "and the same position's return within a day is credited back");
+    }
+
+    /// @dev Sweep panel audit (vault, high). Netted per TRANSACTION against the aggregate, the lag let a
+    /// different position inherit warmth: cancel an honest borrower's warm debt through cash and draw the
+    /// same amount in one call, and the work ceiling minted against zero-second debt. Warmth is banked per
+    /// position now: the honest position banks it, the attacker's draw warms from zero.
+    function test_cancellingAnotherBorrowersWarmDebtDoesNotTransferItsWarmth() public {
+        _workMintingOn();
+        address honest = address(0x4043);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(honest, 2_000 ether);
+        vm.startPrank(honest);
+        imd.approve(address(vault), type(uint256).max);
+        vault.lock(2_000 ether); // 200%: inside the redeemable band (< mat + gap)
+        vault.draw(1_000 ether);
+        vm.stopPrank();
+        Swapper swapper = new Swapper(vault, imd);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(swapper), 2_000 ether);
+        vm.prank(honest);
+        stable.transfer(address(swapper), 1_000 ether);
+        vm.prank(APPROVED_OPERATOR);
+        oracle.grantRights(address(swapper), 1_000 ether);
+        vm.warp(block.timestamp + 3 days);
+        _feeMoney(address(swapper)); // a checkpoint: the honest debt is warm
+        (uint256 warm,) = vault.laggedNow();
+        assertGe(warm, 1_000 ether);
+        // One transaction: cash 1,000 against the honest position, lock, draw 1,000.
+        swapper.swap(honest, 1_000 ether, 1_800 ether, 1_000 ether);
+        assertLt(vault.laggedDebt(), 100 ether, "the honest debt's warmth did not move to the swapper's debt");
+        _nextBlock();
+        vm.prank(address(swapper));
+        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        vault.earn(250 ether);
     }
 
     /// @dev Oracle panel, low. A reverting ETH/USD leg read as price 0 and an ungated wipe wrote a zero
@@ -346,10 +405,13 @@ contract LaggedBackingTest is Test {
         vm.mockCallRevert(CHAINLINK_ETH_USD, abi.encodeWithSignature("latestRoundData()"), "dead");
         vm.prank(WORKER);
         vault.wipe(1 ether);
-        assertEq(vault.securedCollateral(), secured, "the term is kept while the price cannot be read");
-        assertEq(vault.laggedSecured(), laggedBefore, "and the lag is not clamped down");
+        // Kept, scaled down with the principal repaid (sweep panel audits, vault and oracle, low): the
+        // repayment retires fees first, so a little under 1 of 1,000 of principal.
+        assertLt(vault.securedCollateral(), secured, "the term is scaled down with the repayment");
+        assertGt(vault.securedCollateral(), secured * 998 / 1_000, "and kept otherwise");
+        assertGe(vault.laggedSecured(), laggedBefore * 998 / 1_000, "and the lag is not clamped to zero");
         vm.clearMockedCalls();
-        assertEq(vault.backingPerUnit(), backing, "so redemption is whole the moment the leg is back");
+        assertApproxEqRel(vault.backingPerUnit(), backing, 1e15, "so redemption is whole the moment the leg is back");
     }
 
     /// @dev Vault panel, low. At whole seconds a tranche that dwarfed the fresh record rounded its weighted
@@ -381,5 +443,49 @@ contract LaggedBackingTest is Test {
         vm.prank(holder);
         vault.cash(1 ether, 0, WORKER);
         assertGt(vault.redemptionBaseRate(), 0, "principal outstanding for 33 hours is seasoned, so the base rate rises");
+    }
+
+    /// @dev Sweep panel audit (vault, medium x2). Supply burned inside a transaction was not added back to
+    /// the fee base, so a borrower holding most of the supply as its own debt could wipe, redeem a little
+    /// against the shrunken supply and redraw, pinning the redemption fee at the cap for a tenth of the
+    /// honest cost. The burn tally (BURNED_THIS_TX_SLOT) restores the supply both the fee and the backing
+    /// are measured against.
+    function test_aSameTransactionRepaymentDoesNotShrinkTheFeeBase() public {
+        Churner churner = new Churner(vault, imd);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(churner), 2_000 ether);
+        churner.open(2_000 ether, 900 ether);
+        vm.startPrank(HELPER);
+        vault.lock(200 ether);
+        vault.draw(100 ether);
+        stable.transfer(address(churner), 9 ether);
+        vm.stopPrank();
+        address treasury = address(vault.treasury());
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(treasury, 100 ether); // the redemption is reserve-funded
+        assertEq(stable.totalSupply(), 1_000 ether);
+        assertEq(vault.redemptionBaseRate(), 0);
+        churner.wipeCashDraw(900 ether, 9 ether);
+        // 9 of a supply of 1,000 at divisor 2: 45 bps, as if the wipe had not happened in the same call.
+        assertEq(vault.redemptionBaseRate(), 0.0045e18, "the fee base is the supply before the transaction");
+    }
+
+    /// @dev Sweep panel audit (oracle, low). An oversized ETH/USD answer made the USD leg REVERT on the
+    /// multiplication instead of reading zero, reaching the ungated lock and wipe. It reads zero now.
+    function test_anOversizedEthUsdAnswerReadsAsZeroNotARevert() public {
+        vm.startPrank(WORKER);
+        vault.lock(2_000 ether);
+        vault.draw(1_000 ether);
+        vm.stopPrank();
+        vm.mockCall(
+            CHAINLINK_ETH_USD,
+            abi.encodeWithSignature("latestRoundData()"),
+            abi.encode(uint80(1), int256(1e70), block.timestamp, block.timestamp, uint80(1))
+        );
+        (uint256 value,) = vault.usdPriceFeed().latestValue();
+        assertEq(value, 0, "malformed reads as zero");
+        vm.prank(WORKER);
+        vault.wipe(1 ether); // ungated, and must not revert on a malformed leg
+        vm.clearMockedCalls();
     }
 }

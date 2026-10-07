@@ -40,7 +40,8 @@ contract SpotFeed is SwarmFeed {
     /// regenerated, or the feed refuses every attestation — which is the safe direction.
     ///
     /// BEFORE DEPLOYING: buy one request with that payload and run the generator with
-    /// `--verify <requestId>`; it must print MATCH. Nothing has been bought with it yet.
+    /// `--verify <requestId>`; it must print MATCH. A live spot attestation was proven on testnet
+    /// (docs/LAUNCH-READINESS.md) but its request id is not archived here: re-verify before the freeze.
     ///
     /// A univ4-spot recipe with samples 1 reads the window's LAST BLOCK ALONE (deployer sampleBlocks:
     /// `if (samples === 1) return [window.toBlock]`), which is the point-in-time reading this feed wants.

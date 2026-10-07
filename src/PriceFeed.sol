@@ -33,9 +33,10 @@ contract PriceFeed is SwarmFeed {
     /// attestation. Change one character of that payload's question or definitions and this constant
     /// must be regenerated, or the feed refuses every attestation — which is the safe direction.
     ///
-    /// BEFORE DEPLOYING: buy one request with that payload and run the generator with
-    /// `--verify <requestId>`; it must print MATCH. Nothing has been bought with the frozen payload
-    /// yet, so this constant has NOT been checked against a live attestation.
+    /// Checked against a live attestation: keccak256(prefix || "26120928" || ',"toBlock":' || "26121526"
+    /// || "}}") is the questionHash the attester signed in oracle/attestation-e2c85027.json (window
+    /// 26120928..26121526, domain version 2). Run the generator with `--verify <requestId>` again before
+    /// the deploy commit is frozen; it must print MATCH.
     ///
     /// The span bounds bracket a two-hour window (~600 blocks at 12s) with room for block-time drift.
     /// The payload keeps every moving number in `guards`, which the control plane does NOT hash, so

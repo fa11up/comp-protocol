@@ -18,8 +18,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// us test a protocol we were never going to deploy.
 ///
 /// There is no admin or setter. Values are scaled by 1e18; consumers enforce any application bounds.
-/// Zero is rejected on both paths: it is never a valid scaled figure and would pin the relative bound at
-/// zero. The deviation bound is PER UNIT OF TIME, not per attestation: every value accepted within one
+/// Zero is rejected: it is never a valid scaled figure and would pin the relative bound at zero. The deviation bound is PER UNIT OF TIME, not per attestation: every value accepted within one
 /// maxAge of an epoch's start must lie within the epoch's allowance of the ANCHOR, the value the feed held
 /// when the epoch began. The allowance is maxDeviationBps when that value was fresh, and still
 /// maxDeviationBps for the first STALE_GROWTH_PERIOD (an hour) it is stale; after a whole hour of
@@ -27,7 +26,9 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// hour (`_allowanceNow`). The stale base is earned by silence, never by timing: measured from one second
 /// past the lifetime, a buyer relaying one step an hour and a second after the last opened every epoch on
 /// the stale base and compounded at it (second-half review, docs/AUDIT-FINAL-2-2026-10-07.md, medium);
-/// now a feed anyone keeps alive moves at most the cap per hour however it is driven. An epoch opened
+/// now a feed anyone keeps alive moves at most the cap per EPOCH however it is driven (two steps can
+/// straddle an epoch boundary a block apart, so over a sliding hour the move can reach (1 + cap)^2 - 1
+/// once; the sustained rate is the cap per lifetime). An epoch opened
 /// wider than the cap closes behind its first value: every later value in it must also lie within the
 /// cap of that first one (`_epochFirst`), so an honest refresh of a long-silent feed leaves an attacker
 /// the cap around the market, not the stale allowance. It never lifts outright, but it does not stay shut either: the final
@@ -111,7 +112,7 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// vault halted from hour 24).
     uint256 public constant STALE_GROWTH_PERIOD = 1 hours;
     /// @notice The allowance never exceeds this (a value a hundred times the anchor); it also keeps the
-    /// packed uint32 exact.
+    /// packed uint24 exact.
     uint256 public constant MAX_ALLOWANCE_BPS = 1_000_000;
 
     bytes32 public constant ATTESTATION_TYPEHASH = keccak256(

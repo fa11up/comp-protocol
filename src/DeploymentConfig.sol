@@ -59,14 +59,12 @@ uint256 constant NHI_MAX_AGE = 1 days;
 /// @dev Signer of every IdentityMD oracle attestation, recovered from live attestation signatures.
 address constant ORACLE_ATTESTER = 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982;
 
-/// @dev Sole address permitted to submit an attestation. Zero would mean permissionless relay,
-/// which SwarmFeed.submitAttestation documents as unsafe for as long as questionHash binds a
-/// moving block window and so cannot identify WHICH question an attestation answers.
-///
-/// This is SwarmRelay, deployed to Sepolia at the address below, NOT an externally owned account.
-/// Anyone may call it, so the trust is the same as a zero relayer, but the nonzero-relayer guarantee
-/// survives and two things become possible that a key cannot do: several feeds update in one
-/// transaction, and a keeper bundles an update with the action it enables.
+/// @dev Sole address permitted to submit an attestation: the planned mainnet SwarmRelay (plan.py
+/// converges it; DeployMainnet refuses to broadcast while it disagrees). It is a contract anyone may call,
+/// so the trust is the same as a zero relayer: every shipped feed pins its question and bounds every value
+/// after the first per epoch, and the relayer is not a trust boundary (SwarmFeed.submitAttestation). What
+/// it buys is what a key cannot do: several feeds update in one transaction, and a keeper bundles an
+/// update with the action it enables.
 ///
 /// ORDER MATTERS. This is a compile-time constant, so the relay must already exist before the feeds
 /// are compiled — a launch manifest cannot deploy the relay and then build feeds against it. Deploy

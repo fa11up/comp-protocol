@@ -166,20 +166,14 @@ contract ParameterizedVault is CDPVault {
     /// REVISION (finding 998ff6b2): the register valued unlisted IMD at zero on BOTH sides, so in the
     /// launch configuration (an empty register) every reserve-funded payout checked as zero against
     /// zero and the guard was vacuous for the asset the route actually pays; listed IMD whose source
-    /// read stale, or carried a zero factor, did the same. One valuation for the IMD held and the IMD
-    /// leaving is what makes the comparison mean something. Other listed assets still count at their
-    /// registered, discounted value: they back imdUSD but never leave through this route.
-    function _redemptionReserveBacking(uint256 amount, uint256 price)
-        internal
-        view
-        override
-        returns (uint256, uint256)
-    {
+    /// read stale, or carried a zero factor, did the same. The IMD held is valued at the price the IMD
+    /// leaving is paid at, which is what makes the backing figure mean something for this route. Other
+    /// listed assets still count at their registered, discounted value: they back imdUSD but never leave
+    /// through this route. (The value leaving used to be returned too, for a guard the pro-rata payout
+    /// replaced; dropped, sweep panel audit, vault, info.)
+    function _redemptionReserveBacking(uint256 price) internal view override returns (uint256) {
         uint256 others = reserveValue() - treasury.reserveValueOf(gem);
-        return (
-            others + Math.mulDiv(gem.balanceOf(address(treasury)), price, 1e18),
-            Math.mulDiv(amount, price, 1e18, Math.Rounding.Ceil)
-        );
+        return others + Math.mulDiv(gem.balanceOf(address(treasury)), price, 1e18);
     }
 
     /// @notice Both revenue streams land in the Treasury this vault created, never in an account.
@@ -240,8 +234,9 @@ contract ParameterizedVault is CDPVault {
     /// that, a rights holder with transient capital raised totalDebt with their own position, minted
     /// work against a quarter of it, repaid (a zero-second fee is zero) and withdrew everything in one
     /// call, leaving work-minted imdUSD with nothing behind it. The cap is the debt level at the start of
-    /// the transaction, remembered in transient storage, so the ratio term is only ever backed by
-    /// positions that existed before the caller arrived. A position held across transactions counts
+    /// the transaction, remembered in transient storage, so the ratio term is only ever backed by debt
+    /// that existed before the caller arrived; with the wage on, that debt also counts only as it has
+    /// warmed up, and warmth belongs to the position that earned it (CDPVault._bank). A position held across transactions counts
     /// in full, so the ceiling stays point-in-time for the slow version of the same round trip: that is
     /// the accepted design (the ceiling gates new minting only; repayment lowers it and leaves what was
     /// minted), and the cost of it is real capital at risk in an open position, not gas.

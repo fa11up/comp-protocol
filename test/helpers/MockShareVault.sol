@@ -49,7 +49,7 @@ contract MockShareVault is ERC20 {
     }
 
     /// @dev Burns the shares worth `assets`, rounded up against the owner as ERC-4626 requires.
-    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares) {
+    function withdraw(uint256 assets, address receiver, address owner) public virtual returns (uint256 shares) {
         require(msg.sender == owner, "owner only");
         shares = (assets * 1e18 + rate - 1) / rate;
         _burn(owner, shares);

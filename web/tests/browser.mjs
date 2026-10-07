@@ -731,6 +731,9 @@ try {
     "One viewport; every desk and monitor tab fits without scrolling; all mobile panes reachable",
     viewports,
   );
+  // The chart re-stacks its loan markers on resize asynchronously; axe run before that settles saw two
+  // markers overlapping at 320px and failed target-size intermittently.
+  await page.waitForTimeout(500);
   const axeMobile = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
     .analyze();

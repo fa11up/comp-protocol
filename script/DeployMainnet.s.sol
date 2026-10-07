@@ -175,6 +175,13 @@ contract DeployMainnet is Script, DeployPreflight {
 
     // --- deployment --------------------------------------------------------------------------------
 
+    /// @notice STAGE ONE: everything but the vault. The feeds are then seeded (runbook 7.1) and checked by
+    /// `verifySeeded`, and only then does `runVault` deploy the vault. Deployed in one go, the vault was
+    /// live from its constructor while the feeds' first values were still anybody's to relay: whoever
+    /// relayed a first value off a pumped pool could draw against it in the same block, before any check
+    /// could run (sweep panel audit, oracle, low). With the vault absent until the first values are
+    /// checked, a raced first value can price nothing; it costs the operator a wait for the allowance to
+    /// widen and honest values, never a redeploy.
     function run() external {
         Plan memory p = plan();
         _refuseUnlessReady(p);
@@ -187,12 +194,27 @@ contract DeployMainnet is Script, DeployPreflight {
         _deploy(SALT_SPOT, _spotInit(), p.spot);
         _deploy(SALT_ASKER, _askerInit(p), p.asker);
         _deploy(SALT_TREASURY_FACTORY, type(TreasuryFactory).creationCode, p.treasuryFactory);
+        vm.stopBroadcast();
+
+        verifyFeeds(p, true);
+        _record(p);
+        console2.log("\nStage one deployed and verified. Next: runbook 7.1 (buy and relay the first attestations), then");
+        console2.log("`--sig verifySeeded()` with REFERENCE_IMD_ETH_WEI set, then `--sig runVault()` to deploy the vault.");
+    }
+
+    /// @notice STAGE TWO: the vault, once the feeds hold their first values and `verifySeeded` passes.
+    function runVault() external {
+        Plan memory p = plan();
+        _refuseUnlessReady(p);
+        verifySeeded(p);
+
+        vm.startBroadcast();
         _deploy(SALT_VAULT, _vaultInit(p), p.vault);
         vm.stopBroadcast();
 
         verify(p);
         _record(p);
-        console2.log("\nDeployed and verified. Next: runbook section 7 (seed the feeds, list sIMD, start the keeper).");
+        console2.log("\nDeployed and verified. Next: runbook section 7 from step 3 (list sIMD, start the keeper).");
     }
 
     /// @dev Everything that would make the broadcast wrong, checked before it starts.
@@ -284,31 +306,15 @@ contract DeployMainnet is Script, DeployPreflight {
         require(parameters.streamPayee() == address(0) && parameters.streamPerDay() == 0, "stream is not off");
         require(vault.totalDebt() == 0 && vault.earnLine() == 0, "vault: opens with debt or a work ceiling");
 
-        // Feeds: authority, policy, and that they open unseeded with no reporter.
-        address[3] memory feeds = [p.price, p.nhi, p.spot];
-        uint256[3] memory ages = [PRICE_MAX_AGE, NHI_MAX_AGE, SPOT_MAX_AGE];
-        for (uint256 i; i < 3; ++i) {
-            SwarmFeed f = SwarmFeed(feeds[i]);
-            require(f.attester() == ORACLE_ATTESTER, "feed: wrong attester");
-            require(f.relayer() == p.relay, "feed: wrong relayer");
-            require(f.attestationChainId() == ATTESTATION_CHAIN_ID, "feed: wrong data chain");
-            require(f.attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "feed: wrong answer type");
-            require(f.maxAge() == ages[i], "feed: wrong maxAge");
-            require(f.maxDeviationBps() == FEED_MAX_DEVIATION_BPS, "feed: wrong deviation cap");
-            require(f.isStale(), "feed: must open unseeded");
-            require(f.expectedQuestionHash(1, 2) != bytes32(0), "feed: binds no question");
-            (bool reported,) = feeds[i].staticcall(abi.encodeWithSignature("report(uint256)", uint256(1)));
-            require(!reported, "feed: a reporter fallback is reachable");
-        }
-
-        // The asker: paid in IMD, one entry per feed, each pinned to the body this script wrote.
+        verifyFeeds(p, false);
         OracleAsker asker = OracleAsker(p.asker);
+        address[3] memory feeds = [p.price, p.nhi, p.spot];
         require(address(asker.payToken()) == IMD, "asker: not paid in IMD");
         bytes[3] memory bodies = [p.priceBody, p.nhiBody, p.spotBody];
         bool[3] memory tracks = [true, false, true];
         bool[3] memory alive = [false, true, false];
         for (uint256 i; i < 3; ++i) {
-            (bytes32 bodyHash, bool tracksPool, bool keepAlive,,,,) = asker.feeds(feeds[i]);
+            (bytes32 bodyHash, bool tracksPool, bool keepAlive,,,,,) = asker.feeds(feeds[i]);
             require(bodyHash == keccak256(bodies[i]), "asker: body hash mismatch");
             require(tracksPool == tracks[i] && keepAlive == alive[i], "asker: wrong trigger policy");
             // The trigger is a property of the feed's cap, not of the policy: a quarter of it on a fall, never a rise.
@@ -321,7 +327,6 @@ contract DeployMainnet is Script, DeployPreflight {
         // must read a price, or drift reads as zero and the Treasury never pays for a fall.
         require(asker.price() != 0 && asker.price() <= ASK_MAX_PRICE, "asker: the Intake does not sell oracle.request for IMD at or under ASK_MAX_PRICE");
         require(asker.poolPrice() != 0, "asker: the pool slot reads empty (POOL_MANAGER or IMD_POOL_ID wrong)");
-        require(asker.wideOpen(p.price) && asker.wideOpen(p.nhi) && asker.wideOpen(p.spot), "asker: an unseeded feed must read wide open");
         require(WIDE_ALLOWANCE_BPS > FEED_MAX_DEVIATION_BPS * 2, "wide allowance must exceed the stale base");
         require(parameters.workOracle() == address(0), "work-oracle slot is not empty");
         require(vault.gap() == 50, "gap drifted from the Parameters default");
@@ -338,15 +343,43 @@ contract DeployMainnet is Script, DeployPreflight {
         _preflightPriceLeg();
     }
 
-    /// @notice Runbook section 7.1, after the first attestations are relayed and BEFORE deposits open:
+    /// @notice Stage one's read-back: the feeds' authority and policy, and the asker's entries. `unseeded`
+    /// requires every feed to hold no value yet (fresh from the deploy); `verify` after stage two passes false.
+    function verifyFeeds(Plan memory p, bool unseeded) public view {
+        address[3] memory feeds = [p.price, p.nhi, p.spot];
+        uint256[3] memory ages = [PRICE_MAX_AGE, NHI_MAX_AGE, SPOT_MAX_AGE];
+        for (uint256 i; i < 3; ++i) {
+            SwarmFeed f = SwarmFeed(feeds[i]);
+            require(f.attester() == ORACLE_ATTESTER, "feed: wrong attester");
+            require(f.relayer() == p.relay, "feed: wrong relayer");
+            require(f.attestationChainId() == ATTESTATION_CHAIN_ID, "feed: wrong data chain");
+            require(f.attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "feed: wrong answer type");
+            require(f.maxAge() == ages[i], "feed: wrong maxAge");
+            require(f.maxDeviationBps() == FEED_MAX_DEVIATION_BPS, "feed: wrong deviation cap");
+            if (unseeded) require(f.isStale(), "feed: must open unseeded");
+            require(f.expectedQuestionHash(1, 2) != bytes32(0), "feed: binds no question");
+            (bool reported,) = feeds[i].staticcall(abi.encodeWithSignature("report(uint256)", uint256(1)));
+            require(!reported, "feed: a reporter fallback is reachable");
+        }
+        OracleAsker asker = OracleAsker(p.asker);
+        require(address(asker.payToken()) == IMD, "asker: not paid in IMD");
+        if (unseeded) {
+            require(asker.wideOpen(p.price) && asker.wideOpen(p.nhi) && asker.wideOpen(p.spot), "asker: an unseeded feed must read wide open");
+        }
+    }
+
+    /// @notice Runbook section 7.1, after the first attestations are relayed and BEFORE the vault exists:
     /// refuse a first value someone else raced in. Nothing on chain bounds a feed's first value and the
     /// relay is permissionless, so whoever relays first anchors the feed; a pumped pool attested honestly
     /// is a valid first value two times the market (final panel audit, oracle, low). Every feed must
     /// hold a fresh value, the price and spot feeds within a quarter of the cap (5% at launch) of IMD's
     /// pool as the asker reads it, and of each other within SKEW_BPS, and NHI must lie in (0, 1e18]. If
-    /// this fails, do not open deposits: wait for the allowance to widen and relay honest values, then run
-    /// it again. `forge script script/DeployMainnet.s.sol --sig "verifySeeded()" --rpc-url <mainnet>`
-    /// rebuilds the plan from source and checks it.
+    /// this fails, do not deploy the vault: wait for the allowance to widen and relay honest values, then
+    /// run it again. The pool itself can be held at the attested level through the check, so the values are
+    /// also checked against REFERENCE_IMD_ETH_WEI, a price the operator takes from somewhere the attacker
+    /// does not control (the day's observed market, in wei of ETH per 1e18 IMD), and the stage-two deploy
+    /// refuses to run without it. `forge script script/DeployMainnet.s.sol --sig "verifySeeded()"
+    /// --rpc-url <mainnet>` rebuilds the plan from source and checks it.
     function verifySeeded() external view {
         verifySeeded(plan());
     }
@@ -355,10 +388,13 @@ contract DeployMainnet is Script, DeployPreflight {
         OracleAsker asker = OracleAsker(p.asker);
         uint256 pool = asker.poolPrice();
         require(pool != 0, "seeded: the pool slot reads empty");
+        uint256 referencePrice = vm.envOr("REFERENCE_IMD_ETH_WEI", uint256(0));
+        require(referencePrice != 0, "seeded: set REFERENCE_IMD_ETH_WEI to the market price from a source the pool cannot be held against");
         uint256 band = FEED_MAX_DEVIATION_BPS * DRIFT_FALL_TRIGGER_OF_CAP_BPS / 10_000;
         (uint256 price, uint256 spot, uint256 nhi) = (_seeded(p.price), _seeded(p.spot), _seeded(p.nhi));
-        require(_within(price, pool, band), "seeded: the price feed's first value is off the pool: do not open deposits");
-        require(_within(spot, pool, band), "seeded: the spot feed's first value is off the pool: do not open deposits");
+        require(_within(pool, referencePrice, band), "seeded: the pool itself is off the reference price: wait");
+        require(_within(price, pool, band), "seeded: the price feed's first value is off the pool: do not deploy the vault");
+        require(_within(spot, pool, band), "seeded: the spot feed's first value is off the pool: do not deploy the vault");
         require(_within(spot, price, SKEW_BPS), "seeded: price and spot disagree beyond SKEW_BPS");
         require(nhi <= 1e18, "seeded: NHI above one");
         console2.log("Seeded and verified: price, spot and NHI hold fresh values, price and spot on the pool.");
@@ -404,14 +440,17 @@ contract DeployMainnet is Script, DeployPreflight {
         vm.serializeAddress(o, "oracleAsker", p.asker);
         vm.serializeAddress(o, "intake", INTAKE);
         vm.serializeAddress(o, "vault", p.vault);
-        vm.serializeAddress(o, "stablecoin", address(vault.stablecoin()));
         vm.serializeAddress(o, "gem", STAKED_IMD);
-        vm.serializeAddress(o, "imd", IMD);
-        vm.serializeAddress(o, "parameters", address(vault.parameters()));
-        vm.serializeAddress(o, "treasury", address(vault.treasury()));
-        vm.serializeAddress(o, "usdPriceFeed", address(vault.usdPriceFeed()));
-        vm.serializeAddress(o, "collateralPriceFeed", address(vault.collateralPriceFeed()));
-        string memory json = vm.serializeAddress(o, "workOracle", address(vault.oracle()));
+        string memory json = vm.serializeAddress(o, "imd", IMD);
+        // Stage one records the plan (the vault's address is planned, not deployed); stage two the rest.
+        if (p.vault.code.length != 0) {
+            vm.serializeAddress(o, "stablecoin", address(vault.stablecoin()));
+            vm.serializeAddress(o, "parameters", address(vault.parameters()));
+            vm.serializeAddress(o, "treasury", address(vault.treasury()));
+            vm.serializeAddress(o, "usdPriceFeed", address(vault.usdPriceFeed()));
+            vm.serializeAddress(o, "collateralPriceFeed", address(vault.collateralPriceFeed()));
+            json = vm.serializeAddress(o, "workOracle", address(vault.oracle()));
+        }
         vm.writeJson(json, string.concat(OUT, "deployment.json"));
     }
 

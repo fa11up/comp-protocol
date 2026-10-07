@@ -33,7 +33,8 @@ contract NhiFeed is SwarmFeed {
     /// regenerated, or the feed refuses every attestation — which is the safe direction.
     ///
     /// BEFORE DEPLOYING: buy one request with that payload and run the generator with
-    /// `--verify <requestId>`; it must print MATCH. Nothing has been bought with it yet.
+    /// `--verify <requestId>`; it must print MATCH. A live NHI attestation was proven on testnet
+    /// (docs/LAUNCH-READINESS.md) but its request id is not archived here: re-verify before the freeze.
     ///
     /// The NHI question is a LIVE READ of api.imd.fun/swarm and is not tied to the block window at all, so
     /// the span bounds here are hygiene rather than a price defence: what matters for this feed is that the
