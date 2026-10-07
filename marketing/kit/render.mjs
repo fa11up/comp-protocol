@@ -19,7 +19,10 @@ const logo = (name, bg) => `<body style="margin:0;background:${bg}">${mark(name,
 
 // End card: the site's header lockup (imd + bold USD), the mark, the address and the staging chip,
 // inside a double hairline frame that nods to a banknote border.
-const endcard = (w, h) => {
+// status: "staging" (the default card), "" (the word blanked, for a blink) or "live" (in engraved green, bold).
+// The status word sits in a fixed 7ch box so the chip does not change width between the states.
+const GREEN = "#2F5D50";
+const endcard = (w, h, status = "staging") => {
   const m = Math.round(Math.min(w, h) * 0.3);
   const word = Math.round(Math.min(w, h) * 0.105);
   return `<body style="margin:0;width:${w}px;height:${h}px;background:${IVORY};font-family:${FONT};color:${INK}">
@@ -29,7 +32,7 @@ const endcard = (w, h) => {
     ${mark("mark-transparent.svg", m)}
     <div style="font-size:${word}px;letter-spacing:-0.02em;line-height:1">imd<b>USD</b></div>
     <div style="font-size:${Math.round(word * 0.32)}px;color:${SLATE};letter-spacing:0.04em">imdusd.com</div>
-    <div style="font-size:${Math.round(word * 0.2)}px;letter-spacing:0.12em;text-transform:uppercase;border:1px solid ${SLATE};color:${SLATE};padding:${Math.round(word * 0.07)}px ${Math.round(word * 0.16)}px">Mainnet · staging</div>
+    <div style="font-size:${Math.round(word * 0.2)}px;letter-spacing:0.12em;text-transform:uppercase;border:1px solid ${SLATE};color:${SLATE};padding:${Math.round(word * 0.07)}px ${Math.round(word * 0.16)}px;white-space:pre">Mainnet · <span style="display:inline-block;width:calc(7ch + 0.84em);text-align:left;${status === "live" ? `color:${GREEN};font-weight:700` : ""}${status ? "" : "visibility:hidden"}">${status || "staging"}</span></div>
   </div></body>`;
 };
 
@@ -40,6 +43,9 @@ const jobs = [
   ["endcard/endcard-1920x1080.png", 1920, 1080, endcard(1920, 1080), false],
   ["endcard/endcard-1080x1080.png", 1080, 1080, endcard(1080, 1080), false],
   ["endcard/endcard-1080x1920.png", 1080, 1920, endcard(1080, 1920), false],
+  // the blink from STAGING to LIVE at the end of the explainer (16:9)
+  ["endcard/endcard-1920x1080-blank.png", 1920, 1080, endcard(1920, 1080, ""), false],
+  ["endcard/endcard-1920x1080-live.png", 1920, 1080, endcard(1920, 1080, "live"), false],
 ];
 
 const browser = await chromium.launch();

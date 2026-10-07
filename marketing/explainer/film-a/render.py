@@ -322,8 +322,20 @@ def main():
     run(['-f', 'lavfi', '-i', f'color=c=0x{PAL["ivory"][1:]}:s={W}x{H}:r={FPS}', '-vf', 'format=gbrp',
          '-frames:v', 2, '-c:v', 'ffv1', flash])
     endcard = ROOT / f'marketing/kit/endcard/endcard-{Wf}x{Hf}.png'
-    run(['-loop', 1, '-framerate', FPS, '-i', endcard, '-vf', f'scale={W}:{H}:flags=lanczos,format=gbrp',
-         '-frames:v', NFRAMES - HIT_FRAME - 2, '-c:v', 'ffv1', card])
+    blank, live = endcard.with_name(endcard.stem + '-blank.png'), endcard.with_name(endcard.stem + '-live.png')
+    if blank.exists() and live.exists():
+        # The status chip blinks from STAGING to LIVE (as in film B): off 0.80-0.95, on, off 1.10-1.25, then LIVE.
+        sc = f'scale={W}:{H}:flags=lanczos,format=gbrp'
+        g = (f'[0:v]{sc}[c0];[1:v]{sc}[b];[2:v]{sc}[l];[b]split[b1][b2];'
+             "[c0][b1]overlay=0:0:enable='between(t,0.80,0.95)'[c1];"
+             "[c1][b2]overlay=0:0:enable='between(t,1.10,1.25)'[c2];"
+             "[c2][l]overlay=0:0:enable='gte(t,1.25)'[v]")
+        run(['-loop', 1, '-framerate', FPS, '-i', endcard, '-loop', 1, '-framerate', FPS, '-i', blank,
+             '-loop', 1, '-framerate', FPS, '-i', live, '-filter_complex', g, '-map', '[v]',
+             '-frames:v', NFRAMES - HIT_FRAME - 2, '-c:v', 'ffv1', card])
+    else:
+        run(['-loop', 1, '-framerate', FPS, '-i', endcard, '-vf', f'scale={W}:{H}:flags=lanczos,format=gbrp',
+             '-frames:v', NFRAMES - HIT_FRAME - 2, '-c:v', 'ffv1', card])
     (work / 'list.txt').write_text(''.join(f"file '{p.name}'\n" for p in files + [flash, card]))
     audio = ['-i', a.music] if a.music else ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo']
     out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
