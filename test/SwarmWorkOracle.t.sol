@@ -233,6 +233,27 @@ contract SwarmWorkOracleTest is WorkBackingFixture {
         assertEq(w.wage(), RATE * 2, "but it does apply to the next one");
     }
 
+    /// @dev Final panel audit (governance, info). A superseded oracle kept reading the vault's wage and
+    /// accepting claims the vault never reads. It refuses them now. The replacement is built directly for
+    /// the vault, the route Parameters documents (WorkOracleFactory.create binds the oracle to its caller).
+    function test_aSupersededOracleRefusesClaims() public {
+        _setWage(governance, 0);
+        SwarmWorkOracle successor = new SwarmWorkOracle(address(attestedVault), 1 days);
+        vm.prank(APPROVED_OPERATOR);
+        governance.proposeWorkOracle(address(successor));
+        vm.warp(governance.pendingEta());
+        governance.applyPending();
+        _refreshEthUsd();
+        assertEq(address(attestedVault.oracle()), address(successor));
+        _setWage(governance, RATE);
+        (bytes32 root, bytes32[] memory proofA,) = _tree(AGENT_A, 10, 10, AGENT_B, 20, 20);
+        _accept(root);
+        _controls(AGENT_A, CONTROLLER_A, true);
+        vm.prank(CONTROLLER_A);
+        vm.expectRevert(SwarmWorkOracle.NotTheVaultsOracle.selector);
+        work.claim(AGENT_A, 10, 10, proofA, root);
+    }
+
     // --- minting from work is off at launch -------------------------------------------------------
 
     /// @dev WAGE_WAD ships as zero. A claim then would mark the agent's tasks credited for nothing and

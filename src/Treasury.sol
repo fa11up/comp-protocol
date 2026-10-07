@@ -258,28 +258,45 @@ contract Treasury {
     /// @dev A word that is a valid ABI bool is exactly 0 or 1. Anything else is not a bool, and the
     /// caller treats "not a bool" the same as "no answer": this asset counts for nothing.
     function _readBool(ISwarmFeed feed, bytes memory call) private view returns (bool value, bool ok) {
-        (bool success, bytes memory data) = address(feed).staticcall(call);
-        if (!success || data.length < 32) return (false, false);
-        uint256 word = abi.decode(data, (uint256));
+        (bool success, uint256 word,) = _boundedCall(address(feed), call);
+        if (!success) return (false, false);
         if (word > 1) return (false, false);
         return (word == 1, true);
+    }
+
+    /// @dev A staticcall that copies at most the two words a reserve read needs. The `(bool, bytes)`
+    /// form copies ALL the callee's returndata into this frame before any length check, so a listed feed
+    /// or token answering megabytes made the copy itself run out of gas and reverted reserveValueUsd, and
+    /// with it earnLine, earn, backingPerUnit and every cash, for the two days a delisting takes (final
+    /// panel audit, governance, low). Here the copy is fixed-size; `success` is false when the call failed
+    /// or returned fewer than 32 bytes, and `second` is meaningful only when 64 or more came back.
+    function _boundedCall(address target, bytes memory data) private view returns (bool success, uint256 first, uint256 second) {
+        uint256 size;
+        assembly ("memory-safe") {
+            let out := mload(0x40)
+            success := staticcall(gas(), target, add(data, 32), mload(data), out, 64)
+            size := returndatasize()
+            first := mload(out)
+            second := mload(add(out, 32))
+        }
+        if (size < 32) success = false;
+        if (size < 64) second = type(uint256).max;
     }
 
     /// @dev `(uint256, uint64)`: two words, the second of which must actually fit in uint64. The
     /// timestamp is discarded — staleness is the feed's own answer — but a word that cannot be a
     /// uint64 means the response is not the tuple it claims to be, so it is refused wholesale.
     function _readValue(ISwarmFeed feed) private view returns (uint256 value, bool ok) {
-        (bool success, bytes memory data) = address(feed).staticcall(abi.encodeCall(ISwarmFeed.latestValue, ()));
-        if (!success || data.length < 64) return (0, false);
-        (uint256 first, uint256 second) = abi.decode(data, (uint256, uint256));
-        if (second > type(uint64).max) return (0, false);
+        (bool success, uint256 first, uint256 second) = _boundedCall(address(feed), abi.encodeCall(ISwarmFeed.latestValue, ()));
+        // Fewer than two words reads `second` as max, which is not a uint64: refused like any malformed tuple.
+        if (!success || second > type(uint64).max) return (0, false);
         return (first, true);
     }
 
     function _readBalance(IERC20 asset) private view returns (uint256 balance, bool ok) {
-        (bool success, bytes memory data) = address(asset).staticcall(abi.encodeCall(IERC20.balanceOf, (address(this))));
-        if (!success || data.length < 32) return (0, false);
-        return (abi.decode(data, (uint256)), true);
+        (bool success, uint256 first,) = _boundedCall(address(asset), abi.encodeCall(IERC20.balanceOf, (address(this))));
+        if (!success) return (0, false);
+        return (first, true);
     }
 
     function _remove(IERC20 asset) private {
@@ -467,7 +484,8 @@ contract Treasury {
     /// destination is a source constant, the amount is capped per UTC day by the vault's governed
     /// `Parameters.oracleBudget`, and the token is the collateral's. When the collateral is a share
     /// (sIMD), the IMD is WITHDRAWN from the share vault straight to the asker, so the asker holds the
-    /// asset the Intake is paid in and never touches shares. sIMD's one-block hold applies: shares that
+    /// asset the Intake is paid in and never touches shares; IMD the Treasury holds directly (and has not
+    /// listed as a reserve asset) is spent before any share is unwrapped. sIMD's one-block hold applies: shares that
     /// arrived in this block cannot be withdrawn in it, so a call right after a liquidation reverts and
     /// succeeds a block later. Refuses an asker with no code, so a placeholder constant fails loudly.
     /// @return sent IMD sent to the asker by this call; zero once today's budget is spent.
@@ -491,12 +509,30 @@ contract Treasury {
         uint256 held = IERC20(imd).balanceOf(ORACLE_ASKER);
         uint256 room = budget > held ? budget - held : 0;
         if (room < want) want = room;
-        uint256 available = share ? IShareVault(token).maxWithdraw(address(this)) : IERC20(token).balanceOf(address(this));
-        sent = want < available ? want : available;
+        if (want == 0) return 0;
+        // With a share collateral, IMD the Treasury holds as itself (launch-pool fees through
+        // handOffLaunchFees, donations) is spent first, then shares are unwrapped. Shares alone left the
+        // oracle unfunded however much plain IMD revenue arrived, while the runbook said that revenue took
+        // over from the keeper (final panel audit, governance, low). Plain IMD that is a LISTED reserve
+        // asset stays protected, as it is from the operator's withdraw.
+        uint256 plain;
+        if (share && !isReserveAsset(IERC20(imd))) {
+            plain = IERC20(imd).balanceOf(address(this));
+            if (plain > want) plain = want;
+        }
+        uint256 fromShares;
+        if (plain < want) {
+            uint256 available = share ? IShareVault(token).maxWithdraw(address(this)) : IERC20(token).balanceOf(address(this));
+            fromShares = want - plain < available ? want - plain : available;
+        }
+        sent = plain + fromShares;
         if (sent == 0) return 0;
         oracleSpent += sent;
-        if (share) _withdrawUnderlying(IERC20(token), sent);
-        else _withdraw(IERC20(token), ORACLE_ASKER, sent);
+        if (plain != 0) _withdraw(IERC20(imd), ORACLE_ASKER, plain);
+        if (fromShares != 0) {
+            if (share) _withdrawUnderlying(IERC20(token), fromShares);
+            else _withdraw(IERC20(token), ORACLE_ASKER, fromShares);
+        }
         emit OracleFunded(ORACLE_ASKER, sent, oracleSpent);
     }
 

@@ -39,6 +39,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 collateral;
         uint256 debt;
         /// @dev Principal minted within FRESH_DEBT_WINDOW of `mintedAt` and still outstanding, and
+        /// `mintedAt` is its amount-weighted mint time in 1e18-SCALED seconds (see `draw`),
         /// its amount-weighted mint time. Only redemption reads them: see `_redeemPosition`.
         uint256 recentlyMinted;
         uint256 mintedAt;
@@ -238,6 +239,13 @@ contract CDPVault is ReentrancyGuard {
     uint256 private constant WORK_MINTED_THIS_TX_SLOT = 0xf427427e9c6fc4311907632705fbeaa6595527cec8a17ee1a7090d960da2ff6d;
     uint256 private constant SECURED_THIS_TX_SLOT = 0xf45fbc7390d8fe64766790eac1c1a0c998865663167e91e17d360ad63faf32cb;
     uint256 private constant MINTED_THIS_TX_SLOT = 0x7863d18732bd3fc443c44a39552cffecac393d3fbf3094322f7f794631746012;
+    /// @dev keccak256("comp.CDPVault.laggedDebtAtTransactionStart") and "...laggedSecuredAtTransactionStart":
+    /// the lagged figures as this transaction first found them, plus one so zero means "not recorded".
+    uint256 private constant LAGGED_DEBT_TX_SLOT = 0x980f5e5b63657b0ab514426b93f5d498bcfd411cd6e2c22fe10c69f26fc52c00;
+    uint256 private constant LAGGED_SECURED_TX_SLOT = 0xd6108f725315e4bd5e3646eb94cc39b878712cfe07e6b686f4fed4b077606184;
+    /// @dev 1e18-scaled seconds, the unit of the fresh-debt record's date.
+    uint256 private constant WAD = 1e18;
+    error WorkMintingOff();
 
     /// @notice Sum over positions of min(collateral, SECURED_COLLATERAL_MULTIPLE x principal / price),
     /// in IMD, each term at the price in force when that position last changed.
@@ -275,8 +283,9 @@ contract CDPVault is ReentrancyGuard {
     uint256 public totalEarned;
     uint256 public totalFeesMinted;
     /// @notice Recorded residual debt from liquidations that exhausted collateral, at its last update.
-    /// @dev A record of REALIZED loss: reduced only by repaying the position's debt (`wipe`, or `cover`
-    /// with the protocol's surplus imdUSD); adding collateral does not erase it. So a drained borrower
+    /// @dev A record of REALIZED loss: reduced only when the position's debt is repaid or cancelled
+    /// (`wipe`, `cover` with the protocol's surplus imdUSD, `bite` of re-locked collateral, `cash` against
+    /// a drained-then-relocked candidate); adding collateral does not erase it. So a drained borrower
     /// who re-collateralises and keeps a healthy loan open holds that much Treasury imdUSD behind the
     /// bad-debt-first floor until they repay (launch audit, governance panel, accepted: it costs them a
     /// real, fee-paying position). Use badDebtOf for a current-price, accrued view.
@@ -455,12 +464,16 @@ contract CDPVault is ReentrancyGuard {
         // hours kept any amount of principal fresh forever. The record's timestamp now moves toward
         // the present by the new principal's share of the total: one wei cannot re-date a large
         // record, a record that has aged out starts over at the present, and principal-time in the
-        // band is conserved whatever the tranches.
+        // band is conserved whatever the tranches. The date is kept in 1e18-scaled seconds: at whole
+        // seconds a tranche that dwarfed the record rounded its weighted date to the present, the next
+        // repayment then multiplied a zero age, and a large draw/wipe pair every few hours kept seasoned
+        // principal fresh, so redemptions against it never raised the base rate (final panel audit,
+        // vault, low).
         uint256 fresh = _recentlyMinted(position);
+        uint256 nowWad = block.timestamp * WAD;
         position.mintedAt = fresh == 0
-            ? block.timestamp
-            : position.mintedAt
-                + Math.mulDiv(block.timestamp - position.mintedAt, amount, fresh + amount, Math.Rounding.Ceil);
+            ? nowWad
+            : position.mintedAt + Math.mulDiv(nowWad - position.mintedAt, amount, fresh + amount, Math.Rounding.Ceil);
         position.recentlyMinted = fresh + amount;
         _clearMark(msg.sender);
         stablecoin.mint(msg.sender, amount);
@@ -475,6 +488,7 @@ contract CDPVault is ReentrancyGuard {
     /// mint, the ceiling says how much backing exists for anyone to mint against.
     function earn(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
+        if (!_earnOpen()) revert WorkMintingOff();
         _requireFreshFeeds();
         if (stablecoin.vault() != address(this)) revert NotInitialized();
         IWorkOracle workOracle = oracle();
@@ -508,9 +522,10 @@ contract CDPVault is ReentrancyGuard {
 
     /// @notice Cover a drained position's realized bad debt with the protocol's own surplus imdUSD.
     /// @dev Maker's Vow.heal, under a name that is not one letter from `heel`. Anyone may call it: it
-    /// only ever cancels debt that no reachable collateral stands behind — a drained position, or one
-    /// holding dust worth under a millionth of its debt (at least the seizure for one wei), which is
-    /// swept to the surplus account first —
+    /// only ever cancels debt that no reachable collateral stands behind — a drained position; one
+    /// holding dust (`_coverDust`: worth under about 1.2 imdUSD, or a millionth of a debt above a
+    /// million); or one with realized bad debt whose collateral is worth less than that bad debt, which
+    /// cannot make it good — any such collateral is swept to the surplus account first,
     /// so it raises backing per imdUSD for every holder. The surplus is the Treasury's imdUSD (the stability fees it collected), and
     /// it is spent through the same repayment path as `wipe`, so fees are retired first and the
     /// position's recorded bad debt, totalBadDebt and totalDebt all move together. Reverts on a
@@ -523,17 +538,31 @@ contract CDPVault is ReentrancyGuard {
         Position storage position = _positions[owner];
         _accrue(owner);
         if (position.collateral != 0) {
-            // Dust (worth under a millionth of the debt, or under about 1.2 imdUSD: `_coverDust`) does not
-            // make the debt behind it any less bad: it goes to the surplus account and the shortfall is realized here,
-            // so re-locking one raw unit onto a drained position cannot keep its bad debt uncoverable.
-            // Anything larger must go through mark, grace and bite like any other position.
-            _requireFreshFeeds();
-            _requirePriceAgreement();
-            uint256 price = _price();
-            if (position.collateral >= _coverDust(owner, price)) revert NoRealizedBadDebt();
+            // Collateral that cannot make the debt good does not make it any less bad: it goes to the
+            // surplus account and the shortfall is realized here. Two tests, one without a price:
+            // collateral below the seizure for one wei of debt at the LAST price is unreachable by any
+            // bite and is swept with no fresh feed, so re-locking one raw unit cannot move cover onto the
+            // feed-gated path between purchased attestations (final panel audit, vault, low). Anything
+            // larger needs fresh, agreeing feeds, and is swept if it is dust (`_coverDust`) or, on a
+            // position that has realized bad debt, worth less than that bad debt: re-locking anything less
+            // than the bad debt itself no longer holds cover off until someone pays a mark, six hours of
+            // grace and an exactly sized bite (same audit, low). The rest goes through mark, grace and
+            // bite like any other position.
+            uint256 last = _priceOrZero();
+            if (last == 0 || position.collateral >= _oneWeiSeizure(last)) {
+                _requireFreshFeeds();
+                _requirePriceAgreement();
+                uint256 price = _price();
+                uint256 recorded = _recordedBadDebt[owner];
+                bool sweepable = position.collateral < _coverDust(owner, price)
+                    || (recorded != 0 && Math.mulDiv(position.collateral, price, 1e18) < recorded);
+                if (!sweepable) revert NoRealizedBadDebt();
+                last = price;
+            }
+            uint256 price_ = last;
             uint256 dust = position.collateral;
             position.collateral = 0;
-            _resecure(position, price);
+            _resecure(position, price_);
             _recordBadDebt(owner);
             gem.safeTransfer(payer, dust);
         }
@@ -576,8 +605,9 @@ contract CDPVault is ReentrancyGuard {
     /// Final review 2026-10-07, low: at the one-wei seizure plus one raw unit (about 1e-20 sIMD, worth
     /// nothing) a drained borrower could re-lock for free after every bite and keep its bad debt
     /// uncoverable for a mark-and-grace cycle at a time. A millionth of the debt alone left that re-lock
-    /// free in capital too, about $0.001 on a $1,000 debt (second-half review 2026-10-07, low); blocking
-    /// cover now costs collateral worth about 1.2 imdUSD every cycle, which goes to the surplus account.
+    /// free in capital too, about $0.001 on a $1,000 debt (second-half review 2026-10-07, low). Swept, the
+    /// dust goes to the surplus account. `cover` also sweeps, on a position with realized bad debt, any
+    /// collateral worth less than that bad debt, so blocking it costs the bad debt itself.
     function _coverDust(address owner, uint256 price) private view returns (uint256) {
         uint256 debt = _positions[owner].debt + _stabilityFees[owner];
         uint256 floor_ = debt / 100 < COVER_DUST_MIN_DEBT ? debt / 100 : COVER_DUST_MIN_DEBT;
@@ -806,7 +836,7 @@ contract CDPVault is ReentrancyGuard {
     /// @dev Principal minted within the window and still outstanding; a record older than the window
     /// has aged out whole.
     function _recentlyMinted(Position storage position) private view returns (uint256) {
-        return block.timestamp - position.mintedAt < FRESH_DEBT_WINDOW ? position.recentlyMinted : 0;
+        return block.timestamp * WAD - position.mintedAt < FRESH_DEBT_WINDOW * WAD ? position.recentlyMinted : 0;
     }
 
     /// @dev A position's contribution to `securedCollateral` at `price`: its collateral, bounded by
@@ -826,7 +856,14 @@ contract CDPVault is ReentrancyGuard {
     /// so what the guard measures never includes capital that arrived in the same call.
     function _resecure(Position storage position, uint256 price) private {
         uint256 before = position.secured;
-        uint256 current = _secured(position, price);
+        // An unreadable price (a reverting Chainlink or share-vault leg reads zero) cannot re-price the
+        // term, and must not zero it: `lock` and `wipe` are ungated, and a zero written while the leg was
+        // down persisted past its recovery, shutting or underpaying `cash` for a day (final panel audit,
+        // oracle, low). The term is kept, never above the position's collateral, and dropped only when
+        // the position owes nothing; the next priced checkpoint of the position corrects it.
+        uint256 current = price == 0
+            ? (position.debt == 0 ? 0 : Math.min(before, position.collateral))
+            : _secured(position, price);
         position.secured = current;
         _advanceLag();
         securedCollateral = securedCollateral - before + current;
@@ -844,10 +881,30 @@ contract CDPVault is ReentrancyGuard {
         laggedAt = block.timestamp;
     }
 
-    /// @dev A decrease counts at once: the lag never stands above the live figure.
+    /// @dev A decrease counts at once: the lag never stands above the live figure. Netted per transaction:
+    /// the lagged figures are clamped against the levels this transaction FIRST found, not the last ones
+    /// it lowered them to, so capital that leaves and comes back inside one transaction (a borrower's
+    /// wipe-and-redraw, free-and-relock) leaves the lag where it was. Clamped step by step, such a round
+    /// trip turned warm capital into fresh and drove backingPerUnit down for a day, to zero for a dominant
+    /// borrower with work supply outstanding (final panel audit, vault, medium). Capital that leaves in
+    /// one transaction and returns in another still re-warms: a decrease that lasted is a decrease.
     function _clampLag() private {
-        if (totalDebt < laggedDebt) laggedDebt = totalDebt;
-        if (securedCollateral < laggedSecured) laggedSecured = securedCollateral;
+        uint256 startDebt = _lagAtStart(LAGGED_DEBT_TX_SLOT, laggedDebt);
+        uint256 startSecured = _lagAtStart(LAGGED_SECURED_TX_SLOT, laggedSecured);
+        laggedDebt = totalDebt < startDebt ? totalDebt : startDebt;
+        laggedSecured = securedCollateral < startSecured ? securedCollateral : startSecured;
+    }
+
+    /// @dev The lagged figure this transaction first found, recording `current` if this is the first
+    /// clamp. Within a transaction `_advanceLag` moves nothing after its first call (no time elapses), so
+    /// the first value seen here is the transaction's starting level.
+    function _lagAtStart(uint256 slot, uint256 current) private returns (uint256 start) {
+        uint256 recorded = _transient(slot);
+        if (recorded != 0) return recorded - 1;
+        assembly ("memory-safe") {
+            tstore(slot, add(current, 1))
+        }
+        return current;
     }
 
     function _approach(uint256 lagged, uint256 level, uint256 elapsed) private pure returns (uint256) {
@@ -862,9 +919,16 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @dev Whether backing reads the lagged figures. Never for the base vault; ParameterizedVault turns
-    /// it on exactly when minting from work is on (a nonzero wage).
+    /// it on exactly when minting from work is on (a nonzero wage), which is also exactly when `earn` is
+    /// open there (`_earnOpen`).
     function _lagApplies() internal view virtual returns (bool) {
         return false;
+    }
+
+    /// @dev Whether `earn` may mint at all. Always for the base vault, whose work channel has no wage;
+    /// ParameterizedVault opens it exactly while the wage is nonzero, the same switch as the lag.
+    function _earnOpen() internal view virtual returns (bool) {
+        return true;
     }
 
     function _transientAdd(uint256 slot, uint256 amount) private {
@@ -1168,11 +1232,12 @@ contract CDPVault is ReentrancyGuard {
         if (fresh == 0 || remaining == 0) {
             position.recentlyMinted = remaining;
         } else {
-            uint256 age = Math.mulDiv(block.timestamp - position.mintedAt, fresh, remaining, Math.Rounding.Ceil);
+            uint256 nowWad = block.timestamp * WAD;
+            uint256 age = Math.mulDiv(nowWad - position.mintedAt, fresh, remaining, Math.Rounding.Ceil);
             // A chain younger than the age is a test fixture, not a possibility; treated as aged out.
-            bool stillFresh = age < FRESH_DEBT_WINDOW && age <= block.timestamp;
+            bool stillFresh = age < FRESH_DEBT_WINDOW * WAD && age <= nowWad;
             position.recentlyMinted = stillFresh ? remaining : 0;
-            position.mintedAt = stillFresh ? block.timestamp - age : position.mintedAt;
+            position.mintedAt = stillFresh ? nowWad - age : position.mintedAt;
         }
         _advanceLag();
         totalDebt -= principalPaid;

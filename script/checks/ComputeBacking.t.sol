@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+// OpenWorkVault: the production vault with its work channel open at wage 0 and the lag off, so these
+// checks keep testing the ceiling and backing arithmetic at exact figures (test/helpers/OpenWorkVault.sol).
+import {OpenWorkVault} from "../../test/helpers/OpenWorkVault.sol";
 import {TreasuryFactoryEtch} from "../../test/helpers/TreasuryFactoryEtch.sol";
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -196,7 +199,7 @@ contract ComputeBackingTest is Test {
         spot = new CheckFeed(1 ether);
         nhi = new CheckFeed(0.6 ether); // mat 200, grace 0
         vault =
-            new ParameterizedVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
+            new OpenWorkVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
         params = vault.parameters();
         treasury = vault.treasury();
         usd = vault.usdPriceFeed();
@@ -268,7 +271,7 @@ contract ComputeBackingTest is Test {
 
         // One per vault, never shared, and no post-deploy call anywhere.
         ParameterizedVault other =
-            new ParameterizedVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
+            new OpenWorkVault(address(imd), address(0), address(0), address(price), address(nhi), address(spot));
         assertTrue(address(other.treasury()) != address(treasury));
         assertEq(other.treasury().registrar(), address(other.parameters()));
     }

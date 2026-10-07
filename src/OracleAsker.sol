@@ -263,6 +263,14 @@ contract OracleAsker {
         Feed storage f = feeds[feed];
         // The live request, or one that timed out and was replaced; the latter clears nothing.
         bool live = f.inFlight == requestId;
+        // Whether the live request was the Treasury's own purchase: `ask` writes lastAsk and inFlightAt in
+        // the same call, `askPaid` and `askPaidMany` write only inFlightAt, and no request can follow an
+        // `ask` within its second (it is in flight). Read from the slot this callback clears anyway, so it
+        // costs the stipend nothing. Only a refusal of the Treasury's own purchase backs the Treasury off:
+        // a caller-paid answer can be relayed by hand before the callback lands, so its refusal says
+        // nothing about the feed and, counted, let anyone hold the Treasury off for two hours at a time
+        // for 0.5 IMD (final panel audit, oracle, low).
+        bool treasuryPaid = live && f.lastAsk == f.inFlightAt;
         if (live) {
             f.inFlight = bytes32(0);
             f.inFlightAt = 0;
@@ -280,8 +288,9 @@ contract OracleAsker {
             // this feed waits the full ASK_TIMEOUT. Written into lastAsk, which shares the storage slot
             // cleared just above, so the refusal path costs no extra slot. askPaid is unaffected: its
             // caller pays. A superseded request's refusal says nothing about the feed's state now (its
-            // window has been overtaken), so it does not hold the Treasury back.
-            if (live) f.lastAsk = uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL);
+            // window has been overtaken), and neither does a caller-paid one (its answer may have been
+            // relayed by hand first), so only the Treasury's own live purchase holds the Treasury back.
+            if (live && treasuryPaid) f.lastAsk = uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL);
         }
         emit Delivered(feed, requestId, relayed);
     }

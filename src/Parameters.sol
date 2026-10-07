@@ -48,8 +48,18 @@ interface IWorkOracleSuccessor {
 /// stay immutable in the vault, which is why this contract is given no way to reach them.
 ///
 /// Every bound below is a constant in this file rather than a governance choice, so the governor
-/// cannot widen its own authority — raising the fee cap takes a new Parameters contract and a new
-/// vault, which is a visible event rather than a transaction.
+/// cannot widen these bounds — raising the fee cap takes a new Parameters contract and a new vault,
+/// which is a visible event rather than a transaction.
+///
+/// TRUST ASSUMPTION, stated rather than denied (final panel audit, governance, info): the governor can
+/// mint. It lists any token the Treasury holds as a reserve asset against any price source that answers
+/// in shape (`proposeReserveAsset`), which sets the reserve term of `earnLine` up to MAX_RESERVE_VALUE per
+/// asset; and while the wage is zero it can install a work oracle it controls (`proposeWorkOracle`).
+/// Together, after 96 hours of public proposals, that is minting with no collateral and no attested
+/// work, diluting every imdUSD holder and lowering the redemption backing. The bounds are the 48-hour
+/// delay on each step, the per-asset cap, and that `earn` is refused while the wage is zero, so the oracle
+/// step alone mints nothing until a wage proposal has also been public for 48 hours. The governor is a
+/// cold key for this reason (docs/MAINNET-RUNBOOK.md section 3).
 contract Parameters is Governed {
     struct ParamSet {
         uint256 line;
@@ -237,16 +247,20 @@ contract Parameters is Governed {
     }
 
     /// @notice Replace the vault's work oracle (zero: back to the one it created). Refused while minting
-    /// from work is ON — at proposal and again at application — so no rights are ever claimable in two
-    /// oracles at once. Once anything has ever been minted from work, the replacement must name the
-    /// current oracle as its `predecessor`, so it can start from the tallies already credited instead of
-    /// crediting them a second time; before that, there is nothing to carry over.
-    /// @dev Adds no trust: a governor who could mint through a hostile oracle can already raise the wage.
-    /// The 48-hour delay applies like every other change. `SwarmWorkOracle` answers no `predecessor()`,
-    /// so once anything has been minted the successor has to be a new contract type that does (and that
-    /// carries the old tallies): until one exists the oracle cannot be replaced after the first mint,
-    /// which is the documented position, not an accident (second-half review 2026-10-07, info). Before
-    /// the first mint a fresh `SwarmWorkOracle` (through `WorkOracleFactory.create`) qualifies.
+    /// from work is ON — at proposal and again at application — so no rights are ever CONSUMABLE in two
+    /// oracles at once: the vault reads one oracle, `earn` is refused at wage 0, and a superseded
+    /// `SwarmWorkOracle` refuses claims once it is no longer the vault's oracle. Once anything has ever
+    /// been minted from work, the replacement must name the current oracle as its `predecessor`, so it
+    /// can start from the tallies already credited instead of crediting them a second time; before that,
+    /// there is nothing to carry over.
+    /// @dev A governed power, not a neutral one: see the trust assumption on this contract. The 48-hour
+    /// delay applies like every other change. `SwarmWorkOracle` answers no `predecessor()`, so once
+    /// anything has been minted the successor has to be a new contract type that does (and that carries
+    /// the old tallies): until one exists the oracle cannot be replaced after the first mint, which is the
+    /// documented position (second-half review 2026-10-07, info). Before the first mint, a fresh
+    /// `SwarmWorkOracle` built DIRECTLY for this vault, `new SwarmWorkOracle(address(vault), maxAge)` from
+    /// any account, qualifies. `WorkOracleFactory.create` does not: it binds the oracle to its caller,
+    /// which is the vault only inside the vault's own constructor (final panel audit, governance, info).
     function proposeWorkOracle(address next) external {
         _propose(abi.encode(Change.WorkOracle, next));
     }

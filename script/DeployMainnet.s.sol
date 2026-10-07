@@ -338,6 +338,44 @@ contract DeployMainnet is Script, DeployPreflight {
         _preflightPriceLeg();
     }
 
+    /// @notice Runbook section 7.1, after the first attestations are relayed and BEFORE deposits open:
+    /// refuse a first value someone else raced in. Nothing on chain bounds a feed's first value and the
+    /// relay is permissionless, so whoever relays first anchors the feed; a pumped pool attested honestly
+    /// is a valid first value two times the market (final panel audit, oracle, low). Every feed must
+    /// hold a fresh value, the price and spot feeds within a quarter of the cap (5% at launch) of IMD's
+    /// pool as the asker reads it, and of each other within SKEW_BPS, and NHI must lie in (0, 1e18]. If
+    /// this fails, do not open deposits: wait for the allowance to widen and relay honest values, then run
+    /// it again. `forge script script/DeployMainnet.s.sol --sig "verifySeeded()" --rpc-url <mainnet>`
+    /// rebuilds the plan from source and checks it.
+    function verifySeeded() external view {
+        verifySeeded(plan());
+    }
+
+    function verifySeeded(Plan memory p) public view {
+        OracleAsker asker = OracleAsker(p.asker);
+        uint256 pool = asker.poolPrice();
+        require(pool != 0, "seeded: the pool slot reads empty");
+        uint256 band = FEED_MAX_DEVIATION_BPS * DRIFT_FALL_TRIGGER_OF_CAP_BPS / 10_000;
+        (uint256 price, uint256 spot, uint256 nhi) = (_seeded(p.price), _seeded(p.spot), _seeded(p.nhi));
+        require(_within(price, pool, band), "seeded: the price feed's first value is off the pool: do not open deposits");
+        require(_within(spot, pool, band), "seeded: the spot feed's first value is off the pool: do not open deposits");
+        require(_within(spot, price, SKEW_BPS), "seeded: price and spot disagree beyond SKEW_BPS");
+        require(nhi <= 1e18, "seeded: NHI above one");
+        console2.log("Seeded and verified: price, spot and NHI hold fresh values, price and spot on the pool.");
+    }
+
+    function _seeded(address feed) internal view returns (uint256 value) {
+        SwarmFeed f = SwarmFeed(feed);
+        require(!f.isStale(), "seeded: a feed holds no fresh value");
+        (value,) = f.latestValue();
+        require(value != 0, "seeded: a feed holds zero");
+    }
+
+    function _within(uint256 a, uint256 b, uint256 bps) internal pure returns (bool) {
+        uint256 d = a > b ? a - b : b - a;
+        return d * 10_000 <= b * bps;
+    }
+
     /// @dev Whether `needle` occurs in `hay`. `vm.contains` is not a view, and verify() is.
     function _contains(bytes memory hay, bytes memory needle) internal pure returns (bool) {
         if (needle.length == 0 || needle.length > hay.length) return needle.length == 0;

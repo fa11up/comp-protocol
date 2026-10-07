@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {OpenWorkVault} from "./helpers/OpenWorkVault.sol";
 import {Treasury} from "src/Treasury.sol";
 import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
@@ -462,7 +463,7 @@ contract WorkCeilingTest is WorkBackingFixture {
     function test_divergentOrStaleSpotRefusesWorkAgainstFiniteCeiling() public {
         (uint256 primaryValue,) = primary.latestValue();
         TestSwarmFeed spot = new TestSwarmFeed(primaryValue);
-        ParameterizedVault vaultWithSpot = new ParameterizedVault(
+        ParameterizedVault vaultWithSpot = new OpenWorkVault(
             address(collateral), address(0), address(0), address(primary), address(health), address(spot)
         );
         MockWorkOracle rights = MockWorkOracle(address(vaultWithSpot.oracle()));

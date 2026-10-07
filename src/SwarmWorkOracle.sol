@@ -50,6 +50,7 @@ interface IAdapter8004 {
 contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
     error InvalidVault();
     error WorkMintingOff();
+    error NotTheVaultsOracle();
     error Unauthorized();
     error InvalidAccount();
     error ZeroAmount();
@@ -155,6 +156,11 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
         // credited for nothing, and they could never earn once minting is switched on. Refused instead,
         // so every task stays claimable for the day the wage is set.
         if (wage() == 0) revert WorkMintingOff();
+        // A superseded oracle refuses claims: it still reads the vault's wage, so after a replacement and
+        // a new wage it would otherwise credit tallies the vault never reads, and an agent claiming here
+        // by mistake would strand them (final panel audit, governance, info). Probed, so an oracle for a
+        // vault with no `oracle()` (a test fixture) still works.
+        if (!_isTheVaultsOracle()) revert NotTheVaultsOracle();
         if (!_controls(agentId, msg.sender)) revert NotTheController();
         bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(agentId, accepted, cumulative))));
         if (!_verify(proof, root, leaf)) revert BadProof();
@@ -165,6 +171,12 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
         creditedTasks[agentId] = cumulative;
         creditedRights[msg.sender] += rights;
         emit TallyClaimed(agentId, msg.sender, cumulative, rights);
+    }
+
+    function _isTheVaultsOracle() private view returns (bool) {
+        (bool ok, bytes memory data) = vault.staticcall(abi.encodeWithSignature("oracle()"));
+        if (!ok || data.length != 32) return true;
+        return abi.decode(data, (address)) == address(this);
     }
 
     /// @notice Claimed minus consumed.

@@ -461,6 +461,35 @@ contract OracleAskerTest is Test {
     }
 
     /// @dev Anyone can buy an update with their own IMD, at any time, with no need check.
+    /// @dev Final panel audit (oracle, low). A caller-paid request whose public answer was relayed by hand
+    /// first had its callback refused, and the refusal backed the TREASURY off for two hours: about 0.5 IMD
+    /// to disable Treasury-paid asks. Only the Treasury's own purchase backs the Treasury off now.
+    function test_aCallerPaidRefusalDoesNotHoldTheTreasuryBack() public {
+        address attacker = address(0xA77);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(attacker, 1 ether);
+        vm.startPrank(attacker);
+        imd.approve(address(asker), PRICE);
+        bytes32 id = asker.askPaid(address(priceFeed), PRICE_BODY, PRICE);
+        vm.stopPrank();
+        SwarmFeed.OracleAttestation memory a = _attestation(keccak256("hand-relayed"), IMD_ETH);
+        bytes memory sig = _sign(priceFeed, a);
+        vm.prank(attacker);
+        SwarmRelay(ATTESTATION_RELAYER).relay(priceFeed, a, sig);
+        assertTrue(intake.complete(id, abi.encode(id, a, sig)), "the callback completes, refused as a replay");
+        (,,, uint64 lastAsk,,,) = asker.feeds(address(priceFeed));
+        assertEq(lastAsk, 0, "the Treasury is not backed off by a request it did not pay for");
+    }
+
+    /// @dev And the Treasury's own refused purchase still backs it off, as before.
+    function test_theTreasurysOwnRefusalStillBacksItOff() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        assertTrue(intake.complete(id, abi.encode(id, _attestation(id, 0.9 ether), hex"00")), "refused");
+        (,,, uint64 lastAsk,,,) = asker.feeds(address(healthFeed));
+        assertEq(lastAsk, uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL), "backed off");
+    }
+
     function test_askPaidSpendsTheCallersIMDNotTheTreasurys() public {
         address borrower = address(0xB0B);
         vm.prank(APPROVED_OPERATOR);

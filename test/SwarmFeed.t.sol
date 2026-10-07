@@ -550,6 +550,28 @@ abstract contract SwarmFeedTest is Test {
         assertEq(_allowance(), cap * feed.STALE_DEVIATION_MULTIPLE());
     }
 
+    /// @dev Final panel audit (oracle, medium). Silence was measured from the signed issuedAt, which a
+    /// relayer may hold back for up to a lifetime: an attestation held 55 minutes arrived an hour old, and
+    /// the next step 65 minutes later earned the stale base, compounding at 2x the cap per ~65 minutes.
+    /// Silence now runs from the relay.
+    function test_aHeldAttestationDoesNotEarnTheStaleBase() public {
+        SwarmFeed.OracleAttestation memory a = _attestation();
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        uint256 cap = feed.maxDeviationBps();
+        vm.warp(block.timestamp + 1 hours);
+        a = _attestation();
+        a.requestId = keccak256("held");
+        a.figure = 1 ether + 1 ether * cap / 10_000;
+        a.issuedAt = uint64(block.timestamp - 55 minutes); // signed 55 minutes ago, relayed now
+        feed.submitAttestation(a, _sign(a, SIGNER_KEY));
+        vm.warp(block.timestamp + 65 minutes);
+        assertTrue(feed.isStale(), "stale for consumers: freshness runs from the signature");
+        assertEq(_allowance(), cap, "but the allowance is the cap: silence runs from the relay");
+        uint256 last = a.figure;
+        _expectRefused("stale-base-step", last + last * cap * 2 / 10_000);
+        _submit("cap-step", last + last * cap / 10_000);
+    }
+
     function _allowance() private view returns (uint256 allowance) {
         (,, allowance) = feed.epoch();
     }

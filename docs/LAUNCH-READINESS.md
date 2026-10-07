@@ -81,9 +81,11 @@ a design rule), so it is handled upstream: the stability issue asks for additive
 rotation overlap.
 
 **BUILT (user's call, 2026-10-05):** a governed work-oracle slot — `Parameters` may replace the vault's work oracle
-behind the 48-hour timelock, **only while the wage is zero** (so no rights are ever outstanding in the old
-oracle, which makes double-claiming impossible by construction). Governance already sets the wage, so this
-adds no new trust: a governor who could mint through a malicious oracle can already raise the wage.
+behind the 48-hour timelock, **only while the wage is zero**. Rights claimed under an earlier wage can
+still be outstanding in the old oracle; what makes double-SPENDING impossible is that the vault reads one
+oracle, `earn` is refused while the wage is zero, and a superseded SwarmWorkOracle refuses claims (final
+panel audit, 2026-10-07). It is a governed power, not a neutral one: together with a reserve listing it
+lets the governor mint, which Parameters states as a trust assumption.
 `Parameters.proposeWorkOracle` (48h); `vault.oracle()` now returns the governed replacement or the created
 oracle. Refused while the wage is nonzero (at proposal and at application); once anything has been minted
 from work the replacement must name the current oracle as `predecessor()`. Vault initcode 44,210 / 49,152.

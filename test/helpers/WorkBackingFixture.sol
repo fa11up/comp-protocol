@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {OpenWorkVault} from "./OpenWorkVault.sol";
 import {TreasuryFactoryEtch} from "./TreasuryFactoryEtch.sol";
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -109,7 +110,9 @@ abstract contract WorkBackingFixture is Test {
         primary = new TestSwarmFeed(uint256(1 ether) * 1e18 / ETH_USD);
         health = new TestSwarmFeed(0.85 ether);
         MirroredSwarmFeed spot = new MirroredSwarmFeed(address(primary));
-        backedVault = new ParameterizedVault(
+        // OpenWorkVault: the production vault with its work channel open at wage 0 and the lag off, so
+        // these suites test the ceiling arithmetic at exact figures (see the helper's NatSpec).
+        backedVault = new OpenWorkVault(
             address(collateral), address(0), address(0), address(primary), address(health), address(spot)
         );
         stable = backedVault.stablecoin();

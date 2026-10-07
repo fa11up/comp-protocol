@@ -1407,6 +1407,11 @@
   },
   {
     "type": "error",
+    "name": "WorkMintingOff",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ZeroAmount",
     "inputs": []
   }

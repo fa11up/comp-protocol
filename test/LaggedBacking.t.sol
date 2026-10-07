@@ -13,6 +13,41 @@ import {ISwarmFeed} from "src/interfaces/ISwarmFeed.sol";
 import {Parameters} from "src/Parameters.sol";
 import {APPROVED_OPERATOR, CHAINLINK_ETH_USD, TREASURY_FACTORY} from "src/DeploymentConfig.sol";
 
+/// @dev A borrower that is a contract, so a wipe and a redraw can share one transaction.
+contract Churner {
+    ParameterizedVault private immutable vault;
+    MockIMD private immutable imd;
+
+    constructor(ParameterizedVault vault_, MockIMD imd_) {
+        vault = vault_;
+        imd = imd_;
+        imd_.approve(address(vault_), type(uint256).max);
+    }
+
+    function open(uint256 collateral, uint256 debt) external {
+        vault.lock(collateral);
+        vault.draw(debt);
+    }
+
+    function wipeAndRedraw(uint256 amount) external {
+        vault.wipe(amount);
+        vault.draw(amount);
+    }
+
+    function freeAndRelock(uint256 amount) external {
+        vault.free(amount);
+        vault.lock(amount);
+    }
+
+    function wipe(uint256 amount) external {
+        vault.wipe(amount);
+    }
+
+    function draw(uint256 amount) external {
+        vault.draw(amount);
+    }
+}
+
 contract LagFeed is ISwarmFeed {
     uint256 public constant maxAge = 1 days;
     uint256 private value;
@@ -222,5 +257,129 @@ contract LaggedBackingTest is Test {
         vm.stopPrank();
         _nextBlock();
         assertLt(vault.backingPerUnit(), before + 0.01e18, "capital one block old does not lift backing");
+    }
+
+    // --- final panel audits 2026-10-07 ---------------------------------------------------------------
+
+    /// @dev Vault and governance panels, medium. Rights are priced at claim and outlived the wage, so at
+    /// wage 0 they stayed spendable through earn with the lag off. earn is now refused at wage 0, before
+    /// and after a wage cycle, and works again (with the lag on) the moment a wage is set.
+    function test_earnIsRefusedAtWageZeroEvenWithRightsInHand() public {
+        vm.startPrank(WORKER);
+        vault.lock(2_000 ether);
+        vault.draw(1_000 ether);
+        vm.expectRevert(CDPVault.WorkMintingOff.selector);
+        vault.earn(1);
+        vm.stopPrank();
+        _workMintingOn();
+        vm.warp(block.timestamp + 3 days);
+        vm.prank(WORKER);
+        vault.earn(1 ether);
+        assertEq(vault.totalEarned(), 1 ether, "on with a wage, lagged");
+        Parameters params = vault.parameters();
+        vm.prank(APPROVED_OPERATOR);
+        params.proposeWage(0);
+        vm.warp(block.timestamp + params.TIMELOCK());
+        params.applyPending();
+        assertGt(oracle.mintingRights(WORKER), 0, "the rights are still there");
+        vm.prank(WORKER);
+        vm.expectRevert(CDPVault.WorkMintingOff.selector);
+        vault.earn(1);
+    }
+
+    /// @dev Governance panel, medium (the griefing half): one earn(1) during a pending proposeWorkOracle
+    /// made totalEarned nonzero and the replacement unapplyable for good. It can no longer happen.
+    function test_aRightsHolderCannotBlockAnOracleReplacement() public {
+        MockWorkOracle next = new MockWorkOracle(address(vault));
+        Parameters params = vault.parameters();
+        vm.prank(APPROVED_OPERATOR);
+        params.proposeWorkOracle(address(next));
+        vm.startPrank(WORKER);
+        vault.lock(2_000 ether);
+        vault.draw(1_000 ether);
+        vm.expectRevert(CDPVault.WorkMintingOff.selector);
+        vault.earn(1);
+        vm.stopPrank();
+        vm.warp(block.timestamp + params.TIMELOCK());
+        params.applyPending();
+        assertEq(address(vault.oracle()), address(next), "the replacement applied");
+    }
+
+    /// @dev Vault panel, medium. A borrower's atomic wipe-and-redraw clamped the lagged backing to the
+    /// low point and it only warmed back over a day. The clamp is now netted per transaction.
+    function test_anAtomicWipeAndRedrawLeavesTheLagWhereItWas() public {
+        _workMintingOn();
+        Churner churner = new Churner(vault, imd);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(churner), 2_000 ether);
+        churner.open(2_000 ether, 1_000 ether);
+        vm.warp(block.timestamp + 3 days);
+        _feeMoney(address(churner)); // a checkpoint, and imdUSD for the fees
+        (uint256 debtBefore, uint256 securedBefore) = vault.laggedNow();
+        uint256 backingBefore = vault.backingPerUnit();
+        assertGt(debtBefore, 0);
+        churner.wipeAndRedraw(500 ether);
+        assertEq(vault.laggedDebt(), debtBefore, "debt that left and came back in one transaction did not leave");
+        assertEq(vault.laggedSecured(), securedBefore, "nor did the collateral");
+        assertEq(vault.backingPerUnit(), backingBefore, "and redeemers are paid against the same backing");
+        churner.freeAndRelock(100 ether);
+        assertEq(vault.laggedSecured(), securedBefore, "free-and-relock in one transaction likewise");
+        // Across two transactions it is a decrease that lasted, and it re-warms as before.
+        churner.wipe(500 ether);
+        churner.draw(500 ether);
+        assertLt(vault.laggedDebt(), debtBefore, "a decrease across transactions still counts at once");
+    }
+
+    /// @dev Oracle panel, low. A reverting ETH/USD leg read as price 0 and an ungated wipe wrote a zero
+    /// secured term that outlived the outage, shutting cash for a day. The term is now kept.
+    function test_aDeadLegNeitherZeroesTheSecuredTermNorTheLag() public {
+        vm.startPrank(WORKER);
+        vault.lock(2_000 ether);
+        vault.draw(1_000 ether);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 3 days);
+        _feeMoney(WORKER);
+        uint256 secured = vault.securedCollateral();
+        (, uint256 laggedBefore) = vault.laggedNow();
+        uint256 backing = vault.backingPerUnit();
+        assertGt(secured, 0);
+        vm.mockCallRevert(CHAINLINK_ETH_USD, abi.encodeWithSignature("latestRoundData()"), "dead");
+        vm.prank(WORKER);
+        vault.wipe(1 ether);
+        assertEq(vault.securedCollateral(), secured, "the term is kept while the price cannot be read");
+        assertEq(vault.laggedSecured(), laggedBefore, "and the lag is not clamped down");
+        vm.clearMockedCalls();
+        assertEq(vault.backingPerUnit(), backing, "so redemption is whole the moment the leg is back");
+    }
+
+    /// @dev Vault panel, low. At whole seconds a tranche that dwarfed the fresh record rounded its weighted
+    /// date to the present, and draw/wipe pairs kept seasoned principal fresh forever, so a redemption
+    /// against it never raised the base rate. Dated in 1e18-scaled seconds, the record keeps its age.
+    function test_drawAndWipePairsDoNotKeepSeasonedDebtFresh() public {
+        address holder = address(0x401D);
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(WORKER, 1_000_000 ether);
+        vm.startPrank(WORKER);
+        vault.lock(800_000 ether);
+        vault.draw(10 ether);
+        stable.transfer(holder, 1 ether);
+        vm.stopPrank();
+        uint256 t0 = block.timestamp;
+        for (uint256 i = 1; i <= 3; ++i) {
+            vm.warp(t0 + i * 11 hours);
+            vm.startPrank(WORKER);
+            vault.draw(400_000 ether);
+            vault.wipe(400_000 ether);
+            vm.stopPrank();
+        }
+        // Down to 200%, below mat + gap, so it is a redemption candidate.
+        uint256 debt = vault.debtOf(WORKER);
+        (uint256 held,) = vault.positions(WORKER);
+        vm.prank(WORKER);
+        vault.free(held - debt * 2);
+        assertEq(vault.redemptionBaseRate(), 0);
+        vm.prank(holder);
+        vault.cash(1 ether, 0, WORKER);
+        assertGt(vault.redemptionBaseRate(), 0, "principal outstanding for 33 hours is seasoned, so the base rate rises");
     }
 }

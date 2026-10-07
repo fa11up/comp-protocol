@@ -8,15 +8,13 @@ import {SwarmFeed} from "./SwarmFeed.sol";
 import {CDPVault} from "./CDPVault.sol";
 
 /// @notice Permissionless relayer for swarm attestations, and the only address the feeds accept.
-/// @dev A feed pins a single relayer because `questionHash` binds a moving block window and so cannot
-/// say WHICH question an attestation answers — SwarmFeed.submitAttestation documents that a nonzero
-/// relayer is what covers the unseeded first value and stale re-anchors. Pinning an EOA buys that
-/// guarantee at the cost of liveness: one key, held by one party, has to be online for the protocol
-/// to see a price.
-///
-/// Pinning this contract instead keeps the guarantee and drops the key. Anyone may call it, so the
-/// trust is the same as a zero relayer, and in exchange two things become possible that an EOA
-/// cannot do:
+/// @dev A feed pins a single relayer. It once had to, because `questionHash` alone cannot say WHICH
+/// question an attestation answers and a trusted relayer was what stood behind the unseeded first value
+/// and stale re-anchors. Every shipped feed now pins its question document (`expectedQuestionHash`) and
+/// bounds every value after the first per epoch, so the relayer is no longer a trust boundary, and this
+/// contract does not pretend to be one: anyone may call it, the trust is the same as a zero relayer, and
+/// the first value is bounded by nothing on chain (DeployMainnet.verifySeeded checks it). What pinning
+/// this contract buys is what an EOA cannot do:
 ///
 ///   - several feeds update in ONE transaction, so the price and the health index can never be read
 ///     a block apart, which is what the vault's divergence guard compares;

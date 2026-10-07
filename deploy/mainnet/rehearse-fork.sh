@@ -3,7 +3,7 @@
 #
 #   deploy/mainnet/rehearse-fork.sh                      deploy + verify only
 #   KEEPER_DIR=../imd-keeper deploy/mainnet/rehearse-fork.sh   + bark, bite and a Treasury-paid ask
-#   ANVIL_ARGS="--base-fee 1000000000" ...                   when mainnet gas would trip the deploy's ceiling
+#   BASE_FEE_WEI=1000000000 ...                              when mainnet gas would trip the deploy's ceiling
 #
 # It never touches this working tree: the repo is copied to a temp directory, plan.py converges the
 # copy's DeploymentConfig with a throwaway operator, and the stand-ins it needs on a fork are put there
@@ -30,12 +30,14 @@ c1() { cast "$@" --rpc-url $RPC 2>/dev/null | grep -v Warning | sed -n 1p | awk 
 
 say() { echo; echo "=== $*"; }
 say "fork + deploy"
-# ANVIL_ARGS passes extra flags to anvil, e.g. ANVIL_ARGS="--base-fee 1000000000" when mainnet's base fee
-# at the fork block would trip the deploy's own gas ceiling (a rehearsal is about the deployment, not the
-# price of gas that minute; the real deploy still waits for a cheaper block).
+# ANVIL_ARGS passes extra flags to anvil. BASE_FEE_WEI pins the fork's base fee by mining one block at it
+# (anvil's own --base-fee does not take on a fork): use it when mainnet's base fee at the fork block would
+# trip the deploy's gas ceiling. A rehearsal is about the deployment, not the price of gas that minute;
+# the real deploy still waits for a cheaper block.
 anvil --fork-url "$FORK_URL" --port ${PORT:-8546} --silent ${ANVIL_ARGS:-} > "$R/../anvil.log" 2>&1 &
 ANVIL=$!; trap 'kill $ANVIL 2>/dev/null' EXIT
 for i in $(seq 1 60); do cast chain-id --rpc-url $RPC >/dev/null 2>&1 && break; sleep 1; done
+if [ -n "${BASE_FEE_WEI:-}" ]; then cast rpc anvil_setNextBlockBaseFeePerGas $(cast to-hex $BASE_FEE_WEI) --rpc-url $RPC >/dev/null; cast rpc evm_mine --rpc-url $RPC >/dev/null; fi
 cd $R
 python3 deploy/mainnet/plan.py --write --operator 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --intake 0x0000000000000000000000000000000000000F06
 cast rpc anvil_setCode 0x0000000000000000000000000000000000000F06 "$(forge inspect MockIntake deployedBytecode | tail -1)" --rpc-url $RPC >/dev/null
@@ -60,6 +62,8 @@ POOLP=$(c call $ASKER "poolPrice()(uint256)")
 say "seed feeds at the pool price $POOLP (storage writes: the attester's key is not ours)"
 seed $PRICE $POOLP; seed $SPOT $POOLP; seed $NHI 900000000000000000
 echo "stale? price $(c call $PRICE 'isStale()(bool)') nhi $(c call $NHI 'isStale()(bool)') spot $(c call $SPOT 'isStale()(bool)')"
+# Runbook 7.1: the first values must sit on the pool before deposits open (DeployMainnet.verifySeeded).
+FOUNDRY_PROFILE=deploy forge script script/DeployMainnet.s.sol --sig "verifySeeded()" --rpc-url $RPC 2>&1 | grep -E "Seeded and verified|seeded:|Error" | sed 's/^/  /'
 
 say "borrower: 10,000 IMD from the PoolManager, lockIMD (wraps to sIMD), draw at ~175%"
 cast rpc anvil_impersonateAccount $PM --rpc-url $RPC >/dev/null

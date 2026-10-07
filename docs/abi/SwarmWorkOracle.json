@@ -771,6 +771,11 @@
   },
   {
     "type": "error",
+    "name": "NotTheVaultsOracle",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NothingToClaim",
     "inputs": []
   },

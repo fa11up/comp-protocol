@@ -322,7 +322,13 @@ deploy.** Deploy, verify, and only then announce.
    by a panel when IMD moved 44.6% in a day.
 2. **Verify on chain** that each feed's value is the attested figure and not a reporter value, that
    `usedRequests[requestId]` is true, and that divergence between primary and spot is inside
-   `SKEW_BPS`.
+   `SKEW_BPS`. Then run `forge script script/DeployMainnet.s.sol --sig "verifySeeded()" --rpc-url
+   $MAINNET_RPC_URL`: a feed's first
+   value is bounded by nothing on chain and the relay is permissionless, so a value someone raced in
+   off a pumped pool would anchor the feed (final panel audit, oracle, low). It refuses a price or spot
+   value more than 5% from IMD's pool. **If it fails, do not open deposits**: the feed follows the market
+   once its allowance has widened (two hours of silence for 40%, longer for more), so relay honest
+   values and run it again.
 3. **List the reserve assets** through `Parameters.proposeReserveAsset` — each needs a price source
    and a haircut, and each waits 48 hours. Until the register is non-empty, `reserveValueUsd()` is
    zero and so is the first term of `earnLine`.
@@ -334,7 +340,9 @@ deploy.** Deploy, verify, and only then announce.
    (`KEEPER_ORACLE_FALLBACK`, within `ASK_PAID_IMD_PER_DAY`): NHI near stale first, then falls, then a
    primary whose allowance has widened. It prints `FUNDING …` on every run while the Treasury cannot
    pay. Once revenue lands (launch-pool fees in IMD arrive through `handOffLaunchFees`; liquidation
-   cuts in sIMD) the Treasury takes over and the fallback can be switched off. An unattended protocol
+   cuts in sIMD) the Treasury takes over and the fallback can be switched off: `fundOracle` spends the
+   Treasury's plain IMD first and unwraps sIMD after it (it spent only sIMD before the final panel audit),
+   unless IMD has been listed as a reserve asset, which keeps it protected. An unattended protocol
    with live positions and no liquidator accumulates bad debt.
 
    **Two things that path needs (second-half review 2026-10-07, low).** (a) A refused answer still
@@ -373,8 +381,11 @@ no agent's tasks are spent for nothing). Turning it on later is a governance act
    `predecessor()` with the current oracle, and `SwarmWorkOracle` has no such function, so no oracle
    the shipped code can create qualifies (second-half review 2026-10-07, info). Replacing it after the
    first mint means a new contract type that carries the old tallies, then a 48-hour proposal; before
-   the first mint, a fresh `SwarmWorkOracle` from `WorkOracleFactory.create` is proposable, and
-   `address(0)` (back to the vault's own) is too.
+   the first mint, a fresh `SwarmWorkOracle` built directly for the vault,
+   `new SwarmWorkOracle(address(vault), WORK_ORACLE_MAX_AGE)` from any account, is proposable, and
+   `address(0)` (back to the vault's own) is too. `WorkOracleFactory.create` is NOT a route: it binds the
+   oracle to its caller (final panel audit, governance, info). And at wage 0 nothing mints: `earn` is
+   refused while the wage is zero, so rights claimed under an earlier wage wait for the next one.
 
 ## 8. Open decisions this runbook does not make
 

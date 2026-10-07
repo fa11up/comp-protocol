@@ -251,8 +251,13 @@ contract CoverTest is WorkBackingFixture {
     function test_coverStillRefusesAPositionWithRealCollateral() public {
         _drain();
         _setVaultPrice(SIMD_SCALE_PRICE);
-        // Twice the dust floor: a bite reaches it, so cover must not.
+        // More than the dust floor AND worth more than the realized bad debt (twice it): that collateral
+        // could make the debt good, so a bite reaches it and cover must not. Anything worth LESS than the
+        // bad debt is swept (test_coverSweepsCollateralWorthLessThanTheBadDebt).
+        uint256 bad = backedVault.badDebtOf(BORROWER);
         uint256 real = 2 * _seizureFor(_dustSlice(backedVault.debtOf(BORROWER)), SIMD_SCALE_PRICE);
+        uint256 worthBad = 2 * bad * 1e18 / SIMD_SCALE_PRICE;
+        if (worthBad > real) real = worthBad;
         vm.prank(APPROVED_OPERATOR);
         collateral.mint(BORROWER, real);
         vm.startPrank(BORROWER);
@@ -310,6 +315,42 @@ contract CoverTest is WorkBackingFixture {
         (uint256 held,) = backedVault.positions(BORROWER);
         assertEq(held, 0, "swept");
         assertEq(collateral.balanceOf(address(reserve)), treasuryGem + griefing, "to the surplus account");
+        assertEq(backedVault.badDebtOf(BORROWER), 0);
+    }
+
+    /// @dev Final panel audit (vault, low). One raw unit re-locked onto a drained position moved cover onto
+    /// the feed-gated path, so between purchased attestations it reverted StaleFeed. Collateral below the
+    /// one-wei seizure at the last price is swept with no fresh feed.
+    function test_aOneUnitRelockIsSweptWithoutAFreshFeed() public {
+        uint256 bad = _relockDust();
+        primary.setStale(true);
+        _fundTreasury(bad);
+        backedVault.cover(BORROWER, bad);
+        (uint256 held,) = backedVault.positions(BORROWER);
+        assertEq(held, 0, "swept with a stale feed");
+        assertEq(backedVault.badDebtOf(BORROWER), 0);
+    }
+
+    /// @dev Final panel audit (vault, low). A re-lock worth more than the dust floor kept cover off until
+    /// someone paid a mark, six hours of grace and an exactly sized bite. Collateral on a drained position
+    /// worth less than its realized bad debt cannot make it good, and is swept to the surplus account.
+    function test_coverSweepsCollateralWorthLessThanTheBadDebt() public {
+        uint256 bad = _drain();
+        _setVaultPrice(SIMD_SCALE_PRICE);
+        uint256 half = bad / 2 * 1e18 / SIMD_SCALE_PRICE; // worth half the bad debt
+        assertGt(half, _seizureFor(_dustSlice(backedVault.debtOf(BORROWER)), SIMD_SCALE_PRICE), "far above the dust floor");
+        vm.prank(APPROVED_OPERATOR);
+        collateral.mint(BORROWER, half);
+        vm.startPrank(BORROWER);
+        collateral.approve(address(backedVault), half);
+        backedVault.lock(half);
+        vm.stopPrank();
+        _fundTreasury(bad);
+        uint256 treasuryGem = collateral.balanceOf(address(reserve));
+        backedVault.cover(BORROWER, bad);
+        (uint256 held,) = backedVault.positions(BORROWER);
+        assertEq(held, 0, "swept");
+        assertEq(collateral.balanceOf(address(reserve)), treasuryGem + half, "to the surplus account, not a liquidator");
         assertEq(backedVault.badDebtOf(BORROWER), 0);
     }
 

@@ -61,6 +61,38 @@ contract ShortLatestValueFeed {
     }
 }
 
+/// @dev Answers like a healthy feed until told to answer every read with two megabytes of returndata.
+contract ReturndataBombFeed {
+    uint256 private immutable price;
+    bool public bombing;
+
+    constructor(uint256 price_) {
+        price = price_;
+    }
+
+    function arm() external {
+        bombing = true;
+    }
+
+    function isStale() external view returns (bool) {
+        if (bombing) {
+            assembly {
+                return(0, 0x200000)
+            }
+        }
+        return false;
+    }
+
+    function latestValue() external view returns (uint256, uint64) {
+        if (bombing) {
+            assembly {
+                return(0, 0x200000)
+            }
+        }
+        return (price, uint64(block.timestamp));
+    }
+}
+
 contract ReserveValuationTest is WorkBackingFixture {
     function test_vaultOwnsItsReserveAndUsesTheSameTreasuryForFeesAndCeiling() public view {
         assertEq(reserve.vault(), address(backedVault));
@@ -149,6 +181,22 @@ contract ReserveValuationTest is WorkBackingFixture {
         flaky.setBroken(false, false);
         _register(asset, flaky, 5000);
         assertTrue(reserve.isReserveAsset(asset));
+    }
+
+    /// @dev Final panel audit (governance, low). The reserve reads copied a listed feed's whole returndata,
+    /// so a feed answering megabytes ran the copy out of gas and reverted reserveValueUsd, earnLine and
+    /// every cash for the two days a delisting takes. The reads now copy at most two words.
+    function test_aReturndataBombCountsForNothingInsteadOfRevertingTheSum() public {
+        ReserveTestToken second = new ReserveTestToken(18);
+        ReturndataBombFeed bomb = new ReturndataBombFeed(ASSET_USD);
+        _fundReserve(10 ether);
+        _register(second, ISwarmFeed(address(bomb)), 10_000);
+        second.mint(address(reserve), 10 ether);
+        assertEq(reserve.reserveValueUsd(), 20 ether, "both assets count while the feed is healthy");
+        bomb.arm();
+        uint256 value = reserve.reserveValueUsd{gas: 16_000_000}();
+        assertEq(value, 10 ether, "the bombing feed counts for nothing, the other asset still counts");
+        assertEq(backedVault.reserveValue(), 10 ether, "and the vault's reads do not revert");
     }
 
     function test_sourceThatDiesAfterListingCountsForNothingInsteadOfRevertingTheCeiling() public {

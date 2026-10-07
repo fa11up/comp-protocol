@@ -139,21 +139,33 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// 200,000-gas callback stipend still fits a first delivery (test/OracleAskerBoundGas.t.sol). An
     /// epoch lasts maxAge from its first acceptance; the next acceptance after that opens a new one
     /// from the value then current. See `_epoch`.
-    uint64 private _anchorAt;
-    uint32 private _anchorBound;
+    uint40 private _anchorAt;
+    /// @dev At most MAX_ALLOWANCE_BPS (1e6), so 24 bits are exact.
+    uint24 private _anchorBound;
+    /// @dev The block time the current value was RELAYED (accepted), as opposed to `_updatedAt`, the time
+    /// its attestation was signed. Silence is measured from here: a relayer may hold a signed attestation
+    /// for up to maxAge before relaying it, and measured from the signature a held value arrived already
+    /// an hour old, so the next step earned the stale base an hour early (final panel audit, oracle,
+    /// medium: 1.4 per ~65 minutes instead of the cap per hour). Freshness for consumers still runs from
+    /// the signature (`isStale`), which is the stricter reading for them.
+    uint40 private _acceptedAt;
     /// @dev The first value accepted in the current epoch if that epoch opened wider than the cap (on a
     /// stale value), else zero; see `_checkValue`. Packed into the same slot as `_updatedAt` and the epoch,
     /// which every acceptance writes anyway, so it adds no storage write to a delivery inside the Intake's
-    /// stipend. A value too large for 88 bits (above 3e26, far beyond any figure the shipped feeds carry)
-    /// is not recorded, and that epoch is then bounded from its anchor alone.
-    uint88 private _epochFirst;
+    /// stipend. A value too large for 80 bits (above 1.2e24, far beyond any figure the shipped feeds
+    /// carry: NHI is at most 1e18, the price feeds about 4e15) is not recorded, and that epoch is then
+    /// bounded from its anchor alone.
+    uint80 private _epochFirst;
     uint256 private _anchorValue;
 
     /// @param relayer_ Sole attestation submitter, or zero for permissionless relay.
     /// @param attestationChainId_ Required data chain in the signed payload, independent of the consumer chain.
     /// @param attestationAnswerType_ Required answer type in the signed payload.
     /// @param maxAge_ Maximum accepted age in seconds, strictly positive.
-    /// @param maxDeviationBps_ Maximum change from the last accepted value, from 0 to 10,000 bps.
+    /// @param maxDeviationBps_ The per-epoch deviation cap in bps, 0 to 10,000: every value accepted within
+    /// one lifetime of an epoch's start lies within this much of the epoch's ANCHOR when the epoch opens on
+    /// a fresh value, wider when it opens after a silence (`_checkValue`, `_allowanceNow`). Not a bound on
+    /// the change from the last accepted value.
     constructor(
         address attester_,
         address relayer_,
@@ -218,9 +230,12 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// replay nonce. The immutable consumer domain binds the deployment chain and this feed, stopping
     /// cross-feed replay without identifying the question. questionHash binds a changing pinned block
     /// window, so this contract cannot verify WHICH question an attestation answers FROM THE HASH ALONE.
-    /// The deviation guard bounds a wrong-question figure once seeded while the previous value is fresh;
-    /// a nonzero relayer covers the unseeded first value and stale re-anchors. A feed that pins its
-    /// question document (questionPolicy) verifies the question directly and needs no relayer at all.
+    /// The deviation guard bounds every value after the first against the current epoch's anchor, fresh
+    /// or stale (`_checkValue`); a feed that pins its question document (questionPolicy, every shipped
+    /// feed) verifies the question directly. The relayer is not a trust boundary on the shipped feeds:
+    /// it is SwarmRelay, which forwards for anyone. Nothing on chain bounds the FIRST value, which is why
+    /// the deployment buys and relays it, and DeployMainnet.verifySeeded checks it against the pool
+    /// before deposits open.
     /// Payload chainId and answerType must match the configured policy. Zero figures revert.
     function submitAttestation(OracleAttestation calldata a, bytes calldata sig) external {
         if (relayer != address(0) && msg.sender != relayer) revert UnauthorizedRelayer();
@@ -354,7 +369,10 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// epoch's anchor than its allowance: `maxDeviationBps` for an epoch opened on a fresh value,
     /// STALE_DEVIATION_MULTIPLE times that for one opened on a stale value, and wider the longer it was
     /// stale (`_allowanceNow`). The first value ever has no
-    /// bound: it is the one we buy and check at deployment, and it anchors the first epoch.
+    /// bound on chain, and whoever relays first sets it (the relay is permissionless): the deployment buys
+    /// and relays it, and DeployMainnet.verifySeeded refuses a price or spot anchor more than a quarter of
+    /// the cap from the pool, so a raced first value is caught before deposits open (final panel audit,
+    /// oracle, low). It anchors the first epoch.
     /// @dev VIRTUAL, and the reason is that the bound assumes the value is a PRICE. It is the right
     /// guard for one: a price moves continuously, so a large jump is evidence of a bad figure rather
     /// than of a fast market. It is the wrong guard for a value with no magnitude — a Merkle root is a
@@ -378,7 +396,7 @@ abstract contract SwarmFeed is ISwarmFeed {
             // honest refresh therefore closes it for everyone after (review of cc4103f, 2026-10-07: a
             // +55% value was accepted an hour after the Treasury's honest refresh).
             uint256 first = _epochFirst;
-            if (first != 0 && block.timestamp - _anchorAt < maxAge) {
+            if (first != 0 && block.timestamp - uint256(_anchorAt) < maxAge) {
                 uint256 drift = value > first ? value - first : first - value;
                 if (drift > Math.mulDiv(first, maxDeviationBps, 10_000)) revert ExcessDeviation();
             }
@@ -390,7 +408,7 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// the current value, with the stale allowance if that value has aged past maxAge. Public so a buyer
     /// can see, before paying, how far the feed will follow.
     function _epoch() private view returns (uint256 anchor, uint256 bound) {
-        if (block.timestamp - _anchorAt < maxAge) {
+        if (block.timestamp - uint256(_anchorAt) < maxAge) {
             // An empty anchor slot means the first epoch has seen only its first value, which is `_value`.
             return (_anchorValue == 0 ? _value : _anchorValue, _anchorBound);
         }
@@ -409,10 +427,15 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// Treasury does, through OracleAsker, once the allowance reaches WIDE_ALLOWANCE_BPS).
     function _allowanceNow() private view returns (uint256) {
         if (!_tooOld(_updatedAt)) return maxDeviationBps;
-        // Whole periods stale beyond the lifetime. None yet: still the cap. The stale base and its growth
-        // are earned by silence, a whole period of it at least, so a value relayed an hour and a second
-        // after the last cannot open an epoch on the stale base (second-half review 2026-10-07, medium).
-        uint256 periods = (block.timestamp - _updatedAt - maxAge) / STALE_GROWTH_PERIOD;
+        // Whole periods of silence beyond the lifetime. None yet: still the cap. The stale base and its
+        // growth are earned by silence, a whole period of it at least, so a value relayed an hour and a
+        // second after the last cannot open an epoch on the stale base (second-half review 2026-10-07,
+        // medium). Silence runs from the later of the signature and the relay: a held attestation is
+        // relayed late, and counting from its signature handed the next step that hour back (final panel
+        // audit, oracle, medium). Before the first value there is no relay time and the signature rules.
+        uint256 since = _acceptedAt > _updatedAt ? _acceptedAt : _updatedAt;
+        if (block.timestamp < since + maxAge + STALE_GROWTH_PERIOD) return maxDeviationBps;
+        uint256 periods = (block.timestamp - since - maxAge) / STALE_GROWTH_PERIOD;
         if (periods == 0) return maxDeviationBps;
         uint256 bound = maxDeviationBps * STALE_DEVIATION_MULTIPLE
             + Math.mulDiv(maxDeviationBps, STALE_GROWTH_OF_CAP_BPS, 10_000) * (periods - 1);
@@ -424,7 +447,7 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// the next acceptance would open, so the figures are always the ones the next check uses.
     function epoch() external view returns (uint256 anchor, uint64 openedAt, uint256 allowanceBps) {
         (anchor, allowanceBps) = _epoch();
-        openedAt = block.timestamp - _anchorAt < maxAge ? _anchorAt : uint64(block.timestamp);
+        openedAt = block.timestamp - uint256(_anchorAt) < maxAge ? uint64(_anchorAt) : uint64(block.timestamp);
     }
 
     /// @dev INTERNAL rather than private, so a subclass can accept a value without an attestation.
@@ -444,23 +467,24 @@ abstract contract SwarmFeed is ISwarmFeed {
         _checkValue(value);
         // Open a new epoch from the value being replaced once the old one has run its maxAge. Written
         // before `_value` moves, so the anchor is where the feed stood, never where the new value puts it.
-        // Bounds are at most MAX_ALLOWANCE_BPS, so uint32 is exact.
+        // Bounds are at most MAX_ALLOWANCE_BPS, so uint24 is exact; uint40 holds a timestamp to year 36812.
         if (!_hasValue) {
             // The first value anchors the first epoch and is `_value` itself, so the anchor slot stays
             // empty until a second value arrives: the first delivery pays no extra storage write, which is
             // what keeps it inside the Intake's callback stipend (test/OracleAskerBoundGas.t.sol).
-            (_anchorBound, _anchorAt) = (uint32(maxDeviationBps), uint64(block.timestamp));
-        } else if (block.timestamp - _anchorAt >= maxAge) {
+            (_anchorBound, _anchorAt) = (uint24(maxDeviationBps), uint40(block.timestamp));
+        } else if (block.timestamp - uint256(_anchorAt) >= maxAge) {
             (uint256 anchor, uint256 bound) = _epoch();
-            (_anchorValue, _anchorBound, _anchorAt) = (anchor, uint32(bound), uint64(block.timestamp));
+            (_anchorValue, _anchorBound, _anchorAt) = (anchor, uint24(bound), uint40(block.timestamp));
             // A wide epoch remembers its first value (`_checkValue` holds the rest to the cap around it);
             // a fresh-opened one clears any left from an earlier wide epoch, and otherwise writes nothing.
-            _epochFirst = bound > maxDeviationBps && value <= type(uint88).max ? uint88(value) : 0;
+            _epochFirst = bound > maxDeviationBps && value <= type(uint80).max ? uint80(value) : 0;
         } else if (_anchorValue == 0) {
             _anchorValue = _value; // the first epoch's anchor, materialised before the value moves
         }
         _value = value;
         _updatedAt = updatedAt;
+        _acceptedAt = uint40(block.timestamp);
         _hasValue = true;
         emit ValueUpdated(value, updatedAt);
     }

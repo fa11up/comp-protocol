@@ -207,7 +207,11 @@ steps, three hours; 3.48x in seven, six hours); from a feed two hours silent 1.4
 in six steps, five hours); from a feed ten hours silent the first step is 60%, racing the Treasury's
 refresh, and then 1.2 an hour. Each hour of it is a pool held at the rung for the whole hour (one
 ramp-and-hold round trip, about $40k in fees to 3.48x) with the attacker's position exposed to every
-holder selling into it. `test_relayingAnHourApartNeverEarnsTheStaleBase` pins the rate.
+holder selling into it. `test_relayingAnHourApartNeverEarnsTheStaleBase` pins the rate. Silence is
+measured from the later of a value's signature and its relay: measured from the signature, an attestation
+held back 55 minutes before relaying arrived an hour old and the next step 65 minutes later earned the
+stale base, 1.4 per ~65 minutes (final panel audit, oracle, medium);
+`test_aHeldAttestationDoesNotEarnTheStaleBase` pins that.
 
 What the delay costs (review of cc4103f, 2026-10-07; one hour longer since the second-half review, the
 price of the rate above). While a feed cannot follow, it goes stale and the vault refuses price actions,

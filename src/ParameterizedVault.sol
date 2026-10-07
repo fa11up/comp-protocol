@@ -24,7 +24,10 @@ import {TREASURY_FACTORY} from "./DeploymentConfig.sol";
 /// What this does NOT do is make the vault upgradeable. The price feeds, the attester and the
 /// collateral token are still immutable constructor arguments, and `parameters`, `treasury` and
 /// `usdPriceFeed` are immutables this constructor creates: the governor can change what the numbers
-/// are, never where the price comes from, where the revenue goes, or which contract governs.
+/// are, never where the COLLATERAL price comes from, where the revenue goes, or which contract governs.
+/// Two other price-bearing inputs are governed, behind the same 48-hour delay: the price source of each
+/// reserve asset other than the collateral (Parameters.proposeReserveAsset), and the work oracle `earn`
+/// mints against (Parameters.proposeWorkOracle). See Parameters for what that lets the governor do.
 /// Governance over this vault is therefore bounded by what Parameters can express and by the hard
 /// limits Parameters enforces on itself.
 contract ParameterizedVault is CDPVault {
@@ -109,6 +112,16 @@ contract ParameterizedVault is CDPVault {
     /// @dev The lagged WORK CEILING applies exactly while minting from work is on. (The redemption cap is
     /// lagged at every wage: adversarial review 2026-10-05, see CDPVault._backingPerUnit.)
     function _lagApplies() internal view override returns (bool) {
+        return parameters.wage() != 0;
+    }
+
+    /// @dev And minting from work IS on exactly while the wage is nonzero: `earn` is refused at wage 0.
+    /// Rights are priced at claim and outlive the wage that priced them, so with the wage back at 0 they
+    /// stayed spendable through `earn` while the lag above was off, reopening D1's borrow / earn / unwind
+    /// round trip; and one `earn(1)` during a pending `proposeWorkOracle` made the replacement
+    /// unapplyable for good (final panel audits, vault and governance, medium). Rights claimed under a
+    /// wage are kept, and spendable again the moment a wage is set, with the lag on.
+    function _earnOpen() internal view virtual override returns (bool) {
         return parameters.wage() != 0;
     }
 
@@ -262,8 +275,9 @@ contract ParameterizedVault is CDPVault {
     /// @dev A sum, not a maximum, because the two terms are backed by different things: the reserve
     /// one-for-one by assets the protocol owns, the ratio term by the surplus collateral every
     /// borrower posts above their own debt. Section 3 of docs/COMPUTE-BACKING-DESIGN.md shows
-    /// backing exceeds one for every reserve size exactly when the ratio is below mat - 1, and
-    /// Parameters caps the ratio at half that cliff.
+    /// backing exceeds one for every reserve size exactly when the ratio is below mat - 1: 7000 bps at
+    /// the loosest mat (170), and Parameters caps the ratio at 2500, about a third of that cliff (136%
+    /// worst-case backing with an empty reserve).
     function earnLine() public view override returns (uint256) {
         return reserveValue() + Math.mulDiv(backedDebt(), parameters.earnMat(), 10_000);
     }

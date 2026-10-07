@@ -131,6 +131,29 @@ contract OracleBudgetTest is Test {
         assertEq(treasury.sync(s), 0, "and a later sync credits nothing");
     }
 
+    /// @dev Final panel audit (governance, low). With a share collateral, fundOracle paid only from shares,
+    /// so plain IMD revenue (launch-pool fees) never funded the oracle while the runbook said it took over.
+    function test_plainIMDHeldByTheTreasuryFundsTheOracleFirst() public {
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(treasury), 100 ether);
+        _shares(treasury, 50 ether);
+        uint256 sharesBefore = share.balanceOf(address(treasury));
+        uint256 sent = treasury.fundOracle();
+        assertEq(sent, ORACLE_BUDGET_PER_DAY);
+        assertEq(imd.balanceOf(ORACLE_ASKER), ORACLE_BUDGET_PER_DAY, "the asker holds IMD");
+        assertEq(imd.balanceOf(address(treasury)), 100 ether - ORACLE_BUDGET_PER_DAY, "taken from the plain IMD");
+        assertEq(share.balanceOf(address(treasury)), sharesBefore, "no share was unwrapped");
+    }
+
+    function test_plainIMDAndSharesTogetherMakeUpTheBudget() public {
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(address(treasury), 5 ether);
+        _shares(treasury, 50 ether);
+        assertEq(treasury.fundOracle(), ORACLE_BUDGET_PER_DAY);
+        assertEq(imd.balanceOf(ORACLE_ASKER), ORACLE_BUDGET_PER_DAY);
+        assertEq(imd.balanceOf(address(treasury)), 0, "all the plain IMD first");
+    }
+
     function test_refusesAnAskerWithNoCode() public {
         vm.etch(ORACLE_ASKER, "");
         _shares(treasury, 50 ether);

@@ -143,8 +143,9 @@ uint256 constant DUTY_BPS = 444;
 /// @dev The ratio term of the work-minting ceiling, in basis points of collateral-backed debt:
 /// earnLine = reserveValueUsd + totalDebt * EARN_MAT_BPS / 10000. Section 3 of
 /// docs/COMPUTE-BACKING-DESIGN.md derives the bound: backing stays above one for every reserve size
-/// exactly when this ratio is below mat - 1, which is 5000 at the loosest NHI. 2500 is half that
-/// cliff, 120% worst-case backing with an empty reserve. Parameters refuses any proposal above
+/// exactly when this ratio is below mat - 1, which is 7000 at the loosest NHI (mat 170). 2500 is about a
+/// third of that cliff, 136% worst-case backing with an empty reserve (the design doc's 5000 / 120% date
+/// from a mat floor of 150). Parameters refuses any proposal above
 /// MAX_EARN_MAT_BPS, which is also 2500, so governance can lower it and never raise it past here.
 uint256 constant EARN_MAT_BPS = 2_500;
 
