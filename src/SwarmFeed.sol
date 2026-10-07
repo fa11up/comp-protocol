@@ -19,17 +19,21 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 ///
 /// There is no admin or setter. Values are scaled by 1e18; consumers enforce any application bounds.
 /// Zero is rejected on both paths: it is never a valid scaled figure and would pin the relative bound at
-/// zero. While the last accepted value is fresh, a new one may differ from it by at most maxDeviationBps.
-/// Once it has aged past maxAge the feed is stale (consumers already fail safe) and the bound WIDENS to
-/// STALE_DEVIATION_MULTIPLE times that, but never lifts: a genuine large move is followed in steps, each
-/// later step being fresh and so bounded normally.
+/// zero. The deviation bound is PER UNIT OF TIME, not per attestation: every value accepted within one
+/// maxAge of an epoch's start must lie within the epoch's allowance of the ANCHOR, the value the feed held
+/// when the epoch began. The allowance is maxDeviationBps when that value was fresh and
+/// STALE_DEVIATION_MULTIPLE times it when it was stale (consumers already fail safe then), and it never
+/// lifts: a genuine large move is followed one epoch at a time.
 ///
-/// It used to lift entirely, and that was the internal audit's high finding (2026-10-06). Price feeds live
-/// one hour and are bought on demand, so being stale is their normal state, and the first attestation after
-/// any quiet hour could set any value. The question binding pins the text but the buyer chooses the
-/// window, and the recipe samples fixed blocks inside it, so a buyer who pushes the pool at those blocks has
-/// a manipulated value attested honestly. Bounded at 2x a 20% cap, one re-anchor moves the price at most
-/// 40%, which no longer reaches a profitable over-borrow at a 170% minimum ratio.
+/// Two revisions from the internal audit of 2026-10-06, the high finding. The bound used to lift entirely
+/// once stale. Price feeds live one hour and are bought on demand, so being stale is their normal state,
+/// and the first attestation after any quiet hour could set any value. The question binding pins the text
+/// but the buyer chooses the window, and the recipe samples fixed blocks inside it, so a buyer who pushes
+/// the pool at those blocks has a manipulated value attested honestly. Bounding the stale step alone was
+/// then shown insufficient: measured against the LAST value, six attestations relayed in one block walked a
+/// 20% cap from 1.0 to 3.48 (test/SwarmFeed.t.sol, `test_chainedAttestationsCannotWalkPastTheEpochBound`).
+/// Measured against the anchor, an hour moves the price by at most the allowance however many attestations
+/// are bought, and a 3x walk takes five hours of sustained, visible manipulation of the pool.
 abstract contract SwarmFeed is ISwarmFeed {
     struct OracleAttestation {
         bytes32 requestId;
@@ -81,7 +85,7 @@ abstract contract SwarmFeed is ISwarmFeed {
     uint16 public constant MIN_PANEL_SIZE = 25;
     /// @notice Smallest number of members that must have given the signed answer.
     uint16 public constant MIN_AGREED = 15;
-    /// @notice How much wider the deviation bound is once the current value is stale.
+    /// @notice How much wider an epoch's allowance is when it opens on a stale value.
     uint256 public constant STALE_DEVIATION_MULTIPLE = 2;
 
     bytes32 public constant ATTESTATION_TYPEHASH = keccak256(
@@ -104,6 +108,14 @@ abstract contract SwarmFeed is ISwarmFeed {
     uint256 private _value;
     uint64 private _updatedAt;
     bool private _hasValue;
+    /// @dev The bounding epoch: when it opened and the move it allows (bps), packed into the slot above
+    /// so that opening one costs a single new storage write (the anchor value below) and the Intake's
+    /// 200,000-gas callback stipend still fits a first delivery (test/OracleAskerBoundGas.t.sol). An
+    /// epoch lasts maxAge from its first acceptance; the next acceptance after that opens a new one
+    /// from the value then current. See `_epoch`.
+    uint64 private _anchorAt;
+    uint32 private _anchorBound;
+    uint256 private _anchorValue;
 
     /// @param relayer_ Sole attestation submitter, or zero for permissionless relay.
     /// @param attestationChainId_ Required data chain in the signed payload, independent of the consumer chain.
@@ -306,9 +318,10 @@ abstract contract SwarmFeed is ISwarmFeed {
         signer = ecrecover(digest, v, r, s);
     }
 
-    /// @notice Refuse a value this feed should not accept. Zero always; a move larger than
-    /// `maxDeviationBps` while the current value is fresh, or STALE_DEVIATION_MULTIPLE times that once it
-    /// is stale. The first value ever has no bound: it is the one we buy and check at deployment.
+    /// @notice Refuse a value this feed should not accept. Zero always; a value further from the current
+    /// epoch's anchor than its allowance: `maxDeviationBps` for an epoch opened on a fresh value,
+    /// STALE_DEVIATION_MULTIPLE times that for one opened on a stale value. The first value ever has no
+    /// bound: it is the one we buy and check at deployment, and it anchors the first epoch.
     /// @dev VIRTUAL, and the reason is that the bound assumes the value is a PRICE. It is the right
     /// guard for one: a price moves continuously, so a large jump is evidence of a bad figure rather
     /// than of a fast market. It is the wrong guard for a value with no magnitude — a Merkle root is a
@@ -324,10 +337,30 @@ abstract contract SwarmFeed is ISwarmFeed {
     function _checkValue(uint256 value) internal view virtual {
         if (value == 0) revert ZeroValue();
         if (_hasValue) {
-            uint256 bound = _tooOld(_updatedAt) ? maxDeviationBps * STALE_DEVIATION_MULTIPLE : maxDeviationBps;
-            uint256 change = value > _value ? value - _value : _value - value;
-            if (change > Math.mulDiv(_value, bound, 10_000)) revert ExcessDeviation();
+            (uint256 anchor, uint256 bound) = _epoch();
+            uint256 change = value > anchor ? value - anchor : anchor - value;
+            if (change > Math.mulDiv(anchor, bound, 10_000)) revert ExcessDeviation();
         }
+    }
+
+    /// @notice The anchor the next value is measured against and the move it may make from it, in bps.
+    /// @dev The stored epoch while it lasts; otherwise the epoch the next acceptance will open: anchored at
+    /// the current value, with the stale allowance if that value has aged past maxAge. Public so a buyer
+    /// can see, before paying, how far the feed will follow.
+    function _epoch() private view returns (uint256 anchor, uint256 bound) {
+        if (block.timestamp - _anchorAt < maxAge) {
+            // An empty anchor slot means the first epoch has seen only its first value, which is `_value`.
+            return (_anchorValue == 0 ? _value : _anchorValue, _anchorBound);
+        }
+        return (_value, _tooOld(_updatedAt) ? maxDeviationBps * STALE_DEVIATION_MULTIPLE : maxDeviationBps);
+    }
+
+    /// @notice The current bounding epoch: its anchor value, when it opened, and the allowance in bps that
+    /// every value accepted until maxAge after that must stay within. A fresh epoch is reported as the one
+    /// the next acceptance would open, so the figures are always the ones the next check uses.
+    function epoch() external view returns (uint256 anchor, uint64 openedAt, uint256 allowanceBps) {
+        (anchor, allowanceBps) = _epoch();
+        openedAt = block.timestamp - _anchorAt < maxAge ? _anchorAt : uint64(block.timestamp);
     }
 
     /// @dev INTERNAL rather than private, so a subclass can accept a value without an attestation.
@@ -345,6 +378,20 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// transaction. Any new subclass under src/ must be read with that in mind.
     function _accept(uint256 value, uint64 updatedAt) internal {
         _checkValue(value);
+        // Open a new epoch from the value being replaced once the old one has run its maxAge. Written
+        // before `_value` moves, so the anchor is where the feed stood, never where the new value puts it.
+        // Bounds are at most 2 x 10,000 bps (the constructor caps maxDeviationBps), so uint32 is exact.
+        if (!_hasValue) {
+            // The first value anchors the first epoch and is `_value` itself, so the anchor slot stays
+            // empty until a second value arrives: the first delivery pays no extra storage write, which is
+            // what keeps it inside the Intake's callback stipend (test/OracleAskerBoundGas.t.sol).
+            (_anchorBound, _anchorAt) = (uint32(maxDeviationBps), uint64(block.timestamp));
+        } else if (block.timestamp - _anchorAt >= maxAge) {
+            (uint256 anchor, uint256 bound) = _epoch();
+            (_anchorValue, _anchorBound, _anchorAt) = (anchor, uint32(bound), uint64(block.timestamp));
+        } else if (_anchorValue == 0) {
+            _anchorValue = _value; // the first epoch's anchor, materialised before the value moves
+        }
         _value = value;
         _updatedAt = updatedAt;
         _hasValue = true;
