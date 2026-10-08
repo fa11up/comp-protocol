@@ -60,7 +60,7 @@ export function App() {
 
 type Side = "buy" | "sell";
 
-function Trade({
+export function Trade({
   w,
   tick,
   refresh,

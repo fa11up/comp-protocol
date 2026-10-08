@@ -3624,11 +3624,32 @@ body:has(> .vibe-canvas:not([hidden])) .infer {
   max-width: none;
   text-wrap: balance;
 }
-.infer-buy-lede,
-.infer-buy-main .infer-kicker,
-.infer-buy-main h1 {
+.infer-buy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.infer-buy-go,
+.infer-buy-alt {
+  min-height: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+.infer-buy-alt {
   background: var(--bg);
-  padding: 0 6px;
+  color: var(--text);
+  border: 1px solid var(--text);
+  padding: 10px 18px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.infer-buy-alt:hover,
+.infer-buy-alt:focus-visible {
+  background: var(--text);
+  color: var(--bg);
 }
 .infer-buy-go {
   background: var(--text);
@@ -3654,4 +3675,51 @@ body:has(> .vibe-canvas:not([hidden])) .infer {
   text-transform: uppercase;
   color: var(--muted);
   text-align: center;
+}
+/* The trade sheet: the home page's trade pane in a modal dialog, full width, rising from the bottom. */
+.infer-buy-sheet {
+  width: min(100%, 520px);
+  max-width: 100%;
+  max-height: 100dvh;
+  margin: auto auto 0;
+  padding: 0;
+  border: 0;
+  border-top: 2px solid var(--text);
+  background: var(--bg);
+  color: var(--text);
+  overflow: auto;
+}
+.infer-buy-sheet::backdrop {
+  background: color-mix(in srgb, var(--text) 45%, transparent);
+}
+.infer-buy-sheet .infer-pane {
+  border-right: 0;
+  overflow: visible;
+  padding: 4px 16px 14px;
+}
+.infer-buy-sheet .infer-pane-head h1 {
+  font-size: 24px;
+}
+.infer-buy-sheet-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px 0;
+}
+.infer-buy-close {
+  min-height: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--text);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+}
+.infer-buy-sheet-error {
+  margin: 8px 16px 0;
+  font-size: 12px;
+  color: var(--danger, var(--text));
 }
