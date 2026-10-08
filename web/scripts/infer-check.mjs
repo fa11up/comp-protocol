@@ -66,6 +66,14 @@ const headers = await readFile(`${dir}/_headers`, "utf8");
 const csp = headers.match(/Content-Security-Policy: (.*)/)?.[1] ?? "";
 if (!/'sha256-[A-Za-z0-9+/=]+'/.test(csp))
   fail("the Content-Security-Policy has no hash for the theme bootstrap");
+// /rpc (worker/rpc.js) serves only the contracts in rpc-allow.json: it must exist and name every address in
+// the launch config, or the page's own reads would be refused.
+const rpcAllow = JSON.parse(await readFile(`${dir}/rpc-allow.json`, "utf8").catch(() => "null"));
+if (!Array.isArray(rpcAllow)) fail("rpc-allow.json is missing");
+for (const a of JSON.stringify(launch).match(/0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g) ?? [])
+  if (!/^0x0{40}$/.test(a) && !rpcAllow.includes(a.toLowerCase())) fail(`rpc-allow.json lacks ${a}`);
+if (!rpcAllow.includes("0xca11bde05977b3631167028862be2a173976ca11")) fail("rpc-allow.json lacks Multicall3");
+if (!/connect-src [^;]*'self'/.test(csp)) fail("connect-src must admit 'self' for /rpc");
 const connect = csp.match(/connect-src ([^;]*)/)?.[1] ?? "";
 for (const url of [...launch.rpc, ...launch.claims.origins]) {
   if (!connect.includes(new URL(url).origin))

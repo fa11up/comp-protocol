@@ -6,11 +6,14 @@
 // these routes alone are answered with X's origins as their frame ancestors instead. Its scripts and styles are ordinary
 // assets and keep the site's headers; only the document itself may be framed, and only by X.
 // (whitepaper.imdusd.com runs this same Worker and has neither, so there they are 404s as before.)
-export const FRAME_ANCESTORS =
+import { handleRpc } from "./rpc.js";
+
+// Module-private: a Worker entry module may export only handlers (the runtime refuses to start otherwise).
+const FRAME_ANCESTORS =
   "frame-ancestors https://x.com https://*.x.com https://twitter.com https://*.twitter.com";
 const FRAMEABLE = new Set(["/buy/", "/buy/index.html", "/97/", "/97/index.html"]);
 
-export function frameable(response) {
+function frameable(response) {
   const headers = new Headers(response.headers);
   const csp = headers.get("Content-Security-Policy");
   if (csp)
@@ -33,6 +36,9 @@ export default {
       url.protocol = "https:";
       return Response.redirect(url.toString(), 301);
     }
+    // The pages' own RPC (worker/rpc.js). Only a build that ships rpc-allow.json serves it, so the whitepaper,
+    // which runs this same Worker, answers /rpc with a 404.
+    if (url.pathname === "/rpc") return handleRpc(request, env);
     const response = await env.ASSETS.fetch(request);
     return FRAMEABLE.has(url.pathname) && response.ok
       ? frameable(response)

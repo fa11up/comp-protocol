@@ -1,5 +1,6 @@
 // /claim: the minimal page. Connect, see what is yours, take it.
 import { useEffect, useState } from "react";
+import { everyVisible } from "./visible";
 import { formatUnits, parseUnits, type Address } from "viem";
 import { LAUNCH, LIVE, whole } from "./config";
 import {
@@ -44,8 +45,7 @@ export function Claim() {
   // the one-block hold, a drip, a trade by someone else) shows without a reload.
   useEffect(() => {
     if (!LIVE) return;
-    const t = setInterval(refresh, 12_000);
-    return () => clearInterval(t);
+    return everyVisible(refresh, 12_000);
   }, []);
   const { tx, send, clear } = useTx(refresh);
   const [readError, setReadError] = useState<Notice | null>(null);

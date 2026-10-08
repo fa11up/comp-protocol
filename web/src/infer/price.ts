@@ -7,6 +7,7 @@ import { encodeAbiParameters, keccak256, parseAbi, type Hex } from "viem";
 import { client, ERC20 } from "./chain";
 import { LAUNCH, LIVE } from "./config";
 import { NATIVE, priceFromSlot0, slot0Slot } from "./swap";
+import { everyVisible } from "./visible";
 
 const IMD = "0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7";
 const IMD_POOL_ID: Hex =
@@ -107,10 +108,10 @@ export function useInferMarket(): InferMarket | undefined {
             ),
         );
     tick();
-    const id = setInterval(tick, POLL_MS);
+    const stop = everyVisible(tick, POLL_MS);
     return () => {
       live = false;
-      clearInterval(id);
+      stop();
     };
   }, []);
   return m;

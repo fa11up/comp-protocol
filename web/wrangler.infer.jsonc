@@ -9,10 +9,10 @@
   "assets": {
     "directory": "../dist-infer",
     "binding": "ASSETS",
-    // Only the two X player cards run the Worker (it grants X the right to frame them). Every other file is
+    // Only the two X player cards (X may frame them) and /rpc (worker/rpc.js) run the Worker. Every other file is
     // served straight from Cloudflare's cache: no Worker invocation, so no request cap. HTTP -> HTTPS is the
     // zone's "Always Use HTTPS" setting.
-    "run_worker_first": ["/buy/*", "/97/*"],
+    "run_worker_first": ["/buy/*", "/97/*", "/rpc"],
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },

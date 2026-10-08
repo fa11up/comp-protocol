@@ -1,5 +1,6 @@
 // The INFER app: one screen, no scrolling. Trading on the left, staking on the right.
 import { useEffect, useState } from "react";
+import { everyVisible } from "./visible";
 import { formatUnits, type Address } from "viem";
 import { LAUNCH, LIVE, pct, whole } from "./config";
 import { ERC20, STAKED_INFER, DRIPPER, client, wallet, message } from "./chain";
@@ -43,8 +44,7 @@ export function App() {
   // the one-block hold, a drip, a trade by someone else) shows without a reload.
   useEffect(() => {
     if (!LIVE) return;
-    const t = setInterval(refresh, 12_000);
-    return () => clearInterval(t);
+    return everyVisible(refresh, 12_000);
   }, []);
   return (
     <Shell page="app" depth={0} wallet={w} className="infer-screen">

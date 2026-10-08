@@ -66,12 +66,21 @@ export const chain = defineChain({
   name: "Ethereum",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: LAUNCH.rpc } },
+  // Multicall3 (same address on every chain), so the page's reads go out as one call per refresh.
+  contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11", blockCreated: 14353601 } },
 });
+
+/**
+ * The site's own RPC (worker/rpc.js: cached per block, keyed upstreams, an allowlist of our contracts) first,
+ * then the public RPCs directly if it is unreachable (a local dev server has no /rpc).
+ */
+const OWN_RPC = typeof location !== "undefined" ? [new URL("/rpc", location.origin).href] : [];
 
 export const client = createPublicClient({
   chain,
+  batch: { multicall: true },
   transport: fallback(
-    LAUNCH.rpc.map((url) => http(url, { timeout: 8000, retryCount: 0 })),
+    [...OWN_RPC, ...LAUNCH.rpc].map((url) => http(url, { timeout: 8000, retryCount: 0 })),
   ),
 });
 

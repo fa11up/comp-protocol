@@ -203,6 +203,23 @@ function inferSite(): Plugin {
     ),
   ) as { rpc: string[]; claims: { origins: string[] } };
   const LLMS = inferLlms(launch);
+  // The contracts /rpc will call (worker/rpc.js): every address in the launch config and in the INFER source,
+  // plus Multicall3, which bundles the pages' reads. A new contract read by the page is allowed by being in
+  // one of those two places; anything else is refused.
+  const ADDRESS = /0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
+  const sources = [
+    readFileSync(resolve(launchDir, existsSync(resolve(launchDir, "launch.json")) ? "launch.json" : "launch.example.json"), "utf8"),
+    ...readdirSync(launchDir)
+      .filter((f) => /\.(ts|tsx)$/.test(f))
+      .map((f) => readFileSync(resolve(launchDir, f), "utf8")),
+  ];
+  const RPC_ALLOW = [
+    ...new Set(
+      [...sources.flatMap((s) => s.match(ADDRESS) ?? []), "0xcA11bde05977b3631167028862bE2a173976CA11"]
+        .map((a) => a.toLowerCase())
+        .filter((a) => !/^0x0{40}$/.test(a)),
+    ),
+  ].sort();
   return {
     name: "imdusd-infer-site",
     apply: "build",
@@ -213,6 +230,7 @@ function inferSite(): Plugin {
         source: `User-agent: *\nAllow: /\n\nSitemap: ${INFER_SITE}/sitemap.xml\n`,
       });
       this.emitFile({ type: "asset", fileName: "llms.txt", source: LLMS });
+      this.emitFile({ type: "asset", fileName: "rpc-allow.json", source: JSON.stringify(RPC_ALLOW, null, 1) + "\n" });
       this.emitFile({
         type: "asset",
         fileName: PLAYER.image,
