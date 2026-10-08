@@ -49,8 +49,9 @@ test("pack never shrinks a hit circle below the 24px target and grows the plot i
   for (const a of circles) {
     for (const b of circles) {
       if (a === b) continue;
-      const d = Math.hypot(a.x - b.x, (ys.get(a.id) ?? 0) - (ys.get(b.id) ?? 0));
-      assert.ok(d + 1e-6 >= a.r + b.r, `${a.id} and ${b.id} overlap`);
+      // Box to box: apart horizontally or vertically by the sum of the radii, so hit boxes never overlap.
+      const d = Math.max(Math.abs(a.x - b.x), Math.abs((ys.get(a.id) ?? 0) - (ys.get(b.id) ?? 0)));
+      assert.ok(d + 1e-6 >= a.r + b.r, `${a.id} and ${b.id} overlap box to box`);
     }
   }
   assert.ok(height >= 2 * extent(circles, ys) + HIT_RADIUS, "nothing is clipped");

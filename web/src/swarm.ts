@@ -7,8 +7,13 @@ export type Circle = { id: string; x: number; r: number };
 /**
  * Vertical offsets (0 = the centre line) for circles placed in order, largest first, so the biggest debts sit
  * on the line and smaller ones settle around them. For each circle, the candidates are the centre and every
- * height at which it would just touch an already placed circle; it takes the one nearest the centre that
- * touches nothing. Deterministic: the same book always draws the same way.
+ * height at which it would just clear an already placed circle; it takes the one nearest the centre that
+ * clears all of them. Deterministic: the same book always draws the same way.
+ *
+ * "Clear" is by BOX, not by circle: two circles are apart when they are apart horizontally OR vertically
+ * by the sum of their radii and the gap, so their square hit boxes never overlap. Circles that merely did
+ * not touch could still overlap box to box when packed diagonally, and the touch-target check (WCAG 2.5.8
+ * through axe) measures the box a pointer can hit, so it failed on exactly those.
  */
 export function swarm(circles: Circle[], gap = 2): Map<string, number> {
   const order = [...circles].sort((a, b) => b.r - a.r || a.x - b.x || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -16,14 +21,12 @@ export function swarm(circles: Circle[], gap = 2): Map<string, number> {
   const out = new Map<string, number>();
   for (const c of order) {
     const clear = (y: number) =>
-      placed.every((p) => (c.x - p.x) ** 2 + (y - p.y) ** 2 >= (c.r + p.r + gap) ** 2 - 1e-6);
+      placed.every((p) => Math.max(Math.abs(c.x - p.x), Math.abs(y - p.y)) >= c.r + p.r + gap - 1e-6);
     const candidates = [0];
     for (const p of placed) {
       const need = c.r + p.r + gap;
-      const dx = Math.abs(c.x - p.x);
-      if (dx >= need) continue;
-      const dy = Math.sqrt(need * need - dx * dx);
-      candidates.push(p.y + dy, p.y - dy);
+      if (Math.abs(c.x - p.x) >= need) continue;
+      candidates.push(p.y + need, p.y - need);
     }
     candidates.sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
     const y = candidates.find(clear) ?? 0;

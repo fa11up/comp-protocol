@@ -878,12 +878,14 @@ try {
   // No names on the chart; a loan's name shows in a popup on hover or focus.
   assert.equal(await page.locator(".strip-plot .loan-label").count(), 0);
   assert.equal(await page.locator(".loan-pop").count(), 0);
+  // Area is debt against the MEDIAN loan: the two 1,000-debt loans are the median and draw at 20px, the
+  // 250-debt loan at half that area, 10px.
   const dots = await page
     .locator(".loan-dot")
     .evaluateAll((nodes) => nodes.map((n) => parseFloat(n.style.width)));
   assert.deepEqual(
     [...dots].sort((a, b) => a - b),
-    [12, 24, 24],
+    [10, 20, 20],
   );
   await page.locator(".loan-mark").first().hover();
   await page.locator(".loan-pop").waitFor();
@@ -926,11 +928,14 @@ try {
   // QA-06 regression: the keyboard-active option carries an outline, not just a faint fill.
   await loans.getByRole("button", { name: "Filter by zone" }).focus();
   await page.keyboard.press("ArrowDown");
+  await page.getByRole("listbox").waitFor();
   await page.keyboard.press("End");
+  // The active option is re-rendered after the key; read its outline once it is there, not a frame early.
+  const activeOption = page.locator(".select-list li.is-active");
+  await activeOption.waitFor();
+  await page.waitForTimeout(100);
   assert.equal(
-    await page
-      .locator(".select-list li.is-active")
-      .evaluate((n) => getComputedStyle(n).outlineStyle),
+    await activeOption.evaluate((n) => getComputedStyle(n).outlineStyle),
     "solid",
   );
   await page.keyboard.press("Escape");
