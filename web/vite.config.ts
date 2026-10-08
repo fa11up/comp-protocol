@@ -34,7 +34,8 @@ Sitemap: ${SITE}/sitemap.xml
  * allowed by its hash, so any other inline script, every inline style, and every connection to a
  * chain or a third party is refused by the browser. The public site reads no chain (scripts/public-check.mjs):
  * its one allowance is Cloudflare Web Analytics, which the zone injects into every page: the beacon's script
- * from static.cloudflareinsights.com and its report to cloudflareinsights.com, and nothing else.
+ * from static.cloudflareinsights.com and its report, which goes to the page's own origin (/cdn-cgi/rum, since the
+ * zone is proxied) or to cloudflareinsights.com. 'self' admits nothing else: the public site has no API.
  * /assets/* (hashed, public, immutable) also answers any origin: the build marks its scripts and styles
  * `crossorigin`, and a page framed in a sandbox without allow-same-origin, as X frames a player card
  * (infer.imdusd.com/buy/, /97/), has the origin "null", so without this every asset was refused and the card
@@ -127,7 +128,7 @@ function publicSite(): Plugin {
         );
       writeFileSync(
         resolve(dir, "_headers"),
-        publicHeaders([...hashes], [CF_ANALYTICS.report], [], false, [CF_ANALYTICS.script]),
+        publicHeaders([...hashes], ["'self'", CF_ANALYTICS.report], [], false, [CF_ANALYTICS.script]),
       );
     },
   };

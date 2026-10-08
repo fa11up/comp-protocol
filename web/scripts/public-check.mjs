@@ -44,7 +44,7 @@ const headers = await readFile(`${dir}/_headers`, "utf8");
 if (!/Content-Security-Policy: .*'sha256-[A-Za-z0-9+/=]+'/.test(headers))
   fail("_headers has no hashed Content-Security-Policy");
 const connect = headers.match(/connect-src ([^;]*);/)?.[1].trim();
-if (connect !== "https://cloudflareinsights.com")
+if (connect !== "'self' https://cloudflareinsights.com")
   fail(`the Content-Security-Policy allows network connections beyond Cloudflare Web Analytics: ${connect}`);
 const scripts = headers.match(/script-src ([^;]*);/)?.[1].split(/\s+/).filter((s) => !s.startsWith("'")) ?? [];
 if (scripts.join(" ") !== "https://static.cloudflareinsights.com")
