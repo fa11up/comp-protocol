@@ -23,6 +23,8 @@ for (const need of [
   "claim/index.html",
   "buy/index.html",
   "buy/card.png",
+  "97/index.html",
+  "97/card.png",
   "tokenomics/index.html",
   "404.html",
   "sitemap.xml",
@@ -88,6 +90,9 @@ if (
   !/X-Frame-Options: DENY/.test(headers)
 )
   fail("_headers must forbid framing; the Worker opens /buy/ to X alone");
+// A player card framed in a strict sandbox has the origin "null": its crossorigin assets need CORS.
+if (!/\/assets\/\*\n(?:  .*\n)*  Access-Control-Allow-Origin: \*/.test(headers))
+  fail("_headers must let /assets/* answer any origin, or a sandboxed player card loads blank");
 const buy = await readFile(`${dir}/buy/index.html`, "utf8");
 for (const [name, value] of [
   ["twitter:card", "player"],
@@ -98,6 +103,18 @@ for (const [name, value] of [
 ])
   if (!buy.includes(`<meta name="${name}" content="${value}" />`))
     fail(`buy/index.html lacks ${name} = ${value}`);
+const film = await readFile(`${dir}/97/index.html`, "utf8");
+for (const [name, value] of [
+  ["twitter:card", "player"],
+  ["twitter:player", "https://infer.imdusd.com/97/"],
+  ["twitter:player:width", "480"],
+  ["twitter:player:height", "480"],
+  ["twitter:image", "https://infer.imdusd.com/97/card.png"],
+])
+  if (!film.includes(`<meta name="${name}" content="${value}" />`))
+    fail(`97/index.html lacks ${name} = ${value}`);
+if (!/<video[^>]+src="\/?(\.\.\/)?assets\/infer97-[^"]+\.mp4"/.test(film)) fail("97/index.html does not play the built film");
+if (!/media-src 'self'/.test(csp)) fail("the Content-Security-Policy must let /97/ play its film");
 console.log(
   `infer-check: ${files.length} files; mainnet only; CSP admits ${connect.trim()}.`,
 );

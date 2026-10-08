@@ -34,13 +34,18 @@ Sitemap: ${SITE}/sitemap.xml
  * allowed by its hash, so any other inline script, every inline style, and every connection to a
  * chain or a third party is refused by the browser. `connect-src 'none'` is also the public site's
  * promise (scripts/public-check.mjs): it reads no chain.
+ * /assets/* (hashed, public, immutable) also answers any origin: the build marks its scripts and styles
+ * `crossorigin`, and a page framed in a sandbox without allow-same-origin, as X frames a player card
+ * (infer.imdusd.com/buy/, /97/), has the origin "null", so without this every asset was refused and the card
+ * stayed blank.
  */
 const publicHeaders = (
   scriptHashes: string[],
   connect: string[] = [],
   frames: string[] = [],
+  media = false,
 ) => `/*
-  Content-Security-Policy: default-src 'none'; script-src 'self' ${scriptHashes.map((h) => `'sha256-${h}'`).join(" ")}; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src ${connect.length ? connect.join(" ") : "'none'"};${frames.length ? ` frame-src ${frames.join(" ")};` : ""} frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'none'; script-src 'self' ${scriptHashes.map((h) => `'sha256-${h}'`).join(" ")}; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src ${connect.length ? connect.join(" ") : "'none'"};${media ? " media-src 'self';" : ""}${frames.length ? ` frame-src ${frames.join(" ")};` : ""} frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
@@ -48,6 +53,7 @@ const publicHeaders = (
   Strict-Transport-Security: max-age=31536000; includeSubDomains
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+  Access-Control-Allow-Origin: *
 `;
 
 const walk = (dir: string): string[] =>
@@ -148,7 +154,10 @@ const WALLETCONNECT_ORIGINS = [
  * before play. The Worker admits x.com as a frame ancestor on this route only (worker/infer.js).
  */
 const PLAYER = { width: 480, height: 560, image: "buy/card.png" };
-function playerTags(url: string, title: string, description: string) {
+/** /97/, INFER 97: the square film as a player card, the same way (worker/infer.js frames it for X too). */
+const PLAYER_97 = { width: 480, height: 480, image: "97/card.png" };
+function playerTags(url: string, title: string, description: string, player = PLAYER) {
+  const PLAYER = player;
   const image = `${INFER_SITE}/${PLAYER.image}`;
   return (
     `<link rel="canonical" href="${url}" />` +
@@ -203,10 +212,15 @@ function inferSite(): Plugin {
       });
       this.emitFile({
         type: "asset",
+        fileName: PLAYER_97.image,
+        source: readFileSync(resolve(launchDir, "infer97-card.png")),
+      });
+      this.emitFile({
+        type: "asset",
         fileName: "sitemap.xml",
         source:
           `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
-          ["", "claim/", "tokenomics/"]
+          ["", "claim/", "tokenomics/", "97/"]
             .map((p) => `  <url><loc>${INFER_SITE}/${p}</loc></url>`)
             .join("\n") +
           `\n</urlset>\n`,
@@ -229,7 +243,7 @@ function inferSite(): Plugin {
       manifest.description =
         "INFER, the imdUSD protocol's token: claim, swap, stake and the tokenomics.";
       writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n");
-      for (const page of ["", "claim/", "tokenomics/", "buy/"]) {
+      for (const page of ["", "claim/", "tokenomics/", "buy/", "97/"]) {
         const file = resolve(dir, page, "index.html");
         const html = readFileSync(file, "utf8");
         const title = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? "INFER";
@@ -240,7 +254,7 @@ function inferSite(): Plugin {
           file,
           html.replace(
             "</head>",
-            `${page === "buy/" ? playerTags(`${INFER_SITE}/${page}`, title, description) : socialTags(INFER_SITE, `${INFER_SITE}/${page}`, title, description, { type: "website" })}</head>`,
+            `${page === "buy/" ? playerTags(`${INFER_SITE}/${page}`, title, description) : page === "97/" ? playerTags(`${INFER_SITE}/${page}`, title, description, PLAYER_97) : socialTags(INFER_SITE, `${INFER_SITE}/${page}`, title, description, { type: "website" })}</head>`,
           ),
         );
       }
@@ -274,6 +288,7 @@ function inferSite(): Plugin {
           [...hashes],
           ["'self'", ...origins],
           wc.projectId ? WALLETCONNECT_FRAMES : [],
+          true, // /97/ plays its film from the site itself
         ),
       );
     },
@@ -333,6 +348,7 @@ export default defineConfig(({ mode }) => {
             index: resolve(import.meta.dirname, "infer/index.html"),
             claim: resolve(import.meta.dirname, "infer/claim/index.html"),
             buy: resolve(import.meta.dirname, "infer/buy/index.html"),
+            infer97: resolve(import.meta.dirname, "infer/97/index.html"),
             tokenomics: resolve(
               import.meta.dirname,
               "infer/tokenomics/index.html",

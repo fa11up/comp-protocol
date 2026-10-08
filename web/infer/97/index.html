@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- INFER 97, the bootleg-cartridge ad, as an X player card (vite --mode infer). The film is rendered in
+         fa11up/imdusd-marketing (marketing/infer97/) and copied here as src/infer/infer97.mp4. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="INFER 97: a 1995 bootleg cartridge, and an ad for INFER, the imdUSD protocol's token."
+    />
+    <title>INFER 97</title>
+    <link rel="icon" href="../favicon.svg" />
+  </head>
+  <body class="infer97">
+    <main>
+      <video
+        id="film"
+        src="../../src/infer/infer97.mp4"
+        poster="../../src/infer/infer97-card.png"
+        playsinline
+        loop
+        controls
+        preload="metadata"
+      ></video>
+      <button id="start" type="button" aria-label="Play INFER 97 with sound">PUSH START</button>
+    </main>
+    <script type="module" src="../../src/entry-infer-97.ts"></script>
+  </body>
+</html>

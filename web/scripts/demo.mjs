@@ -109,7 +109,8 @@ const page = await context.newPage();
 await page.exposeFunction("__sendFixture", (tx) => sent(s, tx));
 await installWallet(page, { chain: `0x${config.chainId.toString(16)}` });
 await page.goto(`${url}terminal/`);
-await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
+// No connect button: an amount box's "Disconnected" label is the way in.
+await page.getByRole("button", { name: "Disconnected: connect a wallet" }).first().click();
 console.log(
   `Demo terminal open at ${url} (fixture data; close the window to stop).`,
 );

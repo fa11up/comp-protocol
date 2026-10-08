@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DisconnectBox } from "./disconnect";
 import {
   formatUnits,
   type Address,
@@ -14,6 +15,7 @@ import {
   type Actions,
   type Request,
   AddressLink,
+  ConnectWallet,
 } from "./actions";
 import { Redemption } from "./Redemption";
 import { Position, Work, Oracle, Keeper, Backing, Governance } from "./Panes";
@@ -22,11 +24,26 @@ import { explained } from "./explain";
 import { onChain, onChainArgs } from "./names";
 import { ThemeToggle } from "./theme";
 import { SiteHeader } from "./site";
-import { Who } from "./ens";
 import { LoanBook, useCharts } from "./Charts";
 import { Points, usePoints } from "./Points";
 import { Ticker } from "./motion";
 import { MarketCap, compact } from "./MarketCap";
+/** The terminal remembers a disconnect, so a reload does not silently reconnect the wallet. */
+const DISCONNECTED_KEY = "comp-terminal-disconnected";
+function disconnectedHere(): boolean {
+  try {
+    return localStorage.getItem(DISCONNECTED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function rememberDisconnected(on: boolean) {
+  try {
+    if (on) localStorage.setItem(DISCONNECTED_KEY, "1");
+    else localStorage.removeItem(DISCONNECTED_KEY);
+  } catch {}
+}
+
 export default function App() {
   const [r, setRuntime] = useState<Runtime>();
   const [error, setError] = useState("");
@@ -142,6 +159,9 @@ function Terminal({ r }: { r: Runtime }) {
     const p = window.ethereum;
     if (!p) return;
     const changed = (a: unknown) => {
+      // Disconnected here: the wallet's own account and its silent reconnect on load are ignored until
+      // the user connects again through a "Disconnected" label.
+      if (disconnectedHere()) return;
       setAccount((a as Address[])[0]);
       setReview(undefined);
       setSnapshot(undefined);
@@ -205,6 +225,7 @@ function Terminal({ r }: { r: Runtime }) {
   async function connect() {
     setConnecting(true);
     setWalletError("");
+    rememberDisconnected(false);
     try {
       const p = window.ethereum;
       if (!p)
@@ -219,6 +240,17 @@ function Terminal({ r }: { r: Runtime }) {
     } finally {
       setConnecting(false);
     }
+  }
+  /** Forget the account here and in the wallet where it allows (wallet_revokePermissions), and stay
+   * disconnected across reloads until the user connects again. */
+  function disconnect() {
+    rememberDisconnected(true);
+    setAccount(undefined);
+    setReview(undefined);
+    setTx({ status: "No transaction submitted." });
+    void window.ethereum
+      ?.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] })
+      .catch(() => {});
   }
   async function changeChain() {
     setConnecting(true);
@@ -364,6 +396,7 @@ function Terminal({ r }: { r: Runtime }) {
     ["governance", "Govern"],
   ] as const;
   return (
+    <ConnectWallet.Provider value={account ? null : { connect, connecting }}>
     <div className="terminal">
       <a href="#terminal-main" className="skip">
         Skip to terminal panes
@@ -371,9 +404,6 @@ function Terminal({ r }: { r: Runtime }) {
       <SiteHeader page="terminal" network={r.config.network.name}>
         {account ? (
           <>
-            <span className="account">
-              <Who address={account} />
-            </span>
             {!correctChain && (
               <button
                 className="primary"
@@ -386,11 +416,12 @@ function Terminal({ r }: { r: Runtime }) {
               </button>
             )}
           </>
-        ) : (
-          <button className="primary" disabled={connecting} onClick={connect}>
-            {connecting ? "Connecting…" : "Connect wallet"}
-          </button>
-        )}
+        ) : null}
+        <DisconnectBox
+          connected={!!account}
+          label={account ? `Disconnect ${account}` : "Disconnect"}
+          onDisconnect={disconnect}
+        />
       </SiteHeader>
       {walletError || readError || s?.errors.length ? (
         <div className="global-notice" role="alert">
@@ -653,5 +684,6 @@ function Terminal({ r }: { r: Runtime }) {
         )}
       </dialog>
     </div>
+    </ConnectWallet.Provider>
   );
 }

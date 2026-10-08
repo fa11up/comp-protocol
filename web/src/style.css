@@ -609,6 +609,7 @@ dialog [role="status"] {
   }
   .wallet-bar {
     gap: 8px;
+    --bar-gap: 8px;
     flex-wrap: wrap;
   }
   .network {
@@ -1251,6 +1252,134 @@ td span {
   border-color: var(--text);
   position: relative;
   z-index: 1;
+}
+/* The disconnect box (src/disconnect.tsx): drawn in, like the engravings, and drawn out. The slot opens first
+   so the controls beside it slide over rather than jump; the frame is traced clockwise from the top-left;
+   the × follows in two strokes. Leaving runs the other way and closes the slot, gap and all (--bar-gap is
+   the header's own gap), so nothing is left where it stood. */
+.wallet-bar {
+  --bar-gap: 14px;
+}
+.infer-tools {
+  --bar-gap: 10px;
+}
+.disconnect-slot {
+  display: inline-flex;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  overflow: hidden;
+}
+.disconnect-slot.is-in {
+  animation: db-slot-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.disconnect-slot.is-out {
+  animation: db-slot-out 240ms cubic-bezier(0.5, 0, 0.7, 0.4) 420ms both;
+}
+.disconnect-box {
+  width: 36px;
+  min-height: 0;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+}
+.disconnect-box:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.disconnect-box svg {
+  display: block;
+  width: 36px;
+  height: 36px;
+  overflow: visible;
+}
+.disconnect-box rect,
+.disconnect-box path {
+  fill: none;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 0;
+}
+.disconnect-box .db-frame {
+  stroke: var(--rule);
+  stroke-width: 1;
+  transition: stroke 160ms ease;
+}
+.disconnect-box path {
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: square;
+}
+.disconnect-box .db-x {
+  transform-origin: 18px 18px;
+  transition: transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.disconnect-box:hover .db-frame,
+.disconnect-box:focus-visible .db-frame {
+  stroke: var(--text);
+}
+/* A quarter turn: the release, before it is pressed. */
+.disconnect-box:hover .db-x,
+.disconnect-box:focus-visible .db-x {
+  transform: rotate(90deg);
+}
+.is-in .db-frame {
+  animation: db-draw 440ms cubic-bezier(0.45, 0, 0.25, 1) 180ms both;
+}
+.is-in .db-x1 {
+  animation: db-draw 170ms ease-out 560ms both;
+}
+.is-in .db-x2 {
+  animation: db-draw 170ms ease-out 700ms both;
+}
+.is-out .db-x2 {
+  animation: db-erase 140ms ease-in both;
+}
+.is-out .db-x1 {
+  animation: db-erase 140ms ease-in 90ms both;
+}
+.is-out .db-frame {
+  animation: db-unwind 300ms cubic-bezier(0.55, 0, 0.75, 0.2) 160ms both;
+}
+@keyframes db-slot-in {
+  from {
+    width: 0;
+    margin-inline-start: calc(-1 * var(--bar-gap, 0px));
+  }
+}
+@keyframes db-slot-out {
+  to {
+    width: 0;
+    margin-inline-start: calc(-1 * var(--bar-gap, 0px));
+  }
+}
+@keyframes db-draw {
+  from {
+    stroke-dashoffset: 100;
+  }
+}
+/* Lifted from where it began, so each stroke leaves the way the pen laid it. */
+@keyframes db-erase {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+/* The frame unwinds back toward its top-left corner, the reverse of its tracing. */
+@keyframes db-unwind {
+  to {
+    stroke-dashoffset: 100;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .disconnect-slot,
+  .disconnect-box rect,
+  .disconnect-box path {
+    animation: none !important;
+  }
+  .disconnect-box .db-x {
+    transition: none;
+  }
 }
 .theme-toggle {
   display: inline-grid;
@@ -2666,6 +2795,16 @@ button.balance-hint.balance-use {
 button.balance-hint.balance-use:hover {
   color: var(--text);
 }
+/* "Disconnected" is the terminal's only way to connect a wallet, so it reads as a link, as on INFER. */
+button.balance-hint.balance-connect {
+  color: var(--text);
+  text-decoration: underline dotted;
+  text-decoration-color: currentColor;
+  text-underline-offset: 3px;
+}
+button.balance-hint.balance-connect:hover {
+  text-decoration-style: solid;
+}
 
 /* An action's error: after ten seconds it swipes out to the left; with reduced motion it simply goes. */
 .fading-wrap {
@@ -2766,23 +2905,6 @@ button.balance-hint.balance-use:hover {
   color: var(--muted);
   border: 1px solid var(--rule);
   padding: 3px 8px;
-}
-.infer-connect {
-  background: var(--text);
-  color: var(--bg);
-  border: 1px solid var(--text);
-  letter-spacing: 0.04em;
-}
-.infer-account {
-  min-height: 0;
-  background: var(--bg);
-  color: var(--text);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  border: 1px solid var(--text);
-  padding: 5px 9px;
 }
 
 /* --- the desk: two panes, one screen, no page scroll ------------------------------------- */
@@ -3304,9 +3426,10 @@ button.balance-hint.balance-use:hover {
   .infer-tools .vibe-toggle {
     grid-area: vibe;
   }
-  .infer-tools .infer-connect,
-  .infer-tools .infer-account {
+  /* In the phone grid the slot is its own track: an empty track takes no room, so no gap to undo. */
+  .infer-tools .disconnect-slot {
     grid-area: wallet;
+    --bar-gap: 0px;
   }
   .infer-tools .chip {
     grid-area: chip;
@@ -3320,10 +3443,6 @@ button.balance-hint.balance-use:hover {
     .infer-tools .chip {
       display: none;
     }
-  }
-  .infer-connect {
-    padding: 8px 12px;
-    font-size: 12px;
   }
   .infer-nav {
     grid-area: nav;

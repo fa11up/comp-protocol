@@ -1,6 +1,7 @@
 import favicon from "../../public/favicon.svg?raw";
 
 // Shared pieces of the three INFER pages: the shell, the wallet, the transaction runner and figures.
+import { DisconnectBox } from "../disconnect";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   formatUnits,
@@ -779,25 +780,13 @@ export function Shell({
           {LIVE ? <span className="chip">Mainnet</span> : <StagingChip />}
           <ThemeToggle />
           <Vibe suite={INFER_VIBES} />
-          {wallet.account ? (
-            <button
-              type="button"
-              className="infer-account"
-              title={`${wallet.account} · click to disconnect`}
-              aria-label={`Disconnect ${wallet.account}`}
-              onClick={() => void wallet.disconnect()}
-            >
-              {short(wallet.account)}
-            </button>
-          ) : (
-            <button
-              className="infer-connect"
-              disabled={wallet.busy}
-              onClick={wallet.connect}
-            >
-              {wallet.busy ? "Connecting…" : "Connect wallet"}
-            </button>
-          )}
+          {/* No connect button: an amount box's "disconnected" label is the way in (Balance). Connected,
+              the header gains only the disconnect box. */}
+          <DisconnectBox
+            connected={!!wallet.account}
+            label={wallet.account ? `Disconnect ${wallet.account}` : "Disconnect"}
+            onDisconnect={() => void wallet.disconnect()}
+          />
         </div>
       </header>
       <WalletChooser wallet={wallet} />

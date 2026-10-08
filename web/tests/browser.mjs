@@ -171,10 +171,15 @@ async function tab(page, id) {
   if (await t.isVisible()) await t.click();
   else await pickPane(page, id);
 }
+/** The terminal has no connect button: an amount box's "Disconnected" label is the way in. The Position
+ * desk always has one. */
+async function connectButton(page) {
+  const visible = page.locator('button[aria-label="Disconnected: connect a wallet"]:visible');
+  if ((await visible.count()) === 0) await tab(page, "position");
+  return visible.first();
+}
 async function connect(page) {
-  await page
-    .getByRole("button", { name: "Connect wallet", exact: true })
-    .click();
+  await (await connectButton(page)).click();
   if (
     await page
       .getByRole("button", { name: "Switch to Sepolia", exact: true })
@@ -217,7 +222,7 @@ async function cancel(page) {
 }
 try {
   let { page, s } = await setup({ wallet: false });
-  await page.getByRole("button", { name: "Connect wallet" }).click();
+  await (await connectButton(page)).click();
   await expectText(page, "No browser wallet found");
   await tab(page, "redemption");
   assert.equal(
@@ -299,7 +304,7 @@ try {
   );
   ({ page, s } = await setup());
   await page.evaluate(() => (window.__wallet.reject = true));
-  await page.getByRole("button", { name: "Connect wallet" }).click();
+  await (await connectButton(page)).click();
   await expectText(page, "Wallet request rejected");
   await page.evaluate(() => (window.__wallet.reject = false));
   await connect(page);
@@ -319,11 +324,17 @@ try {
   passed(
     "Connect rejection recovery, wrong chain and exact add-chain fallback",
   );
-  await expectText(page.locator(".topbar .account"), "miyagod.eth");
+  // Connected, the header gains only the disconnect box: no address, no name, no connect button.
+  await page.locator(".topbar .disconnect-box").waitFor();
+  assert.match(
+    await page.locator(".topbar .disconnect-box").getAttribute("aria-label"),
+    /^Disconnect 0x[0-9a-fA-F]{40}$/,
+  );
+  assert.equal(await page.locator(".topbar .account").count(), 0, "no account text in the header");
   // No native dropdowns remain: their open list is drawn by the OS and cannot match the site.
   assert.equal(await page.locator("select").count(), 0);
   passed(
-    "A verified ENS name replaces the connected address; dropdowns use the site's own style",
+    "Connected, the header holds only the disconnect box; dropdowns use the site's own style",
   );
   const red = page.locator(".pane-redemption");
   await tab(page, "redemption");
@@ -859,7 +870,7 @@ try {
   await page.reload();
   await expectText(page, "ABI asset integrity check failed");
   assert.equal(
-    await page.getByRole("button", { name: "Connect wallet" }).count(),
+    await page.getByRole("button", { name: "Disconnected: connect a wallet" }).count(),
     0,
   );
   await page.unroute("**/abi/PriceFeed.json");
@@ -1458,7 +1469,14 @@ try {
     await tab(page, "position");
     const field = page.locator(".pane-position .field").first();
     await expectText(field, "Disconnected");
-    await connect(page);
+    // There is no connect button in the header: the label is the only way in.
+    assert.equal(await page.getByRole("button", { name: "Connect wallet" }).count(), 0, "no connect box");
+    await field.getByRole("button", { name: "Disconnected: connect a wallet" }).click();
+    await page.locator(".pane-position .balance-use").first().waitFor();
+    if (
+      await page.getByRole("button", { name: "Switch to Sepolia", exact: true }).isVisible()
+    )
+      await page.getByRole("button", { name: "Switch to Sepolia", exact: true }).click();
     await tab(page, "position");
     const use = page.locator(".pane-position .balance-use").first();
     await use.waitFor();
@@ -1466,7 +1484,17 @@ try {
     const exact = (await use.getAttribute("title")).split(" ")[0];
     await use.click();
     assert.equal(await page.locator('.pane-position input[name="deposit-amount"]').inputValue(), exact);
-    passed("Amount boxes show the wallet balance and fill the exact amount on click; Disconnected without a wallet");
+    passed("Amount boxes show the wallet balance and fill the exact amount on click; Disconnected without a wallet, and it connects");
+    // The box disconnects: it draws itself out and nothing takes its place, the label is back, and a
+    // reload does not silently reconnect.
+    await page.locator(".topbar .disconnect-box").click();
+    await page.locator(".topbar .disconnect-slot").waitFor({ state: "detached" });
+    await expectText(page.locator(".pane-position .field").first(), "Disconnected");
+    await page.reload();
+    await page.locator(".pane-position .field").first().waitFor();
+    await expectText(page.locator(".pane-position .field").first(), "Disconnected");
+    assert.equal(await page.locator(".topbar .disconnect-box").count(), 0, "a reload stays disconnected");
+    passed("The disconnect box disconnects, leaves nothing in its place, and a reload stays disconnected");
   }
   {
     // Repaying a borrower is capped at what they owe: the hint offers the debt (not the larger wallet

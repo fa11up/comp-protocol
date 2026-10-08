@@ -330,7 +330,6 @@ export function Trade({
               ] as const,
           )
         : [];
-  const connectFirst = compact && LIVE && !w.account;
 
   return (
     <section
@@ -492,22 +491,19 @@ export function Trade({
         )}
         <button
           className="infer-go"
-          type={connectFirst ? "button" : "submit"}
-          onClick={connectFirst ? () => void w.connect() : undefined}
+          type="submit"
           disabled={
-            connectFirst
-              ? w.busy
-              : !LIVE ||
-                !w.account ||
-                !bal ||
-                amountIn === 0n ||
-                insufficient ||
-                !quote ||
-                quote.forAmount !== amountIn ||
-                tx.status === "pending"
+            !LIVE ||
+            !w.account ||
+            !bal ||
+            amountIn === 0n ||
+            insufficient ||
+            !quote ||
+            quote.forAmount !== amountIn ||
+            tx.status === "pending"
           }
         >
-          {connectFirst ? (w.busy ? "Connecting…" : "Connect wallet") : button}
+          {button}
         </button>
         <TxStatus tx={tx} onDone={clear} />
       </form>

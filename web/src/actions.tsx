@@ -1,4 +1,6 @@
 import {
+  createContext,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -123,12 +125,30 @@ export type Balance = {
   /** "Wallet" unless the amount is something else, such as "Available". */
   label?: string;
 };
+/** How an amount box's "Disconnected" label connects a wallet: it is the terminal's only way in. */
+export const ConnectWallet = createContext<{ connect: () => void; connecting: boolean } | null>(null);
+
 /**
  * The balance on an amount box's label line. Connected with some: a button showing it to two decimals, which
  * fills the box with the exact amount (every decimal). Otherwise "Disconnected" or "No <symbol>".
  */
 export function BalanceHint({ b, onUse }: { b: Balance; onUse: (text: string) => void }) {
-  if (!b.connected) return <span className="balance-hint">Disconnected</span>;
+  const wallet = useContext(ConnectWallet);
+  if (!b.connected)
+    return wallet ? (
+      <button
+        type="button"
+        className="balance-hint balance-use balance-connect"
+        title="Connect a wallet"
+        aria-label="Disconnected: connect a wallet"
+        disabled={wallet.connecting}
+        onClick={wallet.connect}
+      >
+        {wallet.connecting ? "Connecting…" : "Disconnected"}
+      </button>
+    ) : (
+      <span className="balance-hint">Disconnected</span>
+    );
   if (!b.amount) return <span className="balance-hint">{b.label && b.label !== "Wallet" ? `No ${b.symbol} available` : `No ${b.symbol}`}</span>;
   const label = b.label ?? "Wallet";
   const exactText = formatUnits(b.amount, b.decimals);
