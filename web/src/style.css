@@ -1415,9 +1415,11 @@ td span {
 .pane-loans .monitor-body {
   gap: 6px;
 }
+/* The list always keeps room for a handful of rows: a tall bubble cloud scrolls the pane instead
+   of squeezing the list to nothing. */
 .loan-feed-wrap {
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
+  min-height: 280px;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--rule);
@@ -1454,8 +1456,8 @@ td span {
   text-align: end;
 }
 .loan-feed {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: 140px;
   overflow: auto;
   margin: 0;
   padding: 0;
@@ -3573,6 +3575,25 @@ body:has(> .vibe-canvas:not([hidden]))
 }
 .vibe-canvas[hidden] {
   display: none;
+}
+/* With a vibe on, the terminal is one sheet of glass: the two outer columns are translucent and
+   everything inside them is clear, so panes, tabs and fields never stack back up to solid. Dialogs,
+   popups, menus and notices keep their own ground: they sit on the panes and must read on their own. */
+html.app-terminal body:has(> .vibe-canvas:not([hidden])) :is(.monitor, .desk) {
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+}
+html.app-terminal
+  body:has(> .vibe-canvas:not([hidden]))
+  :is(.pane, .desk-tabs button, .safe-band) {
+  background: transparent;
+}
+html.app-terminal
+  body:has(> .vibe-canvas:not([hidden]))
+  :is(.desk-tabs button[aria-selected="true"], .liquidatable-band, .loan-feed button:hover, .loan-feed .selected-loan button) {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+html.app-terminal body:has(> .vibe-canvas:not([hidden])) :is(input, textarea) {
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
 }
 /* Full screen, fixed behind the whole page as it scrolls. */
 .vibe-canvas {

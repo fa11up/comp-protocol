@@ -903,6 +903,17 @@ try {
     await page.locator(".selected-loan").textContent(),
     /0x[0-9a-fA-F]{40}/,
   );
+  // A circle picked while a search hides its row clears the search and highlights that row in view.
+  const search = page.getByLabel("Search positions by name or address");
+  await search.fill("no such borrower");
+  await expectText(page.locator(".loan-feed"), "No positions match");
+  const picked = page.locator(".loan-mark").nth(1);
+  const pickedOwner = (await picked.getAttribute("aria-label")).match(/0x[0-9a-fA-F]{40}/)[0];
+  await picked.click();
+  await page.locator(".selected-loan").waitFor();
+  assert.equal(await search.inputValue(), "");
+  assert.equal(await page.locator(".selected-loan").getAttribute("data-owner"), pickedOwner);
+  assert.equal(await page.locator(".selected-loan").isVisible(), true);
   // ENS names replace the readable labels where they resolve, and search finds either.
   const loans = page.locator(".pane-loans");
   await expectText(loans.locator(".loan-feed"), "keeper.eth");
@@ -1219,6 +1230,16 @@ try {
     await page.screenshot({ path: `${evidence}/cadence-${theme}-390.png` });
     await page.setViewportSize({ width: 1440, height: 900 });
     const pairs = await page.evaluate(() => {
+      // A computed colour as 0-255 channels and an alpha: rgb()/rgba(), or color(srgb r g b / a) with
+      // 0-1 channels, which is what a color-mix() background computes to.
+      const parse = (value) => {
+        const m = value.match(/[\d.]+/g).map(Number);
+        const unit = value.startsWith("color(") ? 255 : 1;
+        return { c: m.slice(0, 3).map((v) => v * unit), a: m.length > 3 ? m[3] : 1 };
+      };
+      // The pane is translucent while the vibe is on: what the eye sees is the pane over the page.
+      const over = (fg, bg) =>
+        `rgb(${fg.c.map((v, i) => Math.round(v * fg.a + bg.c[i] * (1 - fg.a))).join(", ")})`;
       const rgb = (value) =>
         value
           .match(/[\d.]+/g)
@@ -1232,12 +1253,13 @@ try {
       const ratio = (a, b) =>
         (Math.max(luminance(a), luminance(b)) + 0.05) /
         (Math.min(luminance(a), luminance(b)) + 0.05);
-      const surface = getComputedStyle(
-        document.querySelector(".pane"),
-      ).backgroundColor;
       const background = getComputedStyle(
         document.documentElement,
       ).backgroundColor;
+      const surface = over(
+        parse(getComputedStyle(document.querySelector(".pane")).backgroundColor),
+        parse(background),
+      );
       const text = getComputedStyle(document.documentElement).color;
       const muted = getComputedStyle(
         document.querySelector(".book-heading .muted"),

@@ -424,8 +424,17 @@ function fee(s, amount) {
   const capped = base > 450n * 10n ** 14n ? 450n * 10n ** 14n : base;
   return 50n + (capped + 10n ** 14n - 1n) / 10n ** 14n;
 }
-/** The demo's crowd: deterministic owners, ratios mostly 150–230% with a tail, debts 40–1,500. */
-export const crowdOwner = (i) => `0x${(0xd000 + i).toString(16).padStart(40, "0")}`;
+/** The demo's crowd: deterministic owners, ratios mostly 150–230% with a tail, debts 40–1,500. Each
+ * address looks like a real one (a deterministic scramble of its index) and ends in its index, which
+ * `crowdIndex` reads back, so searching the book by address finds something. */
+export const crowdOwner = (i) => {
+  let x = (i + 1) * 2654435761 >>> 0, hex = "";
+  for (let k = 0; k < 34; k++) {
+    x = (x * 1664525 + 1013904223) >>> 0;
+    hex += (x >>> 28).toString(16);
+  }
+  return `0x${hex}${(0xd000 + i).toString(16).padStart(6, "0")}`;
+};
 function crowdIndex(owner) {
   const n = parseInt(owner.slice(-6), 16) - 0xd000;
   return n >= 0 && n < 10000 ? n : -1;
@@ -704,6 +713,13 @@ export const ensRpcUrls = JSON.parse(
 export const ensNames = {
   [account.toLowerCase()]: "miyagod.eth",
   [candidate.toLowerCase()]: "keeper.eth",
+  // A dozen of the demo's crowd carry primary names too, so the book's search by ENS has something to find.
+  ...Object.fromEntries(
+    [
+      "whale.eth", "hodl.eth", "nakamoto.eth", "liquidity.eth", "degen.eth", "vitalik-fan.eth",
+      "satoshi.eth", "ledger.eth", "treasury.eth", "marketmaker.eth", "stable.eth", "dollar.eth",
+    ].map((name, i) => [crowdOwner(i * 3).toLowerCase(), name]),
+  ),
 };
 const reverseAbi = parseAbi([
   "function reverseWithGateways(bytes reverseName, uint256 coinType, string[] gateways) view returns (string resolvedName, address resolver, address reverseResolver)",

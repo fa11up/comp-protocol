@@ -366,12 +366,27 @@ function LoanFeed({
             ? 1
             : 0,
     );
+  // A loan picked on the chart is always found in the list: a search or zone filter that would hide
+  // it is cleared, then its row scrolls into view (the pane too, when the list is below the fold).
+  // Only a new pick does this; filtering afterwards may hide the selected row like any other.
+  const hidden = !!selected && !shown.some((p) => p.owner === selected);
+  const [reveal, setReveal] = useState<string>();
   useEffect(() => {
     if (!selected) return;
-    list.current
-      ?.querySelector(`[data-owner="${selected}"]`)
-      ?.scrollIntoView({ block: "nearest" });
+    if (hidden) {
+      setQuery("");
+      setZone("all");
+    }
+    setReveal(selected);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
+  useEffect(() => {
+    if (!reveal || hidden) return;
+    list.current
+      ?.querySelector(`[data-owner="${reveal}"]`)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    setReveal(undefined);
+  }, [reveal, hidden]);
   return (
     <div className="loan-feed-wrap">
       <div className="loan-tools">
