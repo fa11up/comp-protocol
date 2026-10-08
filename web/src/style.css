@@ -11,6 +11,8 @@
   --control: #5a6472;
   --focus: #16202e;
   --healthy: #2f5d50;
+  /* A network that is live: brighter than --healthy, still 4.6:1 on --bg at the chip's 10px. */
+  --live: #15803d;
   --danger: #8c2f2f;
   --clear: transparent;
 }
@@ -25,6 +27,7 @@
   --control: #777777;
   --focus: #eeeeee;
   --healthy: #92b5a6;
+  --live: #4ade80;
   --danger: #e19a9a;
   --clear: transparent;
 }
@@ -700,6 +703,7 @@ dialog [role="status"] {
     --focus: Highlight;
     --control: ButtonText;
     --healthy: CanvasText;
+    --live: CanvasText;
     --danger: CanvasText;
   }
 }
@@ -2189,15 +2193,15 @@ html.app-page body {
     color: var(--text);
   }
 }
-/* "live" is the theme's healthy green, pulsing in strength rather than from muted to ink. */
+/* "live" is a bright green (--live), pulsing in strength rather than from muted to ink. */
 .chip-pulse.chip-live {
-  color: var(--healthy);
+  color: var(--live);
   animation-name: chip-pulse-live;
 }
 @keyframes chip-pulse-live {
   0%,
   100% {
-    opacity: 0.7;
+    opacity: 0.8;
   }
   50% {
     opacity: 1;
