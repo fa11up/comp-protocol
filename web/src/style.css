@@ -2189,6 +2189,20 @@ html.app-page body {
     color: var(--text);
   }
 }
+/* "live" is the theme's healthy green, pulsing in strength rather than from muted to ink. */
+.chip-pulse.chip-live {
+  color: var(--healthy);
+  animation-name: chip-pulse-live;
+}
+@keyframes chip-pulse-live {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .chip-pulse {
     animation: none;

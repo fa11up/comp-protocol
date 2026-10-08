@@ -31,7 +31,7 @@ export function NetworkChip({
 }) {
   return (
     <span className="chip">
-      {network} · <span className="chip-pulse">{state}</span>
+      {network} · <span className={`chip-pulse chip-${state}`}>{state}</span>
     </span>
   );
 }
