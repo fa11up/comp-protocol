@@ -29,6 +29,7 @@ for (const need of [
   "_headers",
   "manifest.webmanifest",
   "robots.txt",
+  "llms.txt",
 ])
   if (!files.includes(need)) fail(`missing ${need}`);
 for (const f of files)
@@ -38,7 +39,7 @@ for (const f of files)
 // third-party code that renders no text, so it is the one file exempt from this check.
 const ours = (f) => !/^assets\/walletconnect-[\w-]+\.js$/.test(f);
 for (const f of files.filter(
-  (f) => /\.(html|js|css|webmanifest)$/.test(f) && ours(f),
+  (f) => /\.(html|js|css|webmanifest|txt)$/.test(f) && ours(f),
 )) {
   const text = await readFile(`${dir}/${f}`, "utf8");
   const leak = text.match(/sepolia|testnet/i);

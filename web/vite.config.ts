@@ -10,6 +10,8 @@ import {
 import { createHash } from "node:crypto";
 // @ts-expect-error plain ESM build script without types
 import { renderDocs, socialTags } from "./scripts/docs-pages.mjs";
+// @ts-expect-error plain ESM build script without types
+import { inferLlms } from "./scripts/infer-llms.mjs";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 // Three static pages: the landing page, the terminal and the docs. Plain files at /, /terminal/
@@ -183,6 +185,7 @@ function inferSite(): Plugin {
       "utf8",
     ),
   ) as { rpc: string[]; claims: { origins: string[] } };
+  const LLMS = inferLlms(launch);
   return {
     name: "imdusd-infer-site",
     apply: "build",
@@ -192,6 +195,7 @@ function inferSite(): Plugin {
         fileName: "robots.txt",
         source: `User-agent: *\nAllow: /\n\nSitemap: ${INFER_SITE}/sitemap.xml\n`,
       });
+      this.emitFile({ type: "asset", fileName: "llms.txt", source: LLMS });
       this.emitFile({
         type: "asset",
         fileName: PLAYER.image,

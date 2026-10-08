@@ -30,6 +30,8 @@ for (const need of [
   "manifest.webmanifest",
   "robots.txt",
   "sitemap.xml",
+  "llms.txt",
+  "llms-full.txt",
 ])
   if (!files.includes(need)) fail(`missing ${need}`);
 // The not-found page is served at any unknown path, so every URL in it must be absolute.
@@ -48,7 +50,7 @@ if (files.some((f) => f.startsWith("terminal/")))
 for (const f of files)
   if (f === "imd-deployment.json" || f.startsWith("abi/"))
     fail(`${f} ships a chain deployment`);
-for (const f of files.filter((f) => /\.(html|js|css|webmanifest)$/.test(f))) {
+for (const f of files.filter((f) => /\.(html|js|css|webmanifest|txt)$/.test(f))) {
   const text = await readFile(`${dir}/${f}`, "utf8");
   // A link to the terminal, in any of the forms the site writes one.
   if (/["'`(]\.{0,2}\/?terminal\//.test(text))

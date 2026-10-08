@@ -374,8 +374,111 @@ export function renderDocs({ outDir, contentDir, terminal, site }) {
         urls.map((u) => `  <url><loc>${site}/${u}</loc></url>`).join("\n") +
         `\n</urlset>\n`,
     );
+    writeLlms({ outDir, pages, site, redact });
   }
   return pages.length;
+}
+
+// llms.txt (https://llmstxt.org): the site for a language model. llms.txt is the protocol in brief and
+// an index of every docs page; llms-full.txt is every page as Markdown, in reading order. Both are
+// built from the same content as the pages, so they cannot drift from them, and follow the same
+// rules: what is redacted on a page is left out here (a dropped block, not a bar), and links are
+// absolute.
+const LLMS_SUMMARY = `# imdUSD
+
+> imdUSD is a stablecoin meant to be worth one US dollar, borrowed against sIMD (staked IMD, the IdentityMD token) on Ethereum. Its collateral is priced by panels of IdentityMD agents answering a fixed question, signed and checked on chain. Any holder can redeem it for $1 of sIMD less a fee, and keepers liquidate positions that fall below the minimum collateral ratio.
+
+Status: not yet launched on mainnet. Contract addresses and launch values are published at launch; in the docs a value set at launch is written as —. A listed address is not proof of a deployment: check it on chain, and check that each vault-created contract names the vault back, before integrating.
+
+## The protocol in brief
+
+- **Token.** \`ImdUSD\` ("imdUSD", ERC-20, 18 decimals). Only the vault mints and burns it. No owner, no pause, no upgrade path.
+- **Vault.** \`ParameterizedVault\` holds every position (an account's collateral and debt). Its collateral, token, feeds, Treasury and parameters are fixed at deployment; no feed can be swapped.
+- **Collateral.** sIMD, the 24-decimal share token of IdentityMD's staking vault. Deposit sIMD with \`lock\`, or IMD with \`lockIMD\` (the vault stakes it for you). Everything the vault pays out is sIMD; unstake it in the staking vault for IMD.
+- **Borrow and repay.** \`draw\` mints imdUSD while collateral (in dollars) stays at least \`mat\` times debt; \`wipe\` repays (fees first); \`free\` withdraws collateral. Total principal is capped by the debt ceiling \`line\`. Debt grows with the annual stability fee \`duty\`.
+- **Minimum collateral ratio.** \`mat\` follows the IdentityMD network health index (a signed figure, \`NhiFeed\`): a healthier network lowers it. The same index sets the liquidation grace \`lull\`.
+- **Redemption (the price floor).** \`cash\` burns imdUSD for $1 of sIMD per imdUSD, less a fee that rises with redemption volume and decays over time. If backing per imdUSD (reserve plus secured collateral, over supply, never counted above $1) is below $1, every redeemer is paid that lower amount instead of redemption closing. The Treasury's sIMD pays first; then the redeemer names a borrower close to \`mat\`, whose debt is cancelled and collateral pays out. New capital counts toward backing only gradually, over about a day.
+- **Liquidation.** Below \`mat\`, any keeper can mark a position (\`bark\`). After the grace \`lull\`, any keeper can liquidate (\`bite\`) within the window \`tail\`: burn imdUSD to cancel debt and receive sIMD worth it plus a bonus (\`CHOP_PERCENT\` of the debt repaid, shared by the marker (\`chip\`), the Treasury (\`cut\`) and the liquidator). \`heel\` clears a mark once the position is safe again. Bad debt can be cancelled with imdUSD the Treasury holds (\`cover\`); there is no insurance fund.
+- **Price.** sIMD in dollars = IMD/ETH (\`PriceFeed\`: a block-window price the agent panels attest) × ETH/USD (Chainlink, via \`UsdPriceFeed\`) × IMD per sIMD (\`SharePriceFeed\`, from the staking vault). No key can set a price: anyone submits a signed answer through \`SwarmRelay\`, and a feed accepts it only if the signature, panel size, freshness, question and deviation bound all check out. A stale price refuses actions with \`StaleFeed\`.
+- **Divergence guard.** A second IMD/ETH price, \`SpotFeed\` (the last block of the window), never prices anything; if it differs from the primary by more than \`skew\`, borrowing, risky withdrawals, work minting, marking, liquidating, clearing and redeeming pause with \`PriceDivergence\`. Deposits and repayments stay open.
+- **Paying for prices.** \`OracleAsker\` buys price updates from the swarm, only when the health feed is near stale or IMD's pool has fallen below a price feed, funded by a governed daily IMD budget the Treasury sends (\`fundOracle\`).
+- **Treasury.** Holds the reserve (sIMD and any governance-listed asset, each with a price feed and haircut) and the protocol's fees. Its operator can never withdraw collateral, a listed reserve asset, or imdUSD that outstanding bad debt needs.
+- **Governance.** \`Parameters\` holds the economic settings. One governor proposes; every change waits a fixed 48-hour delay (\`TIMELOCK\`) and then anyone may apply it. Hard limits are written into the contract. There is no voting and no way to replace the feeds, the price signer, the collateral or the Treasury.
+- **Minting from work.** \`earn\` mints imdUSD for accepted swarm tasks (\`wage\` per task) from \`SwarmWorkOracle\`, a signed tally rather than an on-chain proof, capped by the work ceiling \`earnLine\`. Off until governance sets a wage.
+- **What is unproven.** The peg relies on traders redeeming below the redemption price; nothing pulls the price down from above $1. Prices and network health come from one signer answering fixed questions. A fast fall can outrun liquidation and leave bad debt.
+- **INFER.** The protocol's token, with its own guide: https://infer.imdusd.com/llms.txt
+`;
+
+function writeLlms({ outDir, pages, site, redact }) {
+  const shown = pages.filter((p) => !(redact && REDACT_WHOLE.has(p.file)));
+  const byFile = new Map(shown.map((p) => [p.file, p]));
+  const hit = (raw) => redact && TERMINAL_RE.test(raw);
+  const absolute = (page, md) =>
+    md.replace(/\]\(([^)\s]+?\.md)(#[^)\s]*)?\)/g, (m, target, hash = "") => {
+      if (/^[a-z]+:/i.test(target)) return m;
+      const to = byFile.get(posix.normalize(posix.join(posix.dirname(page.file), target)));
+      if (!to) throw Error(`${page.file}: llms link to a missing or redacted page ${target}`);
+      return `](${site}/${to.dir}/${hash})`;
+    });
+  // A page's Markdown with every redacted block left out: a paragraph, heading, blockquote or code
+  // block that mentions what is redacted; a list item; a table row (or the whole table, by its header).
+  const body = (page) =>
+    new Marked({ gfm: true })
+      .lexer(page.body)
+      .map((t) => {
+        if (!hit(t.raw)) return t.raw;
+        if (t.type === "list") {
+          const items = t.items.filter((i) => !hit(i.raw));
+          return items.length ? items.map((i) => i.raw.replace(/\n*$/, "\n")).join("") + "\n" : "";
+        }
+        if (t.type === "table") {
+          const [head, rule, ...rows] = t.raw.trimEnd().split("\n");
+          if (hit(head)) return "";
+          return [head, rule, ...rows.filter((r) => !hit(r))].join("\n") + "\n\n";
+        }
+        return "";
+      })
+      .join("");
+  const url = (p) => `${site}/${p.dir}/`;
+  const summary = (md) =>
+    (md.replace(/^#.*$/gm, "").match(/^[^\s#>|\`-].+$/m)?.[0] ?? "")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/[\`*_]/g, "")
+      .replace(/(.{40,}?[.!?])\s.*$/, "$1");
+  const index =
+    LLMS_SUMMARY +
+    SECTIONS.map(([s, label]) => {
+      const items = shown.filter((p) => p.section === s);
+      return `\n## ${label}\n\n${items
+        .map((p) => {
+          const d = summary(body(p));
+          return `- [${p.meta.title}](${url(p)})${d && !hit(d) ? `: ${d}` : ""}`;
+        })
+        .join("\n")}\n`;
+    }).join("") +
+    `\n## Optional\n\n` +
+    `- [Every docs page in one file](${site}/llms-full.txt): the full documentation as Markdown\n` +
+    `- [Whitepaper](https://whitepaper.imdusd.com): the design and its reasoning\n` +
+    `- [Source](${REPO.replace(/\/blob\/main\/$/, "")}): the contracts, with every docs page's sources cited\n` +
+    `- [INFER](https://infer.imdusd.com/llms.txt): the protocol's token, its contracts and how to use them\n`;
+  const full =
+    `<!-- ${site}/docs as Markdown, generated at build. A value written — is set at mainnet launch. -->\n\n` +
+    LLMS_SUMMARY +
+    shown
+      .map((p) => {
+        const sources = [...new Set((p.meta.sources ?? []).map((x) => x.replace(/:.*$/, "")))];
+        return (
+          `\n---\n\n<!-- ${url(p)} -->\n\n` +
+          absolute(p, body(p)).replace(/\n{3,}/g, "\n\n").trim() +
+          (sources.length ? `\n\nSources: ${sources.map((x) => `${REPO}${x}`).join(", ")}` : "") +
+          "\n"
+        );
+      })
+      .join("");
+  for (const [name, text] of [["llms.txt", index], ["llms-full.txt", full]]) {
+    if (redact && TERMINAL_RE.test(text)) throw Error(`${name} mentions what the public site redacts`);
+    writeFileSync(resolve(outDir, name), text);
+  }
 }
 
 /** Canonical URL and the social-card tags for one page, for the <head> of a published page. */
