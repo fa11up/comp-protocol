@@ -38,12 +38,17 @@ for (const need of [
 if (/["'(]\.{1,2}\//.test(await readFile(`${dir}/404.html`, "utf8")))
   fail("404.html has a relative URL");
 // The security headers the Worker's assets serve: a Content-Security-Policy with a hash for the one
-// inline script (the theme bootstrap), and nothing that lets the page talk to a chain.
+// inline script (the theme bootstrap), and nothing that lets the page talk to a chain: the one connection
+// allowed is Cloudflare Web Analytics' report, and the one script origin its beacon.
 const headers = await readFile(`${dir}/_headers`, "utf8");
 if (!/Content-Security-Policy: .*'sha256-[A-Za-z0-9+/=]+'/.test(headers))
   fail("_headers has no hashed Content-Security-Policy");
-if (!/connect-src 'none'/.test(headers))
-  fail("the Content-Security-Policy allows network connections");
+const connect = headers.match(/connect-src ([^;]*);/)?.[1].trim();
+if (connect !== "https://cloudflareinsights.com")
+  fail(`the Content-Security-Policy allows network connections beyond Cloudflare Web Analytics: ${connect}`);
+const scripts = headers.match(/script-src ([^;]*);/)?.[1].split(/\s+/).filter((s) => !s.startsWith("'")) ?? [];
+if (scripts.join(" ") !== "https://static.cloudflareinsights.com")
+  fail(`the Content-Security-Policy admits script origins beyond Cloudflare Web Analytics: ${scripts.join(" ")}`);
 if (files.some((f) => f.startsWith("terminal/")))
   fail("the terminal was built into the public site");
 // The public site connects to no chain: no deployment file, no ABIs.

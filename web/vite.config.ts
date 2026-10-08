@@ -32,20 +32,24 @@ Sitemap: ${SITE}/sitemap.xml
  * The headers Cloudflare serves with every public response. The Content-Security-Policy is built
  * after the export is written: the one inline script (the theme bootstrap in each page's <head>) is
  * allowed by its hash, so any other inline script, every inline style, and every connection to a
- * chain or a third party is refused by the browser. `connect-src 'none'` is also the public site's
- * promise (scripts/public-check.mjs): it reads no chain.
+ * chain or a third party is refused by the browser. The public site reads no chain (scripts/public-check.mjs):
+ * its one allowance is Cloudflare Web Analytics, which the zone injects into every page: the beacon's script
+ * from static.cloudflareinsights.com and its report to cloudflareinsights.com, and nothing else.
  * /assets/* (hashed, public, immutable) also answers any origin: the build marks its scripts and styles
  * `crossorigin`, and a page framed in a sandbox without allow-same-origin, as X frames a player card
  * (infer.imdusd.com/buy/, /97/), has the origin "null", so without this every asset was refused and the card
  * stayed blank.
  */
+/** Cloudflare Web Analytics, injected by the zone: where its beacon loads from and where it reports. */
+const CF_ANALYTICS = { script: "https://static.cloudflareinsights.com", report: "https://cloudflareinsights.com" };
 const publicHeaders = (
   scriptHashes: string[],
   connect: string[] = [],
   frames: string[] = [],
   media = false,
+  scriptOrigins: string[] = [],
 ) => `/*
-  Content-Security-Policy: default-src 'none'; script-src 'self' ${scriptHashes.map((h) => `'sha256-${h}'`).join(" ")}; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src ${connect.length ? connect.join(" ") : "'none'"};${media ? " media-src 'self';" : ""}${frames.length ? ` frame-src ${frames.join(" ")};` : ""} frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'none'; script-src 'self' ${scriptHashes.map((h) => `'sha256-${h}'`).join(" ")}${scriptOrigins.map((o) => ` ${o}`).join("")}; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src ${connect.length ? connect.join(" ") : "'none'"};${media ? " media-src 'self';" : ""}${frames.length ? ` frame-src ${frames.join(" ")};` : ""} frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
@@ -121,7 +125,10 @@ function publicSite(): Plugin {
         throw new Error(
           `expected one inline script across the public pages, found ${hashes.size}`,
         );
-      writeFileSync(resolve(dir, "_headers"), publicHeaders([...hashes]));
+      writeFileSync(
+        resolve(dir, "_headers"),
+        publicHeaders([...hashes], [CF_ANALYTICS.report], [], false, [CF_ANALYTICS.script]),
+      );
     },
   };
 }
