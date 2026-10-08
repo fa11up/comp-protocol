@@ -350,6 +350,7 @@ export function Claim() {
                     <span className="infer-field-k">
                       {r.symbol} to burn
                       <Balance
+                        wallet={w}
                         account={toAddress}
                         value={legacyBalances[i]}
                         symbol={r.symbol}

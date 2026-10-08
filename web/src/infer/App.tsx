@@ -363,6 +363,7 @@ export function Trade({
           <span className="infer-field-k">
             You pay
             <Balance
+              wallet={w}
               account={w.account}
               value={balanceIn}
               symbol={symbolIn}
@@ -833,6 +834,7 @@ function Stake({
           <span className="infer-field-k">
             {mode === "stake" ? "Stake" : "Unstake"}
             <Balance
+              wallet={w}
               account={w.account}
               value={balance}
               symbol={unit}

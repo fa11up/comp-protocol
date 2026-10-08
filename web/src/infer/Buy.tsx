@@ -11,7 +11,9 @@ import { useEffect, useRef, useState } from "react";
 import { Trade } from "./App";
 import { LIVE } from "./config";
 import { useInferMarket, usdCompact, usdPrice } from "./price";
+import { Vibe } from "../vibe";
 import { Fig, Mark, WalletChooser, short, useWallet } from "./ui";
+import { INFER_VIBES } from "./vibes";
 
 export function Buy() {
   const m = useInferMarket();
@@ -43,16 +45,22 @@ export function Buy() {
           <Mark />
           INFER
         </a>
-        <p className="infer-buy-price">
-          <span className="sr-only">Price </span>
-          <strong>
-            <Fig v={m ? usdPrice(m.priceUsd) : null} />
-          </strong>
-          <span className="infer-buy-cap">
-            {" · MC "}
-            <Fig v={m ? usdCompact(m.marketCapUsd) : null} />
-          </span>
-        </p>
+        <div className="infer-buy-tools">
+          <p className="infer-buy-price">
+            <span className="sr-only">Price </span>
+            <strong>
+              <Fig v={m ? usdPrice(m.priceUsd) : null} />
+            </strong>
+            <span className="infer-buy-cap">
+              <span className="infer-buy-sep" aria-hidden="true">
+                {" · "}
+              </span>
+              {"MC "}
+              <Fig v={m ? usdCompact(m.marketCapUsd) : null} />
+            </span>
+          </p>
+          <Vibe suite={INFER_VIBES} />
+        </div>
       </header>
       <main className="infer-buy-main">
         <p className="infer-kicker">

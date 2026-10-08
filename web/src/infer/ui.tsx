@@ -884,14 +884,29 @@ export function Balance({
   symbol,
   decimals,
   onUse,
+  wallet,
 }: {
   account: Address | null;
   value: bigint | null | undefined;
   symbol: string;
   decimals: number;
   onUse: (amount: string) => void;
+  /** With no account, the label is the way to connect (and on the /buy/ card before launch, the only one). */
+  wallet?: Wallet;
 }) {
-  if (!account) return <span className="infer-bal">disconnected</span>;
+  if (!account)
+    return wallet ? (
+      <button
+        type="button"
+        className="infer-bal infer-bal-use"
+        disabled={wallet.busy}
+        onClick={() => void wallet.connect()}
+      >
+        {wallet.busy ? "Connecting…" : "Connect wallet"}
+      </button>
+    ) : (
+      <span className="infer-bal">disconnected</span>
+    );
   if (value === undefined) return <span className="infer-bal">…</span>;
   if (value === null || value === 0n)
     return <span className="infer-bal">No {symbol}</span>;

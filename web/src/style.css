@@ -3621,6 +3621,13 @@ body:has(> .vibe-canvas:not([hidden]))
   border-bottom: 2px solid var(--text);
   background: var(--bg);
 }
+/* The price, then the background button (vibe.tsx), as on every other page's masthead. */
+.infer-buy-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
 .infer-buy-price {
   margin: 0;
   font-size: 13px;
@@ -3634,6 +3641,19 @@ body:has(> .vibe-canvas:not([hidden]))
 }
 .infer-buy-cap {
   color: var(--muted);
+}
+
+/* A narrow card stacks the price over the market cap rather than wrapping mid-line. */
+@media (max-width: 420px) {
+  .infer-buy-price {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    line-height: 1.2;
+  }
+  .infer-buy-sep {
+    display: none;
+  }
 }
 .infer-buy-main {
   flex: 1;
