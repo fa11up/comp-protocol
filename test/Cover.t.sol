@@ -352,7 +352,8 @@ contract CoverTest is WorkBackingFixture {
         // Never swept for less than it is worth: cover must burn the re-lock's value to take it (below).
         vm.expectRevert(CDPVault.CoverBelowCollateralValue.selector);
         backedVault.cover(BORROWER, 1);
-        // No mark, no grace: the keeper bites the re-lock in one transaction and is paid like any liquidator.
+        // The drain's own mark is still inside its window, so a keeper may bite the re-lock and is paid like any
+        // liquidator. Once that mark lapses a re-lock needs a new mark and grace (the test below).
         uint256 keeperGem = collateral.balanceOf(KEEPER);
         uint256 repay = half * SIMD_SCALE_PRICE / 1.2e18; // the debt the seizure of `half` repays
         vm.prank(KEEPER);
@@ -418,6 +419,31 @@ contract CoverTest is WorkBackingFixture {
         vm.prank(KEEPER);
         vm.expectRevert(CDPVault.GracePeriodNotElapsed.selector);
         backedVault.bite(BORROWER, 1 ether);
+    }
+
+    /// @dev Retry2 panel audit 2026-10-08, vault, low. The no-mark bite of a re-lock worth less than the recorded
+    /// loss also caught a borrower rebuilding in tranches, at the 20% penalty with no grace. The shortcut is
+    /// gone: once the drain's mark has lapsed, a re-lock is marked and given grace like any position, and the
+    /// griefing it was there for is answered by cover, which takes such a re-lock at its value.
+    function test_aReLockAfterTheDrainsMarkLapsedNeedsANewMarkAndGrace() public {
+        uint256 bad = _drain();
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        _refreshEthUsd();
+        _setVaultPrice(SIMD_SCALE_PRICE);
+        uint256 relock = bad / 4 * 1e18 / SIMD_SCALE_PRICE;
+        vm.prank(APPROVED_OPERATOR);
+        collateral.mint(BORROWER, relock);
+        vm.startPrank(BORROWER);
+        collateral.approve(address(backedVault), relock);
+        backedVault.lock(relock);
+        vm.stopPrank();
+        vm.prank(KEEPER);
+        vm.expectRevert(CDPVault.MarkExpired.selector);
+        backedVault.bite(BORROWER, 1 ether);
+        _fundTreasury(bad);
+        backedVault.cover(BORROWER, Math.mulDiv(relock, SIMD_SCALE_PRICE, 1e18, Math.Rounding.Ceil));
+        (uint256 held,) = backedVault.positions(BORROWER);
+        assertEq(held, 0, "cover took the re-lock at its value instead");
     }
 
     // --- bookkeeping (launch audit, governance panel, low) ----------------------------------------

@@ -105,7 +105,7 @@ None of these change anything. Reads that depend on a feed can still revert if t
 
 ### `BACKING_WARMUP()`
 
-Returns `uint256`. One day, in seconds. New debt and collateral not yet counted toward backing per imdUSD halve every six hours and count in full once a day passes in which the vault's new capital is not touched; decreases count immediately. It is also how long a position's own warm capital that left (a repayment, a withdrawal, a liquidation or redemption against it) can come back and count at once.
+Returns `uint256`. One day, in seconds. New debt and collateral not yet counted toward backing per imdUSD halve every six hours and count in full once a day passes in which the vault's new capital is not touched; decreases count immediately. A position's own warm capital that left (a repayment, a withdrawal, a liquidation or redemption against it) can come back and count at once, less what it would have cooled while away, and nothing after a day.
 
 ### `CHOP_PERCENT()`
 

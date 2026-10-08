@@ -21,10 +21,17 @@ contract OpenWorkVault is ParameterizedVault {
         return true;
     }
 
+    /// @dev Fully warmed capital, for the fee curve too: only principal minted in the current transaction is
+    /// new in the fee base (CDPVault._feeBase). The production vault's cold exclusion, which reaches back
+    /// hours, is tested in test/retry-panel/ and test/LaggedBacking.t.sol.
+    function _coldPrincipal() internal view override returns (uint256) {
+        return _principalMintedThisTransaction();
+    }
+
     /// @notice The supply a redemption's fee increase is measured against (CDPVault._laggedSupply), for the
     /// invariant suite's model of the fee curve.
     function redemptionSupply() external view returns (uint256) {
-        return _laggedSupplyFrom(_supplyStart());
+        return _feeBase();
     }
 
     /// @notice Principal repaid with its backing left behind, still counted in the supply backing per imdUSD is

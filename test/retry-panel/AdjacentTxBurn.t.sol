@@ -214,6 +214,7 @@ contract AdjacentTxBurnTest is Test {
         (, uint256 debt) = vault.positions(BORROWER);
         assertApproxEqAbs(debt, 900 ether, 0.5 ether, "the position is where it was, but for two days of fee");
         // EXPECTED: 45 bps, the increase for 9 of 1,000. ACTUAL: the 450 bps cap, for everyone, for a half-life.
-        assertEq(vault.redemptionBaseRate(), 0.0045e18, "the fee base is the supply before the churn");
+        // Within the position's own residual cold after two days (1/256 of it, which repays at once).
+        assertApproxEqRel(vault.redemptionBaseRate(), 0.0045e18, 0.005e18, "the fee base is the supply before the churn");
     }
 }

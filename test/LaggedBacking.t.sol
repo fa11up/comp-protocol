@@ -494,9 +494,12 @@ contract LaggedBackingTest is Test {
         imd.mint(treasury, 100 ether); // the redemption is reserve-funded
         assertEq(stable.totalSupply(), 1_000 ether);
         assertEq(vault.redemptionBaseRate(), 0);
+        // A warm book: while every unit of supply is new the fee base is zero and any redemption pays the cap.
+        vm.warp(block.timestamp + 2 days);
         churner.wipeCashDraw(900 ether, 9 ether);
-        // 9 of a supply of 1,000 at divisor 2: 45 bps, as if the wipe had not happened in the same call.
-        assertEq(vault.redemptionBaseRate(), 0.0045e18, "the fee base is the supply before the transaction");
+        // 9 of a supply of 1,000 at divisor 2: 45 bps, as if the wipe had not happened in the same call (within
+        // the position's own residual cold after two days, 1/256 of it, which repays at once).
+        assertApproxEqRel(vault.redemptionBaseRate(), 0.0045e18, 0.005e18, "the fee base is the supply before the transaction");
     }
 
     /// @dev Sweep panel audit (oracle, low). An oversized ETH/USD answer made the USD leg REVERT on the
