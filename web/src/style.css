@@ -3688,26 +3688,10 @@ body:has(> .vibe-canvas:not([hidden]))
   justify-content: center;
   gap: 10px;
 }
-.infer-buy-go,
-.infer-buy-alt {
+.infer-buy-go {
   min-height: 0;
   font-family: inherit;
   cursor: pointer;
-}
-.infer-buy-alt {
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--text);
-  padding: 10px 18px;
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  text-decoration: none;
-}
-.infer-buy-alt:hover,
-.infer-buy-alt:focus-visible {
-  background: var(--text);
-  color: var(--bg);
 }
 .infer-buy-go {
   background: var(--text);

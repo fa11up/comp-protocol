@@ -294,12 +294,19 @@ export function useWallet(): Wallet {
       .catch(() => undefined);
   }, [injected]);
 
+  // Each attempt has a number; closing the chooser moves the number on, so an attempt still waiting
+  // (a WalletConnect pairing nobody scanned, an extension popup left open) can no longer finish: its
+  // late result is dropped, and a late WalletConnect session is disconnected rather than kept.
+  const attempt = useRef(0);
   async function choose(o: WalletOption) {
+    const mine = ++attempt.current;
+    const live = () => attempt.current === mine;
     setBusy(true);
     try {
       if (o.kind === "walletconnect") {
         const m = await import("./walletconnect");
-        const s = await m.connect(setPairing);
+        const s = await m.connect((uri) => live() && setPairing(uri));
+        if (!live()) return void s.disconnect();
         wcDisconnect.current = s.disconnect;
         setW({
           account: s.account,
@@ -321,6 +328,7 @@ export function useWallet(): Wallet {
             params: [{ chainId: `0x${LAUNCH.chainId.toString(16)}` }],
           });
         }
+        if (!live()) return;
         setW({
           account: getAddress(a[0]),
           chainId: LAUNCH.chainId,
@@ -332,9 +340,9 @@ export function useWallet(): Wallet {
       remember(o.id);
       setChoosing(false);
     } catch (e) {
-      setW((s) => ({ ...s, error: notice(message(e)) }));
+      if (live()) setW((s) => ({ ...s, error: notice(message(e)) }));
     } finally {
-      setBusy(false);
+      if (live()) setBusy(false);
       setPairing(null);
     }
   }
@@ -381,8 +389,10 @@ export function useWallet(): Wallet {
     choosing,
     choose,
     cancel: () => {
+      attempt.current++;
       setChoosing(false);
       setPairing(null);
+      setBusy(false);
     },
     pairing,
     disconnect,
@@ -903,14 +913,11 @@ export function Balance({
       <button
         type="button"
         className="infer-bal infer-bal-use"
-        disabled={wallet.busy}
         title="Connect a wallet"
-        aria-label={
-          wallet.busy ? "Connecting" : "Disconnected: connect a wallet"
-        }
+        aria-label="Disconnected: connect a wallet"
         onClick={() => void wallet.connect()}
       >
-        {wallet.busy ? "Connecting…" : "disconnected"}
+        disconnected
       </button>
     ) : (
       <span className="infer-bal">disconnected</span>

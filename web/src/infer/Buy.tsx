@@ -1,6 +1,6 @@
 // /buy/: the page an X player card shows inside a post (480 × 560), and a page of its own anywhere else.
 // The masthead carries INFER's price in USD and its market cap, live from the launch pool; the body is
-// the site's engraved background with two buttons: Tokenomics, and Buy $INFER, which drops the home
+// the site's engraved background with one button, Buy $INFER, which drops the home
 // page's trade pane (App.tsx `Trade`, compact, no staking) in under the masthead, so a trade never
 // leaves the card. Connecting offers every browser wallet and WalletConnect, the way into a phone wallet
 // from the X app, which has no extensions (ui.tsx WalletChooser).
@@ -72,9 +72,6 @@ export function Buy() {
           IMD.
         </p>
         <div className="infer-buy-actions">
-          <a className="infer-buy-alt" href="../tokenomics/" {...out}>
-            Tokenomics ↗
-          </a>
           <button
             type="button"
             className="infer-buy-go"
