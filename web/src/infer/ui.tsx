@@ -885,14 +885,18 @@ export function Balance({
   decimals,
   onUse,
   wallet,
+  hideWhenConnected = false,
 }: {
   account: Address | null;
   value: bigint | null | undefined;
   symbol: string;
   decimals: number;
   onUse: (amount: string) => void;
-  /** With no account, the label is the way to connect (and on the /buy/ card before launch, the only one). */
+  /** With no account, the label ("disconnected") is the way to connect; on the /buy/ card before launch,
+   * the only one. */
   wallet?: Wallet;
+  /** The /buy/ card's compact pane: the label is only the way in, so it goes once a wallet is connected. */
+  hideWhenConnected?: boolean;
 }) {
   if (!account)
     return wallet ? (
@@ -900,13 +904,18 @@ export function Balance({
         type="button"
         className="infer-bal infer-bal-use"
         disabled={wallet.busy}
+        title="Connect a wallet"
+        aria-label={
+          wallet.busy ? "Connecting" : "Disconnected: connect a wallet"
+        }
         onClick={() => void wallet.connect()}
       >
-        {wallet.busy ? "Connecting…" : "Connect wallet"}
+        {wallet.busy ? "Connecting…" : "disconnected"}
       </button>
     ) : (
       <span className="infer-bal">disconnected</span>
     );
+  if (hideWhenConnected) return null;
   if (value === undefined) return <span className="infer-bal">…</span>;
   if (value === null || value === 0n)
     return <span className="infer-bal">No {symbol}</span>;

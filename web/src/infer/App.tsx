@@ -363,6 +363,7 @@ export function Trade({
           <span className="infer-field-k">
             You pay
             <Balance
+              hideWhenConnected={compact}
               wallet={w}
               account={w.account}
               value={balanceIn}
