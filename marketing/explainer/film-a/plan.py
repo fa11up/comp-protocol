@@ -305,7 +305,7 @@ def build(aspect, kicker='a5'):
     ang_d = 1536 / (3264 * .7)      # measured bbox (192,121)-(1727,957), centre ~(960,539)
     ang = Rig(O=(sec[0] - 960 / ang_d, sec[1] - 540 / ang_d), d=ang_d, P=sec, rot=fall_rot, dx=fall_dx, dy=fall_dy)
     add('note-angle', ('angle',), ang, fade((30.0, 30.4, 1.0), (31.6, 31.6, 0.0)), (1920, 1080))
-    add('note-flood', ('flood',), ang, fade((30.6, 31.1, 1.0), (31.6, 31.6, 0.0)), (1920, 1080))
+    # (review 2026-10-07) no green flood: the falling note stays the imdUSD note while it is pulled off
 
     # --- the push: the high-resolution portrait over the layer, then the blink in the eye band
     add('portrait-detail', ('detail',), Rig(O=DETAIL_O, d=DETAIL_D, P=(1632, 700), rot=main.rot),
