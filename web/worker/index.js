@@ -1,6 +1,7 @@
-// imdusd.com's Worker: the effect of Cloudflare's "Always Use HTTPS" and one canonical host, then
-// the static site. The zone settings need permissions the deploy login does not hold, so both
-// redirects live here. Everything else is the assets binding, so _headers and _redirects still apply.
+// imdusd.com's Worker. NOT RUN in normal operation (run_worker_first is false, so Cloudflare serves every file
+// straight from its cache and never invokes it): both redirects below are now the zone's "Always Use HTTPS"
+// setting and a www -> imdusd.com Redirect Rule. Kept as the fallback if those are ever switched off: set
+// run_worker_first back to true in wrangler.jsonc and this restores them.
 const HOST = "imdusd.com";
 export default {
   async fetch(request, env) {

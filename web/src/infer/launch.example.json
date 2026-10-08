@@ -1,7 +1,12 @@
 {
   "$comment": "The INFER page's figures and addresses. This example ships in the public repo with every figure unset, and the page renders a dash for each. The real file, launch.json beside it, is gitignored: it is private until the launch request is submitted (infer-token/README.md). Copy this file to launch.json and fill it in. `contracts.pair` is the token INFER is paired with (address(0) for native ETH); `poolKey` is the launch pool's full v4 key, from which the page derives the pool id; `router` names Uniswap's mainnet Universal Router, V4 Quoter and Permit2.",
   "chainId": 1,
-  "rpc": ["https://ethereum-rpc.publicnode.com", "https://cloudflare-eth.com"],
+  "rpc": [
+    "https://ethereum-rpc.publicnode.com",
+    "https://eth.drpc.org",
+    "https://rpc.mevblocker.io",
+    "https://eth-mainnet.public.blastapi.io"
+  ],
   "supply": null,
   "openingMarketCapImd": null,
   "pair": "IMD",
