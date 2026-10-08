@@ -26,4 +26,10 @@ contract OpenWorkVault is ParameterizedVault {
     function redemptionSupply() external view returns (uint256) {
         return _laggedSupplyFrom(_supplyStart());
     }
+
+    /// @notice Principal repaid with its backing left behind, still counted in the supply backing per imdUSD is
+    /// measured against (CDPVault._moveExcess), for the invariant suite's model of the payout.
+    function excessSupply() external view returns (uint256) {
+        return _excessNow();
+    }
 }

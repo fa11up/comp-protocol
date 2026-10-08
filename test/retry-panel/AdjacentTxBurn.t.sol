@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-// Retry panel audit 2026-10-07 (vault, job 3226aaed): the panel's reproduction of two mediums (a repayment one transaction before a redemption: the fee base is fixed, the backing premium is accepted and bounded),
-// kept as written apart from reading the lag through laggedNow(); the backing test now pins the accepted bound.
+// Retry panel audit 2026-10-07 (vault, job 3226aaed): the panel's reproduction of two mediums (a repayment one transaction before a redemption: the fee base and the backing premium),
+// kept as written apart from reading the lag through laggedNow() and seasoning the fee test's position.
 
 import {Test} from "forge-std/Test.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
@@ -101,9 +101,49 @@ contract AdjacentTxBurnTest is Test {
         imd.approve(address(vault), type(uint256).max);
     }
 
+    /// @dev The same below-par book as the test below, warm.
+    function _bandBook() private returns (uint256 backing) {
+        vm.startPrank(BORROWER);
+        vault.lock(5_790 ether);
+        vault.draw(1_000 ether);
+        vm.stopPrank();
+        vm.startPrank(OTHER);
+        vault.lock(5_100 ether);
+        vault.draw(3_000 ether);
+        stable.transfer(BORROWER, 3_000 ether);
+        vm.stopPrank();
+        primary.set(uint256(0.294 ether) * 1e18 / 2000 ether);
+        vm.prank(BORROWER);
+        vault.lock(1);
+        vm.prank(OTHER);
+        vault.lock(1);
+        vm.warp(block.timestamp + 3 days);
+        backing = vault.backingPerUnit();
+    }
+
+    /// @dev The supply kept for a repayment that left its backing behind (CDPVault._moveExcess): it holds
+    /// backing where it stood, goes the moment the position borrows again, and is released once the
+    /// deleveraging has lasted, so an honest repayment is credited after hours, not never.
+    function test_theSupplyKeptForARepaymentIsReleasedByARedrawOrByTime() public {
+        uint256 backing = _bandBook();
+        vm.prank(BORROWER);
+        vault.wipe(140 ether);
+        assertApproxEqRel(vault.backingPerUnit(), backing, 1e15, "a repayment that leaves its backing behind lifts nothing");
+        vm.prank(BORROWER);
+        vault.draw(140 ether);
+        assertApproxEqRel(vault.backingPerUnit(), backing, 1e15, "and borrowing it again leaves backing where it was");
+        vm.prank(BORROWER);
+        vault.wipe(140 ether);
+        vm.warp(block.timestamp + 6 hours);
+        uint256 half = vault.backingPerUnit();
+        assertGt(half, backing, "half of it is released after six hours");
+        vm.warp(block.timestamp + 18 hours);
+        assertGt(vault.backingPerUnit(), half, "and all of it after a quiet day: the deleveraging lasted");
+    }
+
     /// @dev Backing below par (OTHER underwater), the borrower in the 170-200% band so its term is its whole
     /// collateral and a repayment of up to 15% of principal leaves the numerator untouched.
-    function test_adjacentWipeCashDrawPremiumIsBoundedByTheRepayment() public {
+    function test_adjacentWipeCashDrawIsNotPaidAboveProRata() public {
         vm.startPrank(BORROWER);
         vault.lock(5_790 ether);
         vault.draw(1_000 ether);
@@ -137,13 +177,10 @@ contract AdjacentTxBurnTest is Test {
         uint256 churned = vault.cash(500 ether, 0, BORROWER);
         vm.prank(BORROWER);
         vault.draw(140 ether);
-        // ACCEPTED (CDPVault._backingPerUnit): the cash reads the true backing at that moment, 3,860 of supply
-        // under an unchanged numerator, and the premium is bounded by supply / (supply - repaid). It costs
-        // gas, exists only below par, and the repayment is bounded by the principal above half the
-        // collateral's value (15% of it at mat 170). Lagging the supply instead underpaid every honest
-        // redeemer after an unwind (test/Redemption.t.sol).
-        assertGt(churned, honest, "the churn is paid the backing it briefly created");
-        assertLe(churned, honest * 4_000 / 3_860 + 1e9, "and never more than supply / (supply - repaid) of it");
+        // EXPECTED: the same payout, since debt, supply and collateral are the same before and after the churn.
+        // The 140 repaid without moving the term stays in the supply backing is measured against
+        // (CDPVault._moveExcess), so the cash reads the backing that stood before it.
+        assertLe(churned, honest + honest / 1_000, "a repayment one transaction earlier must not raise the payout");
     }
 
     /// @dev The fee base: a borrower holding 90% of the supply as its own debt pins the base rate at the cap
