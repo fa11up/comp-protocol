@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Test} from "forge-std/Test.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {WorkBackingFixture} from "./helpers/WorkBackingFixture.sol";
@@ -336,7 +337,7 @@ contract CoverTest is WorkBackingFixture {
     /// sized bite; a sweep of anything worth less than the bad debt (8756817) then took a re-collateralised
     /// borrower's whole collateral for one wei of cover. Now cover refuses it and a drained position is
     /// bitten with no mark and no grace, so the re-lock is seized at once and cover follows.
-    function test_aReLockOnADrainedPositionIsBittenAtOnceAndNeverSwept() public {
+    function test_aReLockOnADrainedPositionIsBittenAtOnceOrTakenByCoverAtItsValue() public {
         uint256 bad = _drain();
         _setVaultPrice(SIMD_SCALE_PRICE);
         uint256 half = bad / 2 * 1e18 / SIMD_SCALE_PRICE; // worth half the bad debt: real collateral
@@ -348,7 +349,8 @@ contract CoverTest is WorkBackingFixture {
         backedVault.lock(half);
         vm.stopPrank();
         _fundTreasury(bad);
-        vm.expectRevert(CDPVault.NoRealizedBadDebt.selector);
+        // Never swept for less than it is worth: cover must burn the re-lock's value to take it (below).
+        vm.expectRevert(CDPVault.CoverBelowCollateralValue.selector);
         backedVault.cover(BORROWER, 1);
         // No mark, no grace: the keeper bites the re-lock in one transaction and is paid like any liquidator.
         uint256 keeperGem = collateral.balanceOf(KEEPER);
@@ -360,6 +362,62 @@ contract CoverTest is WorkBackingFixture {
         assertLt(held, _seizureFor(1, SIMD_SCALE_PRICE), "nothing a bite could reach is left");
         backedVault.cover(BORROWER, backedVault.badDebtOf(BORROWER));
         assertEq(backedVault.badDebtOf(BORROWER), 0);
+    }
+
+    /// @dev Retry panel audit 2026-10-07, vault, low. A drained borrower held cover off with a $1.20
+    /// re-lock, and the only bite that cleared it paid the liquidator $0.18 before gas. Cover now takes a
+    /// re-lock worth less than the realized bad debt at its value: the surplus burns at least that much of
+    /// the position's debt, so holding cover off costs the whole re-lock and needs no liquidator.
+    function test_coverTakesAReLockWorthLessThanTheBadDebtAtItsValue() public {
+        uint256 bad = _drain();
+        _setVaultPrice(SIMD_SCALE_PRICE);
+        uint256 relock = bad / 4 * 1e18 / SIMD_SCALE_PRICE;
+        vm.prank(APPROVED_OPERATOR);
+        collateral.mint(BORROWER, relock);
+        vm.startPrank(BORROWER);
+        collateral.approve(address(backedVault), relock);
+        backedVault.lock(relock);
+        vm.stopPrank();
+        _fundTreasury(bad);
+        uint256 value = Math.mulDiv(relock, SIMD_SCALE_PRICE, 1e18, Math.Rounding.Ceil);
+        vm.expectRevert(CDPVault.CoverBelowCollateralValue.selector);
+        backedVault.cover(BORROWER, value - 1);
+        address treasury = address(backedVault.treasury());
+        uint256 treasuryGem = collateral.balanceOf(treasury);
+        uint256 debtBefore = backedVault.debtOf(BORROWER);
+        backedVault.cover(BORROWER, value);
+        (uint256 held,) = backedVault.positions(BORROWER);
+        assertEq(held, 0, "the re-lock is taken");
+        assertEq(collateral.balanceOf(treasury), treasuryGem + relock, "by the surplus account that paid for it");
+        assertEq(backedVault.debtOf(BORROWER), debtBefore - value, "and the debt falls by its full value");
+        backedVault.cover(BORROWER, backedVault.debtOf(BORROWER));
+        assertEq(backedVault.badDebtOf(BORROWER), 0);
+    }
+
+    /// @dev Retry panel audit 2026-10-07, vault, low. A once-drained borrower who rebuilt past its recorded
+    /// loss was bitten with no mark and no grace on any later dip below mat. Only a re-lock worth less than
+    /// the realized bad debt skips them now; a rebuilt position is marked and given grace like any other.
+    function test_aDrainedBorrowerWhoRebuiltPastItsLossIsMarkedAndGivenGrace() public {
+        uint256 bad = _drain();
+        _setVaultPrice(SIMD_SCALE_PRICE);
+        // Collateral worth twice the debt: 200%, and far past the recorded loss.
+        uint256 rebuilt = backedVault.debtOf(BORROWER) * 2 * 1e18 / SIMD_SCALE_PRICE;
+        vm.prank(APPROVED_OPERATOR);
+        collateral.mint(BORROWER, rebuilt);
+        vm.startPrank(BORROWER);
+        collateral.approve(address(backedVault), rebuilt);
+        backedVault.lock(rebuilt);
+        vm.stopPrank();
+        assertEq(backedVault.totalBadDebt(), bad, "the record stands until repaid");
+        // A 20% fall: 160%, below mat, but the collateral is still worth more than the recorded loss.
+        _setVaultPrice(SIMD_SCALE_PRICE * 8 / 10);
+        vm.prank(KEEPER);
+        vm.expectRevert(CDPVault.PositionNotMarked.selector);
+        backedVault.bite(BORROWER, 1 ether);
+        backedVault.bark(BORROWER);
+        vm.prank(KEEPER);
+        vm.expectRevert(CDPVault.GracePeriodNotElapsed.selector);
+        backedVault.bite(BORROWER, 1 ether);
     }
 
     // --- bookkeeping (launch audit, governance panel, low) ----------------------------------------

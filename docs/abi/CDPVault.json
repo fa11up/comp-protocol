@@ -489,32 +489,6 @@
   },
   {
     "type": "function",
-    "name": "laggedAt",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "laggedDebt",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "laggedNow",
     "inputs": [],
     "outputs": [
@@ -525,19 +499,6 @@
       },
       {
         "name": "secured",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "laggedSecured",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1247,6 +1208,11 @@
   {
     "type": "error",
     "name": "CollateralNotWrappable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CoverBelowCollateralValue",
     "inputs": []
   },
   {

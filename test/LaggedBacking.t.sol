@@ -186,6 +186,14 @@ contract LaggedBackingTest is Test {
         vm.stopPrank();
     }
 
+    function _lagDebt() private view returns (uint256 debt) {
+        (debt,) = vault.laggedNow();
+    }
+
+    function _lagSecured() private view returns (uint256 secured) {
+        (, secured) = vault.laggedNow();
+    }
+
     function _nextBlock() private {
         vm.roll(block.number + 1);
         vm.warp(block.timestamp + 12);
@@ -229,13 +237,34 @@ contract LaggedBackingTest is Test {
         vault.lock(2_000 ether);
         vault.draw(1_000 ether);
         vm.stopPrank();
-        vm.warp(block.timestamp + 12 hours);
-        assertApproxEqAbs(vault.earnLine(), 125 ether, 1e9, "half the warm-up, half the credit");
-        vm.warp(block.timestamp + 12 hours);
-        assertApproxEqAbs(vault.earnLine(), 250 ether, 1e9, "a day held earns full credit");
+        vm.warp(block.timestamp + 6 hours);
+        assertApproxEqAbs(vault.earnLine(), 125 ether, 1e9, "one half-life, half the credit");
+        vm.warp(block.timestamp + 18 hours);
+        assertEq(vault.earnLine(), 250 ether, "a quiet day held earns full credit");
         vm.prank(WORKER);
         vault.earn(250 ether);
         assertEq(vault.totalEarned(), 250 ether);
+    }
+
+    /// @dev Under activity the cutoff never arrives and a day credits 15/16: a touch every six hours from
+    /// another borrower keeps restarting the vault's quiet day, and only slows the warm-up.
+    function test_activityOnlySlowsTheWarmUp() public {
+        _workMintingOn();
+        vm.startPrank(WORKER);
+        vault.lock(2_000 ether);
+        vault.draw(1_000 ether);
+        vm.stopPrank();
+        vm.startPrank(HELPER);
+        vault.lock(200 ether);
+        vault.draw(50 ether);
+        vm.stopPrank();
+        for (uint256 i; i < 4; ++i) {
+            vm.warp(block.timestamp + 6 hours);
+            vm.prank(HELPER);
+            vault.draw(1); // another position moves by a wei: a touch of the cold total
+        }
+        (uint256 debt,) = vault.laggedNow();
+        assertApproxEqAbs(debt, vault.totalDebt() - 65.625 ether, 1e6, "1/16 of the day-old 1,050 is still cold");
     }
 
     function test_aDecreaseCountsAtOnce() public {
@@ -244,8 +273,8 @@ contract LaggedBackingTest is Test {
         vault.lock(2_000 ether);
         vault.draw(1_000 ether);
         vm.stopPrank();
-        vm.warp(block.timestamp + 1 days);
-        assertApproxEqAbs(vault.earnLine(), 250 ether, 1e9);
+        vm.warp(block.timestamp + 2 days);
+        assertApproxEqRel(vault.earnLine(), 250 ether, 0.004e18);
         vm.prank(WORKER);
         vault.wipe(500 ether);
         (uint256 lagDebt,) = vault.laggedNow();
@@ -262,10 +291,10 @@ contract LaggedBackingTest is Test {
         vault.lock(2_000 ether);
         vault.draw(1_000 ether);
         vm.stopPrank();
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + 2 days);
         vm.startPrank(WORKER);
-        vault.earn(250 ether);
-        stable.transfer(ATTACKER, 250 ether);
+        vault.earn(249 ether);
+        stable.transfer(ATTACKER, 249 ether);
         vm.stopPrank();
         _feeMoney(WORKER);
         vm.startPrank(WORKER);
@@ -343,16 +372,16 @@ contract LaggedBackingTest is Test {
         uint256 backingBefore = vault.backingPerUnit();
         assertGt(debtBefore, 0);
         churner.wipeAndRedraw(500 ether);
-        assertEq(vault.laggedDebt(), debtBefore, "debt that left and came back in one transaction did not leave");
-        assertEq(vault.laggedSecured(), securedBefore, "nor did the collateral");
+        assertEq(_lagDebt(), debtBefore, "debt that left and came back in one transaction did not leave");
+        assertEq(_lagSecured(), securedBefore, "nor did the collateral");
         assertEq(vault.backingPerUnit(), backingBefore, "and redeemers are paid against the same backing");
         churner.freeAndRelock(100 ether);
-        assertEq(vault.laggedSecured(), securedBefore, "free-and-relock in one transaction likewise");
+        assertEq(_lagSecured(), securedBefore, "free-and-relock in one transaction likewise");
         // Across two transactions the same position's return is credited from its bank too (within a day).
         churner.wipe(500 ether);
-        assertLt(vault.laggedDebt(), debtBefore, "a decrease counts at once");
+        assertLt(_lagDebt(), debtBefore, "a decrease counts at once");
         churner.draw(500 ether);
-        assertEq(vault.laggedDebt(), debtBefore, "and the same position's return within a day is credited back");
+        assertEq(_lagDebt(), debtBefore, "and the same position's return within a day is credited back");
     }
 
     /// @dev Sweep panel audit (vault, high). Netted per TRANSACTION against the aggregate, the lag let a
@@ -379,10 +408,10 @@ contract LaggedBackingTest is Test {
         vm.warp(block.timestamp + 3 days);
         _feeMoney(address(swapper)); // a checkpoint: the honest debt is warm
         (uint256 warm,) = vault.laggedNow();
-        assertGe(warm, 1_000 ether);
+        assertGe(warm, 999 ether);
         // One transaction: cash 1,000 against the honest position, lock, draw 1,000.
         swapper.swap(honest, 1_000 ether, 1_800 ether, 1_000 ether);
-        assertLt(vault.laggedDebt(), 100 ether, "the honest debt's warmth did not move to the swapper's debt");
+        assertLt(_lagDebt(), 100 ether, "the honest debt's warmth did not move to the swapper's debt");
         _nextBlock();
         vm.prank(address(swapper));
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
@@ -409,7 +438,7 @@ contract LaggedBackingTest is Test {
         // repayment retires fees first, so a little under 1 of 1,000 of principal.
         assertLt(vault.securedCollateral(), secured, "the term is scaled down with the repayment");
         assertGt(vault.securedCollateral(), secured * 998 / 1_000, "and kept otherwise");
-        assertGe(vault.laggedSecured(), laggedBefore * 998 / 1_000, "and the lag is not clamped to zero");
+        assertGe(_lagSecured(), laggedBefore * 998 / 1_000, "and the lag is not clamped to zero");
         vm.clearMockedCalls();
         assertApproxEqRel(vault.backingPerUnit(), backing, 1e15, "so redemption is whole the moment the leg is back");
     }
@@ -448,7 +477,7 @@ contract LaggedBackingTest is Test {
     /// @dev Sweep panel audit (vault, medium x2). Supply burned inside a transaction was not added back to
     /// the fee base, so a borrower holding most of the supply as its own debt could wipe, redeem a little
     /// against the shrunken supply and redraw, pinning the redemption fee at the cap for a tenth of the
-    /// honest cost. The burn tally (BURNED_THIS_TX_SLOT) restores the supply both the fee and the backing
+    /// honest cost. The supply the transaction began with (`_supplyStart`, lagged for the fee) restores what both the fee and the backing
     /// are measured against.
     function test_aSameTransactionRepaymentDoesNotShrinkTheFeeBase() public {
         Churner churner = new Churner(vault, imd);

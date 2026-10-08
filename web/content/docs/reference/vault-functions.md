@@ -47,9 +47,9 @@ Burns all of `amount`, pays from the Treasury's sIMD first and from the candidat
 
 ### `cover(address owner, uint256 amount)`
 
-Cancel a drained position's bad debt with the Treasury's imdUSD. Anyone may call it. Needs a positive `amount` no larger than the position's debt, and a position with recorded bad debt. The position may hold no collateral, or only dust smaller than what a liquidation of one wei of debt would seize; in the dust case it also needs live prices, and the dust is moved to the Treasury and the shortfall recorded first.
+Cancel a drained position's bad debt with the Treasury's imdUSD. Anyone may call it. Needs a positive `amount` no larger than the position's debt, and a position with recorded bad debt. The position may hold no collateral; or dust (worth under about 1.2 imdUSD, or a millionth of a debt above a million), which is moved to the Treasury first; or collateral worth less than the position's recorded bad debt, which the Treasury takes at its value, so `amount` must then be at least that value. Anything but no collateral needs live prices unless the dust is below what a liquidation of one wei of debt would seize.
 
-Burns `amount` of the Treasury's imdUSD and applies it like a repayment: fees first (reminted to the Treasury), then principal. `totalDebt`, the position's bad debt and `totalBadDebt` fall together, which raises backing for every holder. Emits `Cover`. Reverts with `NoRealizedBadDebt` if the position holds collateral a liquidation could still reach, or has no recorded bad debt.
+Burns `amount` of the Treasury's imdUSD and applies it like a repayment: fees first (reminted to the Treasury), then principal. `totalDebt`, the position's bad debt and `totalBadDebt` fall together, which raises backing for every holder. Emits `Cover`. Reverts with `NoRealizedBadDebt` if the position holds collateral worth at least its recorded bad debt, or has no recorded bad debt, and with `CoverBelowCollateralValue` if it takes collateral for less than its value.
 
 ### `draw(uint256 amount)`
 
@@ -105,7 +105,7 @@ None of these change anything. Reads that depend on a feed can still revert if t
 
 ### `BACKING_WARMUP()`
 
-Returns `uint256`. How long, in seconds, newly added debt and collateral take to count fully toward backing per imdUSD: one day. Each update closes the elapsed share of that day of the remaining gap, and decreases count immediately.
+Returns `uint256`. One day, in seconds. New debt and collateral not yet counted toward backing per imdUSD halve every six hours and count in full once a day passes in which the vault's new capital is not touched; decreases count immediately. It is also how long a position's own warm capital that left (a repayment, a withdrawal, a liquidation or redemption against it) can come back and count at once.
 
 ### `CHOP_PERCENT()`
 
@@ -199,21 +199,9 @@ Returns `uint256`. The last saved stability-fee index, scaled by 1e18. Changed b
 
 Returns `uint256`. When `drip()` last saved the index; starts at deployment.
 
-### `laggedAt()`
-
-Returns `uint256`. When the lagged debt and collateral were last updated.
-
-### `laggedDebt()`
-
-Returns `uint256`. Lagged total principal as stored at `laggedAt()`. Use `laggedNow()` for the current value.
-
 ### `laggedNow()`
 
-Returns `uint256 debt, uint256 secured`. The lagged principal and secured collateral as of now, each never above its live figure. These are what backing per imdUSD counts while new capital warms up.
-
-### `laggedSecured()`
-
-Returns `uint256`. Lagged secured collateral as stored at `laggedAt()`. Use `laggedNow()` for the current value.
+Returns `uint256 debt, uint256 secured`. The lagged principal and secured collateral as of now: the live figures less what is still new, tracked position by position. These are what backing per imdUSD counts while new capital warms up.
 
 ### `lastRedemptionAt()`
 

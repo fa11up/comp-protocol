@@ -138,7 +138,11 @@ Deployment only: the collateral or a supplied stablecoin is not a deployed contr
 
 ### `NoRealizedBadDebt()`
 
-`cover` named a position that still holds collateral a liquidation could reach, or that has no recorded bad debt. Dust too small for any liquidation does not count as reachable: `cover` moves it to the Treasury and records the shortfall first.
+`cover` named a position that has no recorded bad debt, or that holds collateral worth at least its recorded bad debt (a borrower rebuilding, liquidated if at all through a mark and grace). Dust, and a re-lock worth less than the recorded bad debt, do not count: `cover` moves them to the Treasury first.
+
+### `CoverBelowCollateralValue()`
+
+`cover` would take a drained position's re-lock, worth less than its recorded bad debt, for less than the re-lock is worth. Call it with an `amount` of at least the collateral's value at the current price.
 
 ### `NoSurplus()`
 

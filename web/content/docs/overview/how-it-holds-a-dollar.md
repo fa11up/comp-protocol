@@ -32,7 +32,7 @@ Anyone can burn imdUSD and receive sIMD (`cash`). Each imdUSD pays $1 of sIMD, l
 
 Redemption is paid from the Treasury's sIMD first. If the Treasury is short, the rest comes from a borrower's position the redeemer names: that borrower's debt is cancelled and their collateral pays the redeemer. Only positions close to the minimum ratio can be named, so redemption lands on the thinnest positions first.
 
-New collateral and new debt only count toward backing gradually, over about a day or longer while the vault is busy. This stops someone from adding capital, redeeming against it and pulling it straight back out. The full rules, fee and steps are in [Redeem](../guides/redeem.md).
+New collateral and new debt only count toward backing gradually: what is still new halves every six hours, and a quiet day counts it in full. This stops someone from adding capital, redeeming against it and pulling it straight back out. The full rules, fee and steps are in [Redeem](../guides/redeem.md).
 
 If imdUSD trades below the redemption price, buying it and redeeming earns a profit, which pushes the price back up. That is the floor. Nothing in the contracts pulls the price down from above $1; new borrowing may do so in practice, but that is not guaranteed.
 

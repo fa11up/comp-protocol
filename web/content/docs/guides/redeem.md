@@ -28,7 +28,7 @@ For each imdUSD burned, the vault pays sIMD worth $1, or the backing per imdUSD 
 
 ### New capital counts gradually
 
-Backing counts new collateral and new debt only as they age: they are counted over about a day, longer when the vault is busy, while anything leaving counts at once. So someone cannot deposit and borrow, redeem at a better rate against that fresh capital and withdraw it again a few blocks later. Honest redeemers are not underpaid by this, because fresh debt and the imdUSD minted against it are left out together. You may simply see backing read a little lower right after a large new position opens.
+Backing counts new collateral and new debt only as they age: what is still new halves every six hours and a quiet day counts it in full, while anything leaving counts at once. So someone cannot deposit and borrow, redeem at a better rate against that fresh capital and withdraw it again a few blocks later. Honest redeemers are not underpaid by this, because fresh debt and the imdUSD minted against it are left out together. You may simply see backing read a little lower right after a large new position opens.
 
 ## Who funds the payout
 

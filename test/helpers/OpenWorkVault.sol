@@ -10,7 +10,7 @@ import {ParameterizedVault} from "src/ParameterizedVault.sol";
 /// reserve valuation and redemption accounting at exact figures; with the lag on, every one of those
 /// figures would carry a day's warm-up. This vault is that arithmetic for fully warmed capital, which
 /// is what the production ceiling converges to. The gate and the lag themselves are tested against the
-/// production vault (test/LaggedBacking.t.sol, test/EarnGate.t.sol). Nothing under src/ or script/
+/// production vault (test/LaggedBacking.t.sol). Nothing under src/ or script/
 /// references this contract.
 contract OpenWorkVault is ParameterizedVault {
     constructor(address gem_, address stablecoin_, address oracle_, address price_, address nhi_, address spot_)
@@ -19,5 +19,11 @@ contract OpenWorkVault is ParameterizedVault {
 
     function _earnOpen() internal pure override returns (bool) {
         return true;
+    }
+
+    /// @notice The supply a redemption's fee increase is measured against (CDPVault._laggedSupply), for the
+    /// invariant suite's model of the fee curve.
+    function redemptionSupply() external view returns (uint256) {
+        return _laggedSupplyFrom(_supplyStart());
     }
 }

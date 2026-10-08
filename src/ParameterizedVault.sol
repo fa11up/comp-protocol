@@ -236,7 +236,8 @@ contract ParameterizedVault is CDPVault {
     /// call, leaving work-minted imdUSD with nothing behind it. The cap is the debt level at the start of
     /// the transaction, remembered in transient storage, so the ratio term is only ever backed by debt
     /// that existed before the caller arrived; with the wage on, that debt also counts only as it has
-    /// warmed up, and warmth belongs to the position that earned it (CDPVault._bank). A position held across transactions counts
+    /// warmed up, and warmth belongs to the position that earned it (CDPVault._lag): what one position
+    /// repays or loses never warms what another draws, in either order. A position held across transactions counts
     /// in full, so the ceiling stays point-in-time for the slow version of the same round trip: that is
     /// the accepted design (the ceiling gates new minting only; repayment lowers it and leaves what was
     /// minted), and the cost of it is real capital at risk in an open position, not gas.

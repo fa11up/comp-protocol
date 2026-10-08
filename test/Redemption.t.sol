@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {OpenWorkVault} from "./helpers/OpenWorkVault.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -464,7 +465,9 @@ contract RedemptionTest is WorkBackingFixture {
         // worse than 100 against 250 — and the cap stops it by paying the right amount instead.
         assertEq(backedVault.backingPerUnit(), 0.4 ether, "100 of reserve, 250 of supply");
         assertLt(uint256(90.25 ether) * 250 ether, uint256(100 ether) * 240 ether, "par would deteriorate it");
-        // 10 of the 250 supply, over the divisor, is a 2% base: 250 bps with the floor.
+        // 10 of the 250 supply, over the divisor, is a 2% base: 250 bps with the floor. The 1,000 repaid
+        // moments ago was cold principal, so it does not linger in the fee base (CDPVault._laggedSupply).
+        assertEq(OpenWorkVault(address(backedVault)).redemptionSupply(), 250 ether);
         assertEq(_quote(10 ether), 3.9 ether, "40% of par, less the 250 bps fee");
         assertLt(_quote(10 ether), _parQuote(10 ether));
         _expectProRata(10 ether, 0, BORROWER, WORKER);

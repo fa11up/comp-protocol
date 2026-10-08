@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {OpenWorkVault} from "./helpers/OpenWorkVault.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -19,6 +20,8 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     /// @dev Mirror of the position's fresh-principal record: what it holds, and its amount-weighted
     /// mint time. Read as zero once the window has passed, exactly as the vault reads it.
     mapping(address => uint256) public freshPrincipal;
+    /// @dev In 1e18-scaled seconds, as the vault dates its fresh-debt record (CDPVault.draw): at whole
+    /// seconds the model disagreed with the vault about principal one second short of the window.
     mapping(address => uint256) public lastMintedAt;
     uint256 private constant FRESH_WINDOW = 12 hours;
     uint256 private constant BASE_CAP = 0.045 ether;
@@ -245,7 +248,8 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
         // except for the part of a position burn that cancelled principal younger than the window.
         // Fees are cancelled first and are never fresh: only the principal part can be excluded.
         uint256 freshCancelled = Math.min(amounts.principalCancelled, _freshNow(candidate));
-        uint256 expectedBase = _curve(beforeState.decayedBase, amount - freshCancelled, beforeState.supply);
+        // Against the vault's lagged supply: a repayment in the last few hours still counts in it.
+        uint256 expectedBase = _curve(beforeState.decayedBase, amount - freshCancelled, OpenWorkVault(address(backedVault)).redemptionSupply());
         vm.prank(redeemer);
         uint256 paid = backedVault.cash(amount, amounts.payout, candidate);
         assertEq(paid, amounts.payout, "exact feed-priced discounted payout");
@@ -369,7 +373,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     }
 
     function _freshNow(address actor) private view returns (uint256) {
-        return block.timestamp - lastMintedAt[actor] < FRESH_WINDOW ? freshPrincipal[actor] : 0;
+        return block.timestamp * 1e18 - lastMintedAt[actor] < FRESH_WINDOW * 1e18 ? freshPrincipal[actor] : 0;
     }
 
     /// @dev A mint while the record is fresh moves its timestamp toward the present by the new
@@ -378,9 +382,8 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     function _recordMint(address actor, uint256 amount) private {
         uint256 fresh = _freshNow(actor);
         uint256 at = lastMintedAt[actor];
-        lastMintedAt[actor] = fresh == 0
-            ? block.timestamp
-            : at + Math.mulDiv(block.timestamp - at, amount, fresh + amount, Math.Rounding.Ceil);
+        uint256 nowWad = block.timestamp * 1e18;
+        lastMintedAt[actor] = fresh == 0 ? nowWad : at + Math.mulDiv(nowWad - at, amount, fresh + amount, Math.Rounding.Ceil);
         freshPrincipal[actor] = fresh + amount;
     }
 
@@ -395,10 +398,11 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
             freshPrincipal[actor] = remaining;
             return;
         }
-        uint256 age = Math.mulDiv(block.timestamp - lastMintedAt[actor], fresh, remaining, Math.Rounding.Ceil);
-        bool stillFresh = age < FRESH_WINDOW && age <= block.timestamp;
+        uint256 nowWad = block.timestamp * 1e18;
+        uint256 age = Math.mulDiv(nowWad - lastMintedAt[actor], fresh, remaining, Math.Rounding.Ceil);
+        bool stillFresh = age < FRESH_WINDOW * 1e18 && age <= nowWad;
         freshPrincipal[actor] = stillFresh ? remaining : 0;
-        if (stillFresh) lastMintedAt[actor] = block.timestamp - age;
+        if (stillFresh) lastMintedAt[actor] = nowWad - age;
     }
 
     /// @dev floor(effective / supply) / REDEMPTION_DIVISOR on top of the decayed base, saturating at the cap.

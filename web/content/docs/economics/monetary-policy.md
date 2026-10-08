@@ -44,7 +44,7 @@ Repayment and liquidation pay fees before principal: the full amount is burned, 
 
 ## The redemption fee
 
-The fee has a fixed floor and cap. Between them it is a base rate that rises with each redemption (by the amount redeemed ÷ supply ÷ `redemptionDivisor`) and decays every second. The fee applies to the redemption that raises it, not just the next one, and is rounded against the redeemer. Debt minted recently and then redeemed against still pays the full fee, but does not raise the base for later redeemers, so a borrower cannot cheaply pump it. The payout itself is described in [Redeem](../guides/redeem.md).
+The fee has a fixed floor and cap. Between them it is a base rate that rises with each redemption (by the amount redeemed ÷ supply ÷ `redemptionDivisor`) and decays every second. The supply here is the supply the transaction began with, and a repayment of seasoned debt stays in it for a few hours, its share halving every six hours, so a large borrower cannot repay, redeem a little against the smaller supply and redraw to pin the fee at the cap. Redemptions and repayments of debt drawn in the last few hours count at once. The fee applies to the redemption that raises it, not just the next one, and is rounded against the redeemer. Debt minted recently and then redeemed against still pays the full fee, but does not raise the base for later redeemers, so a borrower cannot cheaply pump it. The payout itself is described in [Redeem](../guides/redeem.md).
 
 ## Backing per imdUSD
 
@@ -55,7 +55,7 @@ The fee has a fixed floor and cap. Between them it is a base rate that rises wit
 
 It divides the total by imdUSD supply.
 
-**New capital warms up over about a day.** Backing is the lower of the live figure and a lagged one in which newly added collateral and newly borrowed imdUSD are both left out until they have aged. A reduction counts at once. Under steady activity, capital held a full day counts for about two thirds, and two days for most of it. This stops someone from depositing and borrowing just before a redemption to lift backing to $1, taking the reserve at par, and unwinding afterwards. Honest redemptions are not underpaid, because the new debt and the imdUSD minted against it are excluded together.
+**New capital warms up over hours.** Backing is the lower of the live figure and a lagged one in which newly added collateral and newly borrowed imdUSD are both left out until they have aged. What is still new halves every six hours (`BACKING_HALF_LIFE`), and a day in which nothing changes counts it in full; under steady activity a day counts about 94% and two days over 99%. A reduction counts at once. Each position's new capital is tracked separately, so one borrower's repayment can never make another borrower's new debt count early, in either order. This stops someone from depositing and borrowing just before a redemption to lift backing to $1, taking the reserve at par, and unwinding afterwards. Honest redemptions are not underpaid, because the new debt and the imdUSD minted against it are excluded together.
 
 This is deliberately conservative, not the market value of everything in custody, and it can fall after a redemption that cancels a borrower's debt. Below $1, holders share the shortfall through a smaller payout; above it, the surplus stays with borrowers rather than paying redeemers a premium.
 

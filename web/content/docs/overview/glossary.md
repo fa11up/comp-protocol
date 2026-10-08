@@ -18,7 +18,7 @@ Each entry gives the plain meaning first, then the contract name where there is 
 
 **attestation.** A signed answer from an IdentityMD agent panel. A price feed changes only when it receives a valid one. See [Relay oracle updates](../keepers/relay-oracle-updates.md).
 
-**backing per imdUSD.** The reserve plus the collateral standing behind debt, divided by imdUSD supply, never above $1. New capital counts toward it gradually, over about a day or longer while the vault is busy. Read with `backingPerUnit()`. Redemption pays against it.
+**backing per imdUSD.** The reserve plus the collateral standing behind debt, divided by imdUSD supply, never above $1. New capital counts toward it gradually: half of what is still new every six hours, all of it after a quiet day. Read with `backingPerUnit()`. Redemption pays against it.
 
 **bonus.** The extra collateral a liquidator receives on top of the debt they repay (`CHOP_PERCENT`). It is shared between the marker (`chip`), the protocol (`cut`) and the liquidator. See [Keeper economics](../keepers/keeper-economics.md).
 

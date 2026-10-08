@@ -48,7 +48,7 @@ Grace is short when network health is low and longer when it is high, so a weake
 
 ## Step two: liquidate
 
-Liquidating needs live prices, an unsafe position, a mark (`PositionNotMarked`), an elapsed grace and an unexpired window. Then the vault:
+Liquidating needs live prices, an unsafe position, a mark (`PositionNotMarked`), an elapsed grace and an unexpired window. One exception: a position already drained once, whose collateral is now worth less than the bad debt it left, needs no mark and no grace, since waiting cannot help it (the Treasury may also take that collateral at its value through `cover`). A drained borrower who has rebuilt past that loss is marked and given grace like anyone else. Then the vault:
 
 1. Adds the borrower's accrued stability fee and checks that the amount you repay is not more than their debt (`ExcessRepayment`).
 2. Works out the collateral to seize: the amount repaid plus the bonus, converted to sIMD at the vault's price. If that is more than the borrower holds, it reverts with `InsufficientCollateral`; repay less.

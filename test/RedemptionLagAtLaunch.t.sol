@@ -101,8 +101,9 @@ contract RedemptionLagAtLaunchTest is Test {
         vault.lock(200 ether);
         vm.prank(HONEST);
         vault.draw(100 ether);
-        vm.warp(block.timestamp + 1 days);
-        vm.roll(block.number + 7_200);
+        // Three days: the honest capital is warm (1 - 2^-12 of it, BACKING_HALF_LIFE six hours).
+        vm.warp(block.timestamp + 3 days);
+        vm.roll(block.number + 21_600);
         // IMD falls 70%; the honest position is underwater and not yet liquidated (grace).
         primary.set(uint256(0.3 ether) * 1e18 / 2000 ether);
     }
@@ -130,7 +131,10 @@ contract RedemptionLagAtLaunchTest is Test {
         uint256 fair = Math.mulDiv(3 ether, Math.mulDiv(before, 10_000 - feeBps, 10_000), price);
         emit log_named_decimal_uint("reserve IMD paid", gemOut, 18);
         emit log_named_decimal_uint("at the pre-existing backing", fair, 18);
-        assertLe(gemOut, fair + 1e9, "fresh capital must not let a redemption take the reserve at par");
+        // Within the honest capital's own residual cold (2^-12 of it after three days): an underwater
+        // position still partly cold reads the lagged figure a hair above the live one, and the attacker's
+        // capital can lift the live one that far, never toward par.
+        assertLe(gemOut, fair + fair / 10_000, "fresh capital must not let a redemption take the reserve at par");
         assertGe(gemOut, fair - 1e9, "nor push it below the backing that already stood (the 3.11 fix)");
 
         // Transaction 3: unwind. Only 3 imdUSD of the 100 drawn stays owed; the rest of the capital leaves.
@@ -192,13 +196,13 @@ contract RedemptionLagHonestTest is Test {
         vm.prank(BORROWER);
         vault.lock(200 ether);
         (uint256 lagDebt, uint256 lagSecured) = vault.laggedNow();
-        assertEq(lagDebt, 50 ether, "half a day credits half the debt");
-        assertEq(lagSecured, 100 ether, "and half the secured collateral, which now stops growing");
+        assertApproxEqAbs(lagDebt, 75 ether, 1e9, "two half-lives credit three quarters of the debt");
+        assertApproxEqAbs(lagSecured, 150 ether, 1e9, "and of the secured collateral, which now stops growing");
         assertEq(vault.backingPerUnit(), 1e18, "warm capital on both sides keeps par");
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + 3 days);
         (lagDebt, lagSecured) = vault.laggedNow();
-        assertEq(lagDebt, 100 ether);
-        assertEq(lagSecured, vault.securedCollateral());
+        assertApproxEqRel(lagDebt, 100 ether, 0.0003e18);
+        assertApproxEqRel(lagSecured, vault.securedCollateral(), 0.0003e18);
         assertEq(vault.backingPerUnit(), 1e18);
     }
 }
