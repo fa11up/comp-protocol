@@ -1,4 +1,4 @@
 {
   "$comment": "WalletConnect (Reown Cloud) project id for infer.imdusd.com. Public: it ships in the page. null hides the WalletConnect option. Create one at cloud.reown.com and allow the domain infer.imdusd.com.",
-  "projectId": null
+  "projectId": "215f3136e30c98ec1d5930ee053212fe"
 }

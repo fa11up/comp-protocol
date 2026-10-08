@@ -443,7 +443,11 @@ export function WalletChooser({ wallet }: { wallet: Wallet }) {
     >
       <header className="wallet-chooser-head">
         <h2 id="wallet-chooser-h">
-          {wallet.pairing ? "Scan with your wallet" : "Connect a wallet"}
+          {wallet.pairing
+            ? phone
+              ? "Open your wallet"
+              : "Scan with your wallet"
+            : "Connect a wallet"}
         </h2>
         <button
           type="button"
