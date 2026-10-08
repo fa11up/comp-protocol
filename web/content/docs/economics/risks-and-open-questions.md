@@ -73,7 +73,7 @@ The vault enforces its rules for collateral, prices and accounting. Those rules 
 
 The contracts are immutable. A bug cannot be fixed with a parameter change; it needs a new deployment.
 
-The code has been through several reviews, each linked under Sources: an external audit on 2026-10-03 (one high finding, about binding each feed to its own question), another on 2026-10-04, an internal audit on 2026-10-04, and on 2026-10-05 three launch audit panels (vault, governance and Treasury, oracle) followed by an adversarial review and a gas review. Their findings were fixed; the fix plan records what was accepted and why. One more focused review of the latest fixes is planned before the deploy commit is frozen. Reviews and tests reduce risk; they do not prove every sequence of calls safe.
+The code has been through twenty reviews since 2026-10-03: two single audits, panel audits of the vault, governance and the Treasury, and the price path (four specialists and a judge who re-runs every claim), adversarial reviews of the whole system, a gas review and two in-house reviews. Every finding was fixed, or accepted with its reason stated, in the commit after the round that found it, and the next round was pinned to that commit. The full chain, with each job, commit and record, is in [Audit history](../reference/audit-history.md). Reviews and tests reduce risk; they do not prove every sequence of calls safe.
 
 ## Not yet proven
 
