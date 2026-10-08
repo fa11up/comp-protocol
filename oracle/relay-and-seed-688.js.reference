@@ -21,7 +21,7 @@ const cfg = require('./sim.config.js');
 
 const EXECUTE = process.argv.includes('--execute');
 const RPC = cfg.RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com';
-const ATT_PATH = process.env.ATT || '/private/tmp/claude-501/-Users-azp-a11-imd/f3f717a8-458d-4bd6-a0cb-84f73375bc52/scratchpad/comp/oracle/attestation-e2c85027.json';
+const ATT_PATH = process.env.ATT || 'attestation-e2c85027.json';
 
 const W0_EXPECTED = '0x1d0074aB2ba9dA4cCbc67cFC0026E570D0E93951';
 const PRICE_FEED  = '0x5bbFA44200AcE481388B0B69355F7Bd1FeAb0462';

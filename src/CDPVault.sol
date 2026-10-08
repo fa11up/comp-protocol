@@ -180,8 +180,9 @@ contract CDPVault is ReentrancyGuard {
         return CHIP_BPS;
     }
 
-    /// @notice Each redemption raises the fee base by redeemed / supply / this. The base vault reads
-    /// the source constant; ParameterizedVault reads its governed Parameters.
+    /// @notice Each redemption raises the base rate by redeemed / fee base / this, the fee base being the
+    /// warm supply, floored (`_feeBase`). The base vault reads the source constant; ParameterizedVault
+    /// reads its governed Parameters.
     function redemptionDivisor() public view virtual returns (uint256) {
         return REDEMPTION_DIVISOR;
     }
@@ -327,7 +328,8 @@ contract CDPVault is ReentrancyGuard {
     /// lag's safe direction (retry2 panel audit 2026-10-08, vault, low). Tracked from deployment, so it is
     /// warm whenever it is read.
     uint256 internal constant BACKING_HALF_LIFE = 6 hours;
-    /// @dev A day: cold capital, and a bank, left untouched this long count in full (`_cool`).
+    /// @dev A day: cold capital left untouched this long counts in full, and a bank left untouched this long
+    /// credits nothing, so what returns to it comes back cold (`_cool`).
     uint256 public constant BACKING_WARMUP = 1 days;
     /// @dev 2^(-1 / BACKING_HALF_LIFE), the per-second factor cold capital keeps, 1e27-scaled.
     uint256 private constant COLD_SECOND_DECAY = 999967910367635122012970996;
@@ -586,10 +588,12 @@ contract CDPVault is ReentrancyGuard {
                 uint256 price = _price();
                 if (position.collateral >= _coverDust(owner, price)) {
                     // A re-lock worth less than the bad debt the position already realized is taken AT ITS
-                    // VALUE: the surplus burns at least that much of the position's debt for it. So holding
-                    // cover off costs the griefer the whole re-lock, with no liquidator needed (retry panel
-                    // audit 2026-10-07, vault, low: the bite that cleared a $1.20 re-lock paid $0.18), and
-                    // a borrower rebuilding is paid par for it, not bitten at a 20% penalty.
+                    // VALUE: the surplus burns at least that much of the position's debt for it. So while the
+                    // Treasury holds imdUSD worth the re-lock, holding cover off costs the griefer the whole
+                    // re-lock, with no liquidator needed (retry panel audit 2026-10-07, vault, low: the bite
+                    // that cleared a $1.20 re-lock paid $0.18), and a borrower rebuilding is paid par for it,
+                    // not bitten at a 20% penalty. With less, this reverts and the re-lock waits for a mark,
+                    // grace and bite (`_coverDust`).
                     if (!_relockBelowBadDebt(owner, price)) revert NoRealizedBadDebt();
                     if (amount < Math.mulDiv(position.collateral, price, 1e18, Math.Rounding.Ceil)) {
                         revert CoverBelowCollateralValue();
@@ -662,7 +666,8 @@ contract CDPVault is ReentrancyGuard {
         return Math.mulDiv(slice > 1 ? slice : 1, (100 + CHOP_PERCENT) * 1e16, price);
     }
 
-    /// @notice Burn exactly `amount` caller imdUSD for feed-priced IMD, less the capped fee.
+    /// @notice Burn exactly `amount` caller imdUSD for feed-priced IMD, less the capped fee, scaled down by
+    /// `backingPerUnit` while the protocol is backed below par.
     /// @dev Treasury IMD is spent first; only the shortfall cancels the named candidate's debt.
     /// No approval, partial fill or fee transfer. All checks and both payouts are atomic.
     function cash(uint256 amount, uint256 minGemOut, address candidate)
@@ -750,17 +755,26 @@ contract CDPVault is ReentrancyGuard {
     /// transaction lifted it toward par for a redemption in the next. So this is the LOWER of the live
     /// figure and a lagged one in which fresh capital leaves BOTH sides: warmed-up secured collateral
     /// over supply less the principal that is still warming up. An attacker's capital can raise the live
-    /// figure but not the lagged one, whichever position it sits in (`_lag`); honest redemptions are not
-    /// underpaid, because new debt and the imdUSD minted against it are excluded together. When every unit
-    /// of supply is fresh there is no lagged figure and the live one stands. The supply is the live one plus
+    /// figure but not the lagged one, whichever position it sits in (`_lag`): new debt and the imdUSD minted
+    /// against it are excluded together. The reserve backs every unit, so the lagged figure counts only the
+    /// warm supply's share of it (reserve per unit of the whole supply, as in the live figure, plus warm
+    /// collateral per warm unit). Counted whole against the warm supply alone it read above par while most
+    /// supply was new, as after launch, so the live figure, which a newcomer's capital raises, stood (final
+    /// sweep panel audit 2026-10-08, low). A large new borrower therefore dilutes the reserve's part for a
+    /// warm redeemer until its supply warms, as it does in the live figure: the safe direction. When every unit of supply is fresh there is no lagged
+    /// figure and the live one stands. The lag underpays honest redemptions for hours in two accepted cases:
+    /// a price fall's re-pricing counts as cold (`BACKING_HALF_LIFE`), and a stale position's share can stay
+    /// in the total (`_cool`). The supply is the live one plus
     /// what repayments earlier in this transaction burned (REPAID_THIS_TX_SLOT), so a same-call wipe, cash and
     /// draw is paid no premium (sweep panel audit, vault, medium).
     /// ACCEPTED, one transaction apart: a borrower in the 170-200% band whose term is its whole collateral can
     /// repay without moving it, and a redemption in the next transaction is paid that briefly higher backing,
     /// diluted again by a redraw in the one after (retry panel audit 2026-10-07, vault, medium). It exists only
     /// below par, costs gas, and the premium is at most (supply - fresh) / (supply - fresh - repaid), the
-    /// repayment bounded by the churner's principal above half its collateral's value (15% of it at a 170%
-    /// minimum ratio). Both ways of closing it were worse: lagging the whole supply underpaid every redeemer
+    /// repayment bounded by the churner's principal above half its collateral's value. That is 15% of it for
+    /// a churner at a 170% ratio, but below par positions sit below mat, and wipe has no health check: half
+    /// the principal at 100%, 60% at 80%, where the final sweep panel (2026-10-08) measured a 25% premium.
+    /// The payout never passes par, so the premium is at most the gap to par. Both ways of closing it were worse: lagging the whole supply underpaid every redeemer
     /// after an honest unwind (0.4 to 0.08 in test/Redemption.t.sol), and keeping the left-behind part per
     /// position (58f73de) could be stranded and pumped, for gas, to underpay redeemers without bound (final
     /// vault panel 2026-10-08, high, and five further findings). It was removed.
@@ -772,7 +786,8 @@ contract CDPVault is ReentrancyGuard {
         (uint256 lagDebt,) = laggedNow();
         uint256 fresh = totalDebt - lagDebt;
         if (supply > fresh) {
-            uint256 lagged = Math.mulDiv(reserve + _securedCollateralValue(price, true), 1e18, supply - fresh);
+            uint256 warm = supply - fresh;
+            uint256 lagged = Math.mulDiv(Math.mulDiv(reserve, warm, supply) + _securedCollateralValue(price, true), 1e18, warm);
             if (lagged < perUnit) perUnit = lagged;
         }
         return perUnit < 1e18 ? perUnit : 1e18;
@@ -883,7 +898,8 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @dev The increase is the burned fraction of the fee base (`_feeBase`): warm supply, plus warm
-    /// principal repaid in the last hours, so neither new principal nor a fresh repayment moves it.
+    /// principal repaid in the last hours, so neither new principal nor a fresh repayment moves it. `prior`
+    /// is never zero on a deployed vault (the floor); the zero case is for a subclass that lowers the floor.
     function _redemptionRate(uint256 amount, uint256 prior) private view returns (uint256) {
         uint256 supply = stablecoin.totalSupply();
         if (amount > supply) revert ExcessRepayment();
@@ -1016,7 +1032,10 @@ contract CDPVault is ReentrancyGuard {
     /// cutoff on the totals alone let an old position's repayment, retiring cold the total no longer held,
     /// warm a new position's capital (final vault panel 2026-10-08, medium). The reverse remains: a position
     /// untouched for a day reads zero while a busy total still holds its share, which then stays in the total
-    /// until it cools. That only understates the lagged figures, the safe direction: accepted (retry2, low).
+    /// until it cools. That understates `laggedNow()`, the safe direction: accepted (retry2, low). In the
+    /// backing cap a share orphaned on the DEBT side alone shrinks the lagged figure's denominator and can
+    /// overstate it, by at most a sixteenth of the stale position's day-old cold principal over the supply,
+    /// and halving: far below the redemption fee, accepted (final sweep panel audit 2026-10-08, info).
     /// A touch only restarts the day, so activity can slow warming but never speed it.
     function _cool(uint256 amount, uint256 elapsed, bool up) private pure returns (uint256) {
         if (amount == 0 || elapsed == 0) return amount;
@@ -1042,8 +1061,11 @@ contract CDPVault is ReentrancyGuard {
     /// neither can be lowered by principal held for a block.
     /// FLOORED at `_feeBaseFloor()`: while most supply is new, as right after launch, the warm base is near
     /// zero, and a dust redemption then stored the 4.5% cap as everyone's base rate for days (final vault
-    /// panel 2026-10-08, low). Under the floor a redemption's increase is measured as if the supply were the
-    /// floor, which only lowers fees while the protocol is that small.
+    /// panel 2026-10-08, low). At a 1,000 floor a 90 imdUSD burn still did, for a 4.5 imdUSD fee (final sweep
+    /// panel 2026-10-08, low), so the floor is 100,000: storing the cap from the floor takes a burn of 4.5%
+    /// of it times the divisor (9,000 at 2), the cap paid on all of it. Under the floor a redemption's
+    /// increase is measured as if the supply were the floor, which only lowers fees while the protocol is
+    /// that small; a figure from the live supply instead would let principal held a block lower it again.
     function _feeBase() internal view returns (uint256) {
         uint256 base = stablecoin.totalSupply() + _cool(_feeExcess, block.timestamp - _coldAt, true);
         uint256 out = _coldPrincipal() + _transient(WORK_MINTED_THIS_TX_SLOT);
@@ -1052,9 +1074,9 @@ contract CDPVault is ReentrancyGuard {
         return base > floor ? base : floor;
     }
 
-    /// @dev 1,000 imdUSD. A subclass that models only fee arithmetic may lower it.
+    /// @dev 100,000 imdUSD. A subclass that models only fee arithmetic may lower it.
     function _feeBaseFloor() internal view virtual returns (uint256) {
-        return 1_000e18;
+        return 100_000e18;
     }
 
     /// @dev The vault's principal still cold, as of now.
@@ -1321,7 +1343,8 @@ contract CDPVault is ReentrancyGuard {
         return _lull(nhi);
     }
 
-    /// @notice How long after its grace ends a mark stays actionable: the shorter feed lifetime.
+    /// @notice How long after its grace ends a mark stays actionable: the shorter of the price and NHI
+    /// feeds' lifetimes (the spot feed and Chainlink are not read; at the shipped constants all agree).
     /// @dev Past that, at least one full feed cycle has elapsed in which nobody liquidated, and either
     /// feed may have moved the position through recovery unobserved; the mark is void and must be retaken.
     function tail() public view returns (uint256) {

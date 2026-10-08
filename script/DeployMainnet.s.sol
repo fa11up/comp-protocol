@@ -57,7 +57,8 @@ interface IStakedIMD {
     function decimals() external view returns (uint8);
 }
 
-/// @notice The mainnet deployment: every contract at a CREATE2 address the source already names.
+/// @notice The mainnet deployment: every contract at a CREATE2 address, the vault's from a salt the
+/// source does NOT name.
 /// @dev Four contracts are read by others as SOURCE CONSTANTS (DeploymentConfig), so their addresses
 /// must be in the bytecode before anything that reads them compiles. CREATE2 through the canonical
 /// deterministic deployer makes each address a pure function of initcode and salt, so the whole plan
@@ -71,6 +72,14 @@ interface IStakedIMD {
 ///            embeds ORACLE_ASKER)
 ///   layer 5  ParameterizedVault                      (embeds both factories; creates imdUSD,
 ///            Parameters, its Treasury, SwarmWorkOracle, UsdPriceFeed and SharePriceFeed itself)
+///
+/// The vault's salt is the operator's secret (`VAULT_SALT`), not a constant here. The canonical deployer
+/// binds an address to nothing but (salt, initcode), and the initcode is public once stage one lands: with
+/// the salt in this file, anyone could have placed the planned vault between the two stages, live before
+/// `verifySeeded`, with a raced first value to draw against (final sweep panel audit 2026-10-08, low).
+/// Nothing reads the vault's address as a source constant, so nothing needs the salt before stage two,
+/// and stage two is sent through a private relay (MEV Blocker), so the salt is not public before the
+/// vault exists. The address is read back into deployment.json.
 ///
 /// No cycle, because `bytecode_hash = "none"`: with a metadata hash, editing ANY constant would change
 /// every importer's bytecode and so every address. `check()` computes the plan from the code as
@@ -93,7 +102,8 @@ contract DeployMainnet is Script, DeployPreflight {
     bytes32 internal constant SALT_SPOT = keccak256("infer-protocol/mainnet/v1/SpotFeed");
     bytes32 internal constant SALT_ASKER = keccak256("infer-protocol/mainnet/v1/OracleAsker");
     bytes32 internal constant SALT_TREASURY_FACTORY = keccak256("infer-protocol/mainnet/v1/TreasuryFactory");
-    bytes32 internal constant SALT_VAULT = keccak256("infer-protocol/mainnet/v1/ParameterizedVault");
+    /// @dev A salt that was once committed here. Refused as VAULT_SALT: it is public.
+    bytes32 internal constant PUBLIC_VAULT_SALT = keccak256("infer-protocol/mainnet/v1/ParameterizedVault");
 
     /// @dev Largest move a fresh feed accepts within one epoch (a lifetime from the epoch's anchor), and
     /// the base of the stale allowance: twice this once the value has been stale a whole hour, an eighth
@@ -128,7 +138,7 @@ contract DeployMainnet is Script, DeployPreflight {
         address spot;
         address asker;
         address treasuryFactory;
-        address vault;
+        address vault; // zero unless VAULT_SALT is set
         bytes priceBody;
         bytes nhiBody;
         bytes spotBody;
@@ -147,7 +157,8 @@ contract DeployMainnet is Script, DeployPreflight {
         p.spotBody = _body("spot", p.spot);
         p.asker = _at(SALT_ASKER, _askerInit(p));
         p.treasuryFactory = _at(SALT_TREASURY_FACTORY, type(TreasuryFactory).creationCode);
-        p.vault = _at(SALT_VAULT, _vaultInit(p));
+        bytes32 salt = vm.envOr("VAULT_SALT", bytes32(0));
+        if (salt != bytes32(0)) p.vault = _at(salt, _vaultInit(p));
     }
 
     /// @notice Print the plan and every constant it requires. Lines starting `CONFIG ` are what
@@ -161,7 +172,7 @@ contract DeployMainnet is Script, DeployPreflight {
         console2.log("SpotFeed          ", p.spot);
         console2.log("OracleAsker       ", p.asker);
         console2.log("TreasuryFactory   ", p.treasuryFactory);
-        console2.log("ParameterizedVault", p.vault);
+        console2.log("ParameterizedVault", p.vault, p.vault == address(0) ? "(VAULT_SALT unset)" : "");
         _config("ATTESTATION_RELAYER", ATTESTATION_RELAYER, p.relay);
         _config("WORK_ORACLE_FACTORY", WORK_ORACLE_FACTORY, p.workFactory);
         _config("ORACLE_ASKER", ORACLE_ASKER, p.asker);
@@ -179,9 +190,8 @@ contract DeployMainnet is Script, DeployPreflight {
     /// `verifySeeded`, and only then does `runVault` deploy the vault. Deployed in one go, the vault was
     /// live from its constructor while the feeds' first values were still anybody's to relay: whoever
     /// relayed a first value off a pumped pool could draw against it in the same block, before any check
-    /// could run (sweep panel audit, oracle, low). With the vault absent until the first values are
-    /// checked, a raced first value can price nothing; it costs the operator a wait for the allowance to
-    /// widen and honest values, never a redeploy.
+    /// could run (sweep panel audit, oracle, low). The split buys a check the operator runs before THEIR
+    /// vault exists; the secret salt and the private relay (see above) keep anyone else's from existing first.
     function run() external {
         Plan memory p = plan();
         _refuseUnlessReady(p);
@@ -207,9 +217,11 @@ contract DeployMainnet is Script, DeployPreflight {
         Plan memory p = plan();
         _refuseUnlessReady(p);
         verifySeeded(p);
+        bytes32 salt = vm.envBytes32("VAULT_SALT");
+        require(salt != bytes32(0) && salt != PUBLIC_VAULT_SALT, "VAULT_SALT: set the operator's secret salt, not the public one");
 
         vm.startBroadcast();
-        _deploy(SALT_VAULT, _vaultInit(p), p.vault);
+        _deploy(salt, _vaultInit(p), p.vault);
         vm.stopBroadcast();
 
         verify(p);
@@ -439,11 +451,12 @@ contract DeployMainnet is Script, DeployPreflight {
         vm.serializeAddress(o, "spotFeed", p.spot);
         vm.serializeAddress(o, "oracleAsker", p.asker);
         vm.serializeAddress(o, "intake", INTAKE);
-        vm.serializeAddress(o, "vault", p.vault);
         vm.serializeAddress(o, "gem", STAKED_IMD);
         string memory json = vm.serializeAddress(o, "imd", IMD);
-        // Stage one records the plan (the vault's address is planned, not deployed); stage two the rest.
+        // Stage one records the feeds and the asker, and never the vault's address, which would publish
+        // the salt's result before stage two; stage two the vault and what it created.
         if (p.vault.code.length != 0) {
+            vm.serializeAddress(o, "vault", p.vault);
             vm.serializeAddress(o, "stablecoin", address(vault.stablecoin()));
             vm.serializeAddress(o, "parameters", address(vault.parameters()));
             vm.serializeAddress(o, "treasury", address(vault.treasury()));

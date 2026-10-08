@@ -499,8 +499,8 @@ contract Treasury {
     /// (sIMD), the IMD is WITHDRAWN from the share vault straight to the asker, so the asker holds the
     /// asset the Intake is paid in and never touches shares; IMD the Treasury holds directly (and has not
     /// listed as a reserve asset) is spent before any share is unwrapped. sIMD's one-block hold applies: shares that
-    /// arrived in this block cannot be withdrawn in it, so a call right after a liquidation reverts and
-    /// succeeds a block later. Refuses an asker with no code, so a placeholder constant fails loudly.
+    /// arrived in this block cannot be withdrawn in it, so right after a liquidation the unwrap is caught and
+    /// the call sends only the plain IMD (or nothing); a block later the shares unwrap. Refuses an asker with no code, so a placeholder constant fails loudly.
     /// @return sent IMD sent to the asker by this call; zero once today's budget is spent.
     function fundOracle() external returns (uint256 sent) {
         if (ORACLE_ASKER.code.length == 0) revert OracleAskerMissing();

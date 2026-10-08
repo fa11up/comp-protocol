@@ -11,6 +11,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
+import {SmallFloorVault} from "test/helpers/SmallFloorVault.sol"; // the 1,000 floor these figures assume
 import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
 import {TreasuryFactory} from "src/TreasuryFactory.sol";
@@ -98,7 +99,7 @@ contract FeeBaseColdMintTest is Test {
         imd = new MockIMD();
         FbFeed primary = new FbFeed(uint256(1 ether) * 1e18 / 2000 ether); // IMD = $1
         FbFeed health = new FbFeed(0.85 ether); // mat 170, gap 50
-        vault = new ParameterizedVault(
+        vault = new SmallFloorVault(
             address(imd), address(0), address(0), address(primary), address(health), address(new FbMirror(primary))
         );
         stable = vault.stablecoin();

@@ -181,7 +181,7 @@ Run every one of these. Each has failed for real at least once in this project's
 
 ```bash
 # 1. the suite, under the runner test/README.md documents
-forge test                                   # expect 362+ pass, 0 fail
+forge test                                   # expect 599+ pass, 0 fail
 
 # 2. the fork suite against LIVE mainnet state, not Sepolia
 forge test --match-path test/InHouse.t.sol         --fork-url $MAINNET_RPC_URL
@@ -240,8 +240,16 @@ has code is skipped) and it reads the whole stack back off chain before writing
 `deploy/mainnet/out/deployment.json` + `bodies/`, which is what the keeper runs from.
 
 Choices fixed in the script, part of the deploy commit: salts `infer-protocol/mainnet/v1/<Contract>`; feed
-`maxDeviationBps` **2000** (the asker asks on drift at 10%); the asker treats price and spot as
-pool-tracked and keeps only NHI alive on the Treasury.
+`maxDeviationBps` **2000** (the asker asks on a FALL of 5%, a quarter of the cap, never on a rise); the
+asker treats price and spot as pool-tracked and keeps only NHI alive on the Treasury's clock (any feed
+silent a lifetime with its allowance wide open is also paid for, price and spot included).
+
+The vault's salt is not in the script: `runVault()` reads it from `VAULT_SALT`, the operator's secret,
+and refuses it unset or equal to the salt this file once named. With the salt public, anyone could fill
+the vault's CREATE2 address between the stages, since its initcode is public once stage one lands (final
+sweep panel audit 2026-10-08, low). Nothing reads the vault's address as a source constant, so nothing
+needs the salt before stage two, and stage two goes through a private relay (§7 step 2) so the salt is
+not public before the vault exists. deployment.json records the vault only once it is deployed.
 
 Rehearsed on a mainnet fork: 8 transactions, **26.2M gas** in total, the largest the vault at **12.7M**
 (block limit 60M) — about 0.026 ETH at 1 gwei.
@@ -287,8 +295,8 @@ The dev's ceiling is honoured here instead: `run()` refuses unless (base fee + 0
    Every body must use a RELATIVE window (`"window":{"hours":N}`): a literal block window can be answered
    only once, then every repeat is refused as not advancing. Its body hashes are `keccak256` of the frozen oracle.request bodies — the same bytes the feeds'
    pinned questions were generated from.
-5. **Broadcast once**: the prereqs at their computed addresses, then the three feeds, then the
-   vault — which creates imdUSD, `Parameters`, the Treasury's sibling and `UsdPriceFeed` in its own
+5. **Broadcast** the prereqs at their computed addresses, then the three feeds (stage one), then, after
+   the first values are checked (§7), the vault from the secret salt through a private relay (stage two), which creates imdUSD, `Parameters`, the Treasury's sibling and `UsdPriceFeed` in its own
    constructor, so the stack comes up linked with no follow-up transaction.
 6. **Read it back off chain.** Not the script's own logs — the chain:
    * each feed's `attester`, `relayer`, `attestationChainId`, `attestationAnswerType`, `maxAge`,
@@ -320,8 +328,10 @@ The deploy itself is `run()` (everything but the vault), then steps 1 and 2 belo
 
 The deploy is TWO stages (`DeployMainnet.run`, then `runVault`), and the first values go between them:
 the vault is live from its constructor, so deployed in one go it could price a draw against a first value
-somebody else raced in off a pumped pool before any check ran (sweep panel audit, oracle, low). With no
-vault until the first values are checked, a raced first value prices nothing.
+somebody else raced in off a pumped pool before any check ran (sweep panel audit, oracle, low). The split
+buys a check the operator runs before deploying the vault; the secret salt and the private relay are what
+stop anyone else deploying it first (final sweep panel audit 2026-10-08, low: with the salt public, anyone
+could).
 
 1. **Buy one attestation per feed** and relay it (stage one has deployed the feeds and the asker, not
    the vault). Until each feed holds a value it is stale. Three requests, 1.5 IMD. Order matters: walk
@@ -337,13 +347,16 @@ vault until the first values are checked, a raced first value prices nothing.
    and a price or spot value more than 5% from the pool. **If it fails, do not deploy the vault**: the
    feed follows the market once its allowance has widened (two hours of silence for 40%, longer for
    more), so relay honest values and run it again. Then `runVault()` (same environment plus the
-   reference) deploys the vault and runs `verify`.
+   reference and `VAULT_SALT`) deploys the vault and runs `verify`. **Broadcast it through MEV Blocker**
+   (`--rpc-url https://rpc.mevblocker.io`), never a public mempool: the transaction carries the salt, and
+   until it lands anyone who saw it could deploy the vault first. Keep the salt out of the repository, shell
+   history and logs.
 3. **List the reserve assets** through `Parameters.proposeReserveAsset` — each needs a price source
    and a haircut, and each waits 48 hours. Until the register is non-empty, `reserveValueUsd()` is
    zero and so is the first term of `earnLine`.
 4. **Start the keeper** before announcing, **funded with IMD, because on day one it IS the oracle's
-   budget.** `Treasury.fundOracle` pays only from sIMD the Treasury holds, and the Treasury's only sIMD
-   income is the liquidation cut — so until revenue lands it cannot fund the asker, and nothing in this
+   budget.** `Treasury.fundOracle` pays from the Treasury's plain IMD and sIMD, and until revenue lands
+   (launch-pool fees, liquidation cuts) it holds neither — so it cannot fund the asker, and nothing in this
    sequence would keep NHI alive: 24 hours after the hand-seeded value every price action would refuse
    `StaleFeed` (final review 2026-10-07, medium). The keeper covers that gap with its own IMD
    (`KEEPER_ORACLE_FALLBACK`, within `ASK_PAID_IMD_PER_DAY`): NHI near stale first, then falls, then a

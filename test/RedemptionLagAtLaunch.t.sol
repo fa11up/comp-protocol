@@ -135,7 +135,11 @@ contract RedemptionLagAtLaunchTest is Test {
         // position still partly cold reads the lagged figure a hair above the live one, and the attacker's
         // capital can lift the live one that far, never toward par.
         assertLe(gemOut, fair + fair / 10_000, "fresh capital must not let a redemption take the reserve at par");
-        assertGe(gemOut, fair - 1e9, "nor push it below the backing that already stood (the 3.11 fix)");
+        // Less only the reserve's part diluted by the new supply: the lagged figure counts the reserve per unit of
+        // the whole supply (final sweep panel audit 2026-10-08, low F3), 3 USD over 200 rather than over 100 here.
+        // Far above the ungated lag's 3.11.
+        uint256 diluted = Math.mulDiv(3 ether, Math.mulDiv(3e18 / 100 - 3e18 / 200, 10_000 - feeBps, 10_000), price);
+        assertGe(gemOut, fair - diluted - 1e9, "nor push it below the backing that already stood (the 3.11 fix)");
 
         // Transaction 3: unwind. Only 3 imdUSD of the 100 drawn stays owed; the rest of the capital leaves.
         vm.prank(ATTACKER);

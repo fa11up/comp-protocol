@@ -107,9 +107,10 @@ contract Parameters is Governed {
     /// no sense against a token meant to be worth a dollar.
     uint256 public constant MAX_WAGE_WAD = 1 ether;
 
-    /// @notice Bounds on the redemption fee divisor: each redemption raises the fee base by
-    /// redeemed / supply / divisor. At 1 a run reaches the 5% cap after 4.5% of supply; at 8 it takes
-    /// 36%. Outside these the fee is either a wall or no brake at all.
+    /// @notice Bounds on the redemption fee divisor: each redemption raises the base rate by
+    /// redeemed / fee base / divisor, the fee base being the warm supply floored at 100,000 imdUSD
+    /// (CDPVault._feeBase). At 1 a run reaches the 5% cap after 4.5% of it; at 8 it takes 36%. Outside
+    /// these the fee is either a wall or no brake at all.
     uint256 public constant MIN_REDEMPTION_DIVISOR = 1;
     uint256 public constant MAX_REDEMPTION_DIVISOR = 8;
 

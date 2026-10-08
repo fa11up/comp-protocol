@@ -6,6 +6,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
+import {SmallFloorVault} from "test/helpers/SmallFloorVault.sol"; // the 1,000 floor these figures assume
 import {CDPVault} from "src/CDPVault.sol";
 import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
@@ -87,7 +88,7 @@ contract AdjacentTxBurnTest is Test {
         imd = new MockIMD();
         primary = new AbFeed(uint256(1 ether) * 1e18 / 2000 ether); // IMD = $1
         AbFeed health = new AbFeed(0.85 ether); // mat 170, gap 50
-        vault = new ParameterizedVault(
+        vault = new SmallFloorVault(
             address(imd), address(0), address(0), address(primary), address(health), address(new AbMirror(primary))
         );
         stable = vault.stablecoin();

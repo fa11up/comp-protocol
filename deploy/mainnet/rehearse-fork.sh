@@ -70,7 +70,8 @@ echo "stale? price $(c call $PRICE 'isStale()(bool)') nhi $(c call $NHI 'isStale
 # against (DeployMainnet.verifySeeded) before stage two deploys the vault.
 say "verifySeeded against the pool and a reference price, then stage two: the vault"
 REFERENCE_IMD_ETH_WEI=$POOLP FOUNDRY_PROFILE=deploy forge script script/DeployMainnet.s.sol --sig "verifySeeded()" --rpc-url $RPC 2>&1 | grep -E "Seeded and verified|seeded:|Error" | sed 's/^/  /'
-REFERENCE_IMD_ETH_WEI=$POOLP FOUNDRY_PROFILE=deploy OPERATOR=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 forge script script/DeployMainnet.s.sol --sig "runVault()" --rpc-url $RPC --broadcast --slow --private-key $K0 2>&1 | grep -E "deployed|skipped|Deployed|seeded:|Error|FAIL"
+# The vault's salt is the operator's secret (runbook 7.2): a fresh random one per rehearsal.
+VAULT_SALT=$(cast keccak "rehearsal-$(date +%s)-$RANDOM") REFERENCE_IMD_ETH_WEI=$POOLP FOUNDRY_PROFILE=deploy OPERATOR=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 forge script script/DeployMainnet.s.sol --sig "runVault()" --rpc-url $RPC --broadcast --slow --private-key $K0 2>&1 | grep -E "deployed|skipped|Deployed|seeded:|Error|FAIL"
 VAULT=$(j vault); STABLE=$(j stablecoin)
 
 say "borrower: 10,000 IMD from the PoolManager, lockIMD (wraps to sIMD), draw at ~175%"

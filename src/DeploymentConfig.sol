@@ -33,8 +33,9 @@ uint256 constant ETH_USD_MAX_AGE = 2 hours;
 /// hour refuses every price-dependent action until someone buys a fresh one: on demand, by the caller
 /// (OracleAsker.askPaid) or by the Treasury when IMD's pool drifts (OracleAsker.ask). The protocol does
 /// NOT keep prices fresh on a clock — 24 updates a day per feed is ~$37k a year — so a quiet market is
-/// paused for borrowing between updates, never mispriced. NHI moves slowly and stays daily, and
-/// Treasury-funded staleness asks apply to it alone. `tail()` is the shorter of PRICE and NHI.
+/// paused for borrowing between updates, never mispriced. NHI moves slowly and stays daily, and only it is
+/// kept alive on the Treasury's clock; any feed silent a lifetime with its allowance wide open is also
+/// paid for (OracleAsker.ask), price and spot included. `tail()` is the shorter of PRICE and NHI.
 uint256 constant PRICE_MAX_AGE = 1 hours;
 uint256 constant SPOT_MAX_AGE = 1 hours;
 uint256 constant NHI_MAX_AGE = 1 days;
@@ -124,8 +125,9 @@ uint256 constant CUT_BPS = 1_000;
 /// debt is kept within what liquidators can actually clear (docs/PARAMETERS-2026-10-05.md).
 uint256 constant LINE = 1_000_000e18;
 
-/// @dev Each redemption raises the fee's base by redeemed / supply / this. At 2, redeeming 10% of
-/// supply at once costs 5.0% (the cap); at the former 4 it cost 3%. Chosen 2026-10-05.
+/// @dev Each redemption raises the base rate by redeemed / fee base / this, the fee base being the warm
+/// supply floored at 100,000 imdUSD (CDPVault._feeBase). At 2, redeeming 9% of it at once reaches the cap;
+/// at the former 4 it took 18%. Chosen 2026-10-05.
 uint256 constant REDEMPTION_DIVISOR = 2;
 
 /// @dev The operator stream at launch: who the Treasury pays imdUSD to, and how much per UTC day.

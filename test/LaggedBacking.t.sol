@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
+import {SmallFloorVault} from "test/helpers/SmallFloorVault.sol"; // the 1,000 floor these figures assume
 import {CDPVault} from "src/CDPVault.sol";
 import {ImdUSD} from "src/ImdUSD.sol";
 import {MockIMD} from "src/MockIMD.sol";
@@ -147,7 +148,7 @@ contract LaggedBackingTest is Test {
         // 1 IMD = 1/2000 ETH and 1 ETH = $2000, so the vault prices IMD at exactly $1.
         LagFeed primary = new LagFeed(uint256(1 ether) * 1e18 / 2000 ether);
         LagFeed health = new LagFeed(0.85 ether);
-        vault = new ParameterizedVault(
+        vault = new SmallFloorVault(
             address(imd), address(0), address(0), address(primary), address(health), address(new LagMirror(primary))
         );
         stable = vault.stablecoin();

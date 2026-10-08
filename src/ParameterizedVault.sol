@@ -152,7 +152,9 @@ contract ParameterizedVault is CDPVault {
         return parameters.gap();
     }
 
-    /// @notice All idle IMD is usable, whether or not governance has listed it for reserve valuation.
+    /// @notice All of the Treasury's collateral (sIMD on mainnet) is usable, whether or not governance has
+    /// listed it for reserve valuation. Plain IMD the Treasury holds is never paid to a redeemer; it funds
+    /// the oracle (`Treasury.fundOracle`).
     function redemptionReserve() public view override returns (uint256) {
         return gem.balanceOf(address(treasury));
     }

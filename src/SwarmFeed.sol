@@ -236,7 +236,7 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// feed) verifies the question directly. The relayer is not a trust boundary on the shipped feeds:
     /// it is SwarmRelay, which forwards for anyone. Nothing on chain bounds the FIRST value, which is why
     /// the deployment buys and relays it, and DeployMainnet.verifySeeded checks it against the pool
-    /// before deposits open.
+    /// before the operator deploys the vault (from a salt no one else knows, so no one else can deploy it first).
     /// Payload chainId and answerType must match the configured policy. Zero figures revert.
     function submitAttestation(OracleAttestation calldata a, bytes calldata sig) external {
         if (relayer != address(0) && msg.sender != relayer) revert UnauthorizedRelayer();
