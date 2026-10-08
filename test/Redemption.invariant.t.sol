@@ -275,8 +275,6 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     /// neither dilutes nor backs. Modelled from `laggedNow`, not from `backingPerUnit`, so the payout
     /// is still asserted against an independent computation. Price is one here.
     function _laggedPerUnit(uint256 backing, uint256 reserveIMD, uint256 supply) private view returns (uint256) {
-        // Principal repaid without its secured term moving still counts as supply while it ages.
-        supply += OpenWorkVault(address(backedVault)).excessSupply();
         uint256 perUnit = _backingPerUnit(backing, supply);
         (uint256 lagDebt, uint256 lagSecured) = backedVault.laggedNow();
         uint256 debt = backedVault.totalDebt();

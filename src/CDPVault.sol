@@ -51,16 +51,13 @@ contract CDPVault is ReentrancyGuard {
         uint128 coldDebt;
         uint128 coldSecured;
         /// @dev Warmth this position has BANKED: warm principal and secured collateral that left it (a
-        /// repayment, a withdrawal, a redemption or liquidation against it) and may come back warm within
-        /// BACKING_WARMUP of the bank's own date, the moment it last went from empty to full. See `_lag`.
+        /// repayment, a withdrawal, a redemption or liquidation against it) and may come back warm, less what
+        /// it cooled while away at the lag's own rate since the bank's date, and nothing after a day. See `_lag`.
         uint128 bankDebt;
         uint128 bankSecured;
         uint64 coldAt;
         uint64 bankDebtAt;
         uint64 bankSecuredAt;
-        /// @dev Principal this position repaid that its secured term did not follow down, as of `coldAt`:
-        /// supply gone with the backing left behind. Halves every BACKING_HALF_LIFE. See `_moveExcess`.
-        uint128 excess;
         /// @dev WARM principal this position repaid (`wipe`, or a liquidation or `cover` of it), as of `coldAt`:
         /// still counted in the fee base while it ages, and released as this position borrows back from its
         /// bank. See `_reduceDebt` and `_feeBase`.
@@ -257,6 +254,9 @@ contract CDPVault is ReentrancyGuard {
     uint256 private constant SECURED_THIS_TX_SLOT = 0xf45fbc7390d8fe64766790eac1c1a0c998865663167e91e17d360ad63faf32cb;
     uint256 private constant MINTED_THIS_TX_SLOT = 0x7863d18732bd3fc443c44a39552cffecac393d3fbf3094322f7f794631746012;
     uint256 private constant WORK_MINTED_THIS_TX_SLOT = 0xf427427e9c6fc4311907632705fbeaa6595527cec8a17ee1a7090d960da2ff6d;
+    /// @dev keccak256("comp.CDPVault.supplyBurnedThisTransaction"): imdUSD a repayment burned in this transaction
+    /// (`wipe`, `bite`, `cover`; not a redemption), added back to the supply backing per imdUSD is measured against.
+    uint256 private constant REPAID_THIS_TX_SLOT = 0xbcad9cc89ed804567fe3e103d0426f1858d5c1f9ef8bfda2c4bdf36a0faa0b5d;
     /// @dev 1e18-scaled seconds, the unit of the fresh-debt record's date.
     uint256 private constant WAD = 1e18;
     error WorkMintingOff();
@@ -315,9 +315,8 @@ contract CDPVault is ReentrancyGuard {
     /// is still COLD. Cold is kept PER POSITION (`_lag`): what a position adds is cold, and its cold
     /// halves every BACKING_HALF_LIFE (capital one block old counts about 0.04%, an hour 11%, six hours
     /// half). Every position cools at the same rate, so the vault's total cold cools at that rate too and
-    /// is kept as one figure, read in constant time. A day in which the total is not touched credits it
-    /// in full; under activity a day credits about 94%, two days 99.6%, which errs toward crediting new
-    /// capital more slowly, the safe direction. A decrease takes the
+    /// is kept as one figure, read in constant time. A day in which nothing is touched credits it in full;
+    /// under activity a day credits about 94%, two days 99.6% (see `_cool`). A decrease takes the
     /// position's own cold first and counts at once. So capital brought in one transaction and withdrawn a
     /// few later cannot authorise work minting or a redemption at par, and what one position removes can
     /// never warm what another adds, in either order (retry panel audit 2026-10-07, vault, high: with ONE
@@ -328,8 +327,7 @@ contract CDPVault is ReentrancyGuard {
     /// lag's safe direction (retry2 panel audit 2026-10-08, vault, low). Tracked from deployment, so it is
     /// warm whenever it is read.
     uint256 internal constant BACKING_HALF_LIFE = 6 hours;
-    /// @dev How long a position's banked warmth waits for its capital to return, and how long cold capital
-    /// left untouched takes to count in full.
+    /// @dev A day: cold capital, and a bank, left untouched this long count in full (`_cool`).
     uint256 public constant BACKING_WARMUP = 1 days;
     /// @dev 2^(-1 / BACKING_HALF_LIFE), the per-second factor cold capital keeps, 1e27-scaled.
     uint256 private constant COLD_SECOND_DECAY = 999967910367635122012970996;
@@ -337,9 +335,6 @@ contract CDPVault is ReentrancyGuard {
     uint256 private _coldDebt;
     uint256 private _coldSecured;
     uint256 private _coldAt = block.timestamp;
-    /// @dev The positions' `excess`, summed, as of `_coldAt`: added back to the supply backing per imdUSD is
-    /// measured against (`_backingPerUnit`).
-    uint256 private _excess;
     /// @dev The positions' `feeExcess`, summed, as of `_coldAt`: warm principal repaid in the last hours,
     /// still counted in the supply the redemption fee is measured against (`_feeBase`).
     uint256 private _feeExcess;
@@ -473,13 +468,7 @@ contract CDPVault is ReentrancyGuard {
             if (!_healthy(remaining, debt)) revert UnsafeCollateralRatio();
         }
         position.collateral = remaining;
-        uint256 termBefore = position.secured;
-        uint256 price = _priceOrZero();
-        _resecure(position, price);
-        // The backing a repayment left behind has now left too: so does the supply kept for it.
-        if (position.excess != 0 && termBefore > position.secured) {
-            _moveExcess(position, false, 0, Math.mulDiv(termBefore - position.secured, price, 1e18));
-        }
+        _resecure(position, _priceOrZero());
         _clearMark(msg.sender);
         gem.safeTransfer(msg.sender, amount);
         emit Free(msg.sender, amount);
@@ -499,8 +488,6 @@ contract CDPVault is ReentrancyGuard {
         totalDebt = resultingTotal;
         _debtChanged(resultingTotal - amount);
         _lag(position, false, position.debt, position.debt + amount);
-        // Borrowing again re-dilutes what a repayment left behind: the supply kept for it is no longer needed.
-        if (position.excess != 0) _moveExcess(position, false, 0, amount);
         position.debt += amount;
         _resecure(position, _priceOrZero());
         _transientAdd(MINTED_THIS_TX_SLOT, amount);
@@ -558,19 +545,7 @@ contract CDPVault is ReentrancyGuard {
     function wipe(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _accrue(msg.sender);
-        Position storage position = _positions[msg.sender];
-        (uint256 principalBefore, uint256 termBefore) = (position.debt, position.secured);
         uint256 feePaid = _reduceDebt(msg.sender, amount, true);
-        // The principal repaid that the secured term did not follow down is supply gone with its backing left
-        // behind (a position in the 170-200% band repays without moving its term). Backing per imdUSD keeps
-        // counting it as supply while it ages, so a repayment, a redemption and a redraw in three transactions
-        // pay the redemption no premium (retry panel audit 2026-10-07, vault, medium). An unreadable price
-        // values the term's fall at nothing, the safe direction.
-        uint256 repaid = principalBefore - position.debt;
-        if (repaid != 0) {
-            uint256 fell = termBefore > position.secured ? termBefore - position.secured : 0;
-            _moveExcess(position, false, repaid - Math.min(repaid, Math.mulDiv(fell, _priceOrZero(), 1e18)), 0);
-        }
         _payDebt(amount, feePaid);
         _clearIfRecovered(msg.sender);
         emit Wipe(msg.sender, amount);
@@ -635,6 +610,7 @@ contract CDPVault is ReentrancyGuard {
         _syncSurplus(payer);
         uint256 feePaid = _reduceDebt(owner, amount, true);
         stablecoin.burn(payer, amount);
+        _transientAdd(REPAID_THIS_TX_SLOT, amount);
         // Sync again after the burn and before the fees are reminted, so the baseline drops to the
         // burned balance and the reminted fees arrive as new receipts (adversarial review 2026-10-05,
         // low: synced only before, the remint landed below the baseline and was never credited).
@@ -676,7 +652,8 @@ contract CDPVault is ReentrancyGuard {
     /// uncoverable for a mark-and-grace cycle at a time. A millionth of the debt alone left that re-lock
     /// free in capital too, about $0.001 on a $1,000 debt (second-half review 2026-10-07, low). Swept, the
     /// dust goes to the surplus account; anything larger but worth less than the recorded bad debt is taken
-    /// by `cover` at its value, so holding cover off costs the whole re-lock every time.
+    /// by `cover` at its value, so holding cover off costs the whole re-lock every time the Treasury holds that
+    /// much imdUSD; with less, the re-lock waits for a mark and grace and is bitten, at the 20% bonus.
     function _coverDust(address owner, uint256 price) private view returns (uint256) {
         uint256 debt = _positions[owner].debt + _stabilityFees[owner];
         uint256 floor_ = debt / 100 < COVER_DUST_MIN_DEBT ? debt / 100 : COVER_DUST_MIN_DEBT;
@@ -696,7 +673,10 @@ contract CDPVault is ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
         _requireFreshFeeds();
         _requirePriceAgreement();
-        uint256 base = _redemptionRate(amount);
+        // The fee base is read once, before the candidate is touched: retiring its cold principal first made
+        // the stored rate's base count the imdUSD about to be burned as warm (final vault panel, info).
+        uint256 prior = _feeBase();
+        uint256 base = _redemptionRate(amount, prior);
         // REVISION (finding b8aa4a98): whole basis points, rounded against the party paying them.
         uint256 feeBps = REDEMPTION_FEE_FLOOR_BPS + Math.ceilDiv(base, 1e14);
         uint256 price = _price();
@@ -744,7 +724,7 @@ contract CDPVault is ReentrancyGuard {
         }
         totalNonPrincipalRedeemed += amount - principalCancelled;
         // The fresh part of the burn is charged in full but does not move the rate everyone else pays.
-        redemptionBaseRate = freshCancelled == 0 ? base : _redemptionRate(amount - freshCancelled);
+        redemptionBaseRate = freshCancelled == 0 ? base : _redemptionRate(amount - freshCancelled, prior);
         lastRedemptionAt = block.timestamp;
         stablecoin.burn(msg.sender, amount);
         if (reserveOut != 0) _payRedemptionReserve(reserveOut);
@@ -772,16 +752,20 @@ contract CDPVault is ReentrancyGuard {
     /// over supply less the principal that is still warming up. An attacker's capital can raise the live
     /// figure but not the lagged one, whichever position it sits in (`_lag`); honest redemptions are not
     /// underpaid, because new debt and the imdUSD minted against it are excluded together. When every unit
-    /// of supply is fresh there is no lagged figure and the live one stands. The supply is the live one
-    /// plus what repayments left behind (`_excessNow`), so a repayment earlier in the same call does not
-    /// shrink it (sweep panel audit, vault, medium), nor one a TRANSACTION earlier: a borrower in the 170-200% band whose term is its whole
-    /// collateral can repay without moving it, and a redemption in the next transaction was paid that
-    /// briefly higher backing, diluted again by a redraw in the one after (retry panel audit 2026-10-07,
-    /// vault, medium). Only that part of a repayment is kept in the supply, per position (`_moveExcess`):
-    /// lagging the whole supply instead underpaid every redeemer after an honest unwind, five times over in
-    /// test/Redemption.t.sol, which is the redemption halt this cap was built to replace.
+    /// of supply is fresh there is no lagged figure and the live one stands. The supply is the live one plus
+    /// what repayments earlier in this transaction burned (REPAID_THIS_TX_SLOT), so a same-call wipe, cash and
+    /// draw is paid no premium (sweep panel audit, vault, medium).
+    /// ACCEPTED, one transaction apart: a borrower in the 170-200% band whose term is its whole collateral can
+    /// repay without moving it, and a redemption in the next transaction is paid that briefly higher backing,
+    /// diluted again by a redraw in the one after (retry panel audit 2026-10-07, vault, medium). It exists only
+    /// below par, costs gas, and the premium is at most (supply - fresh) / (supply - fresh - repaid), the
+    /// repayment bounded by the churner's principal above half its collateral's value (15% of it at a 170%
+    /// minimum ratio). Both ways of closing it were worse: lagging the whole supply underpaid every redeemer
+    /// after an honest unwind (0.4 to 0.08 in test/Redemption.t.sol), and keeping the left-behind part per
+    /// position (58f73de) could be stranded and pumped, for gas, to underpay redeemers without bound (final
+    /// vault panel 2026-10-08, high, and five further findings). It was removed.
     function _backingPerUnit(uint256 price) private view returns (uint256) {
-        uint256 supply = stablecoin.totalSupply() + _excessNow();
+        uint256 supply = stablecoin.totalSupply() + _transient(REPAID_THIS_TX_SLOT);
         if (supply == 0) return 1e18;
         uint256 reserve = _redemptionReserveBacking(price);
         uint256 perUnit = Math.mulDiv(reserve + _securedCollateralValue(price, false), 1e18, supply);
@@ -895,16 +879,15 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Fee for a proposed burn, including its increase against supply BEFORE burning.
     /// A zero amount quotes just the current floor plus decayed base.
     function redemptionFeeBps(uint256 amount) external view returns (uint256) {
-        return REDEMPTION_FEE_FLOOR_BPS + Math.ceilDiv(_redemptionRate(amount), 1e14);
+        return REDEMPTION_FEE_FLOOR_BPS + Math.ceilDiv(_redemptionRate(amount, _feeBase()), 1e14);
     }
 
     /// @dev The increase is the burned fraction of the fee base (`_feeBase`): warm supply, plus warm
     /// principal repaid in the last hours, so neither new principal nor a fresh repayment moves it.
-    function _redemptionRate(uint256 amount) private view returns (uint256) {
+    function _redemptionRate(uint256 amount, uint256 prior) private view returns (uint256) {
         uint256 supply = stablecoin.totalSupply();
         if (amount > supply) revert ExcessRepayment();
         uint256 cap = (REDEMPTION_FEE_CAP_BPS - REDEMPTION_FEE_FLOOR_BPS) * 1e14;
-        uint256 prior = _feeBase();
         uint256 increase = amount == 0 ? 0 : prior == 0 ? cap : Math.mulDiv(amount, 1e18, prior) / redemptionDivisor();
         return Math.min(decayedRedemptionBaseRate() + increase, cap);
     }
@@ -971,18 +954,16 @@ contract CDPVault is ReentrancyGuard {
         // Cool the vault's totals and this position's figures to now: all cool at the same rate.
         (_coldDebt, _coldSecured) = _coldNow();
         uint256 elapsed = block.timestamp - _coldAt;
-        (_excess, _feeExcess, _coldAt) =
-            (_cool(_excess, elapsed, true), _cool(_feeExcess, elapsed, true), block.timestamp);
+        (_feeExcess, _coldAt) = (_cool(_feeExcess, elapsed, true), block.timestamp);
         elapsed = block.timestamp - position.coldAt;
         (position.coldDebt, position.coldSecured, position.coldAt) = (
             uint128(_cool(position.coldDebt, elapsed, false)),
             uint128(_cool(position.coldSecured, elapsed, false)),
             uint64(block.timestamp)
         );
-        (position.excess, position.feeExcess) =
-            (uint128(_cool(position.excess, elapsed, false)), uint128(_cool(position.feeExcess, elapsed, false)));
+        position.feeExcess = uint128(_cool(position.feeExcess, elapsed, false));
         uint256 cold = secured ? position.coldSecured : position.coldDebt;
-        // A bank cools while it waits, at the lag's own rate, and is gone after a quiet day: capital that
+        // A bank cools while it waits, at the lag's own rate, and is gone after a day: capital that
         // comes back after hours is credited only what is left, and a one-block visit cannot re-arm it,
         // because what leaves again is only what was credited (retry2 panel audit 2026-10-08, vault, medium:
         // emptied by a visit and re-dated on the next departure, a once-seasoned position kept its warmth
@@ -1007,12 +988,15 @@ contract CDPVault is ReentrancyGuard {
                 cold += after_ - before - credit;
                 total += after_ - before - credit;
                 // Principal coming back warm from the bank is the supply its repayment took away, returning:
-                // the fee base stops counting the repayment.
-                if (!secured && position.feeExcess != 0) _moveExcess(position, true, 0, credit);
+                // the fee base stops counting the repayment. The debt bank is also filled by a redemption's
+                // cancellation, so a redraw after one releases a repayment's share early, raising the next fee a
+                // little: accepted, bounded by the position's own share (final vault panel 2026-10-08, low).
+                if (!secured && position.feeExcess != 0) _moveFeeExcess(position, 0, credit);
             }
         }
         // Saturates rather than reverts, because deposit and repayment promise not to: past 128 bits of raw
-        // units (3.4e14 sIMD) a position's excess over that counts as warm.
+        // units (3.4e14 sIMD) the position records less cold than the total holds for it, so the surplus stays
+        // cold in the total until it cools, the safe direction.
         if (cold > type(uint128).max) cold = type(uint128).max;
         if (secured) {
             (position.coldSecured, position.bankSecured, position.bankSecuredAt) =
@@ -1025,17 +1009,18 @@ contract CDPVault is ReentrancyGuard {
         }
     }
 
-    /// @dev `amount` after `elapsed` seconds of halving every BACKING_HALF_LIFE. `up` (the vault's totals,
-    /// and banks): rounded up, and nothing once a whole BACKING_WARMUP has passed untouched; a touch only
-    /// restarts that day, so activity can slow warming but never speed it. A position's own figures round
-    /// down and never cut off, so a position untouched for a day still holds the share of the total it put
-    /// there, and retires it when it moves (retry2 panel audit, low: cut off, its repayment left that share
-    /// orphaned in the total). The total is therefore at least the sum of the positions only up to rounding
-    /// (`_pow` truncates at each step) and except after a quiet day, when it reads zero and every
-    /// subtraction from it saturates.
+    /// @dev `amount` after `elapsed` seconds of halving every BACKING_HALF_LIFE, rounded up for the vault's
+    /// totals and banks (`up`) and down for a position's own figures; and nothing once a whole BACKING_WARMUP
+    /// has passed untouched, for ALL of them alike. That is what keeps them consistent: a total is untouched
+    /// for a day only when every position in it is, so when the total reads zero so does every position. A
+    /// cutoff on the totals alone let an old position's repayment, retiring cold the total no longer held,
+    /// warm a new position's capital (final vault panel 2026-10-08, medium). The reverse remains: a position
+    /// untouched for a day reads zero while a busy total still holds its share, which then stays in the total
+    /// until it cools. That only understates the lagged figures, the safe direction: accepted (retry2, low).
+    /// A touch only restarts the day, so activity can slow warming but never speed it.
     function _cool(uint256 amount, uint256 elapsed, bool up) private pure returns (uint256) {
         if (amount == 0 || elapsed == 0) return amount;
-        if (elapsed >= (up ? BACKING_WARMUP : 256 * BACKING_HALF_LIFE)) return 0;
+        if (elapsed >= BACKING_WARMUP) return 0;
         return Math.mulDiv(amount, _pow(COLD_SECOND_DECAY, elapsed, RAY), RAY, up ? Math.Rounding.Ceil : Math.Rounding.Floor);
     }
 
@@ -1043,11 +1028,6 @@ contract CDPVault is ReentrancyGuard {
     function _coldNow() private view returns (uint256 debt, uint256 secured) {
         uint256 elapsed = block.timestamp - _coldAt;
         return (_cool(_coldDebt, elapsed, true), _cool(_coldSecured, elapsed, true));
-    }
-
-    /// @dev The positions' `excess`, summed and cooled to now.
-    function _excessNow() internal view returns (uint256) {
-        return _cool(_excess, block.timestamp - _coldAt, true);
     }
 
     /// @dev THE FEE BASE: the supply a redemption's increase is measured against. The live supply, less
@@ -1058,12 +1038,23 @@ contract CDPVault is ReentrancyGuard {
     /// for a tenth of the honest cost, retry panel audit 2026-10-07, medium). Both terms are kept per
     /// position, so one position's cold draw and repayment cannot erase another's warm repayment (retry2,
     /// medium: as one absolute figure it could). A repayment of cold principal and a redemption's burn
-    /// count at once. Zero while every unit of supply is new, and then a redemption pays the cap: early
-    /// redemptions, and those right after a large draw, pay more, the lag's accepted direction.
+    /// count at once. The same figure charges the redeemer and sets the base rate everyone after pays, so
+    /// neither can be lowered by principal held for a block.
+    /// FLOORED at `_feeBaseFloor()`: while most supply is new, as right after launch, the warm base is near
+    /// zero, and a dust redemption then stored the 4.5% cap as everyone's base rate for days (final vault
+    /// panel 2026-10-08, low). Under the floor a redemption's increase is measured as if the supply were the
+    /// floor, which only lowers fees while the protocol is that small.
     function _feeBase() internal view returns (uint256) {
         uint256 base = stablecoin.totalSupply() + _cool(_feeExcess, block.timestamp - _coldAt, true);
         uint256 out = _coldPrincipal() + _transient(WORK_MINTED_THIS_TX_SLOT);
-        return base > out ? base - out : 0;
+        base = base > out ? base - out : 0;
+        uint256 floor = _feeBaseFloor();
+        return base > floor ? base : floor;
+    }
+
+    /// @dev 1,000 imdUSD. A subclass that models only fee arithmetic may lower it.
+    function _feeBaseFloor() internal view virtual returns (uint256) {
+        return 1_000e18;
     }
 
     /// @dev The vault's principal still cold, as of now.
@@ -1076,16 +1067,14 @@ contract CDPVault is ReentrancyGuard {
         return _transient(MINTED_THIS_TX_SLOT);
     }
 
-    /// @dev Moves a position's `excess` (or, with `fee`, its `feeExcess`), and the vault's total with it, by
-    /// `add` and then down by up to `remove`. Called only after `_lag` has cooled both to now in the same call.
-    function _moveExcess(Position storage position, bool fee, uint256 add, uint256 remove) private {
-        uint256 own = (fee ? position.feeExcess : position.excess) + add;
-        uint256 total = (fee ? _feeExcess : _excess) + add;
+    /// @dev Moves a position's `feeExcess`, and the vault's total with it, by `add` and then down by up to
+    /// `remove`. Called only after `_lag` has cooled both to now in the same call.
+    function _moveFeeExcess(Position storage position, uint256 add, uint256 remove) private {
+        uint256 own = position.feeExcess + add;
+        uint256 total = _feeExcess + add;
         remove = Math.min(remove, own);
-        own = Math.min(own - remove, type(uint128).max);
-        total = total > remove ? total - remove : 0;
-        if (fee) (position.feeExcess, _feeExcess) = (uint128(own), total);
-        else (position.excess, _excess) = (uint128(own), total);
+        position.feeExcess = uint128(Math.min(own - remove, type(uint128).max));
+        _feeExcess = total > remove ? total - remove : 0;
     }
 
     /// @notice The lagged debt and secured collateral as of now: the live figures less what is still cold.
@@ -1210,8 +1199,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 bonus = collateralSeized > principalPart ? collateralSeized - principalPart : 0;
         uint256 protocolCut = Math.mulDiv(bonus, protocolShare, 10_000);
         uint256 markerCut = Math.mulDiv(bonus, chip(), 10_000);
-        // An unmarked drained position has no marker: the liquidator takes both shares of the bonus.
-        address marker = mark.marked ? mark.marker : msg.sender;
+        address marker = mark.marker;
         // Sweep a remainder nobody could ever claim. Taking the largest coverable debt leaves dust,
         // and once that dust is smaller than the seizure for a single wei of debt every later
         // bite reverts InsufficientCollateral: the position freezes with debt outstanding and
@@ -1399,7 +1387,7 @@ contract CDPVault is ReentrancyGuard {
         uint256 principalBefore = position.debt;
         {
             uint256 coldOut = _lag(position, false, principalBefore, principalBefore - principalPaid);
-            if (repayment && principalPaid > coldOut) _moveExcess(position, true, principalPaid - coldOut, 0);
+            if (repayment && principalPaid > coldOut) _moveFeeExcess(position, principalPaid - coldOut, 0);
         }
         position.debt -= principalPaid;
         // With no readable price the term cannot be re-priced, but the principal it is bounded by has
@@ -1455,6 +1443,7 @@ contract CDPVault is ReentrancyGuard {
 
     function _payDebt(uint256 amount, uint256 feePaid) private {
         stablecoin.burn(msg.sender, amount);
+        _transientAdd(REPAID_THIS_TX_SLOT, amount);
         if (feePaid != 0) {
             totalFeesMinted += feePaid;
             stablecoin.mint(feeRecipient(), feePaid);

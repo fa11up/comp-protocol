@@ -240,7 +240,9 @@ contract ParameterizedVault is CDPVault {
     /// repays or loses never warms what another draws, in either order. A position held across transactions counts
     /// in full, so the ceiling stays point-in-time for the slow version of the same round trip: that is
     /// the accepted design (the ceiling gates new minting only; repayment lowers it and leaves what was
-    /// minted), and the cost of it is real capital at risk in an open position, not gas.
+    /// minted), and the cost of it is real capital at risk in an open position, not gas. (The redemption
+    /// half differs: a repayment one transaction before a redemption can lift what it is paid, for gas,
+    /// within a bound; see CDPVault._backingPerUnit.)
     /// REVISION (finding e3888b1e): `totalBadDebt` is subtracted, saturating. After a liquidation
     /// drains a position its residual principal stays in totalDebt with no collateral behind it, and
     /// it was credited as if surplus collateral stood behind it. totalBadDebt is accrued debt (fees

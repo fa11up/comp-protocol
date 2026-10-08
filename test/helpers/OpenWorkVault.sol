@@ -28,15 +28,14 @@ contract OpenWorkVault is ParameterizedVault {
         return _principalMintedThisTransaction();
     }
 
+    /// @dev No floor: the suites built on WorkBackingFixture check the fee curve on supplies of a few hundred.
+    function _feeBaseFloor() internal pure override returns (uint256) {
+        return 0;
+    }
+
     /// @notice The supply a redemption's fee increase is measured against (CDPVault._laggedSupply), for the
     /// invariant suite's model of the fee curve.
     function redemptionSupply() external view returns (uint256) {
         return _feeBase();
-    }
-
-    /// @notice Principal repaid with its backing left behind, still counted in the supply backing per imdUSD is
-    /// measured against (CDPVault._moveExcess), for the invariant suite's model of the payout.
-    function excessSupply() external view returns (uint256) {
-        return _excessNow();
     }
 }
