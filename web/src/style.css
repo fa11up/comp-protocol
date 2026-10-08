@@ -3544,6 +3544,29 @@ body:has(> .vibe-canvas:not([hidden])),
 body:has(> .vibe-canvas:not([hidden])) .infer {
   background: var(--clear);
 }
+/* INFER, see-through like the imdusd.com terminal: while the vibe shows, the trade, stake and claim
+   tickets are translucent paper (about a third) and everything inside them is clear, so the engraving
+   runs through the page instead of stopping at each box. The stats grid's hairlines were its opaque
+   backing showing through 1px gaps; a clear grid draws them as shadows instead. The /buy/ sheet keeps
+   its ground: it floats over the card and must read on its own. */
+body:has(> .vibe-canvas:not([hidden])) .infer :is(.infer-ticket, .infer-stats) {
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+}
+body:has(> .vibe-canvas:not([hidden])) .infer-buy-sheet .infer-ticket {
+  background: transparent;
+}
+body:has(> .vibe-canvas:not([hidden])) .infer .infer-stat {
+  background: transparent;
+  box-shadow:
+    1px 0 0 var(--rule),
+    0 1px 0 var(--rule);
+}
+body:has(> .vibe-canvas:not([hidden]))
+  .infer
+  .infer-switch
+  button:not([aria-selected="true"], [aria-pressed="true"]) {
+  background: transparent;
+}
 .vibe-canvas[hidden] {
   display: none;
 }
@@ -3571,6 +3594,16 @@ body:has(> .vibe-canvas:not([hidden])) .infer {
     margin-inline-end: -44px;
     /* Four links do not fit a 320px phone on one line: let them wrap rather than push the page wide. */
     flex-wrap: wrap;
+  }
+}
+/* The network chip sits just before the two buttons on a phone too: pinned beside them on the first
+   row (they are pinned top right above), so it adds no row of its own. The wordmark alone is left on
+   that row, so there is room for both down to a 320px screen. */
+@media (max-width: 760px) {
+  .topbar .wallet-bar .chip {
+    position: absolute;
+    top: 21px;
+    right: 88px;
   }
 }
 

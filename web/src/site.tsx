@@ -30,7 +30,8 @@ export function StagingChip() {
 }
 
 type Page = "home" | "terminal" | "docs";
-/** One header for every page: brand, network chip, navigation, theme, background, and a page-specific end. */
+/** One header for every page: brand and navigation on the left; the network chip, theme, background and a
+ * page-specific end on the right. */
 export function SiteHeader({
   page,
   network,
@@ -51,11 +52,6 @@ export function SiteHeader({
         <a className="wordmark" href={href()} aria-label="imdUSD home">
           imd<b>USD</b>
         </a>
-        {TERMINAL ? (
-          <span className="chip">{`${network ?? "Sepolia"} · testnet`}</span>
-        ) : (
-          <StagingChip />
-        )}
         <nav className="site-nav" aria-label="Site">
           {TERMINAL && link("terminal", "terminal/", "Terminal")}
           {link("docs", "docs/", "Docs")}
@@ -68,6 +64,11 @@ export function SiteHeader({
         </nav>
       </div>
       <div className="wallet-bar">
+        {TERMINAL ? (
+          <span className="chip">{`${network ?? "Sepolia"} · testnet`}</span>
+        ) : (
+          <StagingChip />
+        )}
         <ThemeToggle />
         <Vibe suite={IMDUSD_VIBES} />
         {children}
