@@ -205,7 +205,9 @@ def build(aspect, kicker='a5'):
     # --- the note's layers (stackOrder), with the isolate / reassemble alphas of each beat
     every = ['paper', 'border', 'rosette', 'portrait', 'seal', 'corners', 'banner', 'serials']
     keep = {  # layers that stay while the beat isolates its element
-        1: {'portrait'}, 2: {'paper', 'rosette'}, 3: {'paper', 'seal'}, 4: {'paper', 'corners'}}
+        1: {'portrait'}, 2: {'paper', 'rosette'}, 3: {'paper', 'seal'},
+        # beat 4 (review 2026-10-07): the note stays whole into the liquidation beat; nothing isolates
+        4: {'paper', 'border', 'rosette', 'portrait', 'seal', 'corners', 'banner', 'serials'}}
     def iso(name, beat, out, back, d=.6):
         return [] if name in keep[beat] else [(out, out + d, 0.0), (back, back + d, 1.0)]
     for name in every:

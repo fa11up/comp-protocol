@@ -322,16 +322,20 @@ def main():
     run(['-f', 'lavfi', '-i', f'color=c=0x{PAL["ivory"][1:]}:s={W}x{H}:r={FPS}', '-vf', 'format=gbrp',
          '-frames:v', 2, '-c:v', 'ffv1', flash])
     endcard = ROOT / f'marketing/kit/endcard/endcard-{Wf}x{Hf}.png'
-    blank, live = endcard.with_name(endcard.stem + '-blank.png'), endcard.with_name(endcard.stem + '-live.png')
-    if blank.exists() and live.exists():
-        # The status chip blinks from STAGING to LIVE (as in film B): off 0.80-0.95, on, off 1.10-1.25, then LIVE.
+    blank = endcard.with_name(endcard.stem + '-blank.png')
+    lit, dark = endcard.with_name(endcard.stem + '-term.png'), endcard.with_name(endcard.stem + '-term-off.png')
+    if blank.exists() and lit.exists() and dark.exists():
+        # STAGING blinks off 0.80-0.95, on, off 1.10-1.25, then LIVE in terminal green (a soft glow, no block),
+        # which keeps blinking to the end: lit 0.6 s of every 1.0 s.
         sc = f'scale={W}:{H}:flags=lanczos,format=gbrp'
-        g = (f'[0:v]{sc}[c0];[1:v]{sc}[b];[2:v]{sc}[l];[b]split[b1][b2];'
+        g = (f'[0:v]{sc}[c0];[1:v]{sc}[b];[2:v]{sc}[d];[3:v]{sc}[l];[b]split[b1][b2];'
              "[c0][b1]overlay=0:0:enable='between(t,0.80,0.95)'[c1];"
              "[c1][b2]overlay=0:0:enable='between(t,1.10,1.25)'[c2];"
-             "[c2][l]overlay=0:0:enable='gte(t,1.25)',format=gbrp[v]")   # same pixel format as the segments (concat)
+             "[c2][d]overlay=0:0:enable='gte(t,1.25)'[c3];"
+             "[c3][l]overlay=0:0:enable='gte(t,1.25)*lt(mod(t-1.25,1.0),0.6)',format=gbrp[v]")   # segments' format (concat)
         run(['-loop', 1, '-framerate', FPS, '-i', endcard, '-loop', 1, '-framerate', FPS, '-i', blank,
-             '-loop', 1, '-framerate', FPS, '-i', live, '-filter_complex', g, '-map', '[v]',
+             '-loop', 1, '-framerate', FPS, '-i', dark, '-loop', 1, '-framerate', FPS, '-i', lit,
+             '-filter_complex', g, '-map', '[v]',
              '-frames:v', NFRAMES - HIT_FRAME - 2, '-c:v', 'ffv1', card])
     else:
         run(['-loop', 1, '-framerate', FPS, '-i', endcard, '-vf', f'scale={W}:{H}:flags=lanczos,format=gbrp',
