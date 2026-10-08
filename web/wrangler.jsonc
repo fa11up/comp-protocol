@@ -23,6 +23,8 @@
   // No *.workers.dev copy: the site answers only on its own hostname, where the zone's HTTPS and redirect rules apply.
   "workers_dev": false,
   // Cloudflare creates the DNS records and certificates for custom domains itself.
+  // Static only, so the Worker rarely runs; the cap bounds what one hostile request can cost (busiest hour: 3 ms p99).
+  "limits": { "cpu_ms": 50 },
   "routes": [
     // www.imdusd.com is NOT a route: it is a proxied DNS record plus the zone's www -> imdusd.com Redirect
     // Rule. Listing it here would make every deploy recreate a custom domain that serves the site on www.

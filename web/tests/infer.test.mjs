@@ -218,6 +218,38 @@ test("/rpc serves only the pages' methods and contracts, caches shared reads, an
   assert.equal((await handleRpc(new Request("https://infer.imdusd.com/rpc"), env(), { fetch: fetchStub, cache })).status, 405);
   assert.equal((await rpc(Array.from({ length: 21 }, (_, i) => call(OURS, {}, i)))).status, 400);
 
+  // Per-visitor limits: a visitor over RPC_REQUESTS gets a 429 before anything is read; over RPC_UPSTREAM, a cache
+  // miss is refused without a provider call while cached reads still answer. Keys are the connecting IP.
+  const limiter = (n) => {
+    const seen = new Map();
+    return { keys: seen, limit: async ({ key }) => ({ success: (seen.set(key, (seen.get(key) ?? 0) + 1), seen.get(key)) <= n }) };
+  };
+  const from = (ip, body, e) =>
+    handleRpc(new Request("https://infer.imdusd.com/rpc", { method: "POST", body: JSON.stringify(body), headers: { "cf-connecting-ip": ip } }), e, { fetch: fetchStub, cache });
+  {
+    const e = { ...env(), RPC_REQUESTS: limiter(2) };
+    assert.equal((await from("1.1.1.1", call(OURS), e)).status, 200);
+    assert.equal((await from("1.1.1.1", call(OURS), e)).status, 200);
+    const over = await from("1.1.1.1", call(OURS), e);
+    assert.equal(over.status, 429);
+    assert.equal((await over.json()).error.code, -32005);
+    assert.equal((await from("2.2.2.2", call(OURS), e)).status, 200, "another address is unaffected");
+  }
+  {
+    const e = { ...env(), RPC_UPSTREAM: limiter(1) };
+    const miss = (n) => ({ jsonrpc: "2.0", id: n, method: "eth_call", params: [{ to: OURS, data: "0x18160ddd", from: "0x000000000000000000000000000000000000beef" }, "latest"] });
+    const before = calls.length;
+    assert.ok("result" in (await (await from("3.3.3.3", miss(1), e)).json()));
+    const limited = await from("3.3.3.3", miss(2), e);
+    assert.equal(limited.headers.get("x-rpc"), "limited");
+    assert.equal((await limited.json()).error.code, -32005);
+    assert.equal(calls.length, before + 1, "the limited call never reached a provider");
+    // A shared read already in the cache still answers for the limited visitor.
+    assert.equal((await from("3.3.3.3", call(OURS), e)).headers.get("x-rpc"), "cache");
+  }
+  // A failing limiter never blocks.
+  assert.equal((await from("4.4.4.4", call(OURS), { ...env(), RPC_REQUESTS: { limit: async () => { throw new Error("down"); } } })).status, 200);
+
   // A build without rpc-allow.json (the whitepaper) has no /rpc.
   resetAllowlist();
   assert.equal((await rpc(call(OURS), env(null))).status, 404);

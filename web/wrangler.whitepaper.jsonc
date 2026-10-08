@@ -17,5 +17,7 @@
   },
   // No *.workers.dev copy: the site answers only on its own hostname, where the zone's HTTPS and redirect rules apply.
   "workers_dev": false,
+  // Static only, so the Worker rarely runs; the cap bounds what one hostile request can cost (busiest hour: 3 ms p99).
+  "limits": { "cpu_ms": 50 },
   "routes": [{ "pattern": "whitepaper.imdusd.com", "custom_domain": true }]
 }
