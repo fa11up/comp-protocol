@@ -2187,6 +2187,16 @@ html.app-page body {
   padding-block: 6px;
   color: var(--text);
 }
+/* The X mark: an icon-only link, padded to a 24px target and centred on the text line. */
+.site-footer .x-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  align-self: center;
+}
 .docs-placeholder,
 .not-found {
   padding-block: 72px;

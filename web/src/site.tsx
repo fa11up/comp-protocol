@@ -19,6 +19,18 @@ export const href = (path = "") => new URL(path, appRoot()).href;
 export const TERMINAL = import.meta.env.MODE !== "public";
 export const WHITEPAPER = "https://whitepaper.imdusd.com";
 export const INFER_SITE = "https://infer.imdusd.com";
+export const X_ACCOUNT = "https://x.com/imdusd";
+
+/** The footer's link to imdUSD on X: the X mark, in the text colour, named for screen readers. */
+export function XLink() {
+  return (
+    <a className="x-link" href={X_ACCOUNT} target="_blank" rel="noreferrer" aria-label="imdUSD on X" title="imdUSD on X">
+      <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+      </svg>
+    </a>
+  );
+}
 
 /** imdusd.com's header chip: "Mainnet · staging", the last word pulsing. Shared with infer.imdusd.com. */
 export function StagingChip() {

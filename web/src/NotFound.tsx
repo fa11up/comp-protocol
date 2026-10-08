@@ -1,4 +1,4 @@
-import { SiteHeader, WHITEPAPER, INFER_SITE, href } from "./site";
+import { SiteHeader, WHITEPAPER, INFER_SITE, href, XLink } from "./site";
 
 /** The public site's not-found page (404.html). The host serves it at any unknown path, so every
  * link resolves from the site root (the build rewrites this page's URLs to absolute ones). */
@@ -27,6 +27,7 @@ export function NotFound() {
           <a href={WHITEPAPER} target="_blank" rel="noreferrer">
             Whitepaper ↗
           </a>
+          <XLink />
         </nav>
         <span>imdUSD · built on IdentityMD</span>
       </footer>

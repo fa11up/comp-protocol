@@ -162,6 +162,8 @@ export function renderDocs({ outDir, contentDir, terminal, site }) {
       `<a href="${linkBetween(currentDir, "docs")}">Docs</a>` +
       `<a href="https://infer.imdusd.com" target="_blank" rel="noreferrer">INFER ↗</a>` +
       `<a href="https://whitepaper.imdusd.com" target="_blank" rel="noreferrer">Whitepaper ↗</a>` +
+      `<a class="x-link" href="https://x.com/imdusd" target="_blank" rel="noreferrer" aria-label="imdUSD on X" title="imdUSD on X">` +
+      `<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false"><path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>` +
       `</nav><span>imdUSD · built on IdentityMD</span></footer>`
     );
   };
