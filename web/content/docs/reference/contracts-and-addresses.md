@@ -5,8 +5,9 @@ order: 1
 audience: integrators
 pending: true
 sources:
-  - docs/MAINNET-RUNBOOK.md:194-290
-  - src/ParameterizedVault.sol:25-164
+  - docs/MAINNET-RUNBOOK.md:194-360
+  - script/DeployMainnet.s.sol:1
+  - src/ParameterizedVault.sol:25-309
   - src/CDPVault.sol:274-328
   - src/ImdUSD.sol:19-75
   - src/SwarmFeed.sol:26-156
@@ -32,7 +33,7 @@ Some contracts are deployed on their own; the vault creates the rest in its cons
 | `PriceFeed` | (waiting for mainnet launch) | Inherits `SwarmFeed`. Signer, relayer, data chain, answer type and question are written into the contract. Maximum age (—) and deviation bound (—) are set once at deployment. |
 | `NhiFeed` | (waiting for mainnet launch) | Same setup as `PriceFeed`, with its own question. Maximum age (—) and deviation bound (—) are set once at deployment. |
 | `SpotFeed` | (waiting for mainnet launch) | Same setup, with its own question. Maximum age (—) and deviation bound (—) are set once at deployment. |
-| `OracleAsker` | (waiting for mainnet launch) | No owner or settings. Its feeds and their request bodies are fixed at deployment. Pays only when the health feed is close to stale or IMD's pool has fallen below a price feed (never for a rise); see [How updates are paid for](./oracle-and-question-binding.md#how-updates-are-paid-for). |
+| `OracleAsker` | (waiting for mainnet launch) | No owner or settings. Its feeds and their request bodies are fixed at deployment. Pays only when the health feed is close to stale, when any feed has been silent a whole lifetime with its allowance wide open, or when IMD's pool has fallen below a price feed (never for a rise); see [How updates are paid for](./oracle-and-question-binding.md#how-updates-are-paid-for). |
 | `ParameterizedVault` | (waiting for mainnet launch) | Collateral (sIMD), stablecoin, the three feeds, `parameters`, `treasury`, `usdPriceFeed` and `collateralPriceFeed` are all fixed. Economic settings come from its own `Parameters`. No upgrade path and no way to swap a feed. The work oracle it creates can be replaced through `Parameters`, only while minting from work is off; `oracle()` returns whichever is in use. |
 | `ImdUSD` | (waiting for mainnet launch) | Bound to the vault for good; only the vault mints and burns. No governor, pause or upgrade. |
 | `Parameters` | (waiting for mainnet launch) | Its vault cannot be changed. The governor and every hard limit are written into the contract; changes go through the delay in [Parameters](../governance/parameters.md). |
@@ -44,7 +45,9 @@ Some contracts are deployed on their own; the vault creates the rest in its cons
 
 ## Constructor and read-back checks
 
-`ParameterizedVault(address imdToken_, address stablecoin_, address oracle_, address priceFeed_, address nhiFeed_, address spotFeed_)` takes six contract addresses. The three feeds must be different deployed contracts. The collateral must be a deployed contract and must not be the stablecoin. A work oracle passed in must answer `mintingRights(address)`, and if it has a `vault()` getter, that getter must name this vault. On mainnet the vault is given a reserved placeholder address for the work oracle instead, which tells it to build one through the factory.
+`ParameterizedVault(address gem_, address stablecoin_, address oracle_, address priceFeed_, address nhiFeed_, address spotFeed_)` takes six contract addresses. The three feeds must be different deployed contracts. The collateral must be a deployed contract and must not be the stablecoin. A work oracle passed in must answer `mintingRights(address)`, and if it has a `vault()` getter, that getter must name this vault. On mainnet the vault is given a reserved placeholder address for the work oracle instead, which tells it to build one through the factory.
+
+The deployment runs in two stages. The first deploys everything but the vault at addresses computed in advance from fixed salts (the contracts that read each other's addresses as constants need them before they are compiled). The feeds' first values are then bought, relayed and checked against IMD's pool and an outside reference price, because nothing on chain bounds a feed's first value. Only then does the second stage deploy the vault, from a salt the operator keeps private and through a private transaction relay, so nobody can deploy the vault at its address first. Nothing reads the vault's address as a constant.
 
 Once deployed, `parameters().vault()`, `treasury().vault()` and `stablecoin().vault()` must all return the vault, and so must `oracle().vault()` for `SwarmWorkOracle`. No follow-up transaction is needed to link the contracts the vault created.
 

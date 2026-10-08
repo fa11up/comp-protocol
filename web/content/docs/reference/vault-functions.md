@@ -5,8 +5,8 @@ order: 2
 audience: integrators
 pending: true
 sources:
-  - src/CDPVault.sol:32-1075
-  - src/ParameterizedVault.sol:25-260
+  - src/CDPVault.sol:32-1602
+  - src/ParameterizedVault.sol:25-309
   - docs/abi/ParameterizedVault.json:1
   - docs/abi/CDPVault.json:1
 ---
@@ -35,19 +35,19 @@ If the position already has a mark that has not expired, nothing changes and no 
 
 ### `bite(address owner, uint256 debtToRepay)`
 
-Liquidate. Needs a positive `debtToRepay`, live prices, an unsafe owner with a mark whose grace has passed and whose window has not closed, enough debt to repay and enough collateral for the full payout, valid bonus shares, and enough imdUSD in the caller's wallet. No approval is needed.
+Liquidate. Needs a positive `debtToRepay`, live prices, an unsafe owner with a mark whose grace has passed and whose window has not closed (every position, a drained one too, must be marked first), enough debt to repay and enough collateral for the full payout, valid bonus shares, and enough imdUSD in the caller's wallet. No approval is needed.
 
 Charges the owner's accrued fees, cancels fees then principal, burns the caller's imdUSD and remints the fee part to the Treasury. Takes the collateral and pays the marker, the Treasury and the caller (see [Keeper economics](../keepers/keeper-economics.md) for the split). Collateral too small for any further liquidation goes to the caller. If the collateral runs out with debt left, records the rest as bad debt. Clears the mark if the position is now safe. Emits `Bite`, and `Heel` if a mark was cleared.
 
 ### `cash(uint256 amount, uint256 minGemOut, address candidate)`
 
-Redeem imdUSD for sIMD. Needs a positive `amount` no larger than total supply, enough imdUSD in the caller's wallet, live prices, and a payout above zero and at least `minGemOut`. If the Treasury cannot cover the payout, `candidate` must have debt, a ratio strictly below `mat() + gap()`, enough debt for the shortfall, and must not end up with a worse collateral-to-debt ratio.
+Redeem imdUSD for sIMD. Needs a positive `amount` no larger than total supply, enough imdUSD in the caller's wallet, live prices, and a payout above zero and at least `minGemOut`. The payout is `amount` at the dollar price, times `backingPerUnit()` (so less than $1 a unit while backing is below $1), less the fee. If the Treasury cannot cover the payout, `candidate` must have debt, a ratio strictly below `mat() + gap()`, enough debt for the shortfall, and must not end up with a worse collateral-to-debt ratio.
 
-Burns all of `amount`, pays from the Treasury's sIMD first and from the candidate's collateral for the rest, cancelling the candidate's fees before principal (fees are not reminted). Updates the fee base and redemption time. Emits `Cash`, and `Heel` if a mark was cleared. Returns `gemOut`, the sIMD paid. No partial fills and no approval.
+Burns all of `amount`, pays from the Treasury's sIMD first and from the candidate's collateral for the rest, cancelling the candidate's fees before principal (fees are not reminted). Stores the new redemption base rate and the redemption time; the part of the burn that cancelled the candidate's principal from the last twelve hours is charged in full but does not raise the stored rate. Emits `Cash`, and `Heel` if a mark was cleared. Returns `gemOut`, the sIMD paid. No partial fills and no approval.
 
 ### `cover(address owner, uint256 amount)`
 
-Cancel a drained position's bad debt with the Treasury's imdUSD. Anyone may call it. Needs a positive `amount` no larger than the position's debt, and a position with recorded bad debt. The position may hold no collateral; or dust (worth under about 1.2 imdUSD, or a millionth of a debt above a million), which is moved to the Treasury first; or collateral worth less than the position's recorded bad debt, which the Treasury takes at its value, so `amount` must then be at least that value. Anything but no collateral needs live prices unless the dust is below what a liquidation of one wei of debt would seize.
+Cancel a drained position's bad debt with the Treasury's imdUSD. Anyone may call it. Needs a positive `amount` no larger than the position's debt, a Treasury holding at least `amount` imdUSD, and a position with recorded bad debt. The position may hold no collateral; or dust (worth under about 1.2 imdUSD, or a millionth of a debt above a million), which is moved to the Treasury first; or collateral worth less than the position's recorded bad debt, which the Treasury takes at its value, so `amount` must then be at least that value. Anything but no collateral needs live prices unless the dust is below what a liquidation of one wei of debt would seize.
 
 Burns `amount` of the Treasury's imdUSD and applies it like a repayment: fees first (reminted to the Treasury), then principal. `totalDebt`, the position's bad debt and `totalBadDebt` fall together, which raises backing for every holder. Emits `Cover`. Reverts with `NoRealizedBadDebt` if the position holds collateral worth at least its recorded bad debt, or has no recorded bad debt, and with `CoverBelowCollateralValue` if it takes collateral for less than its value.
 
@@ -67,7 +67,7 @@ Stores `chi()` and the time, and emits `IndexCheckpointed`. Collects no fees and
 
 Mint imdUSD against work rights. Needs a positive `amount`, live prices, the stablecoin linked to this vault, enough `oracle.mintingRights(msg.sender)`, and `totalEarned + amount` within `earnLine()`.
 
-Uses up the caller's rights and mints imdUSD to them. Adds no debt or collateral. Emits `Earn`. Whether this is open at launch: —.
+Uses up the caller's rights and mints imdUSD to them. Adds no debt or collateral. Emits `Earn`. Refused with `WorkMintingOff` while the governed wage is zero. Whether this is open at launch: —.
 
 ### `free(uint256 amount)`
 
@@ -105,7 +105,7 @@ None of these change anything. Reads that depend on a feed can still revert if t
 
 ### `BACKING_WARMUP()`
 
-Returns `uint256`. One day, in seconds. New debt and collateral not yet counted toward backing per imdUSD halve every six hours and count in full once a day passes in which the vault's new capital is not touched; decreases count immediately. A position's own warm capital that left (a repayment, a withdrawal, a liquidation or redemption against it) can come back and count at once, less what it would have cooled while away, and nothing after a day.
+Returns `uint256`. One day, in seconds. New debt and collateral are cold: they are left out of the lagged figures, and what is still cold halves every six hours, tracked position by position. Cold capital left untouched for a whole day counts in full; a touch restarts that day, so activity can slow warming but never speed it. Decreases count at once and take the position's own cold first. A position's own warm capital that left (a repayment, a withdrawal, a liquidation or redemption against it) can come back and count at once, less what it would have cooled while away, and nothing after a day.
 
 ### `CHOP_PERCENT()`
 
@@ -125,7 +125,7 @@ Returns `uint256`. The principal that counts toward the work-minting ceiling: to
 
 ### `backingPerUnit()`
 
-Returns `uint256`. Dollar backing per imdUSD, scaled by 1e18 and capped at $1: the Treasury's sIMD, other listed reserve assets and collateral that secures debt, divided by supply. It is the lower of the live figure and a lagged one in which newly added debt and collateral count only as they warm up (`BACKING_WARMUP`). Redemption pays against this. Needs a nonzero dollar price but does not check freshness. See [Monetary policy](../economics/monetary-policy.md).
+Returns `uint256`. Dollar backing per imdUSD, scaled by 1e18 and capped at $1: the Treasury's sIMD, other listed reserve assets and collateral that secures debt, divided by supply (plus any imdUSD repaid earlier in the same transaction). It is the lower of the live figure and a lagged one in which newly added debt and collateral leave both sides until they warm up (`BACKING_WARMUP`); in the lagged figure the reserve counts per unit of the whole supply, so only the warm supply's share of it stands behind warm units. Redemption pays against this. Needs a nonzero dollar price but does not check freshness. See [Monetary policy](../economics/monetary-policy.md).
 
 ### `badDebtOf(address owner)`
 
@@ -253,11 +253,11 @@ Returns `uint256`. `mat() + gap()`, in whole percentage points. A candidate must
 
 ### `redemptionDivisor()`
 
-Returns `uint256`. How fast the redemption fee climbs: each redemption adds redeemed ÷ supply ÷ this to the base. Governed: —.
+Returns `uint256`. How fast the redemption fee climbs: each redemption adds redeemed ÷ fee base ÷ this to the base rate, where the fee base is the warm supply (see [Monetary policy](../economics/monetary-policy.md)), never less than 100,000 imdUSD. Governed: —.
 
 ### `redemptionFeeBps(uint256 amount)`
 
-Returns `uint256`. The fee a redemption of `amount` would pay, in basis points, including the rise from its own size, rounded up. With zero it quotes the floor plus the decayed base. Reverts with `ExcessRepayment` above total supply. Does not check balances, candidates or prices.
+Returns `uint256`. The fee a redemption of `amount` would pay, in basis points, including the rise from its own size measured against the fee base, rounded up. With zero it quotes the floor plus the decayed base. Reverts with `ExcessRepayment` above total supply. Does not check balances, candidates or prices.
 
 ### `redemptionReserve()`
 
@@ -269,7 +269,7 @@ Returns `uint256`. The Treasury's listed assets at their discounted dollar value
 
 ### `securedCollateral()`
 
-Returns `uint256`. Total collateral that counts as securing debt, in raw sIMD units, each position capped by its own principal as of its last change. Not the vault's token balance.
+Returns `uint256`. Total collateral that counts as securing debt, in raw sIMD units: each position's collateral, capped at what twice its principal buys at the price when the position last changed. A position with no debt counts for nothing. Not the vault's token balance.
 
 ### `skew()`
 

@@ -45,7 +45,7 @@ A holder can burn imdUSD for sIMD worth $1, less a fee. If the system holds less
 - Network health is also a signed figure, and it moves both the collateral requirement and how long a marked borrower has to recover.
 - A liquidation can leave bad debt. There is no insurance fund. Anyone can cancel a drained position's bad debt with imdUSD the Treasury holds (`cover`), but only as far as the Treasury has it.
 - Minting from work (`earn`) rests on a task tally the swarm publishes and a panel signs. It is not an on-chain proof that the work happened.
-- The economic settings are fixed at launch; see [Risks and open questions](../economics/risks-and-open-questions.md).
+- The economic settings are set at launch and can then be changed by one governing account, only within hard limits written into the contracts and only after a public 48-hour delay; see [Parameters](../governance/parameters.md) and [Risks and open questions](../economics/risks-and-open-questions.md).
 
 ## A note on names
 

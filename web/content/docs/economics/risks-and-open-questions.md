@@ -22,6 +22,8 @@ sources:
   - docs/AUDIT-ADVERSARIAL-2026-10-05.md
   - docs/AUDIT-GAS-2026-10-05.md
   - docs/AUDIT-FIX-PLAN-2026-10-05.md
+  - docs/AUDIT-FINAL-VAULT-PANEL-2026-10-08.md
+  - docs/AUDIT-FINAL-SWEEP-PANEL-2026-10-08.md
   - docs/RESEARCH-PARAMS-2026-10-04.md
   - docs/PARAMETERS-2026-10-05.md
   - docs/MAINNET-RUNBOOK.md
@@ -37,7 +39,7 @@ The vault enforces its rules for collateral, prices and accounting. Those rules 
 
 **The second price is not independent.** The spot feed reads the same pool as the primary. It catches a bad or manipulated reading of that pool, not a pool that is itself mispriced.
 
-**Large moves and stale feeds.** One update can move a feed only so far from its last value, so a real, sudden move may be refused. Once a feed is past its maximum age, the next valid update is accepted without that limit, so the feed can catch up. That recovery leans fully on the signer and the question.
+**Large moves and stale feeds.** Within one feed lifetime, updates can move a feed only so far from where that period started, so a real, sudden move may be refused at first. Once a feed has been silent an hour past its maximum age, the allowed move doubles, and it keeps widening for every further hour of silence, so after a long enough gap the feed can follow any move. That recovery leans fully on the signer and the question, and whoever relays first after a silence sets the value the rest of that period is held around; the Treasury pays for an honest refresh once a feed's allowance has widened that far. A feed's very first value is bounded by nothing on chain, which is why the deployment checks the first values against the pool and an outside price before the vault exists.
 
 **A stale or disagreeing feed halts most actions.** Borrowing, withdrawing against debt, marking, liquidating and redeeming all wait for live prices. Depositing and repaying do not. The ETH/USD price comes from Chainlink, and if it goes stale, no IdentityMD update can fix it.
 
@@ -49,7 +51,7 @@ The vault enforces its rules for collateral, prices and accounting. Those rules 
 
 **Bad debt can happen.** A fast fall can leave a position owing more than its collateral. That shortfall is recorded. `cover` can cancel it with imdUSD the Treasury holds from fees; if the Treasury holds too little, the shortfall stays and lowers backing for every holder. There is no insurance fund.
 
-**Backing per imdUSD is a cautious measure.** It counts only collateral that stands behind debt, and it counts new collateral only gradually (half of what is still new every six hours, all of it after a quiet day), so capital brought in just to redeem against cannot inflate it. One edge is accepted: a borrower between the minimum ratio and 200% can repay part of its debt without moving the collateral counted for it, so a redemption in the next transaction is paid the higher backing that briefly exists, and a redraw dilutes it again. It costs only gas, applies only below $1 of backing, never pays past $1, and the premium is bounded by the size of the repayment (in a deep fall, when positions sit below the minimum ratio, a review measured 25%). Both ways found to close it did worse: one underpaid every redeemer after an ordinary unwind, the other could be pumped to underpay them without limit. It can fall after a redemption even when the system as a whole is better backed. A redemption can also fail if no eligible position can cover a reserve shortfall.
+**Backing per imdUSD is a cautious measure.** It counts only collateral that stands behind debt, and it counts new collateral only gradually (half of what is still new every six hours, all of it once left untouched for a day), so capital brought in just to redeem against cannot inflate it. One edge is accepted: a borrower between the minimum ratio and 200% can repay part of its debt without moving the collateral counted for it, so a redemption in the next transaction is paid the higher backing that briefly exists, and a redraw dilutes it again. It costs only gas, applies only below $1 of backing, never pays past $1, and the premium is bounded by the size of the repayment (in a deep fall, when positions sit below the minimum ratio, a review measured 25%). Both ways found to close it did worse: one underpaid every redeemer after an ordinary unwind, the other could be pumped to underpay them without limit. A second, smaller edge is accepted in the redemption fee: if a redemption cancels part of a borrower's debt and the borrower then borrows it back, the fee base stops counting that borrower's recent repayment a little early, which raises the next redeemer's fee slightly, never past the borrower's own share. Backing per imdUSD can fall after a redemption even when the system as a whole is better backed. A redemption can also fail if no eligible position can cover a reserve shortfall.
 
 **Work-backed issuance is a limit at the moment of minting.** If minting from work is open, it is capped when imdUSD is minted. Later repayments, price falls or parameter changes can leave earlier work-minted imdUSD above the cap; nothing is burned to restore it.
 
@@ -73,7 +75,7 @@ The vault enforces its rules for collateral, prices and accounting. Those rules 
 
 The contracts are immutable. A bug cannot be fixed with a parameter change; it needs a new deployment.
 
-The code has been through twenty reviews since 2026-10-03: two single audits, panel audits of the vault, governance and the Treasury, and the price path (four specialists and a judge who re-runs every claim), adversarial reviews of the whole system, a gas review and two in-house reviews. Every finding was fixed, or accepted with its reason stated, in the commit after the round that found it, and the next round was pinned to that commit. The full chain, with each job, commit and record, is in [Audit history](../reference/audit-history.md). Reviews and tests reduce risk; they do not prove every sequence of calls safe.
+The code has been through twenty-one reviews since 2026-10-03: two single audits, panel audits of the vault, governance and the Treasury, and the price path (four specialists and a judge who re-runs every claim), adversarial reviews of the whole system, a gas review and two in-house reviews. Every finding was fixed, or accepted with its reason stated, in the commit after the round that found it, and the next round was pinned to that commit. The last, a panel over the whole system, found nothing above low. The full chain, with each job, commit and record, is in [Audit history](../reference/audit-history.md). Reviews and tests reduce risk; they do not prove every sequence of calls safe.
 
 ## Not yet proven
 

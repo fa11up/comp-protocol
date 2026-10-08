@@ -18,7 +18,7 @@ Each entry gives the plain meaning first, then the contract name where there is 
 
 **attestation.** A signed answer from an IdentityMD agent panel. A price feed changes only when it receives a valid one. See [Relay oracle updates](../keepers/relay-oracle-updates.md).
 
-**backing per imdUSD.** The reserve plus the collateral standing behind debt, divided by imdUSD supply, never above $1. New capital counts toward it gradually: half of what is still new every six hours, all of it after a quiet day. Read with `backingPerUnit()`. Redemption pays against it.
+**backing per imdUSD.** The reserve plus the collateral standing behind debt, divided by imdUSD supply, never above $1. New capital counts toward it gradually: half of what is still new every six hours, all of it once left untouched for a day. Read with `backingPerUnit()`. Redemption pays against it.
 
 **bonus.** The extra collateral a liquidator receives on top of the debt they repay (`CHOP_PERCENT`). It is shared between the marker (`chip`), the protocol (`cut`) and the liquidator. See [Keeper economics](../keepers/keeper-economics.md).
 
@@ -41,6 +41,8 @@ Each entry gives the plain meaning first, then the contract name where there is 
 **deposit (`lock`, `lockIMD`).** Add collateral: sIMD with `lock`, or IMD with `lockIMD`, which stakes it for you.
 
 **duty.** The yearly stability fee rate, set by governance.
+
+**fee base.** The supply a redemption's fee increase is measured against: warm supply plus seasoned debt repaid in the last hours, never less than 100,000 imdUSD. See [Monetary policy](../economics/monetary-policy.md).
 
 **grace (`lull`).** The wait between a mark and the first moment the position can be liquidated. Its length follows network health and is fixed when the mark is made.
 
@@ -77,5 +79,7 @@ Each entry gives the plain meaning first, then the contract name where there is 
 **wage.** The imdUSD earned per accepted swarm task, set by governance within a hard limit. At zero, minting from work is off.
 
 **work oracle.** The contract that turns the swarm's published task tally into minting rights. The vault creates one at deployment; governance may replace it, only while the wage is zero.
+
+**warm and cold capital.** Newly borrowed debt and newly added collateral are cold: they count toward backing per imdUSD and the fee base only as they warm, half of what is still cold every six hours, all of it once left untouched for a day (`BACKING_WARMUP`). Reductions count at once.
 
 **withdraw (`free`).** Take collateral back out. With debt open, it needs live prices and must leave you at or above `mat`.

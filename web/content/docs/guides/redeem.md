@@ -23,12 +23,12 @@ For each imdUSD burned, the vault pays sIMD worth $1, or the backing per imdUSD 
 > sIMD out = imdUSD burned × min($1, backing per imdUSD) × (1 − fee) ÷ sIMD price in dollars
 
 - **Backing per imdUSD** is the reserve plus the collateral standing behind debt, divided by imdUSD supply, never above $1. Read it with `backingPerUnit()`; the terminal shows it.
-- **The fee** has a floor and a cap. It rises with the share of imdUSD supply your burn represents and falls back as time passes. Quote it before you send with `redemptionFeeBps(amount)`.
+- **The fee** has a floor and a cap. It rises with the share of the fee base your burn represents (the warm imdUSD supply, never counted as less than 100,000) and falls back as time passes, halving every twelve hours. Quote it before you send with `redemptionFeeBps(amount)`.
 - If backing is below $1, you are paid less than $1 per imdUSD. Redemption stays open, but it still needs live prices (fresh, and the main and spot prices agreeing), a valid candidate when the reserve is short, and a payout above zero.
 
 ### New capital counts gradually
 
-Backing counts new collateral and new debt only as they age: what is still new halves every six hours and a quiet day counts it in full, while anything leaving counts at once. So someone cannot deposit and borrow, redeem at a better rate against that fresh capital and withdraw it again a few blocks later. Honest redeemers are not underpaid by this, because fresh debt and the imdUSD minted against it are left out together. You may simply see backing read a little lower right after a large new position opens.
+Backing counts new collateral and new debt only as they age: what is still new halves every six hours and new capital left untouched for a day counts in full, while anything leaving counts at once. So someone cannot deposit and borrow, redeem at a better rate against that fresh capital and withdraw it again a few blocks later. Fresh debt and the imdUSD minted against it are left out together, so this mostly leaves your payout where it would be. The reserve counts toward the aged supply only in proportion, so you may see backing read lower for some hours right after a large new position opens, or after a sharp price fall.
 
 ## Who funds the payout
 
@@ -40,12 +40,12 @@ A candidate must have debt, and its collateral ratio must be below `mat` plus th
 ## Prerequisites
 
 - imdUSD in your wallet. No approval is needed: the vault burns it directly.
-- The Oracle tab showing **Price actions: Open**.
-- **Reserve on hand** on the Redeem tab, to see whether the reserve covers your amount. If not, a candidate address.
+- Prices live: the price line on the Oracle tab must not say redeeming is paused (it offers **Update price** when it is).
+- **Reserve on hand** on the Redemption tab, to see whether the reserve covers your amount. If not, a candidate address.
 
 ## Steps in the terminal
 
-1. Open the Redeem desk tab.
+1. Open the Redemption desk tab.
 2. Enter the imdUSD amount. Leave slippage at its default or set your own tolerance in basis points (1 basis point is 0.01%).
 3. If the reserve is short, paste a candidate address.
 4. Press Quote redemption. Read **You receive**, **Your fee**, **Served by**, **Debt cancelled** and **Minimum received**.

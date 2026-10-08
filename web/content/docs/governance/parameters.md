@@ -5,7 +5,7 @@ order: 1
 audience: governance
 pending: true
 sources:
-  - src/Parameters.sol:38-348
+  - src/Parameters.sol:38-546
   - src/Governed.sol:23-94
   - src/Treasury.sol:115-185
   - src/Treasury.sol:277-323
@@ -34,12 +34,12 @@ Every change goes through the same [proposal and delay](./timelock-and-proposals
 | `skew` | How far the primary and spot prices may differ, in basis points of the primary. | `propose(ParamSet)` | Between `MIN_DIVERGENCE_BPS` and `MAX_SKEW_BPS`. |
 | `chip` | Marker's share of the liquidation bonus, in basis points. | `propose(ParamSet)` | Shares the bound with `cut`. |
 | `earnMat` | How much of the backed debt counts toward the work ceiling, in basis points. | `proposeEarnMat(bps)` | Zero up to `MAX_EARN_MAT_BPS`. |
-| `wage` | imdUSD credited per newly claimed accepted task. | `proposeWage(wad)` | Zero up to `MAX_WAGE_WAD`. |
+| `wage` | imdUSD credited per newly claimed accepted task. At zero, minting from work is off: `earn` is refused (`WorkMintingOff`) and the work ceiling stops reading the lagged debt. | `proposeWage(wad)` | Zero up to `MAX_WAGE_WAD`. |
 | `gap` | Redemption eligibility spread above `mat`, in whole percent. | `proposeGap(spread)` | `MIN_GAP` to `MAX_GAP`. |
-| `redemptionDivisor` | How fast the redemption fee climbs: each redemption raises the base by redeemed ÷ supply ÷ divisor. | `proposeRedemptionDivisor(divisor)` | `MIN_REDEMPTION_DIVISOR` to `MAX_REDEMPTION_DIVISOR`. |
+| `redemptionDivisor` | How fast the redemption fee climbs: each redemption raises the base rate by redeemed ÷ fee base ÷ divisor, the fee base being the warm supply, never less than 100,000 imdUSD. | `proposeRedemptionDivisor(divisor)` | `MIN_REDEMPTION_DIVISOR` to `MAX_REDEMPTION_DIVISOR`. |
 | `streamPayee`, `streamPerDay` | Who the Treasury pays imdUSD to, and at most how much per UTC day. Off until proposed. | `proposeStream(payee, perDay)` | Zero up to `MAX_STREAM_PER_DAY`; a nonzero amount needs a payee. |
 | `oracleBudget` | IMD the Treasury may send `OracleAsker` per UTC day to buy price updates ([how updates are paid for](../reference/oracle-and-question-binding.md#how-updates-are-paid-for)). Zero stops it. | `proposeOracleBudget(imdPerDay)` | Zero up to `MAX_ORACLE_BUDGET_PER_DAY`. |
-| `workOracle` | The contract the vault reads work rights from; zero means the one the vault created at deployment. Exists so that a change in how swarm work is published never forces a new vault. | `proposeWorkOracle(address)` | Refused while `wage` is above zero, both when proposed and when applied (`WorkMintingOn`), so rights are never claimable in two oracles at once. The replacement must serve this vault (`InvalidWorkOracle`). Once anything has ever been minted from work, it must also name the current oracle as its `predecessor()`, so already-credited work is not credited twice; returning to the original is then refused. |
+| `workOracle` | The contract the vault reads work rights from; zero means the one the vault created at deployment. Exists so that a change in how swarm work is published never forces a new vault. | `proposeWorkOracle(address)` | Refused while `wage` is above zero, both when proposed and when applied (`WorkMintingOn`), so rights are never claimable in two oracles at once. The replacement must serve this vault (`InvalidWorkOracle`). Once anything has been minted from work, or credited by a claim and not yet minted, it must also name the current oracle as its `predecessor()`, so already-credited work is not credited twice; returning to the original is then refused. |
 | Reserve asset and its `priceFeed` | A token the Treasury counts as backing, and the dollar price source used to value it. sIMD is listed with the vault's own `collateralPriceFeed()`, so it counts at the vault's price. | `proposeReserveAsset(asset, priceFeed, haircutBps)` | The asset and feed must be contracts that answer sensibly; imdUSD itself cannot be listed. Proposing the zero address as the feed removes a listing. |
 | Reserve `haircutBps` | The share of a listed asset's market value that counts. Lower counts less. | Same proposal | From none of its value to all of it. |
 
@@ -62,6 +62,8 @@ These are written into the contracts or calculated, not proposed.
 | `REDEMPTION_FEE_FLOOR_BPS`, `REDEMPTION_FEE_CAP_BPS` | Lowest and highest redemption fee. | — |
 | `REDEMPTION_SECOND_DECAY`, `FRESH_DEBT_WINDOW` | How fast the redemption fee decays, and how long new debt is treated as fresh. | — |
 | `SECURED_COLLATERAL_MULTIPLE` | How much collateral per unit of debt can count as backing. | — |
+| `BACKING_WARMUP`, `BACKING_HALF_LIFE` | How new debt and collateral warm up before counting toward backing per imdUSD: what is still new halves every half-life, and counts in full after a day untouched. | — |
+| Fee-base floor | The least supply a redemption's fee increase is measured against (`_feeBaseFloor`, internal). | — |
 | Feed `maxAge`, `maxDeviationBps` | How old a feed may get, and how far one update may move it. Set when each feed is deployed. | — |
 | `ETH_USD_MAX_AGE`, `WORK_ORACLE_MAX_AGE` | Maximum age of the Chainlink ETH/USD reading and of a work attestation. | — |
 | `earnLine` | Work ceiling: discounted reserve value plus backed debt scaled by `earnMat`. Gates new work mints; it never burns tokens already issued. | Calculated |

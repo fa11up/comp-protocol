@@ -51,7 +51,7 @@ Grace is short when network health is low and longer when it is high, so a weake
 Liquidating needs live prices, an unsafe position, a mark (`PositionNotMarked`), an elapsed grace and an unexpired window, for every position, a drained one too. A drained borrower's small re-deposit is handled by `cover` instead, which takes collateral worth less than the recorded bad debt at its value. Then the vault:
 
 1. Adds the borrower's accrued stability fee and checks that the amount you repay is not more than their debt (`ExcessRepayment`).
-2. Works out the collateral to seize: the amount repaid plus the bonus, converted to sIMD at the vault's price. If that is more than the borrower holds, it reverts with `InsufficientCollateral`; repay less.
+2. Works out the collateral to seize: the amount repaid plus the bonus, converted to sIMD at the vault's price. If that is more than the borrower holds, it reverts with `InsufficientCollateral`; repay less. The one exception is collateral smaller than the seizure for a single unit of debt, which is taken whole.
 3. Burns your imdUSD. No approval is needed. Any fees you paid off are minted to the Treasury.
 4. Splits the seized sIMD between you, the marker and the Treasury. The split only divides the bonus and never takes more from the borrower; [Keeper economics](./keeper-economics.md) has the breakdown.
 5. Emits `Bite(owner, liquidator, debtRepaid, collateralSeized)`.

@@ -7,7 +7,7 @@ sources:
   - src/SwarmRelay.sol:10-134
   - src/SwarmFeed.sol:26-62
   - src/SwarmFeed.sol:152-244
-  - src/SwarmFeed.sol:283-303
+  - src/SwarmFeed.sol:283-496
   - src/UsdPriceFeed.sol:23-95
   - oracle/relay-attestation.js:1-60
   - docs/MAINNET-RUNBOOK.md:72-86
@@ -56,11 +56,12 @@ On `submitAttestation`, a feed reverts with the first of these that applies:
 | `ReplayedAttestation` | This request was already used |
 | `InvalidSignature` | Not signed by the oracle service's key |
 | `InvalidWindow`, `WindowSpanOutOfRange`, `WindowNotAdvancing` | The block window is backwards, the wrong length, or not later than the last accepted one |
+| `WindowInFuture`, `WindowTooOld` | On a feed whose data lives on its own chain (every mainnet feed): the window ends after the current block, or more than one feed lifetime ago |
 | `WrongQuestion(expected, given)` | It answers a different question than this feed's |
 | `ZeroValue` | The figure is zero |
-| `ExcessDeviation` | The figure moved too far from the current value |
+| `ExcessDeviation` | The figure is too far from the current epoch's anchor, or, inside a widened epoch, from the first value accepted in it |
 
-A newly deployed feed has no value and counts as stale. Freshness is measured from when the attestation was signed, so delivering it late does not make it last longer. Once a feed's value is older than its maximum age, the next valid attestation is accepted without the move limit, so the feed can catch up with a large price move; [Oracle and question binding](../reference/oracle-and-question-binding.md) explains why.
+A newly deployed feed has no value and counts as stale. Freshness is measured from when the attestation was signed, so delivering it late does not make it last longer. The move limit is measured against an anchor that holds for one feed lifetime, and it widens the longer a feed has been silent (twice the normal limit an hour past its maximum age, more for every further hour), so after a large price move the feed catches up after a delay rather than never; `epoch()` tells you how far the next value may move. [Oracle and question binding](../reference/oracle-and-question-binding.md) explains the rules.
 
 Before buying a request, you can ask a feed what it will accept: `expectedQuestionHash(fromBlock, toBlock)` returns the question hash for that window.
 

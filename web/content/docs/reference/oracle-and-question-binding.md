@@ -5,7 +5,7 @@ order: 4
 audience: integrators
 pending: true
 sources:
-  - src/SwarmFeed.sol:26-329
+  - src/SwarmFeed.sol:26-496
   - src/DeploymentConfig.sol:45-78
   - src/PriceFeed.sol:17-48
   - src/NhiFeed.sol:17-46
@@ -14,7 +14,7 @@ sources:
   - src/SwarmRelay.sol:37-134
   - src/UsdPriceFeed.sol:23-96
   - src/OracleAsker.sol:1
-  - src/Treasury.sol:474
+  - src/Treasury.sol:493-608
   - src/CDPVault.sol:865-885
   - src/ParameterizedVault.sol:152-164
   - oracle/question-prefix.mjs:45-104
@@ -66,7 +66,7 @@ You can call it before you pay for a request: if the hash of the question you ar
 1. The caller is the feed's `relayer`, the data chain and answer type match, and the panel counts clear the floors.
 2. `issuedAt` is not in the future, the attestation has not expired, it is no older than the feed's maximum age or the value already stored, and its `requestId` has not been used.
 3. The signature recovers to `attester`.
-4. The window runs forward, its length fits the feed's limits below, it ends after the last accepted window, and `questionHash` equals `expectedQuestionHash(fromBlock, toBlock)`.
+4. The window runs forward, its length fits the feed's limits below, it ends after the last accepted window, and `questionHash` equals `expectedQuestionHash(fromBlock, toBlock)`. When the data chain is the chain the feed is on (every mainnet feed), the window must also have closed at or before the current block and no more than one feed lifetime ago, counted in 12-second blocks (`WindowInFuture`, `WindowTooOld`).
 5. The figure passes the feed's value check (next section). The feed then stores the figure, signing time, request and window end, and emits `ValueUpdated` and `AttestationAccepted`.
 
 | Feed | Allowed window, `toBlock - fromBlock` | What the window means |
@@ -76,7 +76,7 @@ You can call it before you pay for a request: if the hash of the question you ar
 | `NhiFeed` | 150 to 1,200 blocks | Keeps answers in order; the question reads live service counters when answered. |
 | `SwarmWorkOracle` | 5,000 to 9,000 blocks | Picks the daily work receipt as of the window's end. |
 
-The feed does not check the window against the data chain's latest block or check `blockHash`. Windows that must move forward stop old answers being reused, but do not prove an answer is recent; `issuedAt` is the service's statement of when it signed.
+The feed does not check `blockHash`. On mainnet the recency bound above stops a fresh signature being put on a window from hours earlier, chosen for its price; a feed whose data lives on another chain cannot see that chain's head, and there only the forward-moving window and `issuedAt`, the service's statement of when it signed, stand in for it.
 
 The relay-side procedure, including the errors each check raises, is in [Relay oracle updates](../keepers/relay-oracle-updates.md). What has and has not been shown against the live service is tracked in [Swarm evidence](../economics/swarm-evidence.md).
 
@@ -84,7 +84,7 @@ The relay-side procedure, including the errors each check raises, is in [Relay o
 
 A feed is stale before its first value, and once more time than its maximum age (—) has passed since the stored value was signed. `latestValue()` returns the stored value even when it is stale, so always read `isStale()` too.
 
-**How far one update can move a feed.** While the stored value is fresh, a new figure may differ from it by at most `maxDeviationBps` (—). A figure of zero is always refused. Once the stored value has gone stale, the limit widens to twice that (`STALE_DEVIATION_MULTIPLE`) but never lifts. A feed catches up after a large market move in steps: each later step is fresh, so it is bounded normally. The limit never lifts because a buyer chooses an attestation's window, so an unbounded first update after a quiet hour would let someone who briefly pushed the pool set any price. `SwarmWorkOracle` skips the limit, since roots have no distance, but still refuses zero.
+**How far one update can move a feed.** A figure of zero is always refused. Every figure after the first is measured against an *epoch*: an anchor value and an allowance that hold for one feed lifetime from when the epoch opened, so several updates inside a lifetime cannot walk the price further than one could. An epoch opened on a fresh value allows `maxDeviationBps` (—) from its anchor. One opened after the feed has been silent for a whole hour past its lifetime allows twice that (`STALE_DEVIATION_MULTIPLE`), plus an eighth of `maxDeviationBps` for every further whole hour of silence (`STALE_GROWTH_OF_CAP_BPS`, `STALE_GROWTH_PERIOD`), up to `MAX_ALLOWANCE_BPS`. Silence is counted from the later of the stored value's signature and its relay. Inside a widened epoch, once its first value has landed, every later value in that epoch is held to `maxDeviationBps` around that first value, so the first honest refresh after a silence closes the wide allowance for everyone after it. `epoch()` returns the anchor, when the epoch opened and the allowance, so a buyer can see before paying how far the feed will follow. A genuine move larger than the allowance is therefore followed after a delay, never refused for good, while re-anchoring the feed far from the market costs an attacker that same silence, during which anyone can refresh it honestly. The first value ever has no bound on chain; the deployment buys and relays it and checks it against the pool before the vault is deployed. `SwarmWorkOracle` skips the limit, since roots have no distance, but still refuses zero.
 
 **Primary against spot.** `skew` (—) is a separate check in the vault: the primary and spot IMD/ETH prices may differ by at most that fraction of the primary. Both are raw IMD/ETH, so ETH/USD plays no part. Both read the same pool, so agreement guards against a bad answer, not against the pool itself being moved.
 
@@ -103,13 +103,14 @@ The protocol pays for its own price updates from its Treasury, and no key decide
 **`OracleAsker`** buys an attestation for a feed through IdentityMD's on-chain request contract (the Intake), paying the Intake's listed price in IMD. Anyone may call `ask(feed, body)`, but it pays only when the chain shows the update is needed:
 
 - **The network health feed is close to stale**: a fixed fraction (—) of the way to its maximum age, or with no value yet. Only feeds marked to be kept alive are refreshed this way. The price feeds are not, because keeping them fresh on a clock would cost far more than it protects.
+- **Any feed has been silent a whole lifetime and its allowance has widened** to a fixed level (—) or more (`wideOpen(feed)`), price and spot included. No arming is needed: the honest value lands first, and the epoch it opens holds every later value to the normal bound around it.
 - **IMD's pool has fallen below the feed** by more than a fixed fraction (—) of the feed's deviation bound. Only a fall is paid for: a feed above the market values collateral too high, which lets positions borrow too much and be liquidated late, so it is corrected early. A rise only values collateral too low, which limits borrowing and puts no one at risk, so the Treasury never pays for one; whoever wants the extra borrowing room buys the update with `askPaid` below. `triggerBps(feed)` returns both thresholds, with zero meaning never. The fall must first be recorded with `arm(feed)` and still be there a set number of blocks (—) later. A pool pushed off price and back within one transaction, as with a flash loan, cannot trigger a paid update.
 
 `body` must be the exact request the feed's question was built from; the asker stores only its hash. Each body asks for a relative window ("the last N hours"), which the oracle service resolves afresh for every request; a fixed block range could be answered only once. Spending is limited five ways: one request in flight per feed until it is delivered or times out, a minimum time between paid requests for the same feed, a longer wait after an answer the feed refused, a maximum price per request, and the daily budget below.
 
 The Intake delivers the answer by calling the asker back, and the asker hands it to `SwarmRelay`, so the feed checks it exactly as it would one relayed by hand. The callback never fails because a relay was refused: it frees the feed for the next request and reports whether the answer landed (`Delivered`). If it did not, the attestation is still public and anyone may relay it, and the Treasury does not pay for that feed again until the request timeout (—) has passed.
 
-**`Treasury.fundOracle()`** is how the asker gets its IMD. Anyone may call it. It tops the asker up to one day's budget, `oracleBudget` (—) in [Parameters](../governance/parameters.md), and never past it: it sends at most what is left of the day's budget and at most what brings the asker's balance to one day's worth, because the asker has no way to give IMD back. It unstakes the Treasury's sIMD so the asker receives IMD. The budget changes only through a delayed governance proposal and has a hard upper limit. Days are UTC days.
+**`Treasury.fundOracle()`** is how the asker gets its IMD. Anyone may call it. It tops the asker up to one day's budget, `oracleBudget` (—) in [Parameters](../governance/parameters.md), and never past it: it sends at most what is left of the day's budget and at most what brings the asker's balance to one day's worth, because the asker has no way to give IMD back. It spends the Treasury's plain IMD first (launch-pool fees, donations; not if IMD is listed as a reserve asset), then unstakes sIMD so the asker receives IMD. sIMD refuses a withdrawal in a block in which the Treasury received shares, as right after a liquidation: the call then sends only the plain IMD, or nothing, without reverting, and the shares unstake a block later. The call needs enough gas for the unstaking step (`InsufficientGasForUnwrap`). The budget changes only through a delayed governance proposal and has a hard upper limit. Days are UTC days.
 
 **`askPaid(feed, body, maxPrice)`** is how anyone else gets a fresh price. The caller pays the Intake's price in their own IMD, up to `maxPrice`, and an update is bought for any feed at any time, because no protocol money is spent. While a price feed is stale, borrowing, withdrawing against debt, marking, liquidating and redeeming wait until someone buys an update this way or the pool moves enough for the Treasury to buy one.
 

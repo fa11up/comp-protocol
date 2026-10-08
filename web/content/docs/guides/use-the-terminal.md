@@ -14,12 +14,19 @@ sources:
   - web/src/Redemption.tsx:28-379
   - web/src/state.ts:295-308
   - web/src/math.ts:128-212
+  - web/src/PriceStatus.tsx:1
+  - web/src/BuyUpdate.tsx:1
+  - web/src/Charts.tsx:150-510
+  - web/src/actions.tsx:120-155
+  - web/src/disconnect.tsx:1
   - web/README.md:15-30
 ---
 
 # Use the terminal
 
 The terminal is a static web page at `/terminal/`. It reads the contracts directly and has no backend. You connect a browser wallet to act; you can read everything without one.
+
+To connect, press **Disconnected** beside an amount box; it is the only connect control. Once connected, the box shows your balance of that token (press it to fill in the whole amount), and a small box with an × appears at the top right of the header: press it to disconnect. The terminal then ignores the wallet's silent reconnect until you connect again.
 
 The terminal has two tab rows. **Monitor** tabs only show figures. **Desk** tabs are where you act. This page explains each tab, what each figure means and what a disabled button is telling you. Contract addresses are listed in [Contracts and addresses](../reference/contracts-and-addresses.md): (waiting for mainnet launch).
 
@@ -36,19 +43,23 @@ State is read at one block and refreshed every 15 seconds while the page is visi
 
 ### Loan book
 
-A strip that places every open position on a collateral-ratio axis. Circle area is the position's accrued debt. Three bands:
+A chart that places every open position on a collateral-ratio axis, from 100%, with a list of the same positions below it. Circle area is the position's accrued debt; circles stack up and down only to stay apart, so height carries no value. Three bands, which move with the live `mat` and redemption ceiling:
 
 - **Below the required ratio (`mat`): liquidatable.** A keeper may Mark these.
 - **From `mat` up to the ceiling: redeemable.** The ceiling is `mat` plus `gap`; a redeemer can name these positions as candidates.
 - **Above the ceiling: safe.**
 
-Selecting a position opens it in the Keeper tab. "Coverage unverified" means the terminal could not read the full history, so the count is unknown; it does not mean the book is empty.
+The list can be searched by name or address, filtered by band and sorted, and shows each position's ratio, debt and liquidation price. Clicking a circle finds and highlights its row; selecting a row opens the position in the Keeper tab. Names are labels derived from public addresses and can repeat. The line under the list gives the block range the terminal read owners from. "Coverage unverified" means the terminal could not read the full history, so the count is unknown; it does not mean the book is empty.
 
 ### Oracle
 
-- **Divergence / allowed:** how far the main (primary) and spot IMD/ETH prices differ, against the bound `skew`.
-- **Headroom:** the room left. It reads Stale if either price is stale and Breached if the bound is exceeded.
-- **Price actions:** Open only when the primary, spot, network health and IMD/USD feeds are all fresh and the main price agrees with spot. Otherwise Paused.
+The top of the tab shows three IMD prices in dollars:
+
+- **Primary:** the price the vault uses, the attested median of IMD's pool over a block window, through Chainlink ETH/USD.
+- **Spot:** the attested reading at a single block, checked against the primary. If the two differ by more than `skew`, borrowing, marking, liquidation and redemption pause.
+- **Market:** read live from IMD's pool and Chainlink every 30 seconds. It is not attested and the vault does not use it; it shows where the next update would move the price.
+
+Beneath them a line says whether price actions are open or paused, and why. When an update is needed, a button buys one with your own IMD through `OracleAsker`: **Update price** buys the primary and the spot together (`askPaidMany`), so they land agreeing; **Update spot check** buys the spot alone; **Update network health** buys the health feed. Each answer arrives on its own, usually minutes later. The same line and buttons appear above the Position tab's actions.
 
 Each feed row expands to show its latest value, when it was updated, its maximum age and its question. **Question: Pinned** means the feed refuses answers to any question other than its own. **None pinned** would mean it accepts any question; **Not reported** means the feed cannot say. **Last window** is the last block of the most recent accepted price window. The IMD/USD row is calculated on chain from the main price and Chainlink ETH/USD, so it is marked Derived and has no question of its own.
 
@@ -75,7 +86,7 @@ Left column, **Your position**:
 
 Right column, **Act**: choose Deposit (`lock`), Borrow (`draw`), Repay (`wipe`) or Withdraw (`free`). Deposit takes IMD (staked for you) or sIMD, and first asks for an approval of that token for exactly the amount, as its own transaction. Repay needs no approval.
 
-### Redeem
+### Redemption
 
 Left: **Current fee** (before your amount is added), **Floor / cap**, **Paid at** ($1, or the backing figure if lower), **Reserve on hand** (Treasury sIMD), **Eligibility ceiling**, and a table of the fee for 1%, 5% and 10% of supply.
 
@@ -89,7 +100,7 @@ Shows the work rights you can use, then **Mint from work** (`earn`). Rights come
 
 Choose **Inspect** and paste a borrower address (or click one in the loan book). You see their ratio, collateral, debt, a bad-debt estimate, liquidation price and mark status: None, Grace with a countdown, Active and liquidatable, or Recovered and clearable. Choose **Act** for Mark (`bark`), Mark for a beneficiary (`barkFor`), Clear mark (`heel`) and Liquidate (`bite`). See [Mark and liquidate](../keepers/mark-and-liquidate.md). The terminal calls the vault directly; it does not bundle a price update with the action.
 
-### Govern
+### Governance
 
 Shows the governed parameters, any pending change with its countdown and a button anyone may press to apply it once the delay has passed. See [Timelock and proposals](../governance/timelock-and-proposals.md).
 

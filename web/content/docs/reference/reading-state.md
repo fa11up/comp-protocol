@@ -8,7 +8,7 @@ sources:
   - src/CDPVault.sol:280-300
   - src/CDPVault.sol:494-537
   - src/CDPVault.sol:636-700
-  - src/CDPVault.sol:760-849
+  - src/CDPVault.sol:760-1110
   - src/ParameterizedVault.sol:86-260
   - src/Treasury.sol:92-230
   - src/SwarmFeed.sol:152-185
@@ -49,7 +49,7 @@ An explorer is one more service that can be down or wrong, not a proof of comple
 
 To explain the reserve, read `reserveValue()`, `treasury.reserveAssets()`, and `reserveAsset(asset)` and `reserveValueOf(asset)` for each. `haircutBps` is the share of value kept, not the share removed. Unlisted or unreadable assets count for nothing. `totalReceived` is a running total of receipts, not a balance; use the token's `balanceOf(treasury)` for holdings.
 
-`redemptionReserve()` is the Treasury's sIMD balance, listed or not. `backingPerUnit()` adds that sIMD at the vault's price, the other listed assets at their discounted value, and collateral that secures debt, divides by imdUSD supply, and caps the result at $1. It is the lower of two figures: the live one, and a lagged one in which newly added debt and collateral count only as they warm up: what is new halves every six hours, and a day with no change counts it in full (`BACKING_WARMUP`). `laggedNow()` returns the lagged debt and secured collateral. So it is not simply `reserveValue() + backedDebt()` over supply. See [Monetary policy](../economics/monetary-policy.md).
+`redemptionReserve()` is the Treasury's sIMD balance, listed or not. `backingPerUnit()` adds that sIMD at the vault's price, the other listed assets at their discounted value, and collateral that secures debt, divides by imdUSD supply, and caps the result at $1. It is the lower of two figures: the live one, and a lagged one in which newly added debt and collateral leave both sides until they warm up: what is new halves every six hours, tracked position by position, and new capital left untouched for a day counts in full (`BACKING_WARMUP`). In the lagged figure the reserve counts per unit of the whole supply, so the warm supply gets only its share of it. Within a transaction, imdUSD repaid earlier in the same transaction is added back to the supply. `laggedNow()` returns the lagged debt and secured collateral. So it is not simply `reserveValue() + backedDebt()` over supply, and it cannot be recomputed exactly from public getters alone: read `backingPerUnit()`. See [Monetary policy](../economics/monetary-policy.md).
 
 Supply always equals `totalDebt() + totalEarned() - totalNonPrincipalRedeemed()`. Do not add `totalFeesMinted()`: fees reminted to the Treasury were first burned from the payer. Work minting is cumulative; redemption does not give its allowance back.
 

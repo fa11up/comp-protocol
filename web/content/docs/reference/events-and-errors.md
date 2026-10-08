@@ -5,8 +5,9 @@ order: 3
 audience: integrators
 sources:
   - src/CDPVault.sol:57-101
-  - src/CDPVault.sol:274-1075
-  - src/ParameterizedVault.sol:25-225
+  - src/CDPVault.sol:274-1602
+  - src/ParameterizedVault.sol:25-309
+  - src/Parameters.sol:270-546
   - docs/abi/ParameterizedVault.json:1
   - lib/openzeppelin-contracts/contracts/utils/Address.sol:1
   - lib/openzeppelin-contracts/contracts/utils/math/Math.sol:1
@@ -64,7 +65,7 @@ sIMD was deposited to `account`'s position. For `lockIMD`, `amount` is the sIMD 
 
 ### `OracleSet(address indexed oracle)`
 
-The constructor linked the work oracle. It is emitted once; there is no way to change the oracle.
+The constructor linked the work oracle it created. It is emitted once. Governance can later point `earn` at a replacement through `Parameters.proposeWorkOracle` (48-hour delay); that change is not logged here, so read `oracle()`.
 
 ### `Wipe(address indexed account, uint256 amount)`
 
@@ -191,6 +192,10 @@ Deployment only: the factory returned a Treasury that does not serve this vault.
 ### `WorkCeilingReached()`
 
 `earn` would take total work minting above `earnLine()`. More rights do not help; the ceiling needs room.
+
+### `WorkMintingOff()`
+
+`earn` was called while the governed wage is zero, which switches minting from work off. Rights already claimed stay spendable once a wage is set.
 
 ### `ZeroAmount()`
 
