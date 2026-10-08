@@ -59,7 +59,7 @@ Severity counts (C/H/M/L/I) are critical, high, medium, low and info, as the rou
 | 18 | 2026-10-08 | Retry panel: the vault's redesigned lag | Panel, job [`3226aaed`](https://explorer.imd.fun/jobs/3226aaed-03da-457d-be15-7e2828021e54) | `973369e` | 0/1/4/2/2 | `24337a2`, `58f73de` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-RETRY-PANEL-VAULT-2026-10-07.md) |
 | 19 | 2026-10-08 | Retry panel 2: warmth per position | Panel, job [`a2640621`](https://explorer.imd.fun/jobs/a2640621-925d-479e-b71d-9629899ed4c6) | `24337a2` | 0/0/3/5/2 | `d7fceab` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-RETRY2-PANEL-VAULT-2026-10-08.md) |
 | 20 | 2026-10-08 | Final vault panel | Panel, job [`45bf3777`](https://explorer.imd.fun/jobs/45bf3777-cc84-44eb-a7ad-bbb2c0833d07) | `d7fceab` | 0/1/4/5/3 | `6085c8a` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-VAULT-PANEL-2026-10-08.md) |
-| 21 | 2026-10-08 | Final sweep: the whole system | Panel, job [`08a12413`](https://explorer.imd.fun/jobs/08a12413-5e3b-4baf-9f1c-6d1ba99e9487) | `6085c8a` | 0/0/0/3/2 | `669d9c1` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-PANEL-2026-10-08.md) |
+| 21 | 2026-10-08 | Final sweep: the whole system | Panel, job [`08a12413`](https://explorer.imd.fun/jobs/08a12413-5e3b-4baf-9f1c-6d1ba99e9487) | `6085c8a` | 0/0/0/3/2 | `77d8878` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-PANEL-2026-10-08.md) |
 
 ## What the chain shows
 
