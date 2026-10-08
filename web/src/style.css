@@ -3552,6 +3552,10 @@ body:has(> .vibe-canvas:not([hidden])) .infer {
 body:has(> .vibe-canvas:not([hidden])) .infer :is(.infer-ticket, .infer-stats) {
   background: color-mix(in srgb, var(--surface) 35%, transparent);
 }
+/* imdusd.com's homepage: the Launch parameters box gets the same treatment (its lines are already clear). */
+body:has(> .vibe-canvas:not([hidden])) .live-panel {
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+}
 body:has(> .vibe-canvas:not([hidden])) .infer-buy-sheet .infer-ticket {
   background: transparent;
 }
