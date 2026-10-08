@@ -16,8 +16,8 @@ export { parseAmount } from "./amount";
 import { ThemeToggle } from "../theme";
 import { Vibe } from "../vibe";
 import { INFER_VIBES } from "./vibes";
-import { StagingChip } from "../site";
-import { LAUNCH, LIVE } from "./config";
+import { NetworkChip } from "../site";
+import { LAUNCH } from "./config";
 import { ERC20, client, message } from "./chain";
 import { NATIVE } from "./swap";
 
@@ -776,7 +776,7 @@ export function Shell({
           </a>
         </nav>
         <div className="infer-tools">
-          {LIVE ? <span className="chip">Mainnet</span> : <StagingChip />}
+          <NetworkChip network="Mainnet" state="live" />
           <ThemeToggle />
           <Vibe suite={INFER_VIBES} />
           {wallet.account ? (

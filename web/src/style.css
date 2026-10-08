@@ -3596,14 +3596,18 @@ body:has(> .vibe-canvas:not([hidden]))
     flex-wrap: wrap;
   }
 }
-/* The network chip sits just before the two buttons on a phone too: pinned beside them on the first
-   row (they are pinned top right above), so it adds no row of its own. The wordmark alone is left on
-   that row, so there is room for both down to a 320px screen. */
+/* The network chips, side by side just before the theme and background buttons. */
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* On a phone two chips do not fit beside the wordmark, so they take a short row of their own at the
+   foot of the header (the theme and background buttons stay pinned top right above). */
 @media (max-width: 760px) {
-  .topbar .wallet-bar .chip {
-    position: absolute;
-    top: 21px;
-    right: 88px;
+  .topbar .wallet-bar .chips {
+    flex-wrap: wrap;
+    gap: 6px;
   }
 }
 
