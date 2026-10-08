@@ -120,6 +120,33 @@ function publicSite(): Plugin {
  * exactly the RPC and claim-file origins the page's launch file names, and nothing else.
  */
 const INFER_SITE = "https://infer.imdusd.com";
+/**
+ * /buy/ is an X player card: a post that links it shows the page itself, live, in a 480 × 560 frame,
+ * with `buy-card.png` (src/infer, rendered from the page by scripts/render-infer-card.mjs) as the still
+ * before play. The Worker admits x.com as a frame ancestor on this route only (worker/infer.js).
+ */
+const PLAYER = { width: 480, height: 560, image: "buy/card.png" };
+function playerTags(url: string, title: string, description: string) {
+  const image = `${INFER_SITE}/${PLAYER.image}`;
+  return (
+    `<link rel="canonical" href="${url}" />` +
+    `<meta property="og:type" content="website" />` +
+    `<meta property="og:site_name" content="imdUSD" />` +
+    `<meta property="og:url" content="${url}" />` +
+    `<meta property="og:title" content="${title}" />` +
+    `<meta property="og:description" content="${description}" />` +
+    `<meta property="og:image" content="${image}" />` +
+    `<meta property="og:image:width" content="${PLAYER.width * 2}" />` +
+    `<meta property="og:image:height" content="${PLAYER.height * 2}" />` +
+    `<meta name="twitter:card" content="player" />` +
+    `<meta name="twitter:title" content="${title}" />` +
+    `<meta name="twitter:description" content="${description}" />` +
+    `<meta name="twitter:image" content="${image}" />` +
+    `<meta name="twitter:player" content="${url}" />` +
+    `<meta name="twitter:player:width" content="${PLAYER.width}" />` +
+    `<meta name="twitter:player:height" content="${PLAYER.height}" />`
+  );
+}
 function inferSite(): Plugin {
   // The export directory, taken from the build rather than assumed, so `--outDir` works (a QA
   // build against a fork lives beside the real one without touching it).
@@ -144,6 +171,11 @@ function inferSite(): Plugin {
         type: "asset",
         fileName: "robots.txt",
         source: `User-agent: *\nAllow: /\n\nSitemap: ${INFER_SITE}/sitemap.xml\n`,
+      });
+      this.emitFile({
+        type: "asset",
+        fileName: PLAYER.image,
+        source: readFileSync(resolve(launchDir, "buy-card.png")),
       });
       this.emitFile({
         type: "asset",
@@ -173,7 +205,7 @@ function inferSite(): Plugin {
       manifest.description =
         "INFER, the imdUSD protocol's token: claim, swap, stake and the tokenomics.";
       writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n");
-      for (const page of ["", "claim/", "tokenomics/"]) {
+      for (const page of ["", "claim/", "tokenomics/", "buy/"]) {
         const file = resolve(dir, page, "index.html");
         const html = readFileSync(file, "utf8");
         const title = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? "INFER";
@@ -184,7 +216,7 @@ function inferSite(): Plugin {
           file,
           html.replace(
             "</head>",
-            `${socialTags(INFER_SITE, `${INFER_SITE}/${page}`, title, description, { type: "website" })}</head>`,
+            `${page === "buy/" ? playerTags(`${INFER_SITE}/${page}`, title, description) : socialTags(INFER_SITE, `${INFER_SITE}/${page}`, title, description, { type: "website" })}</head>`,
           ),
         );
       }
@@ -268,6 +300,7 @@ export default defineConfig(({ mode }) => {
           input: {
             index: resolve(import.meta.dirname, "infer/index.html"),
             claim: resolve(import.meta.dirname, "infer/claim/index.html"),
+            buy: resolve(import.meta.dirname, "infer/buy/index.html"),
             tokenomics: resolve(
               import.meta.dirname,
               "infer/tokenomics/index.html",

@@ -94,3 +94,41 @@ test(
       assert.ok(url.startsWith("https://"), url);
   },
 );
+
+test("the Worker lets X frame /buy/ and nothing else", async () => {
+  const worker = (await import("../worker/infer.js")).default;
+  const CSP =
+    "default-src 'none'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'";
+  const env = {
+    ASSETS: {
+      fetch: async (req) =>
+        new URL(req.url).pathname === "/missing/"
+          ? new Response("", { status: 404 })
+          : new Response("<html>", {
+              headers: {
+                "Content-Security-Policy": CSP,
+                "X-Frame-Options": "DENY",
+              },
+            }),
+    },
+  };
+  const get = (path) =>
+    worker.fetch(new Request(`https://infer.imdusd.com${path}`), env);
+  for (const path of ["/buy/", "/buy/index.html"]) {
+    const r = await get(path);
+    const csp = r.headers.get("Content-Security-Policy");
+    assert.equal(r.headers.get("X-Frame-Options"), null, path);
+    assert.match(csp, /frame-ancestors https:\/\/x\.com https:\/\/\*\.x\.com https:\/\/twitter\.com https:\/\/\*\.twitter\.com/);
+    assert.doesNotMatch(csp, /'none'; base/);
+    // Everything else in the policy is the site's own, untouched.
+    assert.match(csp, /^default-src 'none'; connect-src 'self'; frame-ancestors .*; base-uri 'self'$/);
+  }
+  for (const path of ["/", "/claim/", "/buy/card.png", "/buyx/", "/missing/"]) {
+    const r = await get(path);
+    if (r.status === 404) continue;
+    assert.equal(r.headers.get("X-Frame-Options"), "DENY", path);
+    assert.equal(r.headers.get("Content-Security-Policy"), CSP, path);
+  }
+  const http = await worker.fetch(new Request("http://infer.imdusd.com/buy/"), env);
+  assert.equal(http.status, 301);
+});

@@ -512,7 +512,7 @@ export function Balance({
  * follows the theme. Read from the file at build time, so the two can never drift apart. */
 const MARK =
   favicon.match(/<g style="fill:var\(--text\)">(.*?)<\/g>/)?.[1] ?? "";
-function Mark() {
+export function Mark() {
   return (
     <svg
       className="infer-mark-glyph"

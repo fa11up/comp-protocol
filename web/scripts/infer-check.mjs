@@ -21,6 +21,8 @@ const fail = (m) => {
 for (const need of [
   "index.html",
   "claim/index.html",
+  "buy/index.html",
+  "buy/card.png",
   "tokenomics/index.html",
   "404.html",
   "sitemap.xml",
@@ -66,6 +68,19 @@ if (/["'(]\.{1,2}\//.test(await readFile(`${dir}/404.html`, "utf8")))
 const html = await readFile(`${dir}/index.html`, "utf8");
 if (!/<link rel="canonical" href="https:\/\/infer\.imdusd\.com\/"/.test(html))
   fail("index.html has no canonical URL");
+// /buy/ is an X player card; its framing is the Worker's to grant, never _headers' (worker/infer.js).
+if (!/frame-ancestors 'none'/.test(csp) || !/X-Frame-Options: DENY/.test(headers))
+  fail("_headers must forbid framing; the Worker opens /buy/ to X alone");
+const buy = await readFile(`${dir}/buy/index.html`, "utf8");
+for (const [name, value] of [
+  ["twitter:card", "player"],
+  ["twitter:player", "https://infer.imdusd.com/buy/"],
+  ["twitter:player:width", "480"],
+  ["twitter:player:height", "560"],
+  ["twitter:image", "https://infer.imdusd.com/buy/card.png"],
+])
+  if (!buy.includes(`<meta name="${name}" content="${value}" />`))
+    fail(`buy/index.html lacks ${name} = ${value}`);
 console.log(
   `infer-check: ${files.length} files; mainnet only; CSP admits ${connect.trim()}.`,
 );
