@@ -16,6 +16,7 @@
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },
-  "workers_dev": true,
+  // No *.workers.dev copy: the site answers only on its own hostname, where the zone's HTTPS and redirect rules apply.
+  "workers_dev": false,
   "routes": [{ "pattern": "infer.imdusd.com", "custom_domain": true }]
 }

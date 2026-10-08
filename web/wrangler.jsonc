@@ -20,7 +20,8 @@
     // src/NotFound.tsx), never the homepage pretending to be some other page.
     "not_found_handling": "404-page"
   },
-  "workers_dev": true,
+  // No *.workers.dev copy: the site answers only on its own hostname, where the zone's HTTPS and redirect rules apply.
+  "workers_dev": false,
   // Cloudflare creates the DNS records and certificates for custom domains itself.
   "routes": [
     // www.imdusd.com is NOT a route: it is a proxied DNS record plus the zone's www -> imdusd.com Redirect
