@@ -12,7 +12,7 @@ import { Trade } from "./App";
 import { LIVE } from "./config";
 import { useInferMarket, usdCompact, usdPrice } from "./price";
 import { Vibe } from "../vibe";
-import { Fig, Mark, WalletChooser, short, useWallet } from "./ui";
+import { Fig, Mark, WalletChooser, useWallet } from "./ui";
 import { INFER_VIBES } from "./vibes";
 
 export function Buy() {
@@ -92,17 +92,13 @@ export function Buy() {
         aria-label="Buy INFER"
         onClick={(e) => e.target === e.currentTarget && sheet.current?.close()}
       >
-        {w.account && (
+        {/* Connected, the sheet shows no address and no disconnect; the one thing it adds is, on a
+            phone paired by WalletConnect, the way back into the wallet app to approve each trade. */}
+        {w.account && w.walletLink && (
           <div className="infer-buy-sheet-bar">
-            <span title={w.account}>{short(w.account)}</span>
-            {w.walletLink && (
-              <a href={w.walletLink} target="_blank" rel="noopener noreferrer">
-                Open wallet ↗
-              </a>
-            )}
-            <button type="button" onClick={() => void w.disconnect()}>
-              Disconnect
-            </button>
+            <a href={w.walletLink} target="_blank" rel="noopener noreferrer">
+              Open wallet ↗
+            </a>
           </div>
         )}
         {w.error && !w.choosing && (
