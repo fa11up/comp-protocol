@@ -318,11 +318,17 @@ contract CDPVault is ReentrancyGuard {
     /// half). Every position cools at the same rate, so the vault's total cold cools at that rate too and
     /// is kept as one figure, read in constant time. A day in which nothing is touched credits it in full;
     /// under activity a day credits about 94%, two days 99.6% (see `_cool`). A decrease takes the
-    /// position's own cold first and counts at once. So capital brought in one transaction and withdrawn a
-    /// few later cannot authorise work minting or a redemption at par, and what one position removes can
+    /// position's own cold first and counts at once. So capital brought in one transaction counts about 0.04%
+    /// of itself in the next, and what one position removes can
     /// never warm what another adds, in either order (retry panel audit 2026-10-07, vault, high: with ONE
     /// aggregate lag, a draw followed by the cancellation of another borrower's warm debt left the lag
-    /// warm for the new debt). A position's own warm capital that leaves and returns is credited again from
+    /// warm for the new debt). ACCEPTED: new capital counts by its warmed fraction, averaged with the warm
+    /// book, so a loan k times a thin, below-par book lifts the lagged figure toward par in minutes, not a day
+    /// (to par in about 10 minutes at k = 9 from 0.84). It needs collateral worth about 2k times the warm book
+    /// locked for that window, at the market's price risk, and gains at most the gap to par on the Treasury's
+    /// reserve, since a position-funded payout stays pro rata (delta panel audit 2026-10-08, low): keep the
+    /// Treasury's sIMD small while the book is thin (docs/MAINNET-RUNBOOK.md section 7).
+    /// A position's own warm capital that leaves and returns is credited again from
     /// its bank, which cools at the same rate while it waits. A price fall that re-prices a debt-bound term
     /// upward is new to the lag too, so collateral long held counts as cold for a few hours: accepted, the
     /// lag's safe direction (retry2 panel audit 2026-10-08, vault, low). Tracked from deployment, so it is
@@ -491,7 +497,17 @@ contract CDPVault is ReentrancyGuard {
         _debtChanged(resultingTotal - amount);
         _lag(position, false, position.debt, position.debt + amount);
         position.debt += amount;
+        uint256 termBefore = position.secured;
         _resecure(position, _priceOrZero());
+        // A term that is already the whole collateral (the 170-200% band) does not move with the draw, so
+        // nothing above made any of it cold, and the lagged figure dropped the new imdUSD but kept the
+        // collateral now also standing behind it: a newcomer's capital lifting the live figure in one
+        // transaction let a redemption in the next be paid that overstated lagged figure (delta panel audit
+        // 2026-10-08, medium). The new debt's share of the term goes cold with it.
+        if (position.secured == termBefore && termBefore > position.coldSecured) {
+            _lag(position, true, termBefore, termBefore + Math.min(
+                Math.mulDiv(termBefore, amount, position.debt), termBefore - position.coldSecured));
+        }
         _transientAdd(MINTED_THIS_TX_SLOT, amount);
         // REVISION (finding 883fa030): a top-up re-dated the whole record, so one wei every twelve
         // hours kept any amount of principal fresh forever. The record's timestamp now moves toward
@@ -755,16 +771,18 @@ contract CDPVault is ReentrancyGuard {
     /// transaction lifted it toward par for a redemption in the next. So this is the LOWER of the live
     /// figure and a lagged one in which fresh capital leaves BOTH sides: warmed-up secured collateral
     /// over supply less the principal that is still warming up. An attacker's capital can raise the live
-    /// figure but not the lagged one, whichever position it sits in (`_lag`): new debt and the imdUSD minted
-    /// against it are excluded together. The reserve backs every unit, so the lagged figure counts only the
+    /// figure but only its warmed fraction can raise the lagged one, whichever position it sits in (`_lag`):
+    /// new debt, the imdUSD minted against it and the collateral behind it are excluded together, a band
+    /// position's draw included (`draw`). The reserve backs every unit, so the lagged figure counts only the
     /// warm supply's share of it (reserve per unit of the whole supply, as in the live figure, plus warm
     /// collateral per warm unit). Counted whole against the warm supply alone it read above par while most
     /// supply was new, as after launch, so the live figure, which a newcomer's capital raises, stood (final
-    /// sweep panel audit 2026-10-08, low). A large new borrower therefore dilutes the reserve's part for a
-    /// warm redeemer until its supply warms, as it does in the live figure: the safe direction. When every unit of supply is fresh there is no lagged
-    /// figure and the live one stands. The lag underpays honest redemptions for hours in two accepted cases:
-    /// a price fall's re-pricing counts as cold (`BACKING_HALF_LIFE`), and a stale position's share can stay
-    /// in the total (`_cool`). The supply is the live one plus
+    /// sweep panel audit 2026-10-08, low). When every unit of supply is fresh there is no lagged figure and the
+    /// live one stands. The lag underpays honest redemptions for hours in three accepted cases, all the safe
+    /// direction: a price fall's re-pricing counts as cold (`BACKING_HALF_LIFE`); a stale position's share can
+    /// stay in the total (`_cool`); and a large new loan dilutes the reserve's part for warm redeemers until its
+    /// supply warms, while the live figure, which counts its collateral, rises (a 900,000 loan took 0.88 to
+    /// 0.812 for about two hours, delta panel audit 2026-10-08, info). The supply is the live one plus
     /// what repayments earlier in this transaction burned (REPAID_THIS_TX_SLOT), so a same-call wipe, cash and
     /// draw is paid no premium (sweep panel audit, vault, medium).
     /// ACCEPTED, one transaction apart: a borrower in the 170-200% band whose term is its whole collateral can
@@ -1062,8 +1080,9 @@ contract CDPVault is ReentrancyGuard {
     /// FLOORED at `_feeBaseFloor()`: while most supply is new, as right after launch, the warm base is near
     /// zero, and a dust redemption then stored the 4.5% cap as everyone's base rate for days (final vault
     /// panel 2026-10-08, low). At a 1,000 floor a 90 imdUSD burn still did, for a 4.5 imdUSD fee (final sweep
-    /// panel 2026-10-08, low), so the floor is 100,000: storing the cap from the floor takes a burn of 4.5%
-    /// of it times the divisor (9,000 at 2), the cap paid on all of it. Under the floor a redemption's
+    /// panel 2026-10-08, low), so the floor is 100,000: storing the cap from the floor takes 4.5% of it times
+    /// the divisor in burns (9,000 at 2), paying about 250 imdUSD of fee if split into small burns that each
+    /// pay the rising rate (450 in one; delta panel audit 2026-10-08, info). Under the floor a redemption's
     /// increase is measured as if the supply were the floor, which only lowers fees while the protocol is
     /// that small; a figure from the live supply instead would let principal held a block lower it again.
     function _feeBase() internal view returns (uint256) {
@@ -1344,7 +1363,8 @@ contract CDPVault is ReentrancyGuard {
     }
 
     /// @notice How long after its grace ends a mark stays actionable: the shorter of the price and NHI
-    /// feeds' lifetimes (the spot feed and Chainlink are not read; at the shipped constants all agree).
+    /// feeds' lifetimes. The spot feed and Chainlink are not read: at the shipped constants the spot feed's
+    /// lifetime equals the price feed's (an hour) and Chainlink's (two hours) is longer.
     /// @dev Past that, at least one full feed cycle has elapsed in which nobody liquidated, and either
     /// feed may have moved the position through recovery unobserved; the mark is void and must be retaken.
     function tail() public view returns (uint256) {

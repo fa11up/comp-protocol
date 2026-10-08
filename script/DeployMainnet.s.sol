@@ -87,9 +87,11 @@ interface IStakedIMD {
 /// DeploymentConfig and recompiles until nothing moves (at most five passes, one per layer).
 ///
 /// `run()` refuses to broadcast unless every constant already equals its computed address, so a
-/// mistyped address fails the dry run instead of shipping a dead feed. It is resumable: a contract
-/// whose address already holds code is skipped, never redeployed. Then everything is read back off
-/// chain and written to deploy/mainnet/out/ for the keeper.
+/// mistyped address fails the dry run instead of shipping a dead feed. Stage one is resumable: a contract
+/// whose address already holds code is skipped, never redeployed. Each stage reads back what it deployed
+/// and writes deploy/mainnet/out/deployment.json for the keeper; the vault is recorded only once it exists.
+/// Neither stage runs while that record names a deployed vault other than VAULT_SALT's, so a rerun cannot
+/// leave a second vault or drop the first from the record.
 ///
 /// The Intake is NOT deployed here: the swarm's developer deploys it. INTAKE is an external address
 /// like Chainlink, and OracleAsker's constructor refuses one with no code.
@@ -195,6 +197,7 @@ contract DeployMainnet is Script, DeployPreflight {
     function run() external {
         Plan memory p = plan();
         _refuseUnlessReady(p);
+        _refuseAnotherVault(p);
 
         vm.startBroadcast();
         _deploy(SALT_RELAY, type(SwarmRelay).creationCode, p.relay);
@@ -219,14 +222,33 @@ contract DeployMainnet is Script, DeployPreflight {
         verifySeeded(p);
         bytes32 salt = vm.envBytes32("VAULT_SALT");
         require(salt != bytes32(0) && salt != PUBLIC_VAULT_SALT, "VAULT_SALT: set the operator's secret salt, not the public one");
+        _refuseAnotherVault(p);
 
         vm.startBroadcast();
         _deploy(salt, _vaultInit(p), p.vault);
         vm.stopBroadcast();
 
-        verify(p);
+        // Recorded before it is verified: a vault that exists (ours, or the same initcode placed first by
+        // whoever saw the salt) is in deployment.json even when verify then refuses it, so the operator
+        // sees what is at the address instead of a stale record (delta panel audit 2026-10-08, low).
         _record(p);
+        verify(p);
         console2.log("\nDeployed and verified. Next: runbook section 7 from step 3 (list sIMD, start the keeper).");
+    }
+
+    /// @dev Refuses while deployment.json names a deployed vault other than the one VAULT_SALT gives: a rerun
+    /// with another salt (or none, for stage one) would deploy a second vault or drop the first from the
+    /// record the keeper runs from (delta panel audit 2026-10-08, info).
+    function _refuseAnotherVault(Plan memory p) internal view {
+        string memory path = string.concat(OUT, "deployment.json");
+        if (!vm.exists(path)) return;
+        string memory json = vm.readFile(path);
+        if (!vm.keyExistsJson(json, ".vault")) return;
+        address recorded = vm.parseJsonAddress(json, ".vault");
+        require(
+            recorded.code.length == 0 || recorded == p.vault,
+            "deployment.json records a deployed vault: rerun with the VAULT_SALT that deployed it"
+        );
     }
 
     /// @dev Everything that would make the broadcast wrong, checked before it starts.

@@ -236,10 +236,12 @@ FOUNDRY_PROFILE=deploy OPERATOR=<cold governance> forge script script/DeployMain
 `run()` refuses unless: chain id 1; Chainlink is mainnet's and fresh; every planned address equals its
 source constant; `INTAKE` has code; `OPERATOR` equals `APPROVED_OPERATOR`; the broadcaster is NOT the
 operator; StakedIMD wraps IMD; the wage and the stream ship off. It is resumable (an address that already
-has code is skipped) and it reads the whole stack back off chain before writing
-`deploy/mainnet/out/deployment.json` + `bodies/`, which is what the keeper runs from.
+has code is skipped). Each stage reads back off chain what it deployed and writes
+`deploy/mainnet/out/deployment.json` + `bodies/`, which is what the keeper runs from; stage two adds the
+vault and what it created, recorded before `verify` runs.
 
-Choices fixed in the script, part of the deploy commit: salts `infer-protocol/mainnet/v1/<Contract>`; feed
+Choices fixed in the script, part of the deploy commit: salts `infer-protocol/mainnet/v1/<Contract>` for
+every contract but the vault (below); feed
 `maxDeviationBps` **2000** (the asker asks on a FALL of 5%, a quarter of the cap, never on a rise); the
 asker treats price and spot as pool-tracked and keeps only NHI alive on the Treasury's clock (any feed
 silent a lifetime with its allowance wide open is also paid for, price and spot included).
@@ -249,7 +251,9 @@ and refuses it unset or equal to the salt this file once named. With the salt pu
 the vault's CREATE2 address between the stages, since its initcode is public once stage one lands (final
 sweep panel audit 2026-10-08, low). Nothing reads the vault's address as a source constant, so nothing
 needs the salt before stage two, and stage two goes through a private relay (§7 step 2) so the salt is
-not public before the vault exists. deployment.json records the vault only once it is deployed.
+not public before the vault exists. deployment.json records the vault only once it is deployed. Neither
+stage runs while deployment.json names a deployed vault other than the one `VAULT_SALT` gives, so a rerun
+with another salt cannot deploy a second vault or drop the first from the keeper's record.
 
 Rehearsed on a mainnet fork: 8 transactions, **26.2M gas** in total, the largest the vault at **12.7M**
 (block limit 60M) — about 0.026 ETH at 1 gwei.
@@ -347,10 +351,16 @@ could).
    and a price or spot value more than 5% from the pool. **If it fails, do not deploy the vault**: the
    feed follows the market once its allowance has widened (two hours of silence for 40%, longer for
    more), so relay honest values and run it again. Then `runVault()` (same environment plus the
-   reference and `VAULT_SALT`) deploys the vault and runs `verify`. **Broadcast it through MEV Blocker**
-   (`--rpc-url https://rpc.mevblocker.io`), never a public mempool: the transaction carries the salt, and
-   until it lands anyone who saw it could deploy the vault first. Keep the salt out of the repository, shell
-   history and logs.
+   reference and `VAULT_SALT`) deploys the vault and runs `verify`. Make the salt fresh and random
+   (`openssl rand -hex 32`, prefixed `0x`) and keep it out of the repository, shell history and logs.
+   **Broadcast it through MEV Blocker's full-privacy endpoint** (`--rpc-url https://rpc.mevblocker.io/fullprivacy`),
+   never the default endpoint or a public mempool: the transaction carries the salt in its calldata, the
+   default endpoint shares transactions (without signatures) with searchers, and until it lands anyone who
+   saw it could deploy the same vault first (delta panel audit 2026-10-08, low). If `verify` then refuses
+   a vault that is already there, stop: deployment.json records it, and the operator decides from what
+   is at the address. **Keep the Treasury's sIMD small while the book is thin**: new capital warms into the
+   backing figure by its warmed fraction, so a loan many times a below-par book can lift a reserve-funded
+   redemption toward par within minutes, gaining at most the gap on the Treasury's sIMD.
 3. **List the reserve assets** through `Parameters.proposeReserveAsset` — each needs a price source
    and a haircut, and each waits 48 hours. Until the register is non-empty, `reserveValueUsd()` is
    zero and so is the first term of `earnLine`.
