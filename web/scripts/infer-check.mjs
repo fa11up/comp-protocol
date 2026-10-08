@@ -34,7 +34,12 @@ for (const need of [
 for (const f of files)
   if (f === "imd-deployment.json" || f.startsWith("abi/"))
     fail(`${f} ships the testnet deployment`);
-for (const f of files.filter((f) => /\.(html|js|css|webmanifest)$/.test(f))) {
+// WalletConnect's library (its own lazily loaded chunk) names testnets in its chain tables; it is
+// third-party code that renders no text, so it is the one file exempt from this check.
+const ours = (f) => !/^assets\/walletconnect-[\w-]+\.js$/.test(f);
+for (const f of files.filter(
+  (f) => /\.(html|js|css|webmanifest)$/.test(f) && ours(f),
+)) {
   const text = await readFile(`${dir}/${f}`, "utf8");
   const leak = text.match(/sepolia|testnet/i);
   if (leak) fail(`${f} mentions "${leak[0]}"`);
@@ -63,13 +68,24 @@ for (const url of [...launch.rpc, ...launch.claims.origins]) {
   if (!connect.includes(new URL(url).origin))
     fail(`connect-src lacks ${new URL(url).origin}`);
 }
+// WalletConnect's relay is admitted exactly when a project is configured (vite.config.ts).
+const wc = JSON.parse(
+  await readFile(resolve(here, "../src/infer/walletconnect.json"), "utf8"),
+);
+if (wc.projectId && !connect.includes("wss://relay.walletconnect.org"))
+  fail("a WalletConnect project is set but connect-src lacks its relay");
+if (!wc.projectId && /walletconnect/.test(connect))
+  fail("connect-src admits WalletConnect with no project configured");
 if (/["'(]\.{1,2}\//.test(await readFile(`${dir}/404.html`, "utf8")))
   fail("404.html has a relative URL");
 const html = await readFile(`${dir}/index.html`, "utf8");
 if (!/<link rel="canonical" href="https:\/\/infer\.imdusd\.com\/"/.test(html))
   fail("index.html has no canonical URL");
 // /buy/ is an X player card; its framing is the Worker's to grant, never _headers' (worker/infer.js).
-if (!/frame-ancestors 'none'/.test(csp) || !/X-Frame-Options: DENY/.test(headers))
+if (
+  !/frame-ancestors 'none'/.test(csp) ||
+  !/X-Frame-Options: DENY/.test(headers)
+)
   fail("_headers must forbid framing; the Worker opens /buy/ to X alone");
 const buy = await readFile(`${dir}/buy/index.html`, "utf8");
 for (const [name, value] of [

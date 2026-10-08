@@ -60,14 +60,23 @@ export function App() {
 
 type Side = "buy" | "sell";
 
+/** Quick amounts in the compact pane, in the pair token when buying (whole tokens). */
+const QUICK_BUY: Record<string, string[]> = {
+  ETH: ["0.01", "0.05", "0.1"],
+  IMD: ["10", "50", "100"],
+};
+
 export function Trade({
   w,
   tick,
   refresh,
+  compact = false,
 }: {
   w: Wallet;
   tick: number;
   refresh: () => void;
+  /** The /buy/ card's sheet: tabs, pay, receive, quick amounts and one button; the rest appears with a quote. */
+  compact?: boolean;
 }) {
   const c = LAUNCH.contracts;
   const key = LAUNCH.poolKey;
@@ -231,7 +240,7 @@ export function Trade({
   async function go() {
     if (!w.account || !key || !tokenIn || !quote || amountIn === 0n) return;
     const account = w.account;
-    const p = window.ethereum!;
+    const p = w.provider!;
     // The chain's clock, read now: a 20-minute swap deadline and a 30-day permit from it.
     const { timestamp: now } = await client.getBlock({ blockTag: "latest" });
     if (needsErc20Approve) {
@@ -309,10 +318,29 @@ export function Trade({
                   ? "Buy INFER"
                   : "Sell INFER";
 
+  const quick =
+    side === "buy"
+      ? (QUICK_BUY[pair] ?? []).map((v) => [`${v} ${pair}`, v] as const)
+      : bal && bal.infer > 0n
+        ? ([25n, 50n, 100n] as const).map(
+            (pc) =>
+              [
+                pc === 100n ? "Max" : `${pc}%`,
+                formatUnits((bal.infer * pc) / 100n, 18),
+              ] as const,
+          )
+        : [];
+  const connectFirst = compact && LIVE && !w.account;
+
   return (
-    <section className="infer-pane infer-trade" aria-labelledby="trade-heading">
+    <section
+      className={`infer-pane infer-trade${compact ? " infer-trade-compact" : ""}`}
+      aria-labelledby="trade-heading"
+    >
       <header className="infer-pane-head">
-        <h1 id="trade-heading">Trade</h1>
+        <h1 id="trade-heading" className={compact ? "sr-only" : undefined}>
+          Trade
+        </h1>
         <Switch
           label="Side"
           value={side}
@@ -370,58 +398,78 @@ export function Trade({
             <b>{symbolOut}</b>
           </span>
         </div>
-        <dl className="infer-lines">
-          <Line
-            k="Price"
-            v={
-              !LIVE
-                ? "set at launch"
-                : price === null
-                  ? "…"
-                  : price === 0n
-                    ? "unavailable"
-                    : `${tokens(price, 6)} ${pair} per INFER`
-            }
-          />
-          <Line
-            k="Minimum received"
-            v={
-              quote && quote.forAmount === amountIn
-                ? `${tokens(minimumOut(quote.out, slippage), 4)} ${symbolOut}`
-                : "—"
-            }
-          />
-          <Line
-            k="Slippage"
-            v={
-              <span
-                className="infer-slippage"
-                role="radiogroup"
-                aria-label="Slippage tolerance"
+        {compact && quick.length > 0 && (
+          <div className="infer-quick" role="group" aria-label="Amount">
+            <span>amount</span>
+            {quick.map(([label, v]) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={amount === v}
+                disabled={!LIVE}
+                onClick={() => setAmount(v)}
               >
-                {[50, 100, 300].map((bps) => (
-                  <button
-                    key={bps}
-                    type="button"
-                    role="radio"
-                    aria-checked={slippage === bps}
-                    onClick={() => setSlippage(bps)}
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        {(!compact || amountIn > 0n) && (
+          <dl className="infer-lines">
+            <Line
+              k={compact ? "Rate" : "Price"}
+              v={
+                !LIVE
+                  ? "set at launch"
+                  : price === null
+                    ? "…"
+                    : price === 0n
+                      ? "unavailable"
+                      : `${tokens(price, 6)} ${pair} per INFER`
+              }
+            />
+            <Line
+              k="Minimum received"
+              v={
+                quote && quote.forAmount === amountIn
+                  ? `${tokens(minimumOut(quote.out, slippage), 4)} ${symbolOut}`
+                  : "—"
+              }
+            />
+            {!compact && (
+              <Line
+                k="Slippage"
+                v={
+                  <span
+                    className="infer-slippage"
+                    role="radiogroup"
+                    aria-label="Slippage tolerance"
                   >
-                    {bps / 100}%
-                  </button>
-                ))}
-              </span>
-            }
-          />
-          <Line
-            k="Route"
-            v={
-              LIVE
-                ? `Uniswap v4 · ${pair}/INFER · ${key ? `${key.fee / 10_000}% fee` : ""}`
-                : "the launch pool"
-            }
-          />
-        </dl>
+                    {[50, 100, 300].map((bps) => (
+                      <button
+                        key={bps}
+                        type="button"
+                        role="radio"
+                        aria-checked={slippage === bps}
+                        onClick={() => setSlippage(bps)}
+                      >
+                        {bps / 100}%
+                      </button>
+                    ))}
+                  </span>
+                }
+              />
+            )}
+            <Line
+              k="Route"
+              v={
+                LIVE
+                  ? `Uniswap v4 · ${pair}/INFER · ${key ? `${key.fee / 10_000}% fee` : ""}`
+                  : "the launch pool"
+              }
+            />
+          </dl>
+        )}
         {quoteError && (
           <Vanishing
             key={quoteError.id}
@@ -442,60 +490,67 @@ export function Trade({
         )}
         <button
           className="infer-go"
+          type={connectFirst ? "button" : "submit"}
+          onClick={connectFirst ? () => void w.connect() : undefined}
           disabled={
-            !LIVE ||
-            !w.account ||
-            !bal ||
-            amountIn === 0n ||
-            insufficient ||
-            !quote ||
-            quote.forAmount !== amountIn ||
-            tx.status === "pending"
+            connectFirst
+              ? w.busy
+              : !LIVE ||
+                !w.account ||
+                !bal ||
+                amountIn === 0n ||
+                insufficient ||
+                !quote ||
+                quote.forAmount !== amountIn ||
+                tx.status === "pending"
           }
         >
-          {button}
+          {connectFirst ? (w.busy ? "Connecting…" : "Connect wallet") : button}
         </button>
         <TxStatus tx={tx} onDone={clear} />
       </form>
 
-      <footer className="infer-pane-foot">
-        <dl className="infer-lines">
-          <Line
-            k="Pool"
-            v={
-              <>
-                {LAUNCH.pair}/INFER,{" "}
-                {pct(
-                  LAUNCH.allocation.find((a) => a.key === "pool")?.bps ?? null,
-                ) ?? "—"}{" "}
-                of supply, held by the factory for good
-              </>
-            }
-          />
-          <Line
-            k="Opening cap"
-            v={
-              <Fig
-                v={whole(LAUNCH.openingMarketCapImd, 0)}
-                unit={LAUNCH.pair}
-              />
-            }
-          />
-          <Line
-            k="Fees"
-            v={
-              <>
-                <Fig v={pct(LAUNCH.fees.treasuryBps)} /> of pool fees to the
-                Treasury
-              </>
-            }
-          />
-        </dl>
-        <p className="infer-fine">
-          Trades go to Uniswap's router from your wallet; this page only quotes
-          and prepares them.
-        </p>
-      </footer>
+      {!compact && (
+        <footer className="infer-pane-foot">
+          <dl className="infer-lines">
+            <Line
+              k="Pool"
+              v={
+                <>
+                  {LAUNCH.pair}/INFER,{" "}
+                  {pct(
+                    LAUNCH.allocation.find((a) => a.key === "pool")?.bps ??
+                      null,
+                  ) ?? "—"}{" "}
+                  of supply, held by the factory for good
+                </>
+              }
+            />
+            <Line
+              k="Opening cap"
+              v={
+                <Fig
+                  v={whole(LAUNCH.openingMarketCapImd, 0)}
+                  unit={LAUNCH.pair}
+                />
+              }
+            />
+            <Line
+              k="Fees"
+              v={
+                <>
+                  <Fig v={pct(LAUNCH.fees.treasuryBps)} /> of pool fees to the
+                  Treasury
+                </>
+              }
+            />
+          </dl>
+          <p className="infer-fine">
+            Trades go to Uniswap's router from your wallet; this page only
+            quotes and prepares them.
+          </p>
+        </footer>
+      )}
     </section>
   );
 }
@@ -660,7 +715,7 @@ function Stake({
     const account = w.account,
       infer = c.infer,
       vault = c.stakedInfer,
-      p = window.ethereum!;
+      p = w.provider!;
     if (mode === "stake") {
       if (st.allowance < wei) {
         await send("Approve INFER", async () => {

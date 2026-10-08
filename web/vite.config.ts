@@ -33,8 +33,12 @@ Sitemap: ${SITE}/sitemap.xml
  * chain or a third party is refused by the browser. `connect-src 'none'` is also the public site's
  * promise (scripts/public-check.mjs): it reads no chain.
  */
-const publicHeaders = (scriptHashes: string[], connect: string[] = []) => `/*
-  Content-Security-Policy: default-src 'none'; script-src 'self' ${scriptHashes.map((h) => `'sha256-${h}'`).join(" ")}; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src ${connect.length ? connect.join(" ") : "'none'"}; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
+const publicHeaders = (
+  scriptHashes: string[],
+  connect: string[] = [],
+  frames: string[] = [],
+) => `/*
+  Content-Security-Policy: default-src 'none'; script-src 'self' ${scriptHashes.map((h) => `'sha256-${h}'`).join(" ")}; style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src ${connect.length ? connect.join(" ") : "'none'"};${frames.length ? ` frame-src ${frames.join(" ")};` : ""} frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'; upgrade-insecure-requests
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
@@ -120,6 +124,22 @@ function publicSite(): Plugin {
  * exactly the RPC and claim-file origins the page's launch file names, and nothing else.
  */
 const INFER_SITE = "https://infer.imdusd.com";
+/**
+ * WalletConnect's relay and its verify service, the only origins the protocol contacts (measured under
+ * the enforced policy: the relay socket, and verify, which it loads as a hidden frame; the .com hosts are
+ * their fallbacks). Admitted only when src/infer/walletconnect.json names a project, so without one the
+ * policy is exactly as before.
+ */
+const WALLETCONNECT_FRAMES = [
+  "https://verify.walletconnect.org",
+  "https://verify.walletconnect.com",
+];
+const WALLETCONNECT_ORIGINS = [
+  "wss://relay.walletconnect.org",
+  "wss://relay.walletconnect.com",
+  "https://verify.walletconnect.org",
+  "https://verify.walletconnect.com",
+];
 /**
  * /buy/ is an X player card: a post that links it shows the page itself, live, in a 480 × 560 frame,
  * with `buy-card.png` (src/infer, rendered from the page by scripts/render-infer-card.mjs) as the still
@@ -240,9 +260,17 @@ function inferSite(): Plugin {
           ),
         ),
       ];
+      const wc = JSON.parse(
+        readFileSync(resolve(launchDir, "walletconnect.json"), "utf8"),
+      ) as { projectId: string | null };
+      if (wc.projectId) origins.push(...WALLETCONNECT_ORIGINS);
       writeFileSync(
         resolve(dir, "_headers"),
-        publicHeaders([...hashes], ["'self'", ...origins]),
+        publicHeaders(
+          [...hashes],
+          ["'self'", ...origins],
+          wc.projectId ? WALLETCONNECT_FRAMES : [],
+        ),
       );
     },
   };

@@ -1,14 +1,17 @@
 import favicon from "../../public/favicon.svg?raw";
 
 // Shared pieces of the three INFER pages: the shell, the wallet, the transaction runner and figures.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   formatUnits,
   getAddress,
   parseUnits,
   type Address,
+  type EIP1193Provider,
   type Hex,
 } from "viem";
+import { encode } from "uqr";
+import wcConfig from "./walletconnect.json";
 export { parseAmount } from "./amount";
 import { ThemeToggle } from "../theme";
 import { Vibe } from "../vibe";
@@ -17,6 +20,28 @@ import { StagingChip } from "../site";
 import { LAUNCH, LIVE } from "./config";
 import { ERC20, client, message } from "./chain";
 import { NATIVE } from "./swap";
+
+/** Set in walletconnect.json; read here so the page carries the flag but not WalletConnect's code. */
+const WC_PROJECT_ID: string | null = wcConfig.projectId;
+/** Wallet apps that open a WalletConnect pairing link directly (a phone's replacement for the QR code). */
+const WALLET_APPS: { name: string; link: (uri: string) => string }[] = [
+  {
+    name: "MetaMask",
+    link: (u) => `https://metamask.app.link/wc?uri=${encodeURIComponent(u)}`,
+  },
+  {
+    name: "Rainbow",
+    link: (u) => `https://rnbwapp.com/wc?uri=${encodeURIComponent(u)}`,
+  },
+  {
+    name: "Trust",
+    link: (u) => `https://link.trustwallet.com/wc?uri=${encodeURIComponent(u)}`,
+  },
+  {
+    name: "Uniswap",
+    link: (u) => `https://uniswap.org/app/wc?uri=${encodeURIComponent(u)}`,
+  },
+];
 
 export const SITE = "https://imdusd.com";
 export const WHITEPAPER = "https://whitepaper.imdusd.com";
@@ -73,28 +98,146 @@ export const notice = (text: string): Notice => ({ id: ++noticeSeq, text });
 
 // ------------------------------------------------------------------ wallet
 
+type Listening = EIP1193Provider & {
+  on?: (event: string, listener: (arg: unknown) => void) => void;
+  removeListener?: (event: string, listener: (arg: unknown) => void) => void;
+};
+
+/** One way to connect: a browser wallet (announced through EIP-6963, or plain window.ethereum), or
+ * WalletConnect, which pairs a phone wallet by QR code or by a link into the wallet app. */
+export type WalletOption =
+  | {
+      kind: "injected";
+      id: string;
+      name: string;
+      icon?: string;
+      provider: Listening;
+    }
+  | { kind: "walletconnect"; id: "walletconnect"; name: string };
+
 export type Wallet = {
   account: Address | null;
   chainId: number | null;
   error: Notice | null;
   busy: boolean;
+  /** The connected wallet, for signing; null until one is connected. */
+  provider: EIP1193Provider | null;
+  /** Opens the chooser, or connects at once when there is only one way to. */
   connect: () => Promise<void>;
   clearError: () => void;
+  options: WalletOption[];
+  choosing: boolean;
+  choose: (o: WalletOption) => Promise<void>;
+  cancel: () => void;
+  /** While WalletConnect waits for a wallet: the pairing link, for the QR code and the app links. */
+  pairing: string | null;
+  /** On WalletConnect, the wallet app's link back to itself, to approve a signature on a phone. */
+  walletLink: string | null;
+  disconnect: () => Promise<void>;
 };
+
+const REMEMBER = "infer-wallet";
+const remembered = () => {
+  try {
+    return localStorage.getItem(REMEMBER);
+  } catch {
+    return null;
+  }
+};
+const remember = (id: string | null) => {
+  try {
+    if (id) localStorage.setItem(REMEMBER, id);
+    else localStorage.removeItem(REMEMBER);
+  } catch {
+    /* private window: the choice is just not kept */
+  }
+};
+
+/** Browser wallets announced through EIP-6963 (each with its own name and icon), else window.ethereum. */
+function useInjected(): WalletOption[] {
+  const [found, setFound] = useState<WalletOption[]>([]);
+  useEffect(() => {
+    const onAnnounce = (e: Event) => {
+      const d = (e as CustomEvent).detail as {
+        info?: { uuid: string; name: string; icon?: string; rdns?: string };
+        provider?: Listening;
+      };
+      if (!d?.info || !d.provider) return;
+      const o: WalletOption = {
+        kind: "injected",
+        id: d.info.rdns || d.info.uuid,
+        name: d.info.name,
+        // An icon is a data: URI by the standard; anything else is not shown (and the CSP would refuse it).
+        icon: d.info.icon?.startsWith("data:image/") ? d.info.icon : undefined,
+        provider: d.provider,
+      };
+      setFound((list) =>
+        list.some((x) => x.id === o.id) ? list : [...list, o],
+      );
+    };
+    window.addEventListener("eip6963:announceProvider", onAnnounce);
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    return () =>
+      window.removeEventListener("eip6963:announceProvider", onAnnounce);
+  }, []);
+  return useMemo(
+    () =>
+      found.length === 0 && window.ethereum
+        ? [
+            {
+              kind: "injected",
+              id: "injected",
+              name: "Browser wallet",
+              provider: window.ethereum,
+            },
+          ]
+        : found,
+    [found],
+  );
+}
 
 export function useWallet(): Wallet {
   const [w, setW] = useState<{
     account: Address | null;
     chainId: number | null;
     error: Notice | null;
-  }>({ account: null, chainId: null, error: null });
+    provider: Listening | null;
+    walletLink: string | null;
+  }>({
+    account: null,
+    chainId: null,
+    error: null,
+    provider: null,
+    walletLink: null,
+  });
   const [busy, setBusy] = useState(false);
+  const [choosing, setChoosing] = useState(false);
+  const [pairing, setPairing] = useState<string | null>(null);
+  const injected = useInjected();
+  const options: WalletOption[] = [
+    ...injected,
+    ...(WC_PROJECT_ID
+      ? [
+          {
+            kind: "walletconnect",
+            id: "walletconnect",
+            name: "WalletConnect",
+          } as const,
+        ]
+      : []),
+  ];
+  const wcDisconnect = useRef<(() => Promise<void>) | null>(null);
+
+  // Follow the connected wallet's account and chain.
   useEffect(() => {
-    const p = window.ethereum;
+    const p = w.provider;
     if (!p?.on) return;
     const onAccounts = (a: unknown) => {
-      const list = a as Address[];
-      setW((s) => ({ ...s, account: list[0] ? getAddress(list[0]) : null }));
+      const list = a as string[];
+      setW((s) => ({
+        ...s,
+        account: list[0] ? getAddress(list[0].split(":").pop()!) : null,
+      }));
     };
     const onChain = (c: unknown) => setW((s) => ({ ...s, chainId: Number(c) }));
     p.on("accountsChanged", onAccounts);
@@ -103,35 +246,280 @@ export function useWallet(): Wallet {
       p.removeListener?.("accountsChanged", onAccounts);
       p.removeListener?.("chainChanged", onChain);
     };
-  }, []);
-  async function connect() {
+  }, [w.provider]);
+
+  // The wallet chosen last time comes back without a prompt: eth_accounts never asks, and a kept
+  // WalletConnect session is restored from storage.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    const id = remembered();
+    if (!id) return;
+    if (id === "walletconnect") {
+      if (!WC_PROJECT_ID) return;
+      restored.current = true;
+      import("./walletconnect")
+        .then((m) => m.restore())
+        .then((s) => {
+          if (!s) return remember(null);
+          wcDisconnect.current = s.disconnect;
+          setW({
+            account: s.account,
+            chainId: LAUNCH.chainId,
+            error: null,
+            provider: s.provider,
+            walletLink: s.walletLink,
+          });
+        })
+        .catch(() => remember(null));
+      return;
+    }
+    const o = injected.find((x) => x.id === id);
+    if (!o || o.kind !== "injected") return;
+    restored.current = true;
+    o.provider
+      .request({ method: "eth_accounts" })
+      .then(async (a) => {
+        const list = a as Address[];
+        if (!list?.[0]) return;
+        const c = Number(await o.provider.request({ method: "eth_chainId" }));
+        setW({
+          account: getAddress(list[0]),
+          chainId: c,
+          error: null,
+          provider: o.provider,
+          walletLink: null,
+        });
+      })
+      .catch(() => undefined);
+  }, [injected]);
+
+  async function choose(o: WalletOption) {
     setBusy(true);
     try {
-      const p = window.ethereum;
-      if (!p)
-        throw Error(
-          "No browser wallet found. Install an Ethereum wallet extension, then reload.",
-        );
-      const a = (await p.request({
-        method: "eth_requestAccounts",
-      })) as Address[];
-      if (!a?.[0]) throw Error("The wallet authorised no account.");
-      const c = Number(await p.request({ method: "eth_chainId" }));
-      if (c !== LAUNCH.chainId) {
-        await p.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: `0x${LAUNCH.chainId.toString(16)}` }],
+      if (o.kind === "walletconnect") {
+        const m = await import("./walletconnect");
+        const s = await m.connect(setPairing);
+        wcDisconnect.current = s.disconnect;
+        setW({
+          account: s.account,
+          chainId: LAUNCH.chainId,
+          error: null,
+          provider: s.provider,
+          walletLink: s.walletLink,
+        });
+      } else {
+        const p = o.provider;
+        const a = (await p.request({
+          method: "eth_requestAccounts",
+        })) as Address[];
+        if (!a?.[0]) throw Error("The wallet authorised no account.");
+        const c = Number(await p.request({ method: "eth_chainId" }));
+        if (c !== LAUNCH.chainId) {
+          await p.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: `0x${LAUNCH.chainId.toString(16)}` }],
+          });
+        }
+        setW({
+          account: getAddress(a[0]),
+          chainId: LAUNCH.chainId,
+          error: null,
+          provider: p,
+          walletLink: null,
         });
       }
-      setW({ account: getAddress(a[0]), chainId: LAUNCH.chainId, error: null });
+      remember(o.id);
+      setChoosing(false);
     } catch (e) {
       setW((s) => ({ ...s, error: notice(message(e)) }));
     } finally {
       setBusy(false);
+      setPairing(null);
     }
   }
+
+  async function connect() {
+    if (options.length === 0) {
+      setW((s) => ({
+        ...s,
+        error: notice(
+          "No wallet found. Install an Ethereum wallet extension, then reload.",
+        ),
+      }));
+      return;
+    }
+    if (options.length === 1 && options[0].kind === "injected")
+      return choose(options[0]);
+    setChoosing(true);
+  }
+
+  async function disconnect() {
+    await wcDisconnect.current?.();
+    wcDisconnect.current = null;
+    remember(null);
+    setW({
+      account: null,
+      chainId: null,
+      error: null,
+      provider: null,
+      walletLink: null,
+    });
+  }
+
   const clearError = () => setW((s) => ({ ...s, error: null }));
-  return { ...w, busy, connect, clearError };
+  return {
+    account: w.account,
+    chainId: w.chainId,
+    error: w.error,
+    provider: w.provider,
+    walletLink: w.walletLink,
+    busy,
+    connect,
+    clearError,
+    options,
+    choosing,
+    choose,
+    cancel: () => {
+      setChoosing(false);
+      setPairing(null);
+    },
+    pairing,
+    disconnect,
+  };
+}
+
+const isPhone = () =>
+  typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+
+/** The pairing link as a QR code: crisp squares, scaled by CSS. */
+function PairingQr({ uri }: { uri: string }) {
+  const { data } = encode(uri, { ecc: "M", border: 2 });
+  const n = data.length;
+  let d = "";
+  data.forEach((row, y) =>
+    row.forEach((on, x) => {
+      if (on) d += `M${x} ${y}h1v1h-1z`;
+    }),
+  );
+  return (
+    <svg
+      className="wallet-qr"
+      viewBox={`0 0 ${n} ${n}`}
+      shapeRendering="crispEdges"
+      role="img"
+      aria-label="WalletConnect QR code: scan it with your phone wallet"
+    >
+      {/* Always dark on light, in either theme: some wallet scanners cannot read an inverted code.
+          These are the light theme's paper and ink. */}
+      <rect width={n} height={n} fill="#f7f5ef" />
+      <path d={d} fill="#16202e" />
+    </svg>
+  );
+}
+
+/**
+ * The chooser: every browser wallet the page found, and WalletConnect. Picking WalletConnect shows the
+ * pairing as a QR code to scan with a phone wallet and, on a phone, buttons that open the wallet app
+ * straight onto the pairing. A modal dialog: Escape or Close cancels.
+ */
+export function WalletChooser({ wallet }: { wallet: Wallet }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    const d = ref.current;
+    if (!d) return;
+    if (wallet.choosing && !d.open) d.showModal();
+    if (!wallet.choosing && d.open) d.close();
+  }, [wallet.choosing]);
+  const phone = isPhone();
+  return (
+    <dialog
+      ref={ref}
+      className="wallet-chooser"
+      aria-labelledby="wallet-chooser-h"
+      onClose={() => wallet.choosing && wallet.cancel()}
+      onClick={(e) => e.target === e.currentTarget && wallet.cancel()}
+    >
+      <header className="wallet-chooser-head">
+        <h2 id="wallet-chooser-h">
+          {wallet.pairing ? "Scan with your wallet" : "Connect a wallet"}
+        </h2>
+        <button
+          type="button"
+          className="wallet-chooser-close"
+          aria-label="Close"
+          onClick={wallet.cancel}
+        >
+          ×
+        </button>
+      </header>
+      {wallet.pairing ? (
+        <div className="wallet-pairing">
+          {phone ? (
+            <ul className="wallet-apps">
+              {WALLET_APPS.map((a) => (
+                <li key={a.name}>
+                  <a
+                    href={a.link(wallet.pairing!)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open {a.name}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <PairingQr uri={wallet.pairing} />
+          )}
+          <button
+            type="button"
+            className="wallet-copy"
+            onClick={() =>
+              navigator.clipboard
+                ?.writeText(wallet.pairing!)
+                .then(() => setCopied(true))
+                .catch(() => undefined)
+            }
+          >
+            {copied ? "Link copied" : "Copy link"}
+          </button>
+          <p className="wallet-hint">
+            {phone
+              ? "Approve in your wallet app, then come back here."
+              : "Open your phone wallet's scanner and point it at the code."}
+          </p>
+        </div>
+      ) : (
+        <ul className="wallet-options">
+          {wallet.options.map((o) => (
+            <li key={o.id}>
+              <button
+                type="button"
+                disabled={wallet.busy}
+                onClick={() => wallet.choose(o)}
+              >
+                {o.kind === "injected" && o.icon ? (
+                  <img src={o.icon} alt="" width="28" height="28" />
+                ) : (
+                  <span className="wallet-glyph" aria-hidden="true">
+                    {o.kind === "walletconnect" ? "◎" : "◇"}
+                  </span>
+                )}
+                {o.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {wallet.error && (
+        <p className="wallet-chooser-error" role="alert">
+          {wallet.error.text}
+        </p>
+      )}
+    </dialog>
+  );
 }
 
 // ------------------------------------------------------------------ transactions
@@ -378,9 +766,15 @@ export function Shell({
           <ThemeToggle />
           <Vibe suite={INFER_VIBES} />
           {wallet.account ? (
-            <span className="infer-account" title={wallet.account}>
+            <button
+              type="button"
+              className="infer-account"
+              title={`${wallet.account} · click to disconnect`}
+              aria-label={`Disconnect ${wallet.account}`}
+              onClick={() => void wallet.disconnect()}
+            >
               {short(wallet.account)}
-            </span>
+            </button>
           ) : (
             <button
               className="infer-connect"
@@ -392,7 +786,8 @@ export function Shell({
           )}
         </div>
       </header>
-      {wallet.error && (
+      <WalletChooser wallet={wallet} />
+      {wallet.error && !wallet.choosing && (
         <Vanishing
           key={wallet.error.id}
           className="global-notice"

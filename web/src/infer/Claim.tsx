@@ -185,7 +185,7 @@ export function Claim() {
     if (!w.account || !c.seasonVault) return;
     const account = w.account,
       vault = c.seasonVault,
-      p = window.ethereum!;
+      p = w.provider!;
     await send(
       s.amount === 0n
         ? `Claim season ${s.index + 1}`
@@ -223,7 +223,7 @@ export function Claim() {
     const account = w.account,
       redeemer = c.legacyRedeemer,
       token = r.token,
-      p = window.ethereum!;
+      p = w.provider!;
     const amount = parseAmount(amounts[key] ?? "", r.decimals);
     if (amount === 0n) return;
     const st = legacy[key];

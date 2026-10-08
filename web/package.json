@@ -19,8 +19,10 @@
     "deploy:whitepaper": "node whitepaper/stage.mjs && npx -y wrangler@4 deploy -c wrangler.whitepaper.jsonc"
   },
   "dependencies": {
+    "@walletconnect/universal-provider": "2.25.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "uqr": "0.1.3",
     "viem": "2.57.2"
   },
   "devDependencies": {
