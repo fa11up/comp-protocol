@@ -61,7 +61,7 @@ Severity counts (C/H/M/L/I) are critical, high, medium, low and info, as the rou
 | 19 | 2026-10-08 | Retry panel 2: warmth per position | Panel, job [`a2640621`](https://explorer.imd.fun/jobs/a2640621-925d-479e-b71d-9629899ed4c6) | `24337a2` | 0/0/3/5/2 | `d7fceab` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-RETRY2-PANEL-VAULT-2026-10-08.md) |
 | 20 | 2026-10-08 | Final vault panel | Panel, job [`45bf3777`](https://explorer.imd.fun/jobs/45bf3777-cc84-44eb-a7ad-bbb2c0833d07) | `d7fceab` | 0/1/4/5/3 | `6085c8a` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-VAULT-PANEL-2026-10-08.md) |
 | 21 | 2026-10-08 | Final sweep: the whole system | Panel, job [`08a12413`](https://explorer.imd.fun/jobs/08a12413-5e3b-4baf-9f1c-6d1ba99e9487) | `6085c8a` | 0/0/0/3/2 | `77d8878` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-PANEL-2026-10-08.md) |
-| 22 | 2026-10-08 | Delta panel: what the final sweep's fixes changed | Panel, job [`fc96f209`](https://explorer.imd.fun/jobs/fc96f209-e004-42c6-bea0-728288548eee) | `07905bb` | 0/0/1/2/4 | pending commit | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-DELTA-PANEL-2026-10-08.md) |
+| 22 | 2026-10-08 | Delta panel: what the final sweep's fixes changed | Panel, job [`fc96f209`](https://explorer.imd.fun/jobs/fc96f209-e004-42c6-bea0-728288548eee) | `07905bb` | 0/0/1/2/4 | `46b646f` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-DELTA-PANEL-2026-10-08.md) |
 
 ## What the chain shows
 
