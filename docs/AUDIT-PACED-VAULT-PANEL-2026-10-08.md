@@ -183,7 +183,7 @@ backingPerUnit() returns _backingPerUnit(_price()); _price() only rejects zero. 
 
 ## Resolution
 
-All eleven findings are answered in `b6286fc`: the three mediums and two lows in code, the six infos in the comments, and the one accepted cost restated with the condition the panel showed to be the real one.
+All eleven findings are answered in `c1ecb05`: the three mediums and two lows in code, the six infos in the comments, and the one accepted cost restated with the condition the panel showed to be the real one.
 
 | # | Severity | Outcome |
 |---|---|---|

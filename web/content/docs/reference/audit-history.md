@@ -65,7 +65,7 @@ Severity counts (C/H/M/L/I) are critical, high, medium, low and info, as the rou
 | 21 | 2026-10-08 | Final sweep: the whole system | Panel, job [`08a12413`](https://explorer.imd.fun/jobs/08a12413-5e3b-4baf-9f1c-6d1ba99e9487) | `6085c8a` | 0/0/0/3/2 | `77d8878` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-PANEL-2026-10-08.md) |
 | 22 | 2026-10-08 | Delta panel: what the final sweep's fixes changed | Panel, job [`fc96f209`](https://explorer.imd.fun/jobs/fc96f209-e004-42c6-bea0-728288548eee) | `07905bb` | 0/0/1/2/4 | `46b646f` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-DELTA-PANEL-2026-10-08.md) |
 | 23 | 2026-10-08 | Launch vault panel: the vault in full | Panel, job [`5383ced0`](https://explorer.imd.fun/jobs/5383ced0-fa82-4434-b6bd-62eb0fd2ff2b) | `9bd5f59` | 0/1/2/1/1 | `d3861ac`, by replacing the backing lag with paced figures | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-LAUNCH-VAULT-PANEL-2026-10-08.md) |
-| 24 | 2026-10-08 | Paced vault panel: the redesigned vault in full | Panel, job [`dc27aade`](https://explorer.imd.fun/jobs/dc27aade-6adb-40da-b6d8-0bddfe280ebf) | `d3861ac` | 0/0/3/2/6 | `b6286fc` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-PACED-VAULT-PANEL-2026-10-08.md) |
+| 24 | 2026-10-08 | Paced vault panel: the redesigned vault in full | Panel, job [`dc27aade`](https://explorer.imd.fun/jobs/dc27aade-6adb-40da-b6d8-0bddfe280ebf) | `d3861ac` | 0/0/3/2/6 | `c1ecb05` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-PACED-VAULT-PANEL-2026-10-08.md) |
 
 ## What the chain shows
 
