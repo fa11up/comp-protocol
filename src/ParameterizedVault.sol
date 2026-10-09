@@ -169,7 +169,8 @@ contract ParameterizedVault is CDPVault {
     /// replaced; dropped, sweep panel audit, vault, info.)
     function _redemptionReserveBacking(uint256 price) internal view override returns (uint256) {
         uint256 others = reserveValue() - treasury.reserveValueOf(gem);
-        // Saturating, like the vault's backing it feeds: an absurd price must not revert lock or wipe (CDPVault._mark).
+        // Saturating, like the vault's backing it feeds: an absurd price must not revert lock or wipe (CDPVault._pace
+        // reads it through _liveBacking).
         (bool ok, uint256 product) = Math.tryMul(gem.balanceOf(address(treasury)), price);
         (bool fits, uint256 total) = Math.tryAdd(others, product / 1e18);
         return ok && fits ? total : type(uint256).max;

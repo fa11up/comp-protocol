@@ -409,8 +409,12 @@ no agent's tasks are spent for nothing). Turning it on later is a governance act
 2. ~~The deferred audit finding needs code.~~ **DONE.** D1 is closed by the paced figures
    (`paced()`, `BACKING_RISE_PER_HOUR`, `FOLLOW_BPS_PER_HOUR`, `PACE_INTERVAL`, since 2026-10-08; the per-position
    lag before them is gone): the redemption cap reads the paced backing, the fee base the paced supply, `backedDebt`
-   the paced debt, at every wage. Anyone may `pace()`; the keeper does so hourly so a recovery reaches redeemers
-   through a quiet spell.
+   the paced debt, at every wage. Anyone may `pace()` and `resecure(owner)`; the keeper paces hourly and
+   re-prices every open position after each price update, so a recovery reaches redeemers through a quiet spell
+   and no position's collateral term stays fixed at a stale price (paced vault panel 2026-10-08, medium).
+   Three rules keep the accepted dip rare (a position leaving and returning across two transactions paces the
+   figure to the backing of the book without it): liquidate underwater positions promptly, cover realized bad
+   debt promptly (donate imdUSD to the Treasury if no fees have accrued yet), and refinance in one transaction.
    Nothing about minting from work needs a new vault.
 3. **The work oracle can be replaced only until the first mint, with what ships.** Once anything has
    been minted from work, `Parameters.proposeWorkOracle` requires the successor to answer

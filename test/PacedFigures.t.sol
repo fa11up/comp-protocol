@@ -123,9 +123,11 @@ contract PacedFiguresTest is Test {
         imdEth = DOLLAR;
         primary.set(imdEth); // the price recovers in the same block
         spot.set(imdEth);
-        (uint256 mark,,,) = vault.paced();
-        assertEq(mark, honest, "six dead hours did not count toward the rise");
-        assertEq(vault.backingPerUnit(), honest, "and the payout starts climbing only now");
+        (uint256 mark,,,,) = vault.paced();
+        assertEq(mark, honest, "six dead hours did not write the paced backing");
+        // The backing keeps its own clock (paced vault panel 2026-10-08, low F4): a pacing through the dead window
+        // held it without consuming its interval, so one interval's rise is available now, not six hours' worth.
+        assertEq(vault.backingPerUnit(), honest + vault.BACKING_RISE_PER_HOUR(), "one interval's rise, no more");
     }
 
     function test_principalHeldForAnHourCannotDiluteTheFee() public {
@@ -247,16 +249,157 @@ contract PacedFiguresTest is Test {
     /// primary (bounded by the feed's allowance, but wrong) cannot write it.
     function test_aDivergedPrimaryDoesNotPaceTheBacking() public {
         uint256 honest = _belowPar();
-        (uint256 pacedBefore,,,) = vault.paced();
+        (uint256 pacedBefore,,,,) = vault.paced();
         // The primary alone jumps 15% (within its epoch allowance); the spot stays. Ungated calls still pace.
         primary.set(imdEth * 115 / 100);
         _next(12);
         vm.prank(BOOK);
         vault.lock(1);
-        (uint256 pacedAfter,,,) = vault.paced();
+        (uint256 pacedAfter,,,,) = vault.paced();
         assertEq(pacedAfter, pacedBefore, "held while the feeds disagree");
         primary.set(imdEth);
         _next(12);
         assertLe(vault.backingPerUnit(), honest + vault.BACKING_RISE_PER_HOUR() * 36 / 3600 + 1, "and nothing was banked");
+    }
+
+    // --- paced vault panel 2026-10-08 (job dc27aade) -----------------------------------------------------------
+
+    /// @dev Medium F2: the dip is not "below par only". A par book whose par reading is carried by one dominant
+    /// healthy position (here 500% against an underwater tail) dips to the rest-of-book figure when that position
+    /// wipes and redraws across two blocks. Kept as the statement of the accepted cost, with its bound and recovery.
+    function test_aParBookDipsWhenThePositionCarryingTheCapLeavesAndReturns() public {
+        vm.startPrank(BOOK);
+        vault.lock(199_000 ether);
+        vault.draw(99_500 ether);
+        vm.stopPrank();
+        vm.startPrank(WHALE);
+        vault.lock(2_500_000 ether);
+        vault.draw(500_000 ether);
+        vm.stopPrank();
+        _hours(24);
+        imdEth = DOLLAR * 40 / 100; // BOOK at 80%, WHALE at 200%: the book reads par on WHALE's surplus
+        primary.set(imdEth);
+        spot.set(imdEth);
+        _next(12);
+        vm.prank(BOOK);
+        vault.lock(1);
+        vm.prank(WHALE);
+        vault.lock(1);
+        _hours(12);
+        assertEq(vault.backingPerUnit(), 1e18, "par, carried by the dominant position");
+        vm.prank(WHALE);
+        vault.wipe(500_000 ether);
+        _next(12);
+        vm.prank(WHALE);
+        vault.draw(500_000 ether);
+        _next(12);
+        uint256 restOfBook = Math.mulDiv(8_000 ether + 79_600 ether, 1e18, 99_500 ether); // BOOK and the reserve
+        uint256 dipped = vault.backingPerUnit();
+        assertLt(dipped, 0.9e18, "dipped to the rest of the book");
+        assertGe(dipped + 1e15, restOfBook, "and no lower");
+        _hours(10);
+        assertEq(vault.backingPerUnit(), 1e18, "ten paced hours later, par");
+    }
+
+    /// @dev Medium F3, the under-read: after a fall an idle position's debt-bound term reads low until re-priced.
+    /// `resecure` lets anyone re-price it; the payout then climbs at the rise rate.
+    function test_anyoneCanRepriceAnIdlePositionAfterAFall() public {
+        vm.startPrank(WHALE);
+        vault.lock(600_000 ether);
+        vault.draw(100_000 ether); // 600%, debt-bound: the term is 200,000 IMD at $1
+        vm.stopPrank();
+        _hours(24);
+        assertEq(vault.backingPerUnit(), 1e18);
+        imdEth = DOLLAR * 40 / 100;
+        primary.set(imdEth);
+        spot.set(imdEth);
+        _next(12);
+        vault.pace(); // the stale term, 200,000 IMD at $0.40, reads 80,000 (plus the reserve's 8,000) against 100,000
+        assertEq(vault.backingPerUnit(), 0.88e18, "the stale term under-reads");
+        vault.resecure(WHALE); // the honest term is min(600,000, 2 x 100,000 / 0.40) = 500,000 IMD: par
+        _hours(10);
+        assertEq(vault.backingPerUnit(), 1e18, "re-priced by a third party, the payout climbs back to par");
+    }
+
+    /// @dev Medium F3, the over-read: a term an owner fixed at a crash low reads high after the recovery, and the
+    /// payout climbs toward the inflated figure. `resecure` corrects it (a fall is paced at once).
+    function test_anyoneCanRepriceATermFixedAtACrashLow() public {
+        address X = address(0x5EC);
+        address Y = address(0x5ED);
+        vm.startPrank(APPROVED_OPERATOR);
+        imd.mint(X, 300_001 ether);
+        imd.mint(Y, 425_001 ether);
+        vm.stopPrank();
+        vm.prank(X);
+        imd.approve(address(vault), type(uint256).max);
+        vm.prank(Y);
+        imd.approve(address(vault), type(uint256).max);
+        vm.startPrank(X);
+        vault.lock(300_000 ether);
+        vault.draw(25_000 ether); // 1200%
+        vm.stopPrank();
+        vm.startPrank(Y);
+        vault.lock(425_000 ether);
+        vault.draw(250_000 ether); // 170%
+        vm.stopPrank();
+        _hours(24);
+        imdEth = DOLLAR * 20 / 100; // the crash: X fixes its term at the low, 2 x 25,000 / 0.20 = 250,000 IMD
+        primary.set(imdEth);
+        spot.set(imdEth);
+        _next(12);
+        vm.prank(X);
+        vault.lock(1);
+        vm.prank(Y);
+        vault.lock(1);
+        _hours(2);
+        imdEth = DOLLAR * 40 / 100; // the recovery: X's stale 250,000 IMD reads $100,000 against an honest $50,000
+        primary.set(imdEth);
+        spot.set(imdEth);
+        _next(12);
+        vm.prank(Y);
+        vault.lock(1);
+        // Honest: reserve 20,000 IMD, X min(300,000, 125,000) IMD, Y 425,000 IMD, all at $0.40, over 275,000.
+        uint256 honest = Math.mulDiv((20_000 ether + 125_000 ether + 425_000 ether) * 40 / 100, 1e18, 275_000 ether);
+        uint256 snap = vm.snapshotState();
+        _hours(40);
+        assertEq(vault.backingPerUnit(), 1e18, "unrepriced, the stale term carries the payout to par");
+        vm.revertToState(snap);
+        vault.resecure(X);
+        _hours(40);
+        assertApproxEqRel(vault.backingPerUnit(), honest, 1e15, "re-priced by a third party, it settles at the honest figure");
+    }
+
+    /// @dev Low F4: a pacing through a stale window holds the backing without consuming its interval.
+    function test_aPacingAtAnUnusablePriceDoesNotForfeitTheRise() public {
+        uint256 honest = _belowPar();
+        imdEth = DOLLAR;
+        primary.set(imdEth);
+        spot.set(imdEth); // the price recovers: the live figure is par, the paced backing climbs
+        vm.warp(block.timestamp + 50 minutes);
+        spot.set(imdEth); // the spot stays fresh ...
+        vm.mockCallRevert(CHAINLINK_ETH_USD, abi.encodeWithSignature("latestRoundData()"), "dead"); // ... the USD leg dies
+        vm.prank(BOOK);
+        vault.lock(1); // paces the supply and debt; the backing holds
+        vm.clearMockedCalls();
+        vm.warp(block.timestamp + 10 minutes);
+        primary.set(imdEth);
+        spot.set(imdEth);
+        vault.pace();
+        (uint256 paced,,,,) = vault.paced();
+        assertEq(paced, honest + vault.BACKING_RISE_PER_HOUR(), "the whole hour's rise, not ten minutes of it");
+    }
+
+    /// @dev Low F5: the paced supply starts by following the live one, so a launch-day redemption is measured
+    /// against the supply that exists, not the floor.
+    function test_launchDayFeeIsMeasuredAgainstTheLiveSupply() public {
+        vm.startPrank(WHALE);
+        vault.lock(1_500_000 ether);
+        vault.draw(500_000 ether);
+        vm.stopPrank();
+        _next(1 hours);
+        vault.pace();
+        (, uint256 supply,,,) = vault.paced();
+        assertEq(supply, 500_000 ether, "seeded from the live supply");
+        assertEq(vault.redemptionFeeBps(5_000 ether), 100, "1% of supply at divisor 2: 50 bps over the floor");
     }
 }

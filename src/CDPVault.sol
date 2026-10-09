@@ -199,8 +199,9 @@ contract CDPVault is ReentrancyGuard {
     /// @notice Maximum cumulative imdUSD the work channel may have minted, in imdUSD units.
     /// @dev Unlimited here, exactly as `line` is: this contract has no reserve to read and no
     /// governed ratio, so a bound would be a number pulled from the air. ParameterizedVault overrides
-    /// it with reserveValueUsd + totalDebt * earnMat / 10000, the bound docs/COMPUTE-BACKING-
-    /// DESIGN.md section 3 derives, and `earn` enforces whatever this returns.
+    /// it with reserveValueUsd + backedDebt * earnMat / 10000 (backedDebt: total debt, no more than the
+    /// transaction began with nor the paced debt, less bad debt), the bound docs/COMPUTE-BACKING-DESIGN.md
+    /// section 3 derives, and `earn` enforces whatever this returns.
     function earnLine() public view virtual returns (uint256) {
         return type(uint256).max;
     }
@@ -263,7 +264,7 @@ contract CDPVault is ReentrancyGuard {
     /// Principal is denominated in the unit `_price()` quotes and collateral in IMD, so the bound
     /// needs a price, and a sum cannot be revalued for every position when the feed moves: each
     /// term is fixed at the price its position was last touched at. Positions whose collateral is
-    /// inside their bound (at most 200% at that price, which includes every redeemable one) are
+    /// inside their bound (at most 200% at that price; redeemable ones run to mat + gap, 220% at launch) are
     /// counted exactly in IMD and revalue with the feed like the balance did. Only the surplus above
     /// 200% is approximated: after a price fall such a position counts for less than it should, which
     /// tightens the guard until the position is touched, and after a rise for more, which the
@@ -302,7 +303,8 @@ contract CDPVault is ReentrancyGuard {
     ///   BACKING per imdUSD falls at once to the live figure but rises by at most BACKING_RISE_PER_HOUR of par an
     ///   hour (`_pacedBacking`); a redemption is paid min(live, paced), capped at par.
     ///   SUPPLY follows the live supply, up or down, by at most FOLLOW_BPS_PER_HOUR of itself (or of the fee-base
-    ///   floor, when that is larger) an hour (`_pacedSupply`); the redemption fee is measured against it, floored
+    ///   floor, when that is larger) per hour of elapsed time, compounding per pacing (about 10.5% an hour paced
+    ///   every block, `_pacedSupply`); the redemption fee is measured against it, floored
     ///   (`_feeBase`), so principal drawn for a block cannot dilute the fee and a repayment cannot shrink the base
     ///   to pin it at the cap.
     ///   DEBT falls at once and rises under the same limit as the supply (`_pacedDebt`); the work ceiling counts
@@ -320,17 +322,23 @@ contract CDPVault is ReentrancyGuard {
     /// large honest loan) redemptions catch up with the live backing at BACKING_RISE_PER_HOUR, and only while the
     /// vault is paced (hourly pacing recovers in full; a quiet gap recovers one interval). And a fall is paced at
     /// once, however brief: a borrower who withdraws its capital in one transaction and brings it back in the
-    /// next leaves the figure where the book stood without it, until it climbs back. That dip exists only while
-    /// the book is backed below par (on a par book the surplus above the aggregate cap absorbs any one
-    /// position's exit, `_securedCollateralValue`), is at most the gap between the book's backing and the
-    /// backing of the book without that position, and with work-minted supply outstanding a dominant borrower's
-    /// exit can take it to zero (test/retry-panel/StaleBank.t.sol). ACCEPTED: it underpays redeemers, never
-    /// overpays them, and only in a book already in crisis. Likewise after a price fall: a debt-bound position's
-    /// term is fixed at the old price until the position is next touched (`securedCollateral`), so the live
-    /// figure reads low until then and the first pacing after the fall captures that read; the payout climbs
-    /// back at BACKING_RISE_PER_HOUR once positions are touched (the paced form of retry2 #6, accepted there as
-    /// cold for a few hours). The mirror, a term fixed at a crash low read at a recovered price (launch vault
-    /// panel 2026-10-08, low), can now lift the payout no faster than the same rate.
+    /// next leaves the figure where the book stood without it, until it climbs back. The dip exists whenever the
+    /// book WITHOUT the leaving position is below par: reserve + mat x (debt - bad debt - its principal) less than
+    /// the supply without it (`_securedCollateralValue`). A book of healthy positions with slack in the aggregate
+    /// cap has no dip; a book carrying an underwater position, realized bad debt or work-minted supply dips to the
+    /// backing of what remains, which is near zero when the leaving position was nearly the whole book (paced
+    /// vault panel 2026-10-08, medium, correcting an earlier 'below par only'). It is at most the gap between the
+    /// book's backing and that figure, lasts (gap / BACKING_RISE_PER_HOUR) paced hours, costs the leaver gas and a
+    /// transaction out of the book, and an honest refinance across two transactions triggers it too (in one
+    /// transaction it does not). ACCEPTED: it underpays redeemers, never overpays them; the runbook keeps it
+    /// rare (liquidate promptly, cover bad debt promptly, refinance in one transaction). Likewise after a price
+    /// fall: a debt-bound position's term is fixed at the old price until the position is next touched
+    /// (`securedCollateral`), so the live figure reads low and the first pacing after the fall captures that
+    /// read; `resecure` lets anyone re-price any position, the keeper does after each update, and the payout
+    /// climbs back at BACKING_RISE_PER_HOUR (the paced form of retry2 #6). The mirror, a term fixed at a crash
+    /// low read at a recovered price (launch vault panel 2026-10-08, low; paced vault panel, medium), is
+    /// re-priced the same way, and until it is can lift the payout no faster than the rise rate, bounded by the
+    /// aggregate cap.
     /// History: the per-position lag this replaces (2026-10-05 to 2026-10-08, rounds 7 to 23 of
     /// web/content/docs/reference/audit-history.md) tracked the age of every unit of capital, and each repair of
     /// it opened the next finding. Its proofs are kept and run against the paced figures.
@@ -339,8 +347,11 @@ contract CDPVault is ReentrancyGuard {
     uint256 public constant PACE_INTERVAL = 1 hours;
     /// @dev Backing per imdUSD as last paced, 1e18-scaled (par at deployment, when there is no supply).
     uint128 private _backingPaced = 1e18;
-    /// @dev When the figures were last paced.
+    /// @dev When the supply and debt were last paced.
     uint64 private _pacedAt = uint64(block.timestamp);
+    /// @dev When the backing was last paced AT A USABLE PRICE: a pacing through a stale or diverged window holds
+    /// the backing and does not consume its interval (paced vault panel 2026-10-08, low).
+    uint64 private _backingPacedAt = uint64(block.timestamp);
     /// @dev The supply as last paced.
     uint256 private _supplyPaced;
     /// @dev Total debt as last paced.
@@ -626,6 +637,7 @@ contract CDPVault is ReentrancyGuard {
         // since its last sync is not lost from its books (launch audit, governance panel, low).
         _syncSurplus(payer);
         uint256 feePaid = _reduceDebt(owner, amount);
+        _clampPacedDebt();
         stablecoin.burn(payer, amount);
         _transientAdd(REPAID_THIS_TX_SLOT, amount);
         // Sync again after the burn and before the fees are reminted, so the baseline drops to the
@@ -740,6 +752,7 @@ contract CDPVault is ReentrancyGuard {
             // cancelled debt. Compute the payout ONCE: its price never depends on the candidate.
             debtCancelled = amount - Math.mulDiv(reserveOut, price, payoutScale);
             (principalCancelled, freshCancelled) = _redeemPosition(candidate, debtCancelled, gemOut - reserveOut, price);
+            _clampPacedDebt();
         }
         totalNonPrincipalRedeemed += amount - principalCancelled;
         // The fresh part of the burn is charged in full but does not move the rate everyone else pays.
@@ -751,7 +764,8 @@ contract CDPVault is ReentrancyGuard {
         emit Cash(msg.sender, candidate, amount, gemOut, reserveOut, debtCancelled, feeBps);
     }
 
-    /// @notice Value backing one imdUSD, 1e18-scaled, never above par, at the latest accepted price.
+    /// @notice Value backing one imdUSD, 1e18-scaled, never above par, at the primary feed's latest value (no
+    /// freshness or agreement check: a quote, where `cash` checks both).
     /// @dev Public because it is the figure a redeemer is actually paid against and the one a reader
     /// needs to judge the protocol: below 1e18 it says plainly that a imdUSD is not fully backed, and
     /// the redemption payout falls with it instead of the channel closing.
@@ -773,7 +787,7 @@ contract CDPVault is ReentrancyGuard {
     /// (REPAID_THIS_TX_SLOT), so a same-call wipe, cash and draw is paid no premium (sweep panel audit, vault,
     /// medium); collateral and principal added in this transaction are excluded (`_securedCollateralValue`).
     function _backingPerUnit(uint256 price) private view returns (uint256) {
-        return _pacedBacking(price, block.timestamp - _pacedAt);
+        return _pacedBacking(price, block.timestamp - _backingPacedAt);
     }
 
     /// @dev Backing per imdUSD from the state as it stands, capped at par: reserve plus secured collateral
@@ -790,9 +804,9 @@ contract CDPVault is ReentrancyGuard {
         return Math.mulDiv(reserve + secured, 1e18, supply);
     }
 
-    /// @dev The paced backing `elapsed` seconds after it was written: the live figure, but no more than the paced
-    /// value plus BACKING_RISE_PER_HOUR an hour, for at most PACE_INTERVAL of `elapsed`. With no usable price
-    /// (zero, stale or diverged: `_pace` passes zero) the paced value holds.
+    /// @dev The paced backing `elapsed` seconds after it was written at a usable price: the live figure, but no
+    /// more than the paced value plus BACKING_RISE_PER_HOUR an hour, for at most PACE_INTERVAL of `elapsed`. With
+    /// no readable price the paced value holds.
     function _pacedBacking(uint256 price, uint256 elapsed) private view returns (uint256) {
         if (price == 0) return Math.min(_backingPaced, 1e18);
         uint256 ceiling = _backingPaced + Math.mulDiv(BACKING_RISE_PER_HOUR, Math.min(elapsed, PACE_INTERVAL), 1 hours);
@@ -808,6 +822,11 @@ contract CDPVault is ReentrancyGuard {
         live = live > minted ? live - minted : 0;
         if (!_followRateLimited()) return live;
         uint256 paced = _supplyPaced;
+        // From zero (deployment, or a book that emptied) the paced supply follows the live one at once: there is
+        // no earlier base for a draw to dilute, and measuring the first day's redemptions against the floor
+        // instead of a live supply five times it would store the cap for 9,000 of burns (paced vault panel
+        // 2026-10-08, low). The paced debt has no such seed: debt that counts at once backs work minting.
+        if (paced == 0) return live;
         uint256 step = _step(paced, elapsed);
         if (live >= paced) return Math.min(live, paced + step);
         return Math.max(live, paced > step ? paced - step : 0);
@@ -817,11 +836,17 @@ contract CDPVault is ReentrancyGuard {
     /// less what it cancelled by redemption, liquidation or cover (a position's own wipe and redraw cancel out:
     /// WIPED_THIS_TX_SLOT), and no more than the paced value plus one `_step`. A decrease counts at once.
     function _pacedDebt(uint256 elapsed) private view returns (uint256) {
-        uint256 live = totalDebt + _transient(WIPED_THIS_TX_SLOT);
-        uint256 minted = _transient(MINTED_THIS_TX_SLOT);
-        live = live > minted ? live - minted : 0;
+        uint256 live = _debtForPacing();
         if (!_followRateLimited()) return live;
         return Math.min(live, _debtPaced + _step(_debtPaced, elapsed));
+    }
+
+    /// @dev The debt this transaction began with, less what it has cancelled: total debt plus what `wipe` repaid
+    /// in it, less what it minted.
+    function _debtForPacing() private view returns (uint256) {
+        uint256 live = totalDebt + _transient(WIPED_THIS_TX_SLOT);
+        uint256 minted = _transient(MINTED_THIS_TX_SLOT);
+        return live > minted ? live - minted : 0;
     }
 
     /// @dev FOLLOW_BPS_PER_HOUR of the larger of a paced value and the fee-base floor, for at most PACE_INTERVAL
@@ -844,8 +869,8 @@ contract CDPVault is ReentrancyGuard {
 
     /// @dev keccak256("comp.CDPVault.pacedThisTransaction"): set once the figures are paced in this transaction.
     uint256 private constant PACED_THIS_TX_SLOT = 0xa5af5aeac1078b86a4556924e539e6939ac21e8b1c577f66d2d6e26889efb3e4;
-    /// @dev keccak256("comp.CDPVault.principalWipedThisTransaction"): principal the caller repaid on its own
-    /// position in this transaction (`wipe`), added back to the debt the paced debt follows.
+    /// @dev keccak256("comp.CDPVault.principalWipedThisTransaction"): principal repaid through `wipe` in this
+    /// transaction (by any caller: the tally is per transaction), added back to the debt the paced debt follows.
     uint256 private constant WIPED_THIS_TX_SLOT = 0x05396239c2fc4e6167488fce9321b3608d4ab9f7d959141db04a7b14318e0528;
 
     /// @notice Pace the three figures from the state as it stands. Anyone may call it; every call that moves
@@ -862,22 +887,24 @@ contract CDPVault is ReentrancyGuard {
         if (_transient(PACED_THIS_TX_SLOT) != 0) return;
         _transientAdd(PACED_THIS_TX_SLOT, 1);
         uint256 elapsed = block.timestamp - _pacedAt;
-        _backingPaced = uint128(_pacedBacking(_priceAgrees() ? _priceOrZero() : 0, elapsed));
+        if (_priceAgrees()) {
+            _backingPaced = uint128(_pacedBacking(_priceOrZero(), block.timestamp - _backingPacedAt));
+            _backingPacedAt = uint64(block.timestamp);
+        }
         _supplyPaced = _pacedSupply(elapsed);
         _debtPaced = _pacedDebt(elapsed);
         _pacedAt = uint64(block.timestamp);
     }
 
-    /// @dev After a draw: the paced debt never exceeds the debt this transaction began with less what it has
-    /// cancelled by redemption, liquidation or cover (`_pacedDebt`'s live figure). Pacing at the start of the
-    /// transaction cannot see a cancellation and a redraw inside it, and the next transaction would find the
-    /// same total debt with no record that it is new (sweep panel audit 2026-10-07, vault, high: cancel another
-    /// borrower's debt and draw as much in one call, and the work ceiling minted against zero-second debt).
+    /// @dev After a draw and after every cancellation (cash, bite, cover): the paced debt never exceeds the debt
+    /// this transaction began with less what it has cancelled (`_pacedDebt`'s live figure). Pacing at the start of
+    /// the transaction cannot see a cancellation and a draw inside it, in either order, and the next transaction
+    /// would find the same total debt with no record that it is new (sweep panel audit 2026-10-07, vault, high:
+    /// cancel another borrower's debt and draw as much in one call, and the work ceiling minted against
+    /// zero-second debt; paced vault panel 2026-10-08, medium: the same with the draw first).
     function _clampPacedDebt() private {
         if (!_followRateLimited()) return;
-        uint256 live = totalDebt + _transient(WIPED_THIS_TX_SLOT);
-        uint256 minted = _transient(MINTED_THIS_TX_SLOT);
-        live = live > minted ? live - minted : 0;
+        uint256 live = _debtForPacing();
         if (live < _debtPaced) _debtPaced = live;
     }
 
@@ -888,9 +915,7 @@ contract CDPVault is ReentrancyGuard {
         if (_pricingStale() || spotFeed.isStale()) return false;
         (uint256 spot,) = spotFeed.latestValue();
         (uint256 primary,) = priceFeed.latestValue();
-        if (spot == 0 || primary == 0) return false;
-        uint256 difference = primary > spot ? primary - spot : spot - primary;
-        return difference <= Math.mulDiv(primary, skew(), 10_000);
+        return spot != 0 && primary != 0 && _withinSkew(primary, spot);
     }
 
     /// @dev Whether the paced supply and debt limit how fast the fee base and the work ceiling follow the live
@@ -900,9 +925,25 @@ contract CDPVault is ReentrancyGuard {
         return true;
     }
 
-    /// @notice The three paced figures and when they were written (see BACKING_RISE_PER_HOUR).
-    function paced() external view returns (uint256 backing, uint256 supply, uint256 debt, uint256 at) {
-        return (_backingPaced, _supplyPaced, _debtPaced, _pacedAt);
+    /// @notice The three paced figures and when they were written (see BACKING_RISE_PER_HOUR): the backing at
+    /// `backingAt`, the last pacing at a usable price; the supply and debt at `at`.
+    function paced() external view returns (uint256 backing, uint256 supply, uint256 debt, uint256 at, uint256 backingAt) {
+        return (_backingPaced, _supplyPaced, _debtPaced, _pacedAt, _backingPacedAt);
+    }
+
+    /// @notice Re-price `owner`'s secured term at the current price. Anyone may call it, at a fresh, agreed
+    /// price; the keeper does so for every open position after each price update.
+    /// @dev A term is fixed at the price its position was last touched at (`securedCollateral`), and until this
+    /// function existed only the owner, a redemption, a liquidation or cover touched it: after a price fall an idle
+    /// position's debt-bound term read low for as long as its owner was idle, and a term an owner had fixed at a
+    /// crash low read high after the recovery, lifting the live figure and, at the rise rate, the payout (paced
+    /// vault panel 2026-10-08, medium). A fall this causes is paced at once; a rise reaches the payout at the
+    /// rise rate, bounded by the aggregate cap.
+    function resecure(address owner) external nonReentrant {
+        _pace();
+        _requireFreshFeeds();
+        _requirePriceAgreement();
+        _resecure(_positions[owner], _price());
     }
 
     /// @dev The vault's collateral the guard may count as backing: what stood behind debt before this
@@ -1209,6 +1250,7 @@ contract CDPVault is ReentrancyGuard {
             collateralSeized += remainder;
         }
         uint256 feePaid = _reduceDebt(owner, debtToRepay);
+        _clampPacedDebt();
         position.collateral -= collateralSeized;
         _resecure(position, price);
         _recordBadDebt(owner);
@@ -1359,8 +1401,12 @@ contract CDPVault is ReentrancyGuard {
         // otherwise be comparing a USD figure against an ETH one and diverge by the ETH price itself.
         (uint256 primary,) = priceFeed.latestValue();
         if (primary == 0) revert InvalidPrice();
+        if (!_withinSkew(primary, spot)) revert PriceDivergence();
+    }
+
+    function _withinSkew(uint256 primary, uint256 spot) private view returns (bool) {
         uint256 difference = primary > spot ? primary - spot : spot - primary;
-        if (difference > Math.mulDiv(primary, skew(), 10_000)) revert PriceDivergence();
+        return difference <= Math.mulDiv(primary, skew(), 10_000);
     }
 
     function _accrue(address owner) private {

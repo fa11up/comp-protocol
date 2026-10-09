@@ -193,7 +193,7 @@ contract RedemptionLagHonestTest is Test {
         vm.warp(block.timestamp + 1 hours);
         vm.prank(BORROWER);
         vault.lock(1 ether);
-        (uint256 mark,,,) = vault.paced();
+        (uint256 mark,,,,) = vault.paced();
         assertEq(mark, 0.9e18, "the fall reached the paced backing at once");
         // IMD recovers to $1: the live figure is back at par, the payout climbs two points an hour.
         primary.set(uint256(1 ether) * 1e18 / 2000 ether);
