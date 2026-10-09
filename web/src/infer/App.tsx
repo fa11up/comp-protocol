@@ -27,7 +27,7 @@ import {
   tokens,
   useBalance,
   useTx,
-  useWallet,
+  useSiteWallet,
   type Notice,
   type Wallet,
 } from "./ui";
@@ -37,7 +37,7 @@ const MAX_UINT48 = (1n << 48n) - 1n;
 const MAX_UINT256 = (1n << 256n) - 1n;
 
 export function App() {
-  const w = useWallet();
+  const w = useSiteWallet();
   const [tick, setTick] = useState(0);
   const refresh = () => setTick((t) => t + 1);
   // Live state is re-read every twelve seconds, Ethereum's block time, so a new block (the end of

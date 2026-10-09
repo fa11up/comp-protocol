@@ -49,6 +49,11 @@ if (connect !== "'self' https://cloudflareinsights.com")
 const scripts = headers.match(/script-src ([^;]*);/)?.[1].split(/\s+/).filter((s) => !s.startsWith("'")) ?? [];
 if (scripts.join(" ") !== "https://static.cloudflareinsights.com")
   fail(`the Content-Security-Policy admits script origins beyond Cloudflare Web Analytics: ${scripts.join(" ")}`);
+// Soft navigation (src/soft.tsx) moves between pages of one build only: every page names the same build.
+const builds = new Set();
+for (const f of files.filter((f) => f.endsWith(".html")))
+  builds.add((await readFile(`${dir}/${f}`, "utf8")).match(/<meta name="build" content="([^"]+)"/)?.[1]);
+if (builds.size !== 1 || builds.has(undefined)) fail(`pages disagree on <meta name="build">: ${[...builds]}`);
 if (files.some((f) => f.startsWith("terminal/")))
   fail("the terminal was built into the public site");
 // The public site connects to no chain: no deployment file, no ABIs.

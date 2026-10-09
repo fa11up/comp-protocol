@@ -1,9 +1,9 @@
 // /tokenomics: the supply, where it goes, how each bucket pays, and what INFER is.
 import { LAUNCH, bucketAmount, compact, pct, whole } from "./config";
-import { Fig, Line, SITE, Shell, Undisclosed, WHITEPAPER, useWallet } from "./ui";
+import { Fig, Line, SITE, Shell, Undisclosed, WHITEPAPER, useSiteWallet } from "./ui";
 
 export function Tokenomics() {
-  const w = useWallet();
+  const w = useSiteWallet();
   const largest = Math.max(...LAUNCH.allocation.map((a) => a.bps ?? 0), 1);
   const share = (key: string) =>
     LAUNCH.allocation.find((a) => a.key === key)?.bps ?? null;

@@ -2,7 +2,7 @@ import favicon from "../../public/favicon.svg?raw";
 
 // Shared pieces of the three INFER pages: the shell, the wallet, the transaction runner and figures.
 import { DisconnectBox } from "../disconnect";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   formatUnits,
   getAddress,
@@ -217,6 +217,18 @@ function useInjected(): WalletOption[] {
         : found,
     [found],
   );
+}
+
+/** The site's one wallet, kept above the pages so it stays connected as the visitor moves between them
+ *  (soft.tsx). Pages read it with useSiteWallet; the /buy/ card, a page of its own, keeps useWallet. */
+const SiteWallet = createContext<Wallet | null>(null);
+export function WalletFrame({ children }: { children: ReactNode }) {
+  return <SiteWallet.Provider value={useWallet()}>{children}</SiteWallet.Provider>;
+}
+export function useSiteWallet(): Wallet {
+  const w = useContext(SiteWallet);
+  if (!w) throw new Error("useSiteWallet outside WalletFrame");
+  return w;
 }
 
 export function useWallet(): Wallet {

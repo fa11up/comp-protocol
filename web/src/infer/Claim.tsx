@@ -18,7 +18,7 @@ import {
   TxStatus,
   tokens,
   useTx,
-  useWallet,
+  useSiteWallet,
   Balance,
   Vanishing,
   notice,
@@ -53,7 +53,7 @@ function seasonState(s: SeasonView, now: bigint): string {
 }
 
 export function Claim() {
-  const w = useWallet();
+  const w = useSiteWallet();
   const [tick, setTick] = useState(0);
   const refresh = () => setTick((t) => t + 1);
   // Live state is re-read every twelve seconds, Ethereum's block time, so a new block (the end of

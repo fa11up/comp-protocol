@@ -98,6 +98,11 @@ if (wc.projectId && !connect.includes("wss://relay.walletconnect.org"))
   fail("a WalletConnect project is set but connect-src lacks its relay");
 if (!wc.projectId && /walletconnect/.test(connect))
   fail("connect-src admits WalletConnect with no project configured");
+// Soft navigation (src/soft.tsx) moves between pages of one build only: every page names the same build.
+const builds = new Set();
+for (const page of ["index.html", "claim/index.html", "tokenomics/index.html", "404.html"])
+  builds.add((await readFile(`${dir}/${page}`, "utf8")).match(/<meta name="build" content="([^"]+)"/)?.[1]);
+if (builds.size !== 1 || builds.has(undefined)) fail(`pages disagree on <meta name="build">: ${[...builds]}`);
 if (/["'(]\.{1,2}\//.test(await readFile(`${dir}/404.html`, "utf8")))
   fail("404.html has a relative URL");
 const html = await readFile(`${dir}/index.html`, "utf8");

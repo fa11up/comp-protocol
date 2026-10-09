@@ -1,8 +1,8 @@
 // The INFER site's not-found page: served at any unknown path, so every link is absolute.
-import { Shell, at, useWallet } from "./ui";
+import { Shell, at, useSiteWallet } from "./ui";
 
 export function NotFound() {
-  const w = useWallet();
+  const w = useSiteWallet();
   const to = at(-1);
   return (
     <Shell page="app" depth={-1} wallet={w} className="infer-page">

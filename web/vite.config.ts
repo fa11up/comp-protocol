@@ -41,6 +41,14 @@ Sitemap: ${SITE}/sitemap.xml
  * (infer.imdusd.com/buy/, /97/), has the origin "null", so without this every asset was refused and the card
  * stayed blank.
  */
+/**
+ * One id per build, written into every page as <meta name="build">. Soft navigation (src/soft.tsx) moves
+ * between pages only within one build: a page from a newer deploy is loaded properly, so a tab left open
+ * across a deploy never asks for script files that deploy removed.
+ */
+const BUILD = `${Date.now().toString(36)}-${createHash("sha256").update(String(Math.random())).digest("hex").slice(0, 8)}`;
+const buildMeta = `<meta name="build" content="${BUILD}" />`;
+
 /** Cloudflare Web Analytics, injected by the zone: where its beacon loads from and where it reports. */
 const CF_ANALYTICS = { script: "https://static.cloudflareinsights.com", report: "https://cloudflareinsights.com" };
 const publicHeaders = (
@@ -117,6 +125,11 @@ function publicSite(): Plugin {
       const dir = resolve(import.meta.dirname, "../dist-public");
       const hashes = new Set<string>();
       for (const file of walk(dir).filter((f) => f.endsWith(".html"))) {
+        // Every page names its build, for soft navigation (src/soft.tsx); the docs pages are written by
+        // now, so they get it too.
+        const page = readFileSync(file, "utf8");
+        if (!page.includes('<meta name="build"'))
+          writeFileSync(file, page.replace("</head>", `${buildMeta}</head>`));
         for (const [, script] of readFileSync(file, "utf8").matchAll(
           /<script>([\s\S]*?)<\/script>/g,
         ))
@@ -258,7 +271,9 @@ function inferSite(): Plugin {
       const notFound = resolve(dir, "404.html");
       writeFileSync(
         notFound,
-        readFileSync(notFound, "utf8").replace(/(["'(])\.\.?\//g, "$1/"),
+        readFileSync(notFound, "utf8")
+          .replace(/(["'(])\.\.?\//g, "$1/")
+          .replace("</head>", `${buildMeta}</head>`),
       );
       rmSync(resolve(dir, "abi"), { recursive: true, force: true });
       const file = resolve(dir, "manifest.webmanifest");
@@ -280,7 +295,7 @@ function inferSite(): Plugin {
           file,
           html.replace(
             "</head>",
-            `${page === "buy/" ? playerTags(`${INFER_SITE}/${page}`, title, description) : page === "97/" ? playerTags(`${INFER_SITE}/${page}`, title, description, PLAYER_97) : socialTags(INFER_SITE, `${INFER_SITE}/${page}`, title, description, { type: "website" })}</head>`,
+            `${buildMeta}${page === "buy/" ? playerTags(`${INFER_SITE}/${page}`, title, description) : page === "97/" ? playerTags(`${INFER_SITE}/${page}`, title, description, PLAYER_97) : socialTags(INFER_SITE, `${INFER_SITE}/${page}`, title, description, { type: "website" })}</head>`,
           ),
         );
       }

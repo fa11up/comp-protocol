@@ -10,6 +10,7 @@
     "check:export": "node scripts/manifest.mjs --check",
     "test": "node --test tests/math.test.mjs tests/explain.test.mjs tests/names.test.mjs tests/priceUpdate.test.mjs tests/governance.test.mjs tests/swarm.test.mjs tests/theme.test.mjs tests/history.test.mjs tests/infer.test.mjs tests/swap.unit.test.mjs tests/swap.fork.test.mjs",
     "test:browser": "node tests/browser.mjs",
+    "test:soft": "node tests/soft.mjs",
     "demo": "node scripts/demo.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "build:public": "npm run typecheck && vite build --mode public && node scripts/public-check.mjs",
