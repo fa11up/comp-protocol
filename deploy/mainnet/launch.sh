@@ -97,7 +97,10 @@ case "${1:-}" in
   status)
     load
     echo "mode      $MODE"; echo "deployer  $SIGNER  ($(cast balance "$SIGNER" --ether --rpc-url "$MAINNET_RPC_URL") ETH)"
-    echo "operator  $OPERATOR"; echo "commit    $(git rev-parse --short HEAD)$(git diff --quiet -- src script || echo ' + UNCOMMITTED src/script changes')"
+    echo "operator  $OPERATOR"
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      echo "commit    $(git rev-parse --short HEAD)$(git diff --quiet -- src script || echo ' + UNCOMMITTED src/script changes')"
+    else echo "commit    (not a git checkout: a rehearsal copy)"; fi
     basefee; [ -f "$REC" ] && python3 -m json.tool "$REC" | head -40 || echo "no deployment record yet"
     ;;
   stage1)
@@ -130,6 +133,8 @@ case "${1:-}" in
   wipe)
     [ -d "$RD" ] || { echo "no RAM disk mounted: nothing to wipe"; exit 0; }
     diskutil eject force "$RD" >/dev/null && echo "ejected $RD: the key file is gone" || die "eject failed; close anything using $RD and run wipe again"
+    # forge keeps the RPC URL of every broadcast in cache/ ("sensitive values"); a provider URL can carry an API key.
+    rm -f cache/DeployMainnet.s.sol/*/run-*.json && echo "removed forge's cached RPC URLs"
     ;;
   *) sed -n 2,9p "$0"; exit 1 ;;
 esac
