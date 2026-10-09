@@ -15,6 +15,8 @@ import { useInferMarket, usdCompact, usdPrice } from "./price";
 import { Vibe } from "../vibe";
 import { Fig, Mark, WalletChooser, useWallet } from "./ui";
 import { INFER_VIBES } from "./vibes";
+import { Sound } from "../score";
+import { INFER_SCORE } from "./score";
 
 export function Buy() {
   const m = useInferMarket();
@@ -60,6 +62,7 @@ export function Buy() {
             </span>
           </p>
           <Vibe suite={INFER_VIBES} />
+          <Sound score={INFER_SCORE} />
         </div>
       </header>
       <main className="infer-buy-main">

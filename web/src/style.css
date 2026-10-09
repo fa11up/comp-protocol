@@ -571,6 +571,10 @@ dialog [role="status"] {
   }
 }
 @media (max-width: 1100px) {
+  /* Between phone and desktop the tools wrap under the brand rather than push the page wide. */
+  .topbar {
+    flex-wrap: wrap;
+  }
   .brand {
     gap: 12px;
   }
@@ -3413,10 +3417,10 @@ button.balance-hint.balance-connect:hover {
      the nav takes the second, scrolling sideways if it must. It stays sticky, so it has to be short. */
   .infer-top {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
     grid-template-areas:
-      "mark chip theme vibe wallet"
-      "nav nav nav nav nav";
+      "mark chip theme vibe sound wallet"
+      "nav nav nav nav nav nav";
     align-items: center;
     gap: 4px 10px;
     padding: 8px 16px 0;
@@ -3435,6 +3439,9 @@ button.balance-hint.balance-connect:hover {
   }
   .infer-tools .vibe-toggle {
     grid-area: vibe;
+  }
+  .infer-tools .score-toggle {
+    grid-area: sound;
   }
   /* In the phone grid the slot is its own track: an empty track takes no room, so no gap to undo. */
   .infer-tools .disconnect-slot {
@@ -3678,13 +3685,16 @@ body:has(> .vibe-canvas:not([hidden])) .infer {
 /* INFER, see-through like the imdusd.com terminal: while the vibe shows, the trade, stake and claim
    tickets are translucent paper (about a third) and everything inside them is clear, so the engraving
    runs through the page instead of stopping at each box. The stats grid's hairlines were its opaque
-   backing showing through 1px gaps; a clear grid draws them as shadows instead. The /buy/ sheet keeps
-   its ground: it floats over the card and must read on its own. */
+   backing showing through 1px gaps; a clear grid draws them as shadows instead. The /buy/ sheet is the
+   same translucent paper (its ticket inside clear), over a backdrop that fades the page beneath. */
 body:has(> .vibe-canvas:not([hidden])) .infer :is(.infer-ticket, .infer-stats) {
   background: color-mix(in srgb, var(--surface) 35%, transparent);
 }
 /* imdusd.com's homepage: the Launch parameters box gets the same treatment (its lines are already clear). */
 body:has(> .vibe-canvas:not([hidden])) .live-panel {
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+}
+body:has(> .vibe-canvas:not([hidden])) .infer-buy-sheet {
   background: color-mix(in srgb, var(--surface) 35%, transparent);
 }
 body:has(> .vibe-canvas:not([hidden])) .infer-buy-sheet .infer-ticket {
@@ -3739,25 +3749,29 @@ html.app-terminal body:has(> .vibe-canvas:not([hidden])) :is(input, textarea) {
     top: 13px;
     right: 44px;
   }
-  /* Room for both buttons beside the first row (wordmark and chip); the nav's row sits below the
+  /* Room for the three buttons beside the first row (wordmark and chip); the nav's row sits below the
      buttons, so it gives that extra room back rather than widening the brand. */
+  .topbar .score-toggle {
+    position: absolute;
+    top: 13px;
+    right: 88px;
+  }
   .topbar .brand {
-    padding-inline-end: 96px;
+    padding-inline-end: 140px;
   }
   .topbar .brand .site-nav {
-    margin-inline-end: -44px;
+    /* The full header width on a row of its own under the wordmark, beneath the buttons. */
+    width: calc(100% + 140px);
+    margin-inline-end: -140px;
     /* Four links do not fit a 320px phone on one line: let them wrap rather than push the page wide. */
     flex-wrap: wrap;
   }
 }
-/* The network chip sits just before the two buttons on a phone too: pinned beside them on the first
-   row (they are pinned top right above), so it adds no row of its own. The wordmark alone is left on
-   that row, so there is room for both down to a 320px screen. */
+/* On a phone the chip does not fit beside the wordmark and the three buttons, so it takes a short row
+   of its own at the foot of the header (the buttons stay pinned top right above). */
 @media (max-width: 760px) {
-  .topbar .wallet-bar .chip {
-    position: absolute;
-    top: 21px;
-    right: 88px;
+  .topbar .wallet-bar {
+    width: 100%;
   }
 }
 
@@ -3888,6 +3902,17 @@ html.app-terminal body:has(> .vibe-canvas:not([hidden])) :is(input, textarea) {
 }
 .infer-buy-sheet::backdrop {
   background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+/* The sheet is see-through, so while it is open the page's own words step aside (they are inert under
+   a modal anyway) and only the engraving shows through it. */
+body:has(.infer-buy-sheet[open]) .infer-buy-main {
+  visibility: hidden;
+}
+/* Opened as a page on a desktop rather than as the card inside a post: centred in the window. */
+@media (min-width: 600px) and (min-height: 600px) {
+  .infer-buy-sheet {
+    margin: auto;
+  }
 }
 .infer-buy-sheet-bar {
   display: flex;

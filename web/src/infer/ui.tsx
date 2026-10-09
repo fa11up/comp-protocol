@@ -17,6 +17,8 @@ export { parseAmount } from "./amount";
 import { ThemeToggle } from "../theme";
 import { Vibe } from "../vibe";
 import { INFER_VIBES } from "./vibes";
+import { Sound } from "../score";
+import { INFER_SCORE } from "./score";
 import { StagingChip } from "../site";
 import { LAUNCH, LIVE } from "./config";
 import { ERC20, client, message } from "./chain";
@@ -780,6 +782,7 @@ export function Shell({
           {LIVE ? <span className="chip">Mainnet</span> : <StagingChip />}
           <ThemeToggle />
           <Vibe suite={INFER_VIBES} />
+          <Sound score={INFER_SCORE} />
           {/* No connect button: an amount box's "disconnected" label is the way in (Balance). Connected,
               the header gains only the disconnect box. */}
           <DisconnectBox

@@ -81,14 +81,14 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
 
 // ------------------------------------------------------------------ choice
 
-type Store = {
+export type Store = {
   get: () => string;
   set: (id: string) => void;
   subscribe: (fn: () => void) => () => void;
 };
 const stores = new Map<string, Store>();
 /** One store per suite, created on first use: the saved choice if it is still a scene, else the first. */
-function store(suite: Suite): Store {
+export function vibeStore(suite: Suite): Store {
   let s = stores.get(suite.key);
   if (s) return s;
   let current = suite.scenes[0].id;
@@ -124,7 +124,7 @@ function store(suite: Suite): Store {
 /** The header button: shows the current scene's glyph and switches to the next scene. */
 export function Vibe({ suite }: { suite: Suite }) {
   useEffect(() => startVibe(suite), [suite]);
-  const s = store(suite);
+  const s = vibeStore(suite);
   const vibe = useSyncExternalStore(s.subscribe, s.get);
   const i = Math.max(
     0,
@@ -332,7 +332,7 @@ const started = new Set<string>();
 export function startVibe(suite: Suite) {
   if (typeof document === "undefined" || started.has(suite.key)) return;
   started.add(suite.key);
-  const s = store(suite);
+  const s = vibeStore(suite);
   let current: HTMLCanvasElement | undefined;
   let stop = () => {};
   const show = () => {
