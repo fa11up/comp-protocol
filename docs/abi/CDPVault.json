@@ -89,6 +89,19 @@
   },
   {
     "type": "function",
+    "name": "PAYOUT_PRICE_FALL_BPS_PER_HOUR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "REDEMPTION_FEE_CAP_BPS",
     "inputs": [],
     "outputs": [
@@ -685,6 +698,24 @@
       },
       {
         "name": "backingAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "payoutPrice",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }

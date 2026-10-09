@@ -146,7 +146,7 @@ contract CandidateLiftTest is Test {
         uint256 paid = vault.cash(20_000 ether, 0, CANDIDATE);
         emit log_named_uint("paid against the candidate (raw IMD)", paid);
         emit log_named_uint("honest payout (raw IMD)", honestPay);
-        emit log_named_uint("candidate's collateral lost above honest (raw IMD)", paid - honestPay);
+        emit log_named_uint("candidate's collateral lost above honest (raw IMD)", paid > honestPay ? paid - honestPay : 0);
         assertLe(paid, Math.mulDiv(honestPay, honest + _rise(honestAt), honest) + 1, "candidate-funded redemption paid above the honest backing");
     }
 

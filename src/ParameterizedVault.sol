@@ -236,7 +236,8 @@ contract ParameterizedVault is CDPVault {
     /// call, leaving work-minted imdUSD with nothing behind it. The cap is the debt level at the start of
     /// the transaction, remembered in transient storage, so the ratio term is only ever backed by debt
     /// that existed before the caller arrived; and it counts only up to the paced debt, which rises by at most
-    /// FOLLOW_BPS_PER_HOUR an hour and falls at once (CDPVault._pace), so cancelling another position's debt and
+    /// FOLLOW_BPS_PER_HOUR per hour of elapsed time (compounding per pacing) and falls at once (CDPVault._pace),
+    /// so cancelling another position's debt and
     /// drawing as much backs nothing until the new debt has been held. A position held for hours counts in full, so the ceiling stays point-in-time for the slow version of the
     /// same round trip: that is
     /// the accepted design (the ceiling gates new minting only; repayment lowers it and leaves what was
@@ -259,7 +260,8 @@ contract ParameterizedVault is CDPVault {
     /// an hour and falls at once, at every wage, tracked from deployment. The redemption half is the paced
     /// backing. Proofs: docs/AUDIT-VAULT-2026-10-05.md, test/LaggedBacking.t.sol.
     function backedDebt() public view returns (uint256) {
-        // D1: debt counts only up to the paced debt, which rises by at most FOLLOW_BPS_PER_HOUR an hour and falls
+        // D1: debt counts only up to the paced debt, which rises by at most FOLLOW_BPS_PER_HOUR per hour of elapsed
+        // time (compounding per pacing) and falls
         // at once, so debt drawn to lift the ceiling must be held for hours and debt cancelled this transaction
         // (by a redemption, a liquidation or cover) backs nothing even if the same amount is drawn again.
         uint256 debt = Math.min(Math.min(totalDebt, _debtAtTransactionStart()), _pacedDebtNow());

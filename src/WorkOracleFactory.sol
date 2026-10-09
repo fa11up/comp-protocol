@@ -7,7 +7,7 @@ import {SwarmWorkOracle} from "./SwarmWorkOracle.sol";
 /// @dev THIS EXISTS FOR A SIZE LIMIT, and the measurement is the argument. `SwarmWorkOracle` carries
 /// SwarmFeed plus a 3.5 KB question document, so its creation code is 16,464 bytes. A contract that
 /// creates another embeds that creation code in its OWN initcode, and `ParameterizedVault` is already
-/// at 36,416 of the 49,152 EIP-3860 allows — so a vault that created its own work oracle would be
+/// within about 2 KB of the 49,152 EIP-3860 allows — so a vault that created its own work oracle would be
 /// 52,880 bytes of initcode and could not be deployed at all. Holding the creation code here instead
 /// costs the vault one external call.
 ///

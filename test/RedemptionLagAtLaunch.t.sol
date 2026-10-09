@@ -105,8 +105,14 @@ contract RedemptionLagAtLaunchTest is Test {
         // Three days: the paced figures have long caught up with the honest capital.
         vm.warp(block.timestamp + 3 days);
         vm.roll(block.number + 21_600);
-        // IMD falls 70%; the honest position is underwater and not yet liquidated (grace).
+        // IMD falls 70%; the honest position is underwater and not yet liquidated (grace). A day of hourly pacing
+        // lets the paid price follow the fall (PAYOUT_PRICE_FALL_BPS_PER_HOUR), so the test reads payouts at $0.30.
         primary.set(uint256(0.3 ether) * 1e18 / 2000 ether);
+        for (uint256 i; i < 24; ++i) {
+            vm.warp(block.timestamp + 1 hours);
+            primary.set(uint256(0.3 ether) * 1e18 / 2000 ether);
+            vault.pace();
+        }
     }
 
     /// forge-config: default.isolate = true
@@ -193,7 +199,7 @@ contract RedemptionLagHonestTest is Test {
         vm.warp(block.timestamp + 1 hours);
         vm.prank(BORROWER);
         vault.lock(1 ether);
-        (uint256 mark,,,,) = vault.paced();
+        (uint256 mark,,,,,) = vault.paced();
         assertEq(mark, 0.9e18, "the fall reached the paced backing at once");
         // IMD recovers to $1: the live figure is back at par, the payout climbs two points an hour.
         primary.set(uint256(1 ether) * 1e18 / 2000 ether);

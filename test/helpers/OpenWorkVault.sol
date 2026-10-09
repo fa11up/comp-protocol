@@ -21,10 +21,10 @@ contract OpenWorkVault is ParameterizedVault {
         return true;
     }
 
-    /// @dev No follow limit: the fee base and the work ceiling follow the live supply and debt at once
-    /// (CDPVault._followRateLimited), so the suites check that arithmetic at exact figures. The paced backing
-    /// still applies, as on the deployed vault. The paced supply and debt are tested against the production
-    /// vault (test/PacedFigures.t.sol and the kept panel proofs).
+    /// @dev No follow limit: the fee base, the work ceiling and the payout price follow the live supply, debt and
+    /// price at once (CDPVault._followRateLimited), so the suites check that arithmetic at exact figures. The paced
+    /// backing still applies, as on the deployed vault. The paced supply, debt and payout price are tested against
+    /// the production vault (test/PacedFigures.t.sol and the kept panel proofs).
     function _followRateLimited() internal pure override returns (bool) {
         return false;
     }

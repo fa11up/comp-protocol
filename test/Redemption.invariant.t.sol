@@ -273,7 +273,7 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
     /// was written (CDPVault._pace). The live figure is modelled from the vault's parts, not from `backingPerUnit`,
     /// so the payout is still asserted against an independent computation. Price is one here.
     function _laggedPerUnit(uint256 backing, uint256, uint256 supply) private view returns (uint256) {
-        (uint256 mark,,,, uint256 backingAt) = backedVault.paced();
+        (uint256 mark,,,, uint256 backingAt,) = backedVault.paced();
         uint256 elapsed = Math.min(block.timestamp - backingAt, backedVault.PACE_INTERVAL());
         uint256 ceiling = mark + Math.mulDiv(backedVault.BACKING_RISE_PER_HOUR(), elapsed, 1 hours);
         return Math.min(_backingPerUnit(backing, supply), ceiling);

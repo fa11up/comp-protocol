@@ -153,7 +153,7 @@ contract ClampOrderingTest is Test {
         vault.draw(99_500 ether);
         vm.stopPrank();
         _hours(30);
-        (,, uint256 pacedDebt,,) = vault.paced();
+        (,, uint256 pacedDebt,,,) = vault.paced();
         assertEq(pacedDebt, 99_500 ether, "seasoned");
     }
 
@@ -163,7 +163,7 @@ contract ClampOrderingTest is Test {
         stable.transfer(address(attacker), 99_500 ether); // the spare imdUSD the sweep panel's proof gave the attacker
         attacker.cancelThenDraw(300_000 ether, 99_500 ether, BOOK);
         _next(12);
-        (,, uint256 pacedDebt,,) = vault.paced();
+        (,, uint256 pacedDebt,,,) = vault.paced();
         emit log_named_uint("paced debt after cancel-then-draw", pacedDebt);
         assertLt(pacedDebt, 200 ether, "the redrawn 99,500 counts only at the follow rate");
     }
@@ -172,7 +172,7 @@ contract ClampOrderingTest is Test {
         _book();
         attacker.drawThenCancel(300_000 ether, 99_500 ether, BOOK);
         _next(12);
-        (,, uint256 pacedDebt,,) = vault.paced();
+        (,, uint256 pacedDebt,,,) = vault.paced();
         emit log_named_uint("paced debt after draw-then-cancel", pacedDebt);
         emit log_named_uint("totalDebt", vault.totalDebt());
         (, uint256 bookDebt) = vault.positions(BOOK);

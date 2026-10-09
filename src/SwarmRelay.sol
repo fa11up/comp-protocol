@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {TransientReentrancyGuard} from "./TransientReentrancyGuard.sol";
 import {SwarmFeed} from "./SwarmFeed.sol";
 import {CDPVault} from "./CDPVault.sol";
 
@@ -33,7 +33,7 @@ import {CDPVault} from "./CDPVault.sol";
 /// feed, and cannot alter an attestation: every guard the feed applies — attester signature, replay,
 /// freshness, panel floors, deviation — is untouched and still runs on the forwarded call. The worst
 /// a caller can do is relay a valid attestation the feed would have accepted anyway, or waste gas.
-contract SwarmRelay is ReentrancyGuard {
+contract SwarmRelay is TransientReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// @notice Forward one attestation to one feed.

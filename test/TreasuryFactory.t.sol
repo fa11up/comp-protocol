@@ -61,10 +61,10 @@ contract TreasuryFactoryTest is Test {
         uint256 size = type(ParameterizedVault).creationCode.length;
         // 3 KB since the sweep panel fixes (banked warmth, the burn tally, the drained-position bite):
         // 45,741 bytes of initcode against the 49,152 cap.
-        // 2 KB since the retry2 panel (2026-10-08): the per-position excess that closes the repay-then-redeem
-        // premium and the per-position fee base took about a kilobyte, and the margin exists for exactly such
-        // fixes. More room would mean creating Parameters through a factory, as the Treasury already is.
-        assertLt(size, 49_152 - 2_048, "keep at least 2 KB of headroom under EIP-3860");
+        // 1 KB since the final sweep panel (2026-10-09): the margin was reserved for audit fixes, and the paced
+        // payout price, the cancellation-aware clamp and the permissionless re-price (records 24 and 25) took it;
+        // what is left is for the last corrections before the deploy commit is frozen, not for features.
+        assertLt(size, 49_152 - 1_024, "keep at least 1 KB of headroom under EIP-3860");
     }
 
     /// @dev F10 (launch audit, governance panel). The vault trusted whatever TREASURY_FACTORY returned.

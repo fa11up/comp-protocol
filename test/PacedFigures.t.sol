@@ -107,10 +107,10 @@ contract PacedFiguresTest is Test {
         uint256 figure = vault.backingPerUnit();
         assertLt(figure, 1e18, "three hours in, still below par");
         uint256 feeBps = vault.redemptionFeeBps(1_000 ether);
-        (uint256 price,) = vault.collateralPriceFeed().latestValue();
+        uint256 payPrice = vault.payoutPrice(); // the paced payout price, still above the attested $0.40
         vm.prank(WHALE);
         uint256 paid = vault.cash(1_000 ether, 0, address(0));
-        assertEq(paid, Math.mulDiv(1_000 ether, Math.mulDiv(figure, 10_000 - feeBps, 10_000), price));
+        assertEq(paid, Math.mulDiv(1_000 ether, Math.mulDiv(figure, 10_000 - feeBps, 10_000), payPrice));
     }
 
     function test_withNoReadablePriceTheMarkDoesNotRise() public {
@@ -123,7 +123,7 @@ contract PacedFiguresTest is Test {
         imdEth = DOLLAR;
         primary.set(imdEth); // the price recovers in the same block
         spot.set(imdEth);
-        (uint256 mark,,,,) = vault.paced();
+        (uint256 mark,,,,,) = vault.paced();
         assertEq(mark, honest, "six dead hours did not write the paced backing");
         // The backing keeps its own clock (paced vault panel 2026-10-08, low F4): a pacing through the dead window
         // held it without consuming its interval, so one interval's rise is available now, not six hours' worth.
@@ -249,13 +249,13 @@ contract PacedFiguresTest is Test {
     /// primary (bounded by the feed's allowance, but wrong) cannot write it.
     function test_aDivergedPrimaryDoesNotPaceTheBacking() public {
         uint256 honest = _belowPar();
-        (uint256 pacedBefore,,,,) = vault.paced();
+        (uint256 pacedBefore,,,,,) = vault.paced();
         // The primary alone jumps 15% (within its epoch allowance); the spot stays. Ungated calls still pace.
         primary.set(imdEth * 115 / 100);
         _next(12);
         vm.prank(BOOK);
         vault.lock(1);
-        (uint256 pacedAfter,,,,) = vault.paced();
+        (uint256 pacedAfter,,,,,) = vault.paced();
         assertEq(pacedAfter, pacedBefore, "held while the feeds disagree");
         primary.set(imdEth);
         _next(12);
@@ -385,21 +385,24 @@ contract PacedFiguresTest is Test {
         primary.set(imdEth);
         spot.set(imdEth);
         vault.pace();
-        (uint256 paced,,,,) = vault.paced();
+        (uint256 paced,,,,,) = vault.paced();
         assertEq(paced, honest + vault.BACKING_RISE_PER_HOUR(), "the whole hour's rise, not ten minutes of it");
     }
 
-    /// @dev Low F5: the paced supply starts by following the live one, so a launch-day redemption is measured
-    /// against the supply that exists, not the floor.
-    function test_launchDayFeeIsMeasuredAgainstTheLiveSupply() public {
+    /// @dev Paced vault panel low F5, restated by the final sweep panel (low F3): the paced supply starts at the
+    /// live supply but no higher than the fee-base floor, so whoever draws first cannot set the launch fee base;
+    /// the first day's redemptions are measured against the floor until the paced supply has followed the book up.
+    function test_launchDayFeeBaseIsSeededNoHigherThanTheFloor() public {
         vm.startPrank(WHALE);
         vault.lock(1_500_000 ether);
         vault.draw(500_000 ether);
         vm.stopPrank();
         _next(1 hours);
         vault.pace();
-        (, uint256 supply,,,) = vault.paced();
-        assertEq(supply, 500_000 ether, "seeded from the live supply");
-        assertEq(vault.redemptionFeeBps(5_000 ether), 100, "1% of supply at divisor 2: 50 bps over the floor");
+        (, uint256 supply,,,,) = vault.paced();
+        assertEq(supply, 100_000 ether, "seeded at the floor at the first pacing after the draw");
+        assertEq(vault.redemptionFeeBps(5_000 ether), 300, "measured against the floor, not the live 500,000");
+        _hours(17);
+        assertEq(vault.redemptionFeeBps(5_000 ether), 100, "a day on, against the live supply");
     }
 }

@@ -389,7 +389,8 @@ could).
    after the deploy (one day's budget, `ORACLE_BUDGET_PER_DAY` = 15 IMD, is a reasonable seed), so the
    Treasury-paid path is not dead on day one and the keeper's own IMD is the second line, not the only
    one. `fundOracle` tops the asker up only to the budget, so prefunding it is harmless.
-5. **Only then** open deposits.
+5. **Only then** announce. Nothing gates deposits: the vault takes `lock` and `draw` from the block it lands, so
+   until the announcement the only protection is that nobody knows the address.
 
 ---
 
@@ -409,7 +410,9 @@ no agent's tasks are spent for nothing). Turning it on later is a governance act
 2. ~~The deferred audit finding needs code.~~ **DONE.** D1 is closed by the paced figures
    (`paced()`, `BACKING_RISE_PER_HOUR`, `FOLLOW_BPS_PER_HOUR`, `PACE_INTERVAL`, since 2026-10-08; the per-position
    lag before them is gone): the redemption cap reads the paced backing, the fee base the paced supply, `backedDebt`
-   the paced debt, at every wage. Anyone may `pace()` and `resecure(owner)`; the keeper paces hourly and
+   the paced debt, at every wage; and the price a redemption is PAID at falls at most 5% an hour (`payoutPrice()`,
+   `PAYOUT_PRICE_FALL_BPS_PER_HOUR`), so a one-step fall of the attested price, honest or a held-down pool,
+   reaches the payout only at that rate (final sweep panel 2026-10-09, high). Anyone may `pace()` and `resecure(owner)`; the keeper paces hourly and
    re-prices every open position after each price update, so a recovery reaches redeemers through a quiet spell
    and no position's collateral term stays fixed at a stale price (paced vault panel 2026-10-08, medium).
    Three rules keep the accepted dip rare (a position leaving and returning across two transactions paces the
