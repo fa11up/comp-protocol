@@ -280,6 +280,10 @@ function player(score: Score): Player {
   };
   const start = (tau = 1.2) => {
     if (!ac) {
+      // On an iPhone, Web Audio is "ambient" by default, which the silent switch mutes. Saying it is
+      // playback (Safari 16.4+) makes it sound like any other media, as a music page should.
+      const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+      if (session) session.type = "playback";
       ac = new AudioContext();
       const ctx = ac;
       ctx.addEventListener("statechange", () => {
@@ -365,6 +369,8 @@ function player(score: Score): Player {
   };
   // Remembered on but not yet allowed to play: the first touch anywhere starts it. A touch on the button
   // itself is handled by toggle (armed counts as off there, so the click turns it on rather than off).
+  // Safari unlocks audio on a finished tap (click, touchend) or a key, never on a finger going down.
+  const WAKE = ["click", "touchend", "keydown"] as const;
   const wake = (e: Event) => {
     if ((e.target as Element | null)?.closest?.(".score-toggle")) return;
     disarm();
@@ -374,13 +380,9 @@ function player(score: Score): Player {
     emit();
   };
   function disarm() {
-    window.removeEventListener("pointerdown", wake, true);
-    window.removeEventListener("keydown", wake, true);
+    for (const t of WAKE) window.removeEventListener(t, wake, true);
   }
-  if (state === "armed") {
-    window.addEventListener("pointerdown", wake, true);
-    window.addEventListener("keydown", wake, true);
-  }
+  if (state === "armed") for (const t of WAKE) window.addEventListener(t, wake, true);
   players.set(score.key, p);
   return p;
 }

@@ -622,15 +622,15 @@ dialog [role="status"] {
   .wallet-bar button {
     min-height: 34px;
   }
-  /* The theme toggle stays at the top right of the header instead of wrapping under the brand;
-     the brand leaves room for it. */
+  /* The theme, background and sound buttons stay at the top right of the header instead of wrapping
+     under the brand (placed below); the brand leaves room for them. */
   .topbar {
     position: relative;
   }
   .topbar .theme-toggle {
     position: absolute;
     top: 13px;
-    right: 0;
+    right: 92px;
   }
   .topbar .brand {
     padding-inline-end: 52px;
@@ -3744,17 +3744,21 @@ html.app-terminal body:has(> .vibe-canvas:not([hidden])) :is(input, textarea) {
   pointer-events: none;
 }
 @media (max-width: 760px) {
+  /* Theme, background, sound from left to right, 36 × 40 and 10px apart, as on INFER's masthead. */
+  .topbar .wallet-bar .theme-toggle {
+    min-height: 40px;
+  }
   .topbar .vibe-toggle {
     position: absolute;
     top: 13px;
-    right: 44px;
+    right: 46px;
   }
   /* Room for the three buttons beside the first row (wordmark and chip); the nav's row sits below the
      buttons, so it gives that extra room back rather than widening the brand. */
   .topbar .score-toggle {
     position: absolute;
     top: 13px;
-    right: 88px;
+    right: 0;
   }
   .topbar .brand {
     padding-inline-end: 140px;
