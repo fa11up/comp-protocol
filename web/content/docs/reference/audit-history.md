@@ -18,6 +18,7 @@ sources:
   - docs/AUDIT-DELTA-PANEL-2026-10-08.md
   - docs/AUDIT-LAUNCH-VAULT-PANEL-2026-10-08.md
   - docs/AUDIT-PACED-VAULT-PANEL-2026-10-08.md
+  - docs/AUDIT-FINAL-SWEEP-2-2026-10-09.md
 ---
 
 # Audit history
@@ -66,10 +67,11 @@ Severity counts (C/H/M/L/I) are critical, high, medium, low and info, as the rou
 | 22 | 2026-10-08 | Delta panel: what the final sweep's fixes changed | Panel, job [`fc96f209`](https://explorer.imd.fun/jobs/fc96f209-e004-42c6-bea0-728288548eee) | `07905bb` | 0/0/1/2/4 | `46b646f` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-DELTA-PANEL-2026-10-08.md) |
 | 23 | 2026-10-08 | Launch vault panel: the vault in full | Panel, job [`5383ced0`](https://explorer.imd.fun/jobs/5383ced0-fa82-4434-b6bd-62eb0fd2ff2b) | `9bd5f59` | 0/1/2/1/1 | `d3861ac`, by replacing the backing lag with paced figures | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-LAUNCH-VAULT-PANEL-2026-10-08.md) |
 | 24 | 2026-10-08 | Paced vault panel: the redesigned vault in full | Panel, job [`dc27aade`](https://explorer.imd.fun/jobs/dc27aade-6adb-40da-b6d8-0bddfe280ebf) | `d3861ac` | 0/0/3/2/6 | `c1ecb05` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-PACED-VAULT-PANEL-2026-10-08.md) |
+| 25 | 2026-10-09 | Final sweep 2: the whole system, after the paced figures | Panel, job [`a69e204e`](https://explorer.imd.fun/jobs/a69e204e-d047-4c2f-9944-f37a69dd2796) | `a3aa9e4` | 0/1/0/2/4 | `92b873b` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-2-2026-10-09.md) |
 
 ## What the chain shows
 
-- **No critical finding in any round. The final sweep of the whole system found nothing above low**, and the delta panel on its fixes found one medium in them, fixed with its proof kept. The highs were all fixed in the commit after the round that found them, each with its proof kept as a regression test.
+- **No critical finding in any round.** The highs were four: three in the vault's backing lag, each fixed in the commit after it, and the last (round 25) in the oracle's reach over redemption payouts, which a pool held down through the feed's window could inflate; the price a redemption is paid at is now paced, with the proof kept. The highs were all fixed in the commit after the round that found them, each with its proof kept as a regression test.
 - **The panels found their bugs in each round's newest code.** That is why the vault has had more rounds than the rest: its backing guard and its lagged capital were repaired through rounds 15 to 23, each repair audited again and each found wanting in the next round, until round 23's high was in the repair made for round 22. The lag was then replaced outright by three paced figures with a one-sentence guarantee (record 23); round 24 audited that and found no high, three mediums (an ordering gap, a wrongly stated condition, and a stale collateral term nobody but its owner could re-price), each fixed or restated in the commit after it.
 - **Two items are accepted rather than fixed,** each with its reason in the code and in [Risks and open questions](../economics/risks-and-open-questions.md): a repayment one transaction before a redemption can lift what that redemption is paid, within a stated bound and only below par; and a redraw after a redemption releases a repayment's share of the fee base early. The rounds that tried to close the first did worse than the edge itself, and the records say how.
 - **What the reviews do not cover** is in [Risks and open questions](../economics/risks-and-open-questions.md): the oracle service's signer, the fixed questions, and the economic assumptions behind the peg.
