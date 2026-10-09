@@ -109,18 +109,12 @@ contract ParameterizedVault is CDPVault {
         return parameters.redemptionDivisor();
     }
 
-    /// @dev The lagged WORK CEILING applies exactly while minting from work is on. (The redemption cap is
-    /// lagged at every wage: adversarial review 2026-10-05, see CDPVault._backingPerUnit.)
-    function _lagApplies() internal view override returns (bool) {
-        return parameters.wage() != 0;
-    }
-
     /// @dev And minting from work IS on exactly while the wage is nonzero: `earn` is refused at wage 0.
     /// Rights are priced at claim and outlive the wage that priced them, so with the wage back at 0 they
-    /// stayed spendable through `earn` while the lag above was off, reopening D1's borrow / earn / unwind
+    /// stayed spendable through `earn` while the lag then guarding the ceiling was off, reopening D1's borrow / earn / unwind
     /// round trip; and one `earn(1)` during a pending `proposeWorkOracle` made the replacement
     /// unapplyable for good (final panel audits, vault and governance, medium). Rights claimed under a
-    /// wage are kept, and spendable again the moment a wage is set, with the lag on.
+    /// wage are kept, and spendable again the moment a wage is set.
     function _earnOpen() internal view virtual override returns (bool) {
         return parameters.wage() != 0;
     }
@@ -175,7 +169,10 @@ contract ParameterizedVault is CDPVault {
     /// replaced; dropped, sweep panel audit, vault, info.)
     function _redemptionReserveBacking(uint256 price) internal view override returns (uint256) {
         uint256 others = reserveValue() - treasury.reserveValueOf(gem);
-        return others + Math.mulDiv(gem.balanceOf(address(treasury)), price, 1e18);
+        // Saturating, like the vault's backing it feeds: an absurd price must not revert lock or wipe (CDPVault._mark).
+        (bool ok, uint256 product) = Math.tryMul(gem.balanceOf(address(treasury)), price);
+        (bool fits, uint256 total) = Math.tryAdd(others, product / 1e18);
+        return ok && fits ? total : type(uint256).max;
     }
 
     /// @notice Both revenue streams land in the Treasury this vault created, never in an account.
@@ -237,10 +234,10 @@ contract ParameterizedVault is CDPVault {
     /// work against a quarter of it, repaid (a zero-second fee is zero) and withdrew everything in one
     /// call, leaving work-minted imdUSD with nothing behind it. The cap is the debt level at the start of
     /// the transaction, remembered in transient storage, so the ratio term is only ever backed by debt
-    /// that existed before the caller arrived; with the wage on, that debt also counts only as it has
-    /// warmed up, and warmth belongs to the position that earned it (CDPVault._lag): what one position
-    /// repays or loses never warms what another draws, in either order. A position held across transactions counts
-    /// in full, so the ceiling stays point-in-time for the slow version of the same round trip: that is
+    /// that existed before the caller arrived; and it counts only up to the paced debt, which rises by at most
+    /// FOLLOW_BPS_PER_HOUR an hour and falls at once (CDPVault._pace), so cancelling another position's debt and
+    /// drawing as much backs nothing until the new debt has been held. A position held for hours counts in full, so the ceiling stays point-in-time for the slow version of the
+    /// same round trip: that is
     /// the accepted design (the ceiling gates new minting only; repayment lowers it and leaves what was
     /// minted), and the cost of it is real capital at risk in an open position, not gas. (The redemption
     /// half differs: a repayment one transaction before a redemption can lift what it is paid, for gas,
@@ -253,20 +250,18 @@ contract ParameterizedVault is CDPVault {
     /// drained is not recorded until someone finishes it; the remainder is seizable at the usual bonus,
     /// and dust below one wei of debt is taken whole by `bite` (or swept by `cover`), which records it.
     ///
-    /// D1, BUILT AND DORMANT FOR THE WORK CEILING (launch audit 2026-10-05, vault panel, medium). Excluding only the CURRENT
+    /// D1, FOR THE WORK CEILING (launch audit 2026-10-05, vault panel, medium). Excluding only the CURRENT
     /// transaction's capital left adjacent transactions open: borrow in one, earn (or cash) in the next,
     /// repay and withdraw in a third, and work-minted imdUSD outlived the debt that authorised it, or a
-    /// redemption took the reserve at par while backing was 0.4. Fixed by the lagged capital in CDPVault
-    /// (`laggedNow`, BACKING_WARMUP): increases warm up over about a day, decreases count at once. HERE it
-    /// applies only while the wage is nonzero (`_lagApplies`), i.e. once minting from work is switched on;
-    /// it is tracked from deployment so it is warm then. The redemption half is lagged at every wage. Proofs: docs/AUDIT-VAULT-2026-10-05.md, test/LaggedBacking.t.sol.
+    /// redemption took the reserve at par while backing was 0.4. Fixed by the paced figures in CDPVault
+    /// (the paced debt, CDPVault._pace): debt counts only up to a figure that rises by at most FOLLOW_BPS_PER_HOUR
+    /// an hour and falls at once, at every wage, tracked from deployment. The redemption half is the paced
+    /// backing. Proofs: docs/AUDIT-VAULT-2026-10-05.md, test/LaggedBacking.t.sol.
     function backedDebt() public view returns (uint256) {
-        uint256 debt = Math.min(totalDebt, _debtAtTransactionStart());
-        if (_lagApplies()) {
-            // D1: debt from earlier transactions counts only as it has warmed up.
-            (uint256 lagDebt,) = laggedNow();
-            debt = Math.min(debt, lagDebt);
-        }
+        // D1: debt counts only up to the paced debt, which rises by at most FOLLOW_BPS_PER_HOUR an hour and falls
+        // at once, so debt drawn to lift the ceiling must be held for hours and debt cancelled this transaction
+        // (by a redemption, a liquidation or cover) backs nothing even if the same amount is drawn again.
+        uint256 debt = Math.min(Math.min(totalDebt, _debtAtTransactionStart()), _pacedDebtNow());
         uint256 bad = totalBadDebt;
         return debt > bad ? debt - bad : 0;
     }

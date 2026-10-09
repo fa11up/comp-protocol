@@ -2,7 +2,9 @@
 pragma solidity 0.8.26;
 
 // Retry panel audit 2026-10-07 (vault, job 3226aaed): the panel's reproduction of the high (warmth inherited by debt drawn BEFORE a warm position is cancelled),
-// kept as it was written apart from reading the lag through laggedNow(). It failed on 973369e and passes on the fix.
+// kept as it was written apart from reading the lag through laggedNow(). It failed on 973369e and passed on the fix.
+// The lag it targeted was replaced on 2026-10-08 by the paced figures (CDPVault._pace); the attack is kept and
+// asserted against what it was after (the work ceiling, the backing a redemption is paid), not the lag's internals.
 
 import {Test} from "forge-std/Test.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
@@ -135,10 +137,9 @@ contract WarmthFollowsOrderingTest is Test {
         params.proposeWage(0.01 ether);
         vm.warp(block.timestamp + params.TIMELOCK());
         params.applyPending();
-        // Three quiet days: the honest debt is warm.
+        // Three quiet days: the honest debt is in the paced supply.
         vm.warp(block.timestamp + 3 days);
-        (uint256 warm,) = vault.laggedNow();
-        assertEq(warm, 1_000 ether, "the honest debt is warm");
+        assertEq(vault.backedDebt(), 1_000 ether, "the honest debt counts");
     }
 
     function _nextBlock() private {
@@ -148,22 +149,25 @@ contract WarmthFollowsOrderingTest is Test {
 
     /// Transaction 1: the attacker opens 1,800 / 1,000. Transaction 2: cash 1,000 against the honest
     /// position. The only principal left is the attacker's, zero seconds old, and the lag still reads 1,000.
+    /// Under the paced figures the ceiling is an aggregate: the swap leaves no ceiling that was not there before it, and
+    /// the redemption against the honest position is paid no more than the backing that stood before the draw.
     function test_drawThenCancelAcrossTransactionsKeepsTheLagWarmForFreshDebt() public {
+        uint256 lineBefore = vault.earnLine();
+        uint256 backingBefore = vault.backingPerUnit();
         attacker.lockDraw(1_800 ether, 1_000 ether);
         attacker.cash(1_000 ether, HONEST);
         assertLt(vault.debtOf(HONEST), 1 ether, "the honest principal is cancelled (a fee residue remains)");
-        (uint256 lagDebt,) = vault.laggedNow();
-        // EXPECTED: about the fee residue (the honest position banked its warmth; the attacker's warms from zero).
-        assertLt(lagDebt, 100 ether, "zero-second debt must not read as warm");
         _nextBlock();
-        assertLt(vault.earnLine(), 1 ether, "the work ceiling must not be backed by zero-second debt");
+        // Plus the paced debt's allowance for the 12 seconds that passed (10% an hour of the 100,000 floor, a quarter of it).
+        assertLe(vault.earnLine(), lineBefore + 1 ether, "zero-second debt must not add to the work ceiling");
+        assertLe(vault.backingPerUnit(), backingBefore, "nor lift the backing");
         vm.prank(address(attacker));
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        vault.earn(250 ether);
+        vault.earn(lineBefore + 1 ether + 1);
     }
 
-    /// The whole round trip in one transaction: lock, draw, cash, earn. The tx-start debt cap records the
-    /// honest 1,000 before the attacker's draw, and the lag never moves, so the earn passes.
+    /// The whole round trip in one transaction: lock, draw, cash, earn. The draw clamps the paced debt to what the
+    /// transaction began with less what it cancelled, so the earn is refused.
     function test_drawThenCancelThenEarnInOneTransactionIsRefused() public {
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         attacker.drawCancelEarn(1_800 ether, 1_000 ether, HONEST, 250 ether);

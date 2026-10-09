@@ -269,26 +269,14 @@ contract RedemptionSequenceHandler is WorkBackingFixture {
 
     /// @dev A helper rather than a local: the handler is already at the stack limit, and one more
     /// variable in it makes the whole file fail to compile without viaIR.
-    /// @dev The cap the vault pays at since the adversarial review of 2026-10-05: the live figure, or
-    /// the same figure from LAGGED capital if lower. Debt younger than the warm-up is taken out of
-    /// supply, its collateral out of the secured term, so a position borrowed one transaction earlier
-    /// neither dilutes nor backs; the reserve counts by the warm supply's share. Modelled from `laggedNow`, not from `backingPerUnit`, so the payout
-    /// is still asserted against an independent computation. Price is one here.
-    function _laggedPerUnit(uint256 backing, uint256 reserveIMD, uint256 supply) private view returns (uint256) {
-        uint256 perUnit = _backingPerUnit(backing, supply);
-        (uint256 lagDebt, uint256 lagSecured) = backedVault.laggedNow();
-        uint256 debt = backedVault.totalDebt();
-        uint256 fresh = debt - lagDebt;
-        if (supply <= fresh) return perUnit;
-        // The reserve backs every unit, so only the warm supply's share of it (final sweep panel audit 2026-10-08).
-        reserveIMD = Math.mulDiv(reserveIMD, supply - fresh, supply);
-        uint256 prior = Math.min(debt, lagDebt);
-        uint256 bad = backedVault.totalBadDebt();
-        prior = prior > bad ? prior - bad : 0;
-        uint256 secured = Math.min(
-            Math.min(backedVault.securedCollateral(), lagSecured), Math.mulDiv(prior, backedVault.mat(), 100)
-        );
-        return Math.min(perUnit, _backingPerUnit(reserveIMD + secured, supply - fresh));
+    /// @dev The cap the vault pays at: the live figure, but no more than the paced backing plus its rise since it
+    /// was written (CDPVault._pace). The live figure is modelled from the vault's parts, not from `backingPerUnit`,
+    /// so the payout is still asserted against an independent computation. Price is one here.
+    function _laggedPerUnit(uint256 backing, uint256, uint256 supply) private view returns (uint256) {
+        (uint256 mark,,, uint256 at) = backedVault.paced();
+        uint256 elapsed = Math.min(block.timestamp - at, backedVault.PACE_INTERVAL());
+        uint256 ceiling = mark + Math.mulDiv(backedVault.BACKING_RISE_PER_HOUR(), elapsed, 1 hours);
+        return Math.min(_backingPerUnit(backing, supply), ceiling);
     }
 
     function _backingPerUnit(uint256 backing, uint256 supply) private pure returns (uint256) {
@@ -495,11 +483,7 @@ contract RedemptionInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         handler = new RedemptionSequenceHandler();
-        // A separate transaction from the construction above: see the handler's note. A day later, so the
-        // book is warm: with every position cold, the warm supply is the work minted against no collateral,
-        // and its share of the reserve is all a redemption is paid (final sweep panel audit 2026-10-08).
-        handler.advanceTime(12 hours);
-        handler.advanceTime(12 hours);
+        // A separate transaction from the construction above: see the handler's note.
         handler.seedRedemptions();
         bytes4[] memory selectors = new bytes4[](11);
         selectors[0] = handler.fundReserve.selector;

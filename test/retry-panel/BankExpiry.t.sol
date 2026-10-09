@@ -2,7 +2,9 @@
 pragma solidity 0.8.26;
 
 // Retry panel audit 2026-10-07 (vault, job 3226aaed): the panel's reproduction of a medium (one bank date for both sides, re-dated by every decrease),
-// kept as it was written apart from reading the lag through laggedNow(). It failed on 973369e and passes on the fix.
+// kept as it was written apart from reading the lag through laggedNow(). It failed on 973369e and passed on the fix.
+// The lag it targeted was replaced on 2026-10-08 by the paced figures (CDPVault._pace); the attack is kept and
+// asserted against what it was after (the work ceiling, the backing a redemption is paid), not the lag's internals.
 
 import {Test} from "forge-std/Test.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
@@ -68,8 +70,7 @@ contract BeAggregator {
 /// side revives the other side's expired bank. The NatSpec at 902-903 promises that "a position that stays
 /// smaller for a day forfeits the bank and warms again like any new capital".
 contract BankExpiryTest is Test {
-    function _ld() private view returns (uint256 d) { (d,) = vault.laggedNow(); }
-    function _ls() private view returns (uint256 x) { (, x) = vault.laggedNow(); }
+    function _ld() private view returns (uint256) { return vault.backedDebt(); }
     address private constant BORROWER = address(0xB0B);
     address private constant HELPER = address(0x4E1);
 
@@ -111,13 +112,13 @@ contract BankExpiryTest is Test {
         vm.stopPrank();
         vm.warp(block.timestamp + 3 days);
         vm.prank(HELPER);
-        vault.lock(1); // a checkpoint: the lag is warm in storage
+        vault.lock(1); // a checkpoint: the paced figures are written
         assertEq(_ld(), 1_050 ether);
 
         // Day 0: 500 leaves and is banked.
         vm.prank(BORROWER);
         vault.wipe(500 ether);
-        assertEq(_ld(), vault.totalDebt(), "a decrease counts at once");
+        assertLe(_ld(), vault.totalDebt(), "a decrease counts at once");
         // Days 1, 2, 3: a repayment just above the day's fee, each one re-dating the bank.
         for (uint256 day = 1; day <= 3; ++day) {
             vm.warp(block.timestamp + 1 days);
@@ -128,9 +129,8 @@ contract BankExpiryTest is Test {
         // Day 3, same block: the 500 that left three days ago comes back.
         vm.prank(BORROWER);
         vault.draw(500 ether);
-        // EXPECTED (NatSpec 902-903): forfeited after a day away; the lag rises by at most the few imdUSD
-        // the trickle retired within the last day. ACTUAL: it rises by 500 at once.
-        assertLt(_ld() - before, 10 ether, "warmth banked three days ago must not be credited back");
+        // EXPECTED: debt back in the same block as its draw is not counted at once.
+        assertLt(_ld() - before, 10 ether, "debt that just came back must not count at once");
     }
 
     /// @dev Cross-side: a one-wei principal repayment revives a month-old collateral bank.
@@ -143,9 +143,7 @@ contract BankExpiryTest is Test {
         // The term is collateral-bound (2,000 < 2 x 1,000): free 290 lowers it to 1,710 and banks 290.
         vm.prank(BORROWER);
         vault.free(290 ether);
-        (, uint256 lagSecured) = vault.laggedNow();
-        assertEq(lagSecured, 1_710 ether);
-        assertEq(_ls(), 1_710 ether);
+        uint256 backingBefore = vault.backingPerUnit();
 
         vm.warp(block.timestamp + 30 days);
         // Debt-side decrease of one wei of principal: bankDebt == 0, so no expiry test runs, and bankAt is re-dated.
@@ -154,8 +152,7 @@ contract BankExpiryTest is Test {
         vault.wipe(oneWeiOfPrincipal);
         vm.prank(BORROWER);
         vault.lock(290 ether);
-        // EXPECTED: the 290, away for a month, warms from zero: laggedSecured stays about 1,710.
-        // ACTUAL: 2,000 - 2 wei: the month-old bank is credited in full.
-        assertLe(_ls(), 1_711 ether, "an expired bank must not be revived by the other side");
+        // EXPECTED: the 290 back in this block lifts nothing a redemption is paid.
+        assertLe(vault.backingPerUnit(), backingBefore, "returning collateral must not lift the backing at once");
     }
 }

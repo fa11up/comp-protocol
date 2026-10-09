@@ -125,8 +125,8 @@ uint256 constant CUT_BPS = 1_000;
 /// debt is kept within what liquidators can actually clear (docs/PARAMETERS-2026-10-05.md).
 uint256 constant LINE = 1_000_000e18;
 
-/// @dev Each redemption raises the base rate by redeemed / fee base / this, the fee base being the warm
-/// supply floored at 100,000 imdUSD (CDPVault._feeBase). At 2, redeeming 9% of it at once reaches the cap;
+/// @dev Each redemption raises the base rate by redeemed / fee base / this, the fee base being the supply
+/// mark floored at 100,000 imdUSD (CDPVault._feeBase). At 2, redeeming 9% of it at once reaches the cap;
 /// at the former 4 it took 18%. Chosen 2026-10-05.
 uint256 constant REDEMPTION_DIVISOR = 2;
 
@@ -169,8 +169,8 @@ address constant ERC8004_ADAPTER = 0xde152AfB7db5373F34876E1499fbD893A82dD336;
 // ZERO AT LAUNCH: minting from work stays off until the upstream integration is complete (decided
 // 2026-10-05). Rights are tasks x wage, so no task earns any, and SwarmWorkOracle.claim refuses while
 // the wage is zero so no agent's tasks are spent for nothing. Governance turns it on by proposing a
-// wage behind the 48-hour timelock. Raising it also switches on the lagged backing that closes audit
-// finding D1 (CDPVault.laggedNow), built in and tracked from deployment.
+// wage behind the 48-hour timelock. The work ceiling is then bounded by the paced debt that closes audit
+// finding D1 (CDPVault._pace), tracked from deployment.
 uint256 constant WAGE_WAD = 0;
 
 // The pre-deployed WorkOracleFactory, and the sentinel a vault passes as its oracle to ask for a real

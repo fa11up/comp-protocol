@@ -127,6 +127,11 @@ contract ReserveShareTest is Test {
         _next();
         emit log_named_uint("after the newcomer", vault.backingPerUnit());
         // ... and in the next, a redemption must not be paid more than the book it found.
-        assertLe(vault.backingPerUnit(), honest, "fresh capital lifted a redemption's backing");
+        // Under the paced backing (2026-10-08): no more than the paced backing's rise over the block that passed.
+        assertLe(
+            vault.backingPerUnit(),
+            honest + vault.BACKING_RISE_PER_HOUR() * 12 / 1 hours,
+            "fresh capital lifted a redemption's backing"
+        );
     }
 }

@@ -2,7 +2,9 @@
 pragma solidity 0.8.26;
 
 // Retry2 panel audit 2026-10-08 (vault, job a2640621): the panel's reproduction of the medium F2 (a bank emptied by a one-block visit was re-dated on the next departure),
-// kept as written. It failed on 24337a2 and passes on the fix.
+// kept as written. It failed on 24337a2 and passed on the fix.
+// The lag it targeted was replaced on 2026-10-08 by the paced figures (CDPVault._pace); the attack is kept and
+// asserted against what it was after (the work ceiling, the backing a redemption is paid), not the lag's internals.
 
 import {Test} from "forge-std/Test.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
@@ -114,28 +116,19 @@ contract BankRefreshTest is Test {
         vault.draw(1_000 ether);
         vm.stopPrank();
         vm.warp(block.timestamp + 2 days);
-        (uint256 warmBefore, uint256 warmSecBefore) = vault.laggedNow();
-        assertEq(warmBefore, 1_200 ether, "everything warm after a quiet warm-up");
-        assertEq(warmSecBefore, 2_000 ether + 400 ether, "both terms warm");
+        assertEq(vault.backedDebt(), 1_200 ether, "everything counted after two days");
 
         // Leave: the capital first leaves at t0.
         _leave();
-        uint256 t0 = block.timestamp;
-        (uint256 warmAway,) = vault.laggedNow();
-        assertEq(warmAway, 200 ether, "only OTHER's debt remains");
+        assertEq(vault.backedDebt(), 200 ether, "only OTHER's debt remains");
 
         // Ten one-block visits, 23 hours apart: in each, come back (credited), and leave the next transaction.
         for (uint256 i; i < 10; ++i) {
             vm.warp(block.timestamp + 23 hours);
             _comeBack();
-            (uint256 warm, uint256 warmSec) = vault.laggedNow();
-            if (block.timestamp - t0 > vault.BACKING_WARMUP()) {
-                // EXPECTED: the returning 1,000 of debt and 2,000 of collateral are cold: the bank was created
-                // when the capital first left, more than a warm-up ago, and the capital has been in the vault
-                // for one block since. ACTUAL: credited in full, every time.
-                assertLe(warm, 200 ether + 70 ether, "capital away for a day comes back cold");
-                assertLe(warmSec, 400 ether + 140 ether, "collateral away for a day comes back cold");
-            }
+            // EXPECTED: capital back for one block is not counted: the paced supply was written from the vault
+            // the visit found, with the capital away.
+            assertLe(vault.backedDebt(), 200 ether + 70 ether, "capital away for a day comes back uncounted");
             _leave();
         }
     }

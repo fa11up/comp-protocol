@@ -9,6 +9,9 @@ pragma solidity 0.8.26;
 // position's share; the old position's repayment then takes its own (continuously cooled) cold out of that
 // total, which is the new position's. What one position removes warms what another added.
 
+// The lag it targeted was replaced on 2026-10-08 by the paced figures (CDPVault._pace); the attack is kept and
+// asserted against what it was after (the work ceiling, the backing a redemption is paid), not the lag's internals.
+
 import {Test} from "forge-std/Test.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
 import {ImdUSD} from "src/ImdUSD.sol";
@@ -110,14 +113,13 @@ contract QuietDayOrphanTest is Test {
         vault.draw(1_000 ether);
         stable.transfer(OLD, 100 ether); // OLD's day of stability fee
         vm.stopPrank();
-        (uint256 lagDebt, uint256 lagSecured) = vault.laggedNow();
-        assertEq(lagDebt, 16_000 ether, "OLD is warm after a quiet day, NEW is cold");
-        assertEq(lagSecured, 32_000 ether, "OLD's term is warm, NEW's is cold");
+        uint256 lineBefore = vault.earnLine();
+        uint256 backingBefore = vault.backingPerUnit();
         vm.prank(OLD);
         vault.wipe(16_000 ether);
-        (lagDebt, lagSecured) = vault.laggedNow();
-        // What is left: OLD's day of fee (about 2 imdUSD of principal, warm) and NEW's 1,000, one second old.
-        assertLe(lagDebt, 3 ether, "NEW's one-second-old principal must stay cold after OLD's repayment");
-        assertLe(lagSecured, 6 ether, "NEW's one-second-old term must stay cold after OLD's repayment");
+        // The work ceiling is an aggregate under the paced figures: OLD's repayment leaves NEW's one-second-old debt counted,
+        // but no ceiling exists after the sequence that did not exist before it, and no redemption is paid more.
+        assertLe(vault.earnLine(), lineBefore, "OLD's repayment must not create a ceiling for NEW's fresh debt");
+        assertLe(vault.backingPerUnit(), backingBefore, "nor lift the backing a redemption is paid");
     }
 }

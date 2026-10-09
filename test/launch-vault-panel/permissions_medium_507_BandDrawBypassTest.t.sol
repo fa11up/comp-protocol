@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-// Delta panel audit 2026-10-08 (job fc96f209), medium F1: the panel's proof, kept as written.
-// A band position's draw (170-200%: its term is its whole collateral) adds COLD debt and no cold secured term.
-// _backingPerUnit's lagged figure takes that debt out of the supply but leaves the collateral that now stands
-// behind it in the lagged secured term, so the lagged figure reads ABOVE the honest backing of the book, by up to
-// fresh/(supply - fresh) (17.6% for a position drawn from 200% to 170%). The live figure catches it, but the live
-// figure is what a newcomer's one-transaction-old capital raises, so lock+draw in one transaction and cash in the
-// next is paid the overstated lagged figure: the D1 round trip the lag exists to close.
-//
-// Fails on 07905bb: honest 0.897, after the newcomer 1.000, and 5,000 imdUSD is paid 9,700 raw IMD from the
-// reserve where the honest payout is at most 8,705. Passes once a debt-only draw in a collateral-bound position
-// cools a pro-rata slice of the term (see the finding's fix).
+// Launch vault panel audit 2026-10-08 (job 5383ced0, pinned 9bd5f59): a proof the panel attached, kept as a regression
+// test against the paced figures that replaced the per-position lag (CDPVault._pace). Changes from the panel's
+// text: laggedNow() (removed) reads the live figures, and a "no lift" bound allows the paced backing's rise since the
+// honest reading (BACKING_RISE_PER_HOUR), which is the guarantee the paced figures make. On 9bd5f59 it failed as reported.
+
+// The delta panel's medium (job fc96f209, #1) was fixed in `draw` with a branch that cools the new debt's share of
+// the term ONLY when `position.secured == termBefore`. Any change of the term in the SAME position before the draw
+// (a one-wei `wipe`, which shrinks the term by 2 wei / price and banks it) makes the draw's `_resecure` restore the
+// term FROM THE BANK (warm), the equality fails, and nothing of the collateral behind the new imdUSD goes cold. The
+// delta panel's proof, re-run with `wipe(1)` inserted before the band draw, fails again exactly as it did on 07905bb.
 
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -22,7 +21,7 @@ import {TreasuryFactory} from "src/TreasuryFactory.sol";
 import {ISwarmFeed} from "src/interfaces/ISwarmFeed.sol";
 import {APPROVED_OPERATOR, CHAINLINK_ETH_USD, TREASURY_FACTORY} from "src/DeploymentConfig.sol";
 
-contract BdFeed is ISwarmFeed {
+contract BbFeed is ISwarmFeed {
     uint256 public constant maxAge = 1 days;
     uint256 private value;
     uint64 private updatedAt;
@@ -45,7 +44,7 @@ contract BdFeed is ISwarmFeed {
     }
 }
 
-contract BdMirror is ISwarmFeed {
+contract BbMirror is ISwarmFeed {
     ISwarmFeed private immutable primary;
 
     constructor(ISwarmFeed p) {
@@ -65,7 +64,7 @@ contract BdMirror is ISwarmFeed {
     }
 }
 
-contract BdAggregator {
+contract BbAggregator {
     function decimals() external pure returns (uint8) {
         return 8;
     }
@@ -75,7 +74,7 @@ contract BdAggregator {
     }
 }
 
-contract BandDrawLagTest is Test {
+contract BandDrawBypassTest is Test {
     address private constant BORROWER = address(0xB0B);
     address private constant NEWCOMER = address(0xC0DE);
 
@@ -84,17 +83,17 @@ contract BandDrawLagTest is Test {
     MockIMD private imd;
     ParameterizedVault private vault;
     ImdUSD private stable;
-    BdFeed private primary;
+    BbFeed private primary;
 
     function setUp() public {
         if (TREASURY_FACTORY.code.length == 0) vm.etch(TREASURY_FACTORY, address(new TreasuryFactory()).code);
-        vm.etch(CHAINLINK_ETH_USD, address(new BdAggregator()).code);
+        vm.etch(CHAINLINK_ETH_USD, address(new BbAggregator()).code);
         vm.warp(1_000_000);
         imd = new MockIMD();
-        primary = new BdFeed(DOLLAR);
-        BdFeed health = new BdFeed(0.85 ether); // mat 170
+        primary = new BbFeed(DOLLAR);
+        BbFeed health = new BbFeed(0.85 ether); // mat 170
         vault = new ParameterizedVault(
-            address(imd), address(0), address(0), address(primary), address(health), address(new BdMirror(primary))
+            address(imd), address(0), address(0), address(primary), address(health), address(new BbMirror(primary))
         );
         stable = vault.stablecoin();
         vm.startPrank(APPROVED_OPERATOR);
@@ -109,7 +108,7 @@ contract BandDrawLagTest is Test {
         vm.warp(block.timestamp + 12);
     }
 
-    function test_bandDrawLetsNewcomerLiftRedemptionToPar() public {
+    function test_oneWeiWipeBeforeBandDrawBypassesTheColdShare() public {
         // A warm book: one borrower at 200% (term = its whole collateral = 2 x principal).
         vm.startPrank(BORROWER);
         imd.approve(address(vault), type(uint256).max);
@@ -118,7 +117,14 @@ contract BandDrawLagTest is Test {
         vm.stopPrank();
         vm.warp(block.timestamp + 2 days);
         _next();
-        // The borrower draws down to ~171%: 17,000 of cold debt, and the term (its whole collateral) is unchanged.
+        // THE BYPASS: a one-wei PRINCIPAL repayment shrinks the term by 2 wei / price and banks that warm sliver ...
+        // (one wei past the accrued stability fee, which `wipe` retires first: the repayment must touch principal)
+        uint256 oneWeiOfPrincipal = vault.stabilityFeeOf(BORROWER) + 1;
+        vm.prank(BORROWER);
+        vault.wipe(oneWeiOfPrincipal);
+        _next();
+        // ... so the band draw's `_resecure` restores the term from the bank and `position.secured != termBefore`:
+        // the branch that was meant to cool the new debt's share of the term is skipped.
         vm.prank(BORROWER);
         vault.draw(17_000 ether);
         _next();
@@ -126,11 +132,9 @@ contract BandDrawLagTest is Test {
         primary.set(DOLLAR / 2);
         _next();
         uint256 honest = vault.backingPerUnit();
+        uint256 honestAt = block.timestamp;
         emit log_named_uint("honest, the live figure (5,000 + 100,000) / 117,000", honest);
         assertLt(honest, 1e18, "the scenario needs a book below par");
-        // Under the paced backing (2026-10-08) the payout may exceed the honest figure only by the paced backing's rise over the
-        // block that passes before it: BACKING_RISE_PER_HOUR for 12 seconds.
-        honest += Math.mulDiv(vault.BACKING_RISE_PER_HOUR(), 12, 1 hours);
         uint256 feeBps = vault.redemptionFeeBps(5_000 ether);
         (uint256 price,) = vault.collateralPriceFeed().latestValue();
         uint256 honestPay = Math.mulDiv(Math.mulDiv(5_000 ether, honest, 1e18) * (10_000 - feeBps) / 10_000, 1e18, price);
@@ -150,7 +154,13 @@ contract BandDrawLagTest is Test {
         emit log_named_uint("paid for 5,000 imdUSD (raw IMD)", paid);
         emit log_named_uint("honest payout at most (raw IMD)", honestPay);
 
-        assertLe(lifted, honest, "fresh capital lifted a redemption's backing");
-        assertLe(paid, honestPay, "a redemption was paid above the honest backing of the book it found");
+        assertLe(lifted, honest + _rise(honestAt), "fresh capital lifted a redemption's backing");
+        assertLe(paid, Math.mulDiv(honestPay, honest + _rise(honestAt), honest) + 1, "a redemption was paid above the honest backing of the book it found");
+    }
+
+    /// @dev The paced backing's allowed rise since `since` (CDPVault.BACKING_RISE_PER_HOUR): what the paced figures permit
+    /// a figure to have climbed over the honest one, however much capital arrived in the meantime.
+    function _rise(uint256 since) internal view returns (uint256) {
+        return vault.BACKING_RISE_PER_HOUR() * (block.timestamp - since) / 1 hours;
     }
 }

@@ -472,6 +472,9 @@ contract RedemptionTest is WorkBackingFixture {
         assertLt(_quote(10 ether), _parQuote(10 ether));
         _expectProRata(10 ether, 0, BORROWER, WORKER);
         assertEq(backedVault.reserveValue(), 96.1 ether);
+        // The fee leaves the live figure strictly better; it reaches the payout as the paced backing rises.
+        vm.warp(block.timestamp + 1 hours);
+        _refreshEthUsd();
         assertGt(backedVault.backingPerUnit(), 0.4 ether, "and the fee leaves it strictly better");
     }
 
@@ -566,6 +569,8 @@ contract RedemptionTest is WorkBackingFixture {
         // this test that the old halt could only express as "rejected, then accepted".
         uint256 heldAfterFirst = collateral.balanceOf(address(reserve));
         _reserveIMD(400 ether);
+        // The higher backing reaches redeemers at the paced backing's rise limit, two points of par an hour.
+        _warmBacking();
         uint256 beforeBacking = backedVault.reserveValue();
         uint256 out = _quote(10 ether);
         assertGt(out, first, "a recapitalized reserve pays more for the same burn");

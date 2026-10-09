@@ -532,6 +532,8 @@ contract RedemptionTest is Test {
         assertEq(_parQuote(10 ether, 1 ether), 9.75 ether, "what par would have paid");
         assertEq(_quote(10 ether, 1 ether), 3.9 ether, "40% of par, less the 250 bps fee");
         assertEq(_expectCapped(10 ether, address(0)), 3.9 ether);
+        // The fee leaves the live figure strictly better; it reaches the payout as the paced backing rises.
+        vm.warp(block.timestamp + 1 hours);
         assertGt(vault.backingPerUnit(), 0.4 ether, "and the fee leaves it strictly better");
     }
 
@@ -619,6 +621,9 @@ contract RedemptionTest is Test {
         _expectCapped(10 ether, address(0));
 
         _fundReserve(500 ether);
+        // The recapitalisation reaches redeemers at the paced backing's rise limit: 0.4 to par in thirty hours.
+        _warmBacking();
+        _warmBacking();
         uint256 assetsBefore = vault.reserveValue();
         uint256 supplyBefore = comp.totalSupply();
         // The retained factor halves the REGISTERED value, but the guard values the IMD it would
@@ -798,6 +803,7 @@ contract RedemptionTest is Test {
         // Recapitalizing to the old boundary level raises the cap; the burn is still paid below par
         // because 246.25 against 240 of supply is still short of it.
         _fundReserve(146.25 ether);
+        _warmBacking(); // the recapitalisation reaches redeemers at the paced backing's rise limit
         uint256 payout = _quote(10 ether, 1 ether);
         assertGt(payout, firstPayout, "a larger reserve pays the same burn more");
         vm.prank(REDEEMER);
@@ -1054,6 +1060,10 @@ contract RedemptionTest is Test {
         imd.transfer(APPROVED_OPERATOR, third);
         nhi.setValue(0.6 ether);
         assertEq(vault.mat(), 200);
+        // The higher figure reaches redeemers at the paced backing's rise limit (CDPVault._pace).
+        _warmBacking();
+        _price(1 ether);
+        nhi.setValue(0.6 ether);
         // The cap does NOT bind here, and that is the correct reading rather than a weaker test: the
         // price is back at 1 and mat 200 lets twice ALICE's principal count, so her whole 1700
         // qualifies and a COMP is backed to par. The burn is paid par minus the fee.
@@ -1199,10 +1209,13 @@ contract RedemptionTest is Test {
         assertEq(vault.redemptionBaseRate(), 9.75e13, "the exact fraction is still carried");
     }
 
-    /// @dev Let capital so far finish warming up: the redemption cap reads min(live, lagged) at every
-    /// wage since the adversarial review of 2026-10-05, so same-block figures are discounted by design.
+    /// @dev Let the paced figures catch up with the state: the redemption cap reads min(live, the backing
+    /// mark) at every wage, so a figure that rose this block is discounted by design (CDPVault._pace).
     function _warmBacking() private {
-        vm.warp(block.timestamp + vault.BACKING_WARMUP());
+        for (uint256 i; i < 25; ++i) {
+            vm.warp(block.timestamp + 1 hours);
+            vault.pace();
+        }
     }
 
     function _open(address owner, uint256 collateral, uint256 debt) private {

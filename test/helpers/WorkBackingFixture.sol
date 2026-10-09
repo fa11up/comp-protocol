@@ -210,14 +210,15 @@ abstract contract WorkBackingFixture is Test {
         collateral.transfer(APPROVED_OPERATOR, amount);
     }
 
-    /// @dev Let every capital change so far finish warming up (CDPVault.BACKING_WARMUP: one quiet gap
-    /// of a day credits it in full), so a test about redemption ARITHMETIC reads backing at its settled
-    /// figure. Since the adversarial review of 2026-10-05 the redemption cap reads min(live, lagged) at
-    /// every wage, so capital from the last day is discounted by design; test/LaggedBacking.t.sol is
-    /// where that discount is the subject.
+    /// @dev Let the paced figures catch up (CDPVault._pace: a day is enough for both), so a test about
+    /// redemption ARITHMETIC reads backing at its settled figure. The redemption cap reads min(live, the
+    /// paced backing) at every wage; test/PacedFigures.t.sol is where that limit is the subject.
     function _warmBacking() internal {
-        vm.warp(vm.getBlockTimestamp() + backedVault.BACKING_WARMUP());
-        _refreshEthUsd();
+        for (uint256 i; i < 25; ++i) {
+            vm.warp(vm.getBlockTimestamp() + 1 hours);
+            _refreshEthUsd();
+            backedVault.pace();
+        }
     }
 
     function _mintWork(address worker, uint256 amount) internal {

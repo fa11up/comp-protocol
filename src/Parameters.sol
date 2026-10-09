@@ -58,8 +58,8 @@ interface IWorkOracleSuccessor {
 /// Together that is minting with no collateral and no attested work, diluting every imdUSD holder. One
 /// proposal slot and a 48-hour delay on each step put the full path (listing, oracle, wage) at 144 hours
 /// of public proposals from the launch state, 192 from a running wage (which must first go to zero); the
-/// oracle and wage pair alone (96 hours) mints only against the ratio term, a quarter of the warmed
-/// collateral-backed debt. The listing step by itself, with neither oracle nor wage, already moves money:
+/// oracle and wage pair alone (96 hours) mints only against the ratio term, a quarter of the
+/// collateral-backed debt the paced debt has reached. The listing step by itself, with neither oracle nor wage, already moves money:
 /// the listed value raises the redemption backing, so `cash` pays redeemers more from the reserve. The
 /// per-listing cap (Treasury.MAX_RESERVE_VALUE, $1e18) is an overflow bound and not a limit on damage,
 /// and the register's length is unbounded. `earn` is refused while the wage is zero. The governor is a
@@ -108,7 +108,7 @@ contract Parameters is Governed {
     uint256 public constant MAX_WAGE_WAD = 1 ether;
 
     /// @notice Bounds on the redemption fee divisor: each redemption raises the base rate by
-    /// redeemed / fee base / divisor, the fee base being the warm supply floored at 100,000 imdUSD
+    /// redeemed / fee base / divisor, the fee base being the paced supply floored at 100,000 imdUSD
     /// (CDPVault._feeBase). At 1 a run reaches the 5% cap after 4.5% of it; at 8 it takes 36%. Outside
     /// these the fee is either a wall or no brake at all.
     uint256 public constant MIN_REDEMPTION_DIVISOR = 1;

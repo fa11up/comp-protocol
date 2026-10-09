@@ -174,6 +174,8 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         // subject, and it now reads as a figure instead of as which burns happen to revert.
         health.setValue(0.6 ether);
         assertEq(backedVault.mat(), 200);
+        _warmBacking(); // the higher figure reaches the payout at the paced backing's rise limit
+        health.setValue(0.6 ether);
         assertEq(backedVault.backingPerUnit(), 1e18, "at mat 200 the whole balance counts");
         assertEq(_quote(10 ether), _parQuote(10 ether), "and the cap no longer binds");
 
@@ -189,6 +191,8 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         // next burn of the same size is paid par minus the fee rather than the capped amount.
         health.setValue(0.6 ether);
         assertEq(backedVault.mat(), 200);
+        _warmBacking();
+        health.setValue(0.6 ether);
         assertEq(backedVault.backingPerUnit(), 1e18);
         uint256 atPar = _quote(10 ether);
         assertEq(atPar, _parQuote(10 ether));
@@ -378,9 +382,12 @@ contract RedemptionGuardsTest is WorkBackingFixture {
         // the next transaction, then unwind, was the same attack one block apart. The position counts
         // only as it warms up, so the next transaction still sees about a fifth of par...
         assertLt(backedVault.backingPerUnit(), 1e18 / 2, "capital one transaction old does not count yet");
-        // ...and a day later, held and paying the stability fee throughout, it counts in full.
+        // ...and held, paying the stability fee throughout, it counts as the paced backing rises: two points of par
+        // an hour, so from a fifth of par it takes two days to count in full.
         _warmBacking();
-        assertEq(backedVault.backingPerUnit(), 1e18, "capital held for the warm-up does count");
+        assertEq(backedVault.backingPerUnit(), 0.2e18 + 25 * 0.02e18, "a day held counts 50 more points");
+        _warmBacking();
+        assertEq(backedVault.backingPerUnit(), 1e18, "capital held for two days does count");
         uint256 out = _quote(10 ether);
         assertEq(out, _parQuote(10 ether), "so the burn is paid par minus the fee");
         assertGt(out, inCall * 4, "four times what the same burn got inside one transaction");

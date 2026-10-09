@@ -37,7 +37,7 @@
   },
   {
     "type": "function",
-    "name": "BACKING_WARMUP",
+    "name": "BACKING_RISE_PER_HOUR",
     "inputs": [],
     "outputs": [
       {
@@ -51,6 +51,32 @@
   {
     "type": "function",
     "name": "CHOP_PERCENT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "FOLLOW_BPS_PER_HOUR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PACE_INTERVAL",
     "inputs": [],
     "outputs": [
       {
@@ -528,24 +554,6 @@
   },
   {
     "type": "function",
-    "name": "laggedNow",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "debt",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "secured",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "lastRedemptionAt",
     "inputs": [],
     "outputs": [
@@ -678,6 +686,41 @@
         "name": "",
         "type": "address",
         "internalType": "contract IWorkOracle"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pace",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "paced",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "backing",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "supply",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "debt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "at",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"

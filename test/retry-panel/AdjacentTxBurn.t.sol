@@ -3,6 +3,8 @@ pragma solidity 0.8.26;
 
 // Retry panel audit 2026-10-07 (vault, job 3226aaed): the panel's reproduction of two mediums (a repayment one transaction before a redemption: the fee base is fixed, the backing premium accepted and bounded),
 // kept as written apart from reading the lag through laggedNow() and seasoning the fee test's position.
+// The lag it targeted was replaced on 2026-10-08 by the paced figures (CDPVault._pace); the attack is kept and
+// asserted against what it was after (the work ceiling, the backing a redemption is paid), not the lag's internals.
 
 import {Test} from "forge-std/Test.sol";
 import {ParameterizedVault} from "src/ParameterizedVault.sol";
@@ -102,7 +104,17 @@ contract AdjacentTxBurnTest is Test {
         imd.approve(address(vault), type(uint256).max);
     }
 
-    /// @dev The same below-par book as the test below, warm.
+    /// @dev Hours passing with the vault paced every hour. After the price fall above, the first pacing read the
+    /// positions' stale terms (fixed at the old price until touched: retry2 #6) and the paced backing climbs back
+    /// from that low read at BACKING_RISE_PER_HOUR; a day of pacing more than covers it.
+    function _hours(uint256 n) private {
+        for (uint256 i; i < n; ++i) {
+            vm.warp(block.timestamp + 1 hours);
+            vault.pace();
+        }
+    }
+
+    /// @dev The same below-par book as the test below, paced.
     function _bandBook() private returns (uint256 backing) {
         vm.startPrank(BORROWER);
         vault.lock(5_790 ether);
@@ -118,7 +130,7 @@ contract AdjacentTxBurnTest is Test {
         vault.lock(1);
         vm.prank(OTHER);
         vault.lock(1);
-        vm.warp(block.timestamp + 3 days);
+        _hours(72);
         backing = vault.backingPerUnit();
     }
 
@@ -140,7 +152,7 @@ contract AdjacentTxBurnTest is Test {
         vault.lock(1);
         vm.prank(OTHER);
         vault.lock(1);
-        vm.warp(block.timestamp + 3 days);
+        _hours(72);
         uint256 backing = vault.backingPerUnit();
         assertApproxEqRel(backing, 0.8004e18, 1e15, "below par");
 
@@ -158,12 +170,10 @@ contract AdjacentTxBurnTest is Test {
         uint256 churned = vault.cash(500 ether, 0, BORROWER);
         vm.prank(BORROWER);
         vault.draw(140 ether);
-        // ACCEPTED (CDPVault._backingPerUnit): the cash reads the true backing of that moment, 3,860 of supply under
-        // an unchanged numerator; the premium is at most (supply - fresh) / (supply - fresh - repaid), here
-        // 4,000 / 3,860 with nothing fresh. Closing it per position (58f73de) could be pumped without bound (final
-        // vault panel 2026-10-08, high) and was removed; lagging the whole supply underpaid every honest redeemer.
-        assertGt(churned, honest, "the churn is paid the backing it briefly created");
-        assertLe(churned, honest * 4_000 / 3_860 + 1e9, "and never more than the bound");
+        // CLOSED by the paced backing (2026-10-08): the wipe's call marked the backing it found, and within the
+        // block the paced backing cannot rise, so the cash is paid the honest figure. (Accepted under the lag as a premium
+        // of up to (supply - fresh) / (supply - fresh - repaid).)
+        assertLe(churned, honest, "the churn is paid no premium");
     }
 
     /// @dev The fee base: a borrower holding 90% of the supply as its own debt pins the base rate at the cap

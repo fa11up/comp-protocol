@@ -40,7 +40,7 @@ Each step assumes the previous one is merged and green. Steps 2 and 3 are indepe
 | 2b | Oracle paid from the Treasury (`OracleAsker` + `Treasury.fundOracle`) — **built, waits on upstream** | without it every price update is bought by hand in a browser. `OracleAsker` buys through the IdentityMD Intake only when the chain shows a need (a feed 75% of the way to stale, or IMD's v4 pool armed-and-still a quarter of the deviation cap BELOW it, or any feed whose allowance has widened with staleness) and delivers through SwarmRelay inside the Intake's 200k-gas callback stipend (measured 76,807). `fundOracle` streams at most `Parameters.oracleBudget` IMD per UTC day to it — keyless, unwrapping sIMD on the way. **Blocked on Intake PR #66 merging and deploying:** `INTAKE` and `ORACLE_ASKER` are placeholders (`0x…F06`/`0x…f07`) and the asker's constructor refuses an `INTAKE` with no code. |
 | 3 | **Delete the reporter fallback** | a single key can otherwise re-anchor the price — see §4 |
 | 4 | CREATE2 deployment script with address assertions — **built** (`script/DeployMainnet.s.sol`, `deploy/mainnet/`), rehearsed on a fork | removes the silent-misconfiguration failure mode — see §6 |
-| 5 | Independent audit of this configuration — **done** (three panels + adversarial + gas, `docs/AUDIT-*-2026-10-05.md`, fixes through `9dd2149`). **Still owed, by decision (2026-10-05): one scoped `adversarial-review` of everything after `03e8d0c`, sent right before the deploy commit is frozen** | the phase-2 fixes (notably the always-lagged redemption cap) have had no outside review |
+| 5 | Independent audit of this configuration — **done** (three panels + adversarial + gas, `docs/AUDIT-*-2026-10-05.md`, fixes through `9dd2149`). **Still owed, by decision (2026-10-05): one scoped `adversarial-review` of everything after `03e8d0c`, sent right before the deploy commit is frozen** | the phase-2 fixes (notably the paced redemption cap) have had no outside review |
 | 6 | Keeper / watcher daemon — **mainnet-ready** (`fa11up/imd-keeper@c9b8eaa`), rehearsed bark → bite → Treasury-paid ask on a fork | the protocol is not operable without it — see §7 |
 
 ---
@@ -358,9 +358,10 @@ could).
    default endpoint shares transactions (without signatures) with searchers, and until it lands anyone who
    saw it could deploy the same vault first (delta panel audit 2026-10-08, low). If `verify` then refuses
    a vault that is already there, stop: deployment.json records it, and the operator decides from what
-   is at the address. **Keep the Treasury's sIMD small while the book is thin**: new capital warms into the
-   backing figure by its warmed fraction, so a loan many times a below-par book can lift a reserve-funded
-   redemption toward par within minutes, gaining at most the gap on the Treasury's sIMD.
+   is at the address. What a redemption is paid can rise by at most
+   two points of par an hour however much capital arrives (`BACKING_RISE_PER_HOUR`, the paced backing), so
+   no size of loan lifts a below-par payout faster than that; an honest recovery reaches redeemers at the
+   same rate.
 3. **List the reserve assets** through `Parameters.proposeReserveAsset` — each needs a price source
    and a haircut, and each waits 48 hours. Until the register is non-empty, `reserveValueUsd()` is
    zero and so is the first term of `earnLine`.
@@ -405,8 +406,11 @@ no agent's tasks are spent for nothing). Turning it on later is a governance act
    `oracle_` so it creates a `SwarmWorkOracle` through `WORK_ORACLE_FACTORY`. The oracle is immutable on
    the vault. `DeployGoverned`/`DeployProtocol` pass zero, which builds the TEST FAUCET (`MockWorkOracle`);
    the mainnet CREATE2 script must not.
-2. ~~The deferred audit finding needs code.~~ **DONE.** D1's lagged capital is built (`laggedNow`,
-   `BACKING_WARMUP`): the redemption cap reads it at every wage, `backedDebt` once the wage is nonzero.
+2. ~~The deferred audit finding needs code.~~ **DONE.** D1 is closed by the paced figures
+   (`paced()`, `BACKING_RISE_PER_HOUR`, `FOLLOW_BPS_PER_HOUR`, `PACE_INTERVAL`, since 2026-10-08; the per-position
+   lag before them is gone): the redemption cap reads the paced backing, the fee base the paced supply, `backedDebt`
+   the paced debt, at every wage. Anyone may `pace()`; the keeper does so hourly so a recovery reaches redeemers
+   through a quiet spell.
    Nothing about minting from work needs a new vault.
 3. **The work oracle can be replaced only until the first mint, with what ships.** Once anything has
    been minted from work, `Parameters.proposeWorkOracle` requires the successor to answer

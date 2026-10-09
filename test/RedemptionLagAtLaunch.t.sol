@@ -66,8 +66,9 @@ contract DAggregator {
 /// in ONE transaction earlier (same block, no interest, no price exposure) used to lift backingPerUnit
 /// to 1.0 and let the next transaction redeem the Treasury's reserve at par (9.875 IMD here). The
 /// reviewer's suggested fix — the existing lag, ungated — paid 3.11, half the fair figure, because the
-/// fresh debt still diluted supply. As built, the redemption cap is min(live, lagged) where the lagged
-/// figure removes fresh capital from BOTH sides, at every wage: it pays the pre-existing backing, 6.22.
+/// fresh debt still diluted supply. As built (the paced figures, 2026-10-08), the redemption cap is
+/// min(live, the paced backing), and the mark was written from the book the attacker's first call found and
+/// cannot rise within the block: it pays the pre-existing backing, 6.22.
 /// Each top-level call below is its own transaction (isolate), so transient storage clears between them.
 contract RedemptionLagAtLaunchTest is Test {
     address private constant HONEST = address(0x40E);
@@ -101,7 +102,7 @@ contract RedemptionLagAtLaunchTest is Test {
         vault.lock(200 ether);
         vm.prank(HONEST);
         vault.draw(100 ether);
-        // Three days: the honest capital is warm (1 - 2^-12 of it, BACKING_HALF_LIFE six hours).
+        // Three days: the paced figures have long caught up with the honest capital.
         vm.warp(block.timestamp + 3 days);
         vm.roll(block.number + 21_600);
         // IMD falls 70%; the honest position is underwater and not yet liquidated (grace).
@@ -131,15 +132,8 @@ contract RedemptionLagAtLaunchTest is Test {
         uint256 fair = Math.mulDiv(3 ether, Math.mulDiv(before, 10_000 - feeBps, 10_000), price);
         emit log_named_decimal_uint("reserve IMD paid", gemOut, 18);
         emit log_named_decimal_uint("at the pre-existing backing", fair, 18);
-        // Within the honest capital's own residual cold (2^-12 of it after three days): an underwater
-        // position still partly cold reads the lagged figure a hair above the live one, and the attacker's
-        // capital can lift the live one that far, never toward par.
-        assertLe(gemOut, fair + fair / 10_000, "fresh capital must not let a redemption take the reserve at par");
-        // Less only the reserve's part diluted by the new supply: the lagged figure counts the reserve per unit of
-        // the whole supply (final sweep panel audit 2026-10-08, low F3), 3 USD over 200 rather than over 100 here.
-        // Far above the ungated lag's 3.11.
-        uint256 diluted = Math.mulDiv(3 ether, Math.mulDiv(3e18 / 100 - 3e18 / 200, 10_000 - feeBps, 10_000), price);
-        assertGe(gemOut, fair - diluted - 1e9, "nor push it below the backing that already stood (the 3.11 fix)");
+        assertLe(gemOut, fair, "fresh capital must not let a redemption take the reserve at par");
+        assertGe(gemOut, fair - 1e9, "nor push it below the backing that already stood (the 3.11 fix)");
 
         // Transaction 3: unwind. Only 3 imdUSD of the 100 drawn stays owed; the rest of the capital leaves.
         vm.prank(ATTACKER);
@@ -149,21 +143,21 @@ contract RedemptionLagAtLaunchTest is Test {
     }
 }
 
-/// @notice The other side of the two-sided lag: an HONEST redemption is not underpaid while the vault
-/// is young. On launch day every unit of supply is fresh debt, so the lagged figure has nothing left to
-/// divide by and the live figure stands; a day later the lag has caught up and agrees with it.
+/// @notice The other side: an HONEST redemption is not underpaid while the vault is young (the paced backing
+/// starts at par), and after a real recovery redeemers catch up with the live backing at the rise limit.
 contract RedemptionLagHonestTest is Test {
     address private constant BORROWER = address(0x40E);
     MockIMD private imd;
     ParameterizedVault private vault;
     ImdUSD private stable;
+    DFeed private primary;
 
     function setUp() public {
         if (TREASURY_FACTORY.code.length == 0) vm.etch(TREASURY_FACTORY, address(new TreasuryFactory()).code);
         vm.etch(CHAINLINK_ETH_USD, address(new DAggregator()).code);
         vm.warp(1_000_000);
         imd = new MockIMD();
-        DFeed primary = new DFeed(uint256(1 ether) * 1e18 / 2000 ether);
+        primary = new DFeed(uint256(1 ether) * 1e18 / 2000 ether);
         vault = new ParameterizedVault(
             address(imd), address(0), address(0), address(primary), address(new DFeed(0.85 ether)), address(new DMirror(primary))
         );
@@ -181,9 +175,7 @@ contract RedemptionLagHonestTest is Test {
         vault.lock(180 ether);
         vm.prank(BORROWER);
         vault.draw(100 ether);
-        (uint256 lagDebt,) = vault.laggedNow();
-        assertEq(lagDebt, 0, "every unit of debt is fresh");
-        assertEq(vault.backingPerUnit(), 1e18, "all supply is fresh debt, so the live figure stands");
+        assertEq(vault.backingPerUnit(), 1e18, "the paced backing starts at par, so the live figure stands");
         uint256 feeBps = vault.redemptionFeeBps(10 ether);
         vm.prank(BORROWER);
         uint256 out = vault.cash(10 ether, 0, BORROWER);
@@ -191,22 +183,26 @@ contract RedemptionLagHonestTest is Test {
     }
 
     /// forge-config: default.isolate = true
-    function test_partWarmCapitalPaysTheLowerOfTheTwoFiguresAndCatchesUp() public {
+    function test_aRecoveryReachesRedeemersAtTheRiseLimit() public {
         vm.prank(BORROWER);
-        vault.lock(200 ether);
+        vault.lock(180 ether);
         vm.prank(BORROWER);
         vault.draw(100 ether);
-        vm.warp(block.timestamp + 12 hours);
+        // IMD falls to $0.50: the book is backed at 0.9, and the next call marks it there.
+        primary.set(uint256(0.5 ether) * 1e18 / 2000 ether);
+        vm.warp(block.timestamp + 1 hours);
         vm.prank(BORROWER);
-        vault.lock(200 ether);
-        (uint256 lagDebt, uint256 lagSecured) = vault.laggedNow();
-        assertApproxEqAbs(lagDebt, 75 ether, 1e9, "two half-lives credit three quarters of the debt");
-        assertApproxEqAbs(lagSecured, 150 ether, 1e9, "and of the secured collateral, which now stops growing");
-        assertEq(vault.backingPerUnit(), 1e18, "warm capital on both sides keeps par");
-        vm.warp(block.timestamp + 3 days);
-        (lagDebt, lagSecured) = vault.laggedNow();
-        assertApproxEqRel(lagDebt, 100 ether, 0.0003e18);
-        assertApproxEqRel(lagSecured, vault.securedCollateral(), 0.0003e18);
-        assertEq(vault.backingPerUnit(), 1e18);
+        vault.lock(1 ether);
+        (uint256 mark,,,) = vault.paced();
+        assertEq(mark, 0.9e18, "the fall reached the paced backing at once");
+        // IMD recovers to $1: the live figure is back at par, the payout climbs two points an hour.
+        primary.set(uint256(1 ether) * 1e18 / 2000 ether);
+        vm.warp(block.timestamp + 1 hours);
+        assertEq(vault.backingPerUnit(), 0.92e18, "an hour after the recovery");
+        for (uint256 i; i < 4; ++i) {
+            vault.pace(); // paced hourly, as a live vault is by its activity
+            vm.warp(block.timestamp + 1 hours);
+        }
+        assertEq(vault.backingPerUnit(), 1e18, "five hours after it, par");
     }
 }
