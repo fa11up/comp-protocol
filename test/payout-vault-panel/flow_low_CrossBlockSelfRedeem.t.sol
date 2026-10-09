@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-// Kept proof from the payout vault panel (2026-10-09, job f936eafb), audit_flow, low. Failed on c90e8d9; passes
-// on the fix (PAYOUT_PRICE_FALL_BPS_PER_HOUR 100, and the fresh-principal netting in _tallyPrincipalRetired).
+// Kept proof from the payout vault panel (2026-10-09, job f936eafb), audit_flow, low. Failed on c90e8d9; now kept
+// as the ACCEPTED bound's measure: the paced debt errs low, never high (CDPVault._tallyPrincipalRetired; the
+// netting that closed this in 73191e0 let the ceiling read high and was reverted, final sweep panel 3).
 
 // A self-redemption of a ONE-BLOCK-OLD draw is booked as cancelling pre-existing principal and clamps the
 // paced debt by the whole amount, though that debt never counted in it. Repeated, it ratchets the paced
@@ -126,7 +127,7 @@ contract CrossBlockSelfRedeemTest is Test {
         vault.pace();
     }
 
-    function test_selfRedemptionOfOneBlockOldDrawZeroesThePacedDebt() public {
+    function test_selfRedemptionOfOneBlockOldDrawLowersThePacedDebtNeverRaisesIt() public {
         // Block n: open 200,000 / 100,000 (a candidate at 200%). The paced debt stays ~99,500.
         churner.open(200_000 ether, 100_000 ether);
         (,, uint256 pacedAfterDraw,,,) = vault.paced();
@@ -140,10 +141,15 @@ contract CrossBlockSelfRedeemTest is Test {
         assertEq(collateral, 200_000 ether, "and the same collateral: the fee stayed in its own position");
         assertApproxEqAbs(vault.totalDebt(), 199_500 ether, 1 ether, "the live book is unchanged");
         (,, uint256 pacedDebt,,,) = vault.paced();
-        // EXPECTED: the seasoned 99,500 untouched, so the paced debt stays at least 99,500 and backedDebt with it.
-        // ACTUAL: the cancellation of the churner's own one-block-old principal is booked as pre-existing and the
-        // clamp takes the paced debt to zero; backedDebt is zero and recovers at 10,000 an hour.
-        assertGe(pacedDebt, 99_500 ether, "self-redemption of fresh debt lowered the paced debt");
-        assertGe(vault.backedDebt(), 99_500 ether, "the work ceiling lost the seasoned book");
+        // ACCEPTED: the cancellation of the churner's own one-block-old principal is booked as pre-existing and the
+        // clamp lowers the paced debt below the seasoned book: the work ceiling reads LOW (refuses minting it could
+        // allow), never high, and the follow recovers it at 10% of max(paced, 100,000) an hour.
+        assertLt(pacedDebt, 99_500 ether, "the paced debt errs low");
+        assertLe(vault.backedDebt(), vault.totalDebt(), "and never above the live debt");
+        for (uint256 i; i < 12; ++i) {
+            _hour();
+        }
+        assertGe(vault.backedDebt(), 99_500 ether, "the follow recovers the seasoned book within hours");
+        assertLe(vault.backedDebt(), vault.totalDebt(), "never above the live debt");
     }
 }

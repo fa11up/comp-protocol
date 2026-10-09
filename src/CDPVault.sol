@@ -310,8 +310,9 @@ contract CDPVault is TransientReentrancyGuard {
     ///   to pin it at the cap.
     ///   DEBT falls at once and rises under the same limit as the supply (`_pacedDebt`); the work ceiling counts
     ///   debt only up to it (`ParameterizedVault.backedDebt`), so debt cancelled by a redemption or a liquidation
-    ///   and drawn again by someone else backs nothing until it has been held, and a position's own repayment
-    ///   and redraw in one transaction leaves it where it was (WIPED_THIS_TX_SLOT).
+    ///   and drawn again by someone else counts only as the follow absorbs it, and a position's own repayment
+    ///   and redraw in one transaction leaves it where it was (WIPED_THIS_TX_SLOT). It errs low, never high
+    ///   (`_tallyPrincipalRetired`).
     /// Elapsed time counts toward a move only up to PACE_INTERVAL between two pacings, so a quiet day cannot bank
     /// a day's rise for one transaction to spend; anyone may pace (`pace`, or any call that moves capital), and
     /// within one transaction the transient tallies exclude the transaction's own capital. So whatever capital
@@ -349,18 +350,23 @@ contract CDPVault is TransientReentrancyGuard {
     /// @dev How fast the price a redemption is PAID at may fall, per hour of elapsed time (compounding per
     /// pacing), for at most PACE_INTERVAL between pacings; it rises at once. THE RATE BOUNDS THE SPEED OF A FALL,
     /// NOT ITS SIZE: a one-step fall of the attested price (the feed's allowance, 20% fresh, 40% after two silent
-    /// hours) reaches the payout in full after 1/rate paced hours, so a pool held down pays a redeemer the gain of
-    /// however many hours it is held (1% an hour here, after the fee has eaten the first five), the whole 20% after
-    /// about 22 paced hours and the whole 40% after about 51. The rate was 5% an hour, which paid the whole step
-    /// after five paced hours (payout vault panel 2026-10-09, high: the final sweep panel's high, delayed, not
-    /// closed). It is set so that the hold a profitable push needs runs through the better part of a day on IMD's
-    /// only market, against every dip-buyer that day, rather than through one feed window. The cost is the lag's
-    /// length: after an honest 20% fall redeemers are paid at the higher figure, falling 1% an hour, for that
-    /// long; and a pool PUSHED UP through one window writes the rise at once (a rise written slowly would leave
-    /// the paid price under the market after a real rally, the way in) and underpays every redemption by the
-    /// push, less 1% a paced hour, until it has decayed: about 18 hours for 20%, for the cost of the push
-    /// (payout vault panel, low, accepted: nobody is forced to redeem, `minGemOut` lets a redeemer wait, and
-    /// the direction never overpays).
+    /// hours) reaches the payout in full after about 22 paced hours for 20% and 51 for 40%, and a pool held down
+    /// pays a redeemer about 1% of the volume redeemed for each paced hour it is held, less the fee. The fee is
+    /// what a burn pays against the fee base: a burn of 0.5% of the base pays 0.75% and breaks even after one paced
+    /// hour, one at the 5% cap after five; what bounds a sustained drain is the base rate, which the drain's own
+    /// burns ratchet to the cap. The rate was 5% an hour, which paid the whole step after five paced hours (payout
+    /// vault panel 2026-10-09, high). The protocol bounds the gain per hour of hold; it does not bound the hours.
+    /// The cost of a hold that scales with its length is absorbing every arbitrageur and buyer who takes the
+    /// held pool's cheap IMD (IMD also trades in other pools and on other chains) (the push and unwind themselves cost about 2% of the IMD moved in pool fees, about $5k for 20% at
+    /// launch depth), so whether a hold pays depends on that market, which the code does not enforce (final sweep
+    /// panel 3 2026-10-09, medium, ACCEPTED as stated here and in docs/MAINNET-RUNBOOK.md). The rate bounds `cash`
+    /// only: `bite` seizes at the attested price (see there).
+    /// The cost on the other side is the lag: after an honest 20% fall redeemers are paid at the higher figure,
+    /// falling 1% an hour, for about 22 hours; and a pool PUSHED UP writes each window's rise at once (a rise
+    /// written slowly would leave the paid price under the market after a real rally, the way in) and underpays
+    /// every redemption until it has decayed at 1% a paced hour: about 18 hours for one 20% window, 37 for two
+    /// (1.44x), 55 for three, for the cost of the push and its hold (payout vault panel, low, accepted: nobody is
+    /// forced to redeem, `minGemOut` lets a redeemer wait, and the direction never overpays).
     uint256 public constant PAYOUT_PRICE_FALL_BPS_PER_HOUR = 100;
     /// @dev Backing per imdUSD as last paced, 1e18-scaled (par at deployment, when there is no supply).
     uint128 private _backingPaced = 1e18;
@@ -734,9 +740,9 @@ contract CDPVault is TransientReentrancyGuard {
             // IMD is paid at the higher of the price and the paced price, which falls at most
             // PAYOUT_PRICE_FALL_BPS_PER_HOUR an hour (`_pacedPrice`); eligibility, health and the term stay at
             // the attested price. The rate bounds the speed of a fall, not its size (see the constant): a pool
-            // held down is paid the hours it is held, a pool pushed up underpays redeemers until the push has
-            // decayed, and after an honest fall redeemers are paid at the higher figure until the paced price
-            // has followed it down, about 22 paced hours for 20%: the direction that pays less.
+            // held down is paid about 1% of the volume redeemed per paced hour held, less the fee; a pool pushed
+            // up underpays redeemers until each window's push has decayed; after an honest fall redeemers are
+            // paid at the higher figure until the paced price has followed it down, about 22 paced hours for 20%.
             payPrice = _payoutPrice(price);
         }
         // The fee base is read once, before the candidate is touched, so the quote and the stored rate agree
@@ -911,8 +917,8 @@ contract CDPVault is TransientReentrancyGuard {
     /// @dev keccak256("comp.CDPVault.preexistingPrincipalCancelledThisTransaction"): pre-existing principal cancelled
     /// by a redemption, a liquidation or cover in this transaction. The paced debt may not exceed what it was at
     /// the transaction's start less this (`_clampPacedDebt`), so cancelling seasoned debt lowers it at once however
-    /// the transaction is ordered, while cancelling the transaction's own fresh draw, or principal minted within
-    /// FRESH_DEBT_WINDOW, moves nothing (final sweep panel 2026-10-09, low; payout vault panel 2026-10-09, low).
+    /// the transaction is ordered, while cancelling the transaction's own fresh draw moves nothing (final sweep
+    /// panel 2026-10-09, low). Older principal is booked in full, so the paced debt errs low (`_tallyPrincipalRetired`).
     uint256 private constant CANCELLED_PRE_SLOT = 0x017d720555494c1e7627124a9367b025ef616e2c06f28e766961d9a3f3b87be1;
     /// @dev keccak256("comp.CDPVault.pacedDebtAtTransactionStart"): the paced debt as this transaction's pacing wrote
     /// it, plus one so that zero means "not paced".
@@ -928,15 +934,19 @@ contract CDPVault is TransientReentrancyGuard {
     }
 
     /// @dev Books `principalPaid` retired from `owner`: the part this transaction minted for the position comes
-    /// out of the minted tallies (it was never counted); the part minted within FRESH_DEBT_WINDOW (the position's
-    /// own record, `_recentlyMinted`) is, when cancelled, booked nowhere, since the paced debt has had at most
-    /// that long to follow it (a draw one block old, cancelled by its owner against itself the next block, was
-    /// booked as pre-existing and clamped the paced debt by the whole amount, to zero every block for gas: payout
-    /// vault panel 2026-10-09, low); the rest is pre-existing principal, cancelled (cash, bite, cover). A wipe
-    /// books everything but this transaction's own mint as wiped, whatever its age: that tally only restores the
-    /// debt the transaction began with, which a repayment of young debt is part of. Netting out cancelled
-    /// principal the paced debt had already followed is harmless: the clamp and the next pacing both hold the
-    /// paced debt at or under the live debt, which the cancellation has lowered.
+    /// out of the minted tallies (it was never counted); the rest is pre-existing principal, cancelled (cash,
+    /// bite, cover) or wiped by its owner.
+    /// THE PACED DEBT ERRS LOW, NEVER HIGH. Nothing records how much of a position's debt the paced debt has
+    /// followed, so a cancellation of principal older than this transaction is booked as pre-existing in full and
+    /// the clamp lowers the paced debt by it. When the cancelled principal was younger than the follow, that is
+    /// more than the follow had absorbed, and the paced debt (with `backedDebt` and the work ceiling's ratio term)
+    /// reads low until the follow recovers it at FOLLOW_BPS_PER_HOUR: a borrower redeeming their own one-block-old
+    /// draw drives it toward zero for gas (payout vault panel 2026-10-09, low, ACCEPTED). The other direction was
+    /// tried and is worse: netting out the position's whole twelve-hour record (73191e0) let a fully followed
+    /// loan's cancellation book nothing, so another position's zero-second draw counted in full and the ceiling
+    /// read HIGH (final sweep panel 3 2026-10-09, low; reverted). A low ceiling refuses work minting it could have
+    /// allowed; a high one mints against debt that was not held. The wage is zero at launch, and turning it on is
+    /// a governance act behind the timelock.
     function _tallyPrincipalRetired(address owner, uint256 principalPaid, bool cancellation) private {
         uint256 bySlot = _mintedBySlot(owner);
         uint256 own = Math.min(principalPaid, _transient(bySlot));
@@ -945,13 +955,7 @@ contract CDPVault is TransientReentrancyGuard {
             _transientSub(MINTED_THIS_TX_SLOT, own);
         }
         uint256 rest = principalPaid - own;
-        if (!cancellation) {
-            if (rest != 0) _transientAdd(WIPED_THIS_TX_SLOT, rest);
-            return;
-        }
-        uint256 recent = _recentlyMinted(_positions[owner]);
-        if (recent > own) rest -= Math.min(rest, recent - own);
-        if (rest != 0) _transientAdd(CANCELLED_PRE_SLOT, rest);
+        if (rest != 0) _transientAdd(cancellation ? CANCELLED_PRE_SLOT : WIPED_THIS_TX_SLOT, rest);
     }
 
     /// @notice Pace the three figures from the state as it stands. Anyone may call it; every call that moves
@@ -999,8 +1003,9 @@ contract CDPVault is TransientReentrancyGuard {
     /// less what it cancelled (`_pacedDebt`'s live figure). So cancelling seasoned debt lowers it at once in any
     /// order and in any transaction, however fresh the debt drawn against it (sweep panel audit 2026-10-07, vault,
     /// high; paced vault panel 2026-10-08, medium; final sweep panel 2026-10-09, low: a draw one block earlier
-    /// and a cancellation the next, and a self-redemption of the transaction's own fresh draw; payout vault panel
-    /// 2026-10-09, low: a self-redemption of a draw one block old, which `_tallyPrincipalRetired` now nets out).
+    /// and a cancellation the next, and a self-redemption of the transaction's own fresh draw). Cancelling principal
+    /// older than the transaction but younger than the follow lowers it by more than the follow absorbed: it errs
+    /// low, never high (`_tallyPrincipalRetired`).
     function _clampPacedDebt() private {
         if (!_followRateLimited()) return;
         uint256 recorded = _transient(PACED_DEBT_AT_START_SLOT);
@@ -1330,6 +1335,21 @@ contract CDPVault is TransientReentrancyGuard {
     /// A borrower may mark its own position and so recover the marker's share (CHIP_BPS) of the bonus:
     /// its effective penalty is then 18% of the debt repaid, not 20%. Accepted (launch audit, info).
     /// The mark must still be within its liquidation window (see bark).
+    /// A HELD-DOWN POOL IS PAID HERE IN FULL, ACCEPTED (final sweep panel 3 2026-10-09, high). Health and the
+    /// seizure both read the attested price, and both feeds read one IMD pool, so that pool pushed down and held
+    /// through the feed window and the grace (about seven hours at NHI >= 0.85) makes every position under
+    /// mat / (1 - push) of real CR liquidatable and pays the liquidator, per imdUSD repaid, 1.2 / (1 - push) of
+    /// collateral at the real price: 1.5x for one 20% step (positions under 212%), 1.875x for two (36%, under
+    /// 266%), against 1.2x at an honest price. The loss is the borrower's; the burn retires the debt it repays,
+    /// so backing per imdUSD is untouched, and the protocol's cut adds to the reserve. The one exception: a
+    /// position under 1.2x of its debt at the held price is liquidated to nothing and leaves the rest as bad
+    /// debt (about 9% of a 170% position's debt after two steps), which `cover` charges to the Treasury. Not
+    /// paced, unlike `cash`: pacing the seizure underpays liquidators after a real fall faster than the pace, and
+    /// a liquidation that does not pay is not made, which leaves real crashes to bad debt that every holder
+    /// bears. The defences are the grace (a marked borrower who tops up or repays above mat clears the mark; the
+    /// site warns a connected borrower whose position is marked), the cost of the hold (IMD also trades in other
+    /// pools and on other chains, so for seven hours every arbitrageur who buys the held pool cheap and sells
+    /// elsewhere must be absorbed), and the debt ceiling, which bounds the book at stake.
     function bite(address owner, uint256 debtToRepay) external nonReentrant {
         if (debtToRepay == 0) revert ZeroAmount();
         uint256 price = _requireFreshFeeds();

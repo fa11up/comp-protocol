@@ -55,6 +55,23 @@ contract ReenteringRecipient {
     }
 }
 
+/// @dev Tries to re-enter the Treasury's paying functions while receiving native funds from it.
+contract ReenteringPayee {
+    Treasury private immutable treasury;
+    bytes public lastRevert;
+
+    constructor(Treasury treasury_) {
+        treasury = treasury_;
+    }
+
+    receive() external payable {
+        try treasury.payStream() {}
+        catch (bytes memory reason) {
+            lastRevert = reason;
+        }
+    }
+}
+
 /// @dev The requester-share rules of an IdentityMD launch factory (PoolFees.setRequester), verbatim.
 contract MockLaunchFactory {
     error NotRequester(uint64 launchNumber);
@@ -280,6 +297,19 @@ contract TreasuryTest is Test {
         assertEq(recipient.creditedDuringCall(), 0, "the baseline moved before the call");
         assertEq(treasury.totalReceived(treasury.NATIVE()), 10 ether);
         assertEq(treasury.syncNative(), 0);
+    }
+
+    /// @dev Every paying function is guarded: a recipient re-entering another one during a withdrawal is refused.
+    function test_aRecipientCannotReEnterAPayingFunctionDuringAWithdrawal() public {
+        vm.deal(address(treasury), 10 ether);
+        ReenteringPayee payee = new ReenteringPayee(treasury);
+        vm.prank(APPROVED_OPERATOR);
+        treasury.withdrawNative(payable(address(payee)), 1 ether);
+        assertEq(
+            keccak256(payee.lastRevert()),
+            keccak256(abi.encodeWithSignature("ReentrancyGuardReentrantCall()")),
+            "the nested payStream is refused by the guard"
+        );
     }
 
     function testFuzz_nativeRecordNeverExceedsWhatArrived(uint96 a, uint96 b, uint96 out) public {

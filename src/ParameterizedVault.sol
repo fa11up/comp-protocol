@@ -238,7 +238,7 @@ contract ParameterizedVault is CDPVault {
     /// that existed before the caller arrived; and it counts only up to the paced debt, which rises by at most
     /// FOLLOW_BPS_PER_HOUR per hour of elapsed time (compounding per pacing) and falls at once (CDPVault._pace),
     /// so cancelling another position's debt and
-    /// drawing as much backs nothing until the new debt has been held. A position held for hours counts in full, so the ceiling stays point-in-time for the slow version of the
+    /// drawing as much counts only as the follow absorbs the new debt (it errs low, never high: CDPVault._tallyPrincipalRetired). A position held for hours counts in full, so the ceiling stays point-in-time for the slow version of the
     /// same round trip: that is
     /// the accepted design (the ceiling gates new minting only; repayment lowers it and leaves what was
     /// minted), and the cost of it is real capital at risk in an open position, not gas. (The redemption
@@ -263,7 +263,7 @@ contract ParameterizedVault is CDPVault {
         // D1: debt counts only up to the paced debt, which rises by at most FOLLOW_BPS_PER_HOUR per hour of elapsed
         // time (compounding per pacing) and falls
         // at once, so debt drawn to lift the ceiling must be held for hours and debt cancelled this transaction
-        // (by a redemption, a liquidation or cover) backs nothing even if the same amount is drawn again.
+        // (by a redemption, a liquidation or cover) is clamped out even if the same amount is drawn again.
         uint256 debt = Math.min(Math.min(totalDebt, _debtAtTransactionStart()), _pacedDebtNow());
         uint256 bad = totalBadDebt;
         return debt > bad ? debt - bad : 0;

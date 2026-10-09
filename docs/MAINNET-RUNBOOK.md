@@ -419,7 +419,13 @@ no agent's tasks are spent for nothing). Turning it on later is a governance act
    high; the rate bounds the speed of the fall, not its size, so at the 5% an hour first set a pool held down
    for five paced hours was paid the whole step: payout vault panel 2026-10-09, high). A pool pushed UP through
    one window writes the rise at once and underpays redeemers until it has decayed, about 18 hours for 20%
-   (accepted: nobody is forced to redeem). Anyone may `pace()` and `resecure(owner)`; the keeper paces hourly and
+   (accepted: nobody is forced to redeem). Liquidation is NOT paced (final sweep panel 3 2026-10-09, high,
+   accepted): a pool held down through the feed window and the six-hour grace lets a liquidator take 1.5x the
+   debt repaid at the real price per 20% step, from borrowers who do not top up. Pacing it would stall
+   liquidations in a real crash. Operators: watch for a pool held well under its recent range while marks
+   appear across the book (a held-down pool, not a crash, is the alarm), and say so publicly; the site warns a
+   connected borrower whose position is marked, with the grace countdown and what clears it. When the book
+   reaches `LINE` the site says borrowing is closed until repayments or a governance raise (48 hours). Anyone may `pace()` and `resecure(owner)`; the keeper paces hourly and
    re-prices every open position after each price update, so a recovery reaches redeemers through a quiet spell
    and no position's collateral term stays fixed at a stale price (paced vault panel 2026-10-08, medium).
    Three rules keep the accepted dip rare (a position leaving and returning across two transactions paces the

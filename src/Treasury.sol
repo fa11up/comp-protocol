@@ -9,6 +9,7 @@ import {ISwarmFeed} from "./interfaces/ISwarmFeed.sol";
 import {APPROVED_OPERATOR, ORACLE_ASKER, LAUNCH_FACTORY} from "./DeploymentConfig.sol";
 import {IShareVault} from "./interfaces/IShareVault.sol";
 import {ILaunchFeeShare} from "./interfaces/ILaunchFeeShare.sol";
+import {TransientReentrancyGuard} from "./TransientReentrancyGuard.sol";
 
 /// @notice Where the protocol's own revenue lands: its share of liquidation bonuses, in collateral,
 /// and the stability fees minted to it, in stablecoin. It is also the protocol's reserve, and it can
@@ -39,7 +40,12 @@ import {ILaunchFeeShare} from "./interfaces/ILaunchFeeShare.sol";
 /// what revenue was for. Those decisions are not made yet, and a contract that cannot be upgraded is
 /// the wrong place to guess at them. Withdrawal takes its destination as an argument precisely so the
 /// eventual answer — most likely paired liquidity — needs no change here.
-contract Treasury {
+/// @dev Every function that sends funds out (withdraw, withdrawNative, payStream, fundOracle, redeemIMD) is guarded
+/// (TransientReentrancyGuard), on top of writing its state before each transfer: `fundOracle` records the day's
+/// spend only after its transfers, which was safe only because IMD and sIMD have no transfer hooks (final sweep
+/// panel 3 review, 2026-10-09). `sync` stays open: a re-entered sync credits nothing (see `_withdraw`), and
+/// `unwrapForOracle` is fundOracle's own self-call.
+contract Treasury is TransientReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// @notice A reserve asset's price source and retained-value factor.
@@ -283,7 +289,11 @@ contract Treasury {
     /// put a multi-million-gas floor under every cash, earn and backingPerUnit, and three such listings
     /// made the sum itself run out of gas (sweep panel audit, governance, low). A healthy read is a few
     /// thousand gas; SharePriceFeed, the heaviest shipped source, well under a hundred thousand.
-    function _boundedCall(address target, bytes memory data) private view returns (bool success, uint256 first, uint256 second) {
+    function _boundedCall(address target, bytes memory data)
+        private
+        view
+        returns (bool success, uint256 first, uint256 second)
+    {
         uint256 size;
         assembly ("memory-safe") {
             let out := mload(0x40)
@@ -300,7 +310,8 @@ contract Treasury {
     /// timestamp is discarded — staleness is the feed's own answer — but a word that cannot be a
     /// uint64 means the response is not the tuple it claims to be, so it is refused wholesale.
     function _readValue(ISwarmFeed feed) private view returns (uint256 value, bool ok) {
-        (bool success, uint256 first, uint256 second) = _boundedCall(address(feed), abi.encodeCall(ISwarmFeed.latestValue, ()));
+        (bool success, uint256 first, uint256 second) =
+            _boundedCall(address(feed), abi.encodeCall(ISwarmFeed.latestValue, ()));
         // Fewer than two words reads `second` as max, which is not a uint64: refused like any malformed tuple.
         if (!success || second > type(uint64).max) return (0, false);
         return (first, true);
@@ -366,7 +377,7 @@ contract Treasury {
     ///     Parameters, visible for 48 hours, and the collateral can never be withdrawn here at all;
     ///   - the imdUSD that realized bad debt still needs. The operator may withdraw imdUSD (to provide
     ///     liquidity, say) only down to the vault's outstanding totalBadDebt, so `cover` comes first.
-    function withdraw(IERC20 token, address to, uint256 amount) external {
+    function withdraw(IERC20 token, address to, uint256 amount) external nonReentrant {
         if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
         if (address(token) == _linked(abi.encodeWithSignature("gem()")) || isReserveAsset(token)) {
             revert ReserveProtected(token);
@@ -390,7 +401,7 @@ contract Treasury {
     /// only behind the 48-hour timelock and hard-capped there. A day not claimed is not carried over.
     /// Like `withdraw`, it never spends imdUSD that outstanding bad debt still needs.
     /// @return paid imdUSD sent by this call; zero once today's amount is paid or nothing is spare.
-    function payStream() external returns (uint256 paid) {
+    function payStream() external nonReentrant returns (uint256 paid) {
         address parameters = _linked(abi.encodeWithSignature("parameters()"));
         IERC20 token = IERC20(_linked(abi.encodeWithSignature("stablecoin()")));
         if (parameters == address(0) || address(token) == address(0)) revert NoStream();
@@ -450,7 +461,7 @@ contract Treasury {
     /// @notice Move ETH out, to a destination the operator names. The same authority and the same
     /// accounting order as `withdraw`: credit the unsynced arrival, move the baseline, then transfer,
     /// so a recipient re-entering `syncNative` during the call credits nothing twice.
-    function withdrawNative(address payable to, uint256 amount) external {
+    function withdrawNative(address payable to, uint256 amount) external nonReentrant {
         if (msg.sender != APPROVED_OPERATOR) revert Unauthorized();
         if (to == address(0) || to == address(this)) revert InvalidRecipient();
         if (amount == 0) revert ZeroAmount();
@@ -502,7 +513,7 @@ contract Treasury {
     /// arrived in this block cannot be withdrawn in it, so right after a liquidation the unwrap is caught and
     /// the call sends only the plain IMD (or nothing); a block later the shares unwrap. Refuses an asker with no code, so a placeholder constant fails loudly.
     /// @return sent IMD sent to the asker by this call; zero once today's budget is spent.
-    function fundOracle() external returns (uint256 sent) {
+    function fundOracle() external nonReentrant returns (uint256 sent) {
         if (ORACLE_ASKER.code.length == 0) revert OracleAskerMissing();
         address token = _linked(abi.encodeWithSignature("gem()"));
         if (token == address(0)) revert InvalidReserveAsset();
@@ -535,7 +546,8 @@ contract Treasury {
         }
         uint256 fromShares;
         if (plain < want) {
-            uint256 available = share ? IShareVault(token).maxWithdraw(address(this)) : IERC20(token).balanceOf(address(this));
+            uint256 available =
+                share ? IShareVault(token).maxWithdraw(address(this)) : IERC20(token).balanceOf(address(this));
             fromShares = want - plain < available ? want - plain : available;
         }
         if (plain + fromShares == 0) return 0;
@@ -607,7 +619,7 @@ contract Treasury {
 
     /// @notice Release reserve collateral for a redemption priced and burned by this Treasury's vault.
     /// @dev Neither the caller nor governance can select another reserve asset through this path.
-    function redeemIMD(address to, uint256 amount) external {
+    function redeemIMD(address to, uint256 amount) external nonReentrant {
         if (msg.sender != vault) revert Unauthorized();
         address token = _linked(abi.encodeWithSignature("gem()"));
         if (token == address(0)) revert InvalidReserveAsset();

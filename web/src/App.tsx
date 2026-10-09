@@ -18,7 +18,8 @@ import {
   ConnectWallet,
 } from "./actions";
 import { Redemption } from "./Redemption";
-import { Position, Work, Oracle, Keeper, Backing, Governance } from "./Panes";
+import { unit } from "./unit";
+import { Position, Work, Oracle, Keeper, Backing, Governance, ceilingState } from "./Panes";
 import { message, fmt } from "./math";
 import { explained } from "./explain";
 import { onChain, onChainArgs } from "./names";
@@ -428,6 +429,13 @@ function Terminal({ r }: { r: Runtime }) {
           {walletError ||
             readError ||
             `Unavailable reads: ${s?.errors.join(", ")}. Refresh to retry.`}
+        </div>
+      ) : null}
+      {s && ceilingState(s.v)?.reached ? (
+        <div className="global-notice global-notice-cap" role="status">
+          The borrowing cap is reached: no new {unit()} can be borrowed until
+          borrowers repay or governance raises the cap (a public proposal, then a waiting period). Depositing,
+          repaying and redeeming still work.
         </div>
       ) : null}
       <nav className="mobile-nav" aria-label="Terminal panes">

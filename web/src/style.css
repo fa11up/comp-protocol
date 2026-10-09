@@ -391,6 +391,18 @@ form > button,
 .action-note:empty {
   display: none;
 }
+.notice-warn {
+  border-inline-start-color: var(--danger);
+}
+.notice p {
+  margin: 0 0 6px;
+}
+.notice p:last-child {
+  margin-bottom: 0;
+}
+.global-notice-cap {
+  border-inline-start: 2px solid var(--danger);
+}
 .notice {
   border-inline-start: 2px solid var(--muted);
   padding: 8px 10px;

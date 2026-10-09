@@ -59,6 +59,96 @@ const ceilingText = (v?: bigint) =>
       ? "No ceiling"
       : `${fmt(v)} ${unit()}`;
 
+// The debt ceiling as a state the borrower can act on: reached, nearly reached (under 1% left), or open.
+// A ceiling set to the uint256 range is "none" and never reached.
+export function ceilingState(v: Record<string, any>) {
+  const line = v.line as bigint | undefined;
+  const total = v.totalDebt as bigint | undefined;
+  if (line === undefined || total === undefined || line >= 10n ** 36n) return undefined;
+  const left = line > total ? line - total : 0n;
+  return { line, total, left, reached: left === 0n, near: left > 0n && left * 100n < line };
+}
+
+// Why the ceiling stops borrowing, and what still works, in words a borrower can act on.
+export function CeilingNotice({ v }: { v: Record<string, any> }) {
+  const c = ceilingState(v);
+  if (!c || (!c.reached && !c.near)) return null;
+  const wait = v.TIMELOCK !== undefined ? countdown(v.TIMELOCK as bigint) : "48h";
+  return c.reached ? (
+    <p className="notice notice-warn" role="status">
+      <strong>The borrowing cap is reached.</strong> {fmt(c.total)} of the {fmt(c.line)} {unit()} the vault may
+      lend is already borrowed, so no new {unit()} can be borrowed until governance raises the cap. Raising it
+      takes a public proposal and a {wait} waiting period before it applies. Everything else still works:
+      depositing, withdrawing spare collateral, repaying and redeeming. Room opens again whenever borrowers repay.
+    </p>
+  ) : (
+    <p className="notice" role="status">
+      <strong>The borrowing cap is nearly reached.</strong> {fmt(c.left)} {unit()} of the {fmt(c.line)} cap is
+      left to borrow. Once it is gone, no new {unit()} can be borrowed until borrowers repay or governance raises
+      the cap.
+    </p>
+  );
+}
+
+// A marked position, explained to its borrower: what the mark means, when it can be liquidated, what a
+// liquidation takes and what stops it. The figures are the vault's own (CHOP 20%), not estimates.
+function MarkNotice({ s, actions, now }: { s?: Snapshot; actions: Actions; now: bigint }) {
+  const v = s?.v || {};
+  const mark = v.liquidationMarks as readonly [bigint, bigint, boolean, string] | undefined;
+  if (!mark || !mark[2] || !v.debtOf) return null;
+  const ends = mark[0] + mark[1];
+  const open = now >= ends;
+  const closes = ends + ((v.tail as bigint | undefined) ?? 0n);
+  const when = new Date(Number(ends) * 1000).toLocaleString();
+  return (
+    <div className="notice notice-warn" role="alert">
+      <p>
+        <strong>
+          {open
+            ? "Your position can be liquidated now."
+            : `Your position has been marked for liquidation. It can be liquidated in ${countdown(ends - now)} (${when}).`}
+        </strong>
+      </p>
+      <p>
+        At the price the oracle reports, your collateral is worth less than minCR {ratio(v.mat)} of your debt.
+        Someone noticed and marked it, which starts a grace period. When the grace period ends, anyone can
+        repay some or all of your debt and take your collateral in return: for every {unit()} they repay they take
+        $1.20 of collateral, valued at that same oracle price.
+      </p>
+      <p>
+        <strong>If the oracle price is lower than the real market price, you lose more.</strong> The oracle reads
+        one IMD pool, and someone with enough money can push that pool down and try to hold it there, against
+        traders who buy it cheap and sell on IMD's other markets. If the pool is
+        held 20% below the real price, each {unit()} repaid takes about $1.50 of your collateral at the real
+        price; held 36% down, about $1.88. The protocol cannot tell a held-down pool from a real fall.
+      </p>
+      <p>
+        <strong>To stop it:</strong> deposit collateral or repay debt until your ratio is back above{" "}
+        {ratio(v.mat)}. Doing that clears the mark when the price feeds are fresh. If you are already back above
+        it because the price recovered, clear the mark yourself below.
+        {open && mark[1] !== undefined && closes > now
+          ? ` If nobody liquidates it by ${new Date(Number(closes) * 1000).toLocaleString()}, the mark expires and someone must mark it again, which starts a new grace period.`
+          : ""}
+      </p>
+      {s && v.collateralRatio !== undefined && v.mat !== undefined && v.collateralRatio >= v.mat && (
+        <Action
+          id="clear-own-mark"
+          label="Review clear my mark"
+          actions={actions}
+          disabled={!feedsReady(s)}
+          reason="Fresh, agreeing price feeds are required."
+          request={() => ({
+            target: s.targets.ParameterizedVault,
+            fn: "heel",
+            args: [actions.account!],
+            summary: "Clear the liquidation mark on your position: you are back above minCR.",
+          })}
+        />
+      )}
+    </div>
+  );
+}
+
 export function Position({
   r,
   s,
@@ -100,7 +190,10 @@ export function Position({
   const worth = g.share ? asImd(held) : undefined;
   const connected = !!actions.account;
   const stable = { connected, symbol: unit(), decimals: Number(v.compDecimals ?? 18) };
-  const room = most !== undefined && debt !== undefined ? (most > debt ? most - debt : 0n) : undefined;
+  const cap = ceilingState(v);
+  const byRatio = most !== undefined && debt !== undefined ? (most > debt ? most - debt : 0n) : undefined;
+  // What a draw may add: the ratio's room, and no more than the vault's ceiling has left.
+  const room = byRatio !== undefined && cap ? (byRatio < cap.left ? byRatio : cap.left) : byRatio;
   const free = keep !== undefined && held !== undefined ? (held > keep ? held - keep : 0n) : undefined;
   return (
     <>
@@ -114,6 +207,7 @@ export function Position({
             minCR <Ticker text={ratio(v.mat)} />
           </small>
         </div>
+        <MarkNotice s={s} actions={actions} now={s?.timestamp ?? BigInt(Math.floor(Date.now() / 1000))} />
         <Row label="Collateral">
           {fmtGem(held)} {gemUnit()}
           {worth !== undefined && ` ≈ ${fmt(worth)} ${g.underlyingSymbol}`}
@@ -249,6 +343,7 @@ export function Position({
             </p>
           </>
         )}
+        {act === "borrow" && <CeilingNotice v={v} />}
         {act === "borrow" && (
           <ActionForm
             id="borrow"
@@ -258,8 +353,12 @@ export function Position({
             fn="draw"
             fields={[{ ...amt(`Borrow ${unit()}`), balance: { ...stable, amount: room, label: "Available" } }]}
             summary={`Add ${unit()} debt to your position.`}
-            disabled={!fresh}
-            reason="Fresh, agreeing price feeds are required."
+            disabled={!fresh || !!cap?.reached}
+            reason={
+              cap?.reached
+                ? "The borrowing cap is reached: no new debt until borrowers repay or governance raises it."
+                : "Fresh, agreeing price feeds are required."
+            }
           />
         )}
         {act === "repay" && (
@@ -527,7 +626,7 @@ const feedNames: Record<string, [string, string]> = {
   ],
   NhiFeed: [
     "Network health",
-    "Swarm health index, 0 to 1. It sets minCR (200% at or below 0.60, 150% at or above 0.85) and the liquidation grace period.",
+    "Swarm health index, 0 to 1. It sets minCR (200% at or below 0.60, 170% at or above 0.85) and the liquidation grace period.",
   ],
   SpotFeed: [
     "IMD / ETH spot",

@@ -192,6 +192,8 @@ export async function snapshot(
             "stabilityFeeOf",
             "collateralRatio",
             "badDebtOf",
+            // The connected borrower's own mark: the position pane warns while one is open.
+            "liquidationMarks",
           ].map((fn) => safe(fn, () => read(r, vault, fn, [account], bn))),
           safe("gemBalance", () =>
             read(r, targets.gem, "balanceOf", [account], bn),
