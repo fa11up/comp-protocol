@@ -140,6 +140,25 @@
   },
   {
     "type": "function",
+    "name": "accepts",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "attestationAnswerType",
     "inputs": [],
     "outputs": [

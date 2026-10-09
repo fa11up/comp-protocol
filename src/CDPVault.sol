@@ -1317,7 +1317,9 @@ contract CDPVault is TransientReentrancyGuard {
 
     /// @notice Anyone may clear a mark after observing recovery, including a recovery caused only by a feed.
     /// @dev latestValue cannot reveal an unobserved recover-then-fall sequence. Keepers should clear marks
-    /// when recovery is observed; deposit, repayment and successful borrowing/withdrawal also clear them.
+    /// when recovery is observed; deposit, repayment and successful borrowing/withdrawal also clear them, but only
+    /// at fresh, agreeing feeds (`_clearIfRecovered`): a top-up made while a feed is stale or the two price feeds
+    /// diverge keeps the mark, and the borrower should call this once the feeds are fresh.
     /// Borrowers should call this while healthy: an unobserved recovery does not restart grace within
     /// the bounded mark lifetime, even if a subsequent dip happens before that lifetime ends.
     function heel(address owner) external nonReentrant {
@@ -1331,7 +1333,10 @@ contract CDPVault is TransientReentrancyGuard {
     /// @notice Burn caller imdUSD against a marked, still-underwater position after its snapshotted grace.
     /// @dev Payout is floor(debtToRepay * (100 + CHOP_PERCENT) * 1e16 / price) raw collateral, i.e. collateral
     /// worth 120% of the imdUSD burned at the same accepted price the health check reads. Collateral must
-    /// cover the full payout, except dust below the seizure for one wei of debt, which is taken whole.
+    /// cover the full payout, except dust below the seizure for one wei of debt, which is taken whole; and when
+    /// debt survives, a remainder too small for any later bite is swept in with the seizure (below). The dust
+    /// branch accepts any `debtToRepay` up to the debt: repaying more than one wei against dust burns the
+    /// caller's imdUSD for it, which retires bad debt at the caller's expense (a keeper sizes it at one wei).
     /// A borrower may mark its own position and so recover the marker's share (CHIP_BPS) of the bonus:
     /// its effective penalty is then 18% of the debt repaid, not 20%. Accepted (launch audit, info).
     /// The mark must still be within its liquidation window (see bark).
@@ -1346,7 +1351,7 @@ contract CDPVault is TransientReentrancyGuard {
     /// debt (about 9% of a 170% position's debt after two steps), which `cover` charges to the Treasury. Not
     /// paced, unlike `cash`: pacing the seizure underpays liquidators after a real fall faster than the pace, and
     /// a liquidation that does not pay is not made, which leaves real crashes to bad debt that every holder
-    /// bears. The defences are the grace (a marked borrower who tops up or repays above mat clears the mark; the
+    /// bears. The defences are the grace (a marked borrower who tops up or repays above mat at fresh feeds clears the mark; the
     /// site warns a connected borrower whose position is marked), the cost of the hold (IMD also trades in other
     /// pools and on other chains, so for seven hours every arbitrageur who buys the held pool cheap and sells
     /// elsewhere must be absorbed), and the debt ceiling, which bounds the book at stake.
@@ -1377,7 +1382,8 @@ contract CDPVault is TransientReentrancyGuard {
             // this, collateral smaller than the seizure for a single wei of debt could never be bitten:
             // left after a further price fall, or re-locked by a drained borrower (`lock(1)`) to stop
             // the position draining, it froze the bad debt — unliquidatable, and `cover` refused it.
-            // Any larger shortfall is still refused: a bite never seizes more than the formula.
+            // Any larger shortfall is still refused: a bite never seizes more than the formula, plus a remainder
+            // too small for any later bite (swept below).
             if (position.collateral == 0 || position.collateral >= _oneWeiSeizure(price)) {
                 revert InsufficientCollateral();
             }

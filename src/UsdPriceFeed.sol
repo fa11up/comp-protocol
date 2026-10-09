@@ -17,9 +17,10 @@ import {CHAINLINK_ETH_USD, ETH_USD_MAX_AGE} from "./DeploymentConfig.sol";
 ///
 /// The USD leg is read with a low-level staticcall rather than a typed call. A typed call to an
 /// aggregator that is missing, paused or returning a malformed answer reverts, and that revert would
-/// surface as `earnLine()` reverting — which blocks every work mint and breaks the view the
-/// frontend reads. Here such a leg reads as zero, which is reported as stale, which values whatever
-/// it priced at nothing. Degrading the ceiling is the safe direction; bricking the channel is not.
+/// surface as `earnLine()`, `backingPerUnit()` and the Treasury's reserve valuation reverting, breaking the
+/// views the frontend reads. Here such a leg reads as zero and reports stale: those views stay readable and
+/// value whatever it priced at nothing, while every price action, `earn` included, is refused by the vault's
+/// staleness check (ParameterizedVault._pricingStale) until Chainlink answers. Refusing is the safe direction.
 contract UsdPriceFeed is ISwarmFeed {
     /// @notice The IMD/ETH leg: wei of ETH per 1e18 IMD, the vault's primary price feed.
     ISwarmFeed public immutable imdEthFeed;

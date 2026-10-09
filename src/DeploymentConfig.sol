@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-/// @dev Explicit operator named in the approved Sepolia workflow (miyagod.eth).
-/// Preserves the specified constructor signatures while allowing a constructor-only factory
-/// to deploy. The operator completes the two one-time links and operates the mock faucets.
-/// This release is specific to that operator; neither msg.sender nor tx.origin selects authority.
+/// @dev The protocol's one key, pinned in source (deploy/mainnet/plan.py --write sets it). On the mainnet path
+/// it holds: the Parameters governor (Governed: propose and cancel, every change behind the 48-hour timelock),
+/// the Treasury's withdraw, withdrawNative and handOffLaunchFees, and nothing else. The vault creates a bound
+/// ImdUSD and its work oracle in its constructor, so there are no one-time links and no faucet (those were the
+/// testnet release's). Neither msg.sender nor tx.origin selects authority.
 address constant APPROVED_OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
 
 /// @dev Receives the protocol's share of liquidation bonuses, when a deployment turns that share on.
 /// Pinned in source for the same reason APPROVED_OPERATOR is: a manifest placeholder resolved to the
 /// platform's own address on launch 519, not to the requester.
-/// MUST NOT be the feed's reporter or relayer — whoever sets the price would otherwise profit from
-/// liquidations they can trigger. Nothing on chain enforces that; see SPEC-ceiling-and-fee.md.
 /// Read only by the plain CDPVault: ParameterizedVault creates a Treasury in its constructor and
 /// routes both the bonus share and the minted stability fees there instead (`feeRecipient()`).
 address constant FEE_RECIPIENT = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
 
-/// @dev Chainlink ETH/USD on Sepolia (8 decimals), the USD leg of UsdPriceFeed. A price authority, so
+/// @dev Chainlink ETH/USD (8 decimals), the USD leg of UsdPriceFeed; plan.py --write sets the mainnet aggregator. A price authority, so
 /// it is pinned in source like the attester and the feeds rather than supplied by a deployer.
 address constant CHAINLINK_ETH_USD = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
 
@@ -141,7 +140,9 @@ uint256 constant STREAM_PER_DAY = 0;
 uint256 constant DUTY_BPS = 444;
 
 /// @dev The ratio term of the work-minting ceiling, in basis points of collateral-backed debt:
-/// earnLine = reserveValueUsd + totalDebt * EARN_MAT_BPS / 10000. Section 3 of
+/// earnLine = reserveValueUsd + backedDebt * EARN_MAT_BPS / 10000, where backedDebt is totalDebt capped at the
+/// transaction's opening debt and the paced debt, less totalBadDebt (ParameterizedVault.backedDebt): in the day
+/// after a large draw it is far below totalDebt. Section 3 of
 /// docs/COMPUTE-BACKING-DESIGN.md derives the bound: backing stays above one for every reserve size
 /// exactly when this ratio is below mat - 1, which is 7000 at the loosest NHI (mat 170). 2500 is about a
 /// third of that cliff, 136% worst-case backing with an empty reserve (the design doc's 5000 / 120% date

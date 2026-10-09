@@ -36,7 +36,10 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// cannot follow a single-step market move larger than itself — the pinned recipes read the pool, and a
 /// step has no intermediate medians — so the feed, and every vault pinned to it, would halt for good
 /// after one such gap. Widening with staleness turns a gap into a delay of hours and makes a far
-/// re-anchor cost an attacker those same hours of silence, during which anyone can refresh the feed.
+/// re-anchor cost an attacker those same hours of silence, during which anyone can refresh the feed. A value
+/// relayed at the end of a live epoch needs no silence to anchor the next one, so once an epoch has expired a
+/// value within the cap of the level it held is also accepted (`_returnAnchor`): the honest level is never
+/// locked out by a late push (final sweep panel 4 2026-10-09, medium).
 ///
 /// Two revisions from the internal audit of 2026-10-06, the high finding. The bound used to lift entirely
 /// once stale. Price feeds live one hour and are bought on demand, so being stale is their normal state,
@@ -388,20 +391,44 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// feed that pinned no question.
     function _checkValue(uint256 value) internal view virtual {
         if (value == 0) revert ZeroValue();
-        if (_hasValue) {
-            (uint256 anchor, uint256 bound) = _epoch();
-            uint256 change = value > anchor ? value - anchor : anchor - value;
-            if (change > Math.mulDiv(anchor, bound, 10_000)) revert ExcessDeviation();
-            // Inside a wide epoch, once its first value has landed, the rest of the epoch is held to the
-            // cap around that value. Whoever lands first after a silence gets the stale allowance; an
-            // honest refresh therefore closes it for everyone after (review of cc4103f, 2026-10-07: a
-            // +55% value was accepted an hour after the Treasury's honest refresh).
-            uint256 first = _epochFirst;
-            if (first != 0 && block.timestamp - uint256(_anchorAt) < maxAge) {
-                uint256 drift = value > first ? value - first : first - value;
-                if (drift > Math.mulDiv(first, maxDeviationBps, 10_000)) revert ExcessDeviation();
-            }
+        if (_hasValue && !_fitsEpoch(value) && _returnAnchor(value) == 0) revert ExcessDeviation();
+    }
+
+    /// @dev Whether `value` lies within the current epoch's allowance of its anchor (`_epoch`), and, inside a
+    /// wide epoch whose first value has landed, within the cap of that first value. Whoever lands first after a
+    /// silence gets the stale allowance; an honest refresh therefore closes it for everyone after (review of
+    /// cc4103f, 2026-10-07: a +55% value was accepted an hour after the Treasury's honest refresh).
+    function _fitsEpoch(uint256 value) private view returns (bool) {
+        (uint256 anchor, uint256 bound) = _epoch();
+        uint256 change = value > anchor ? value - anchor : anchor - value;
+        if (change > Math.mulDiv(anchor, bound, 10_000)) return false;
+        uint256 first = _epochFirst;
+        if (first != 0 && block.timestamp - uint256(_anchorAt) < maxAge) {
+            uint256 drift = value > first ? value - first : first - value;
+            if (drift > Math.mulDiv(first, maxDeviationBps, 10_000)) return false;
         }
+        return true;
+    }
+
+    /// @dev THE WAY BACK. Once the stored epoch has expired, a value within the cap of the level that epoch held
+    /// its values to (its first value if it opened wide, else its anchor) is accepted, and opens the next epoch
+    /// anchored there. Without it a value relayed in the last minute of an epoch anchored the next epoch, and
+    /// the honest level it had moved away from was refused until the pushed value had been silent long enough
+    /// to widen the allowance: for a spot feed, one block of a pushed pool attested honestly refused the honest
+    /// spot for two hours, and the vault refused every priced action for disagreement, then staleness, long
+    /// enough to expire a liquidation mark (final sweep panel 4 2026-10-09, medium). It reaches no level the
+    /// expired epoch did not already allow, and only until that epoch is older than two lifetimes and one
+    /// STALE_GROWTH_PERIOD, when the stale allowance from the last value takes over. It applies only to a value
+    /// the epoch rule refuses (`_fitsEpoch`), so every value accepted before is accepted and anchored as before.
+    /// Zero when no way back applies.
+    function _returnAnchor(uint256 value) private view returns (uint256 level) {
+        uint256 opened = uint256(_anchorAt);
+        if (block.timestamp - opened < maxAge || block.timestamp - opened >= 2 * maxAge + STALE_GROWTH_PERIOD) {
+            return 0;
+        }
+        level = _epochFirst != 0 ? uint256(_epochFirst) : (_anchorValue == 0 ? _value : _anchorValue);
+        uint256 change = value > level ? value - level : level - value;
+        if (change > Math.mulDiv(level, maxDeviationBps, 10_000)) return 0;
     }
 
     /// @notice The anchor the next value is measured against and the move it may make from it, in bps.
@@ -425,7 +452,9 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// So a genuine gap larger than the stale allowance is followed once the feed has been stale long
     /// enough — a delay, not a halt for good — while a re-anchor far from the market costs an attacker
     /// that same silence, during which anyone can refresh the feed honestly for one request (the
-    /// Treasury does, through OracleAsker, once the allowance reaches WIDE_ALLOWANCE_BPS).
+    /// Treasury does, through OracleAsker, once the allowance reaches WIDE_ALLOWANCE_BPS). A push relayed at the
+    /// end of a live epoch needs no silence; the way back (`_returnAnchor`) is what keeps it from locking the
+    /// honest level out.
     function _allowanceNow() private view returns (uint256) {
         if (!_tooOld(_updatedAt)) return maxDeviationBps;
         // Whole periods of silence beyond the lifetime. None yet: still the cap. The stale base and its
@@ -441,6 +470,15 @@ abstract contract SwarmFeed is ISwarmFeed {
         uint256 bound = maxDeviationBps * STALE_DEVIATION_MULTIPLE
             + Math.mulDiv(maxDeviationBps, STALE_GROWTH_OF_CAP_BPS, 10_000) * (periods - 1);
         return bound > MAX_ALLOWANCE_BPS ? MAX_ALLOWANCE_BPS : bound;
+    }
+
+    /// @notice Whether this feed would accept `value` now, by the same rule a delivery is checked against: the
+    /// current epoch's allowance or, once it has expired, the way back to the level it held (`_returnAnchor`).
+    /// `epoch()` reports only the first, so a buyer deciding whether an update would be refused asks this (an
+    /// honest value returning after a late push fits only the second). A subclass that overrides
+    /// `_checkValue` for a value with no magnitude does not use these bounds and must not be read through this.
+    function accepts(uint256 value) external view returns (bool) {
+        return value != 0 && (!_hasValue || _fitsEpoch(value) || _returnAnchor(value) != 0);
     }
 
     /// @notice The current bounding epoch: its anchor value, when it opened, and the allowance in bps that
@@ -475,7 +513,8 @@ abstract contract SwarmFeed is ISwarmFeed {
             // what keeps it inside the Intake's callback stipend (test/OracleAskerBoundGas.t.sol).
             (_anchorBound, _anchorAt) = (uint24(maxDeviationBps), uint40(block.timestamp));
         } else if (block.timestamp - uint256(_anchorAt) >= maxAge) {
-            (uint256 anchor, uint256 bound) = _epoch();
+            uint256 back = _fitsEpoch(value) ? 0 : _returnAnchor(value);
+            (uint256 anchor, uint256 bound) = back != 0 ? (back, maxDeviationBps) : _epoch();
             (_anchorValue, _anchorBound, _anchorAt) = (anchor, uint24(bound), uint40(block.timestamp));
             // A wide epoch remembers its first value (`_checkValue` holds the rest to the cap around it);
             // a fresh-opened one clears any left from an earlier wide epoch, and otherwise writes nothing.

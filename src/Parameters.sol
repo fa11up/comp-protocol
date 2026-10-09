@@ -139,7 +139,8 @@ contract Parameters is Governed {
     /// @notice The live values.
     ParamSet private _current;
 
-    /// @notice The live ratio term of the vault's work ceiling, in basis points of totalDebt.
+    /// @notice The live ratio term of the vault's work ceiling, in basis points of `backedDebt` (totalDebt capped at
+    /// the transaction's opening debt and the paced debt, less totalBadDebt: ParameterizedVault.earnLine).
     uint256 private _earnMat;
 
     /// @notice The live imdUSD-per-accepted-task rate, 1e18-scaled.

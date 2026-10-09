@@ -49,7 +49,7 @@ interface IPoolManagerExtsload {
 ///
 /// Anyone may also `askPaid`: the caller pays the Intake's price in IMD and an update is bought for any
 /// feed at any time, with none of the need checks, because no protocol money is spent. That is how a
-/// borrower who finds the price stale gets one (~$4.25) instead of waiting for the market to move.
+/// borrower who finds the price stale gets one (0.5 IMD, about $5 at launch prices) instead of waiting for the market to move.
 ///
 /// Treasury spending is bounded four ways: one request in flight per feed (until delivered or ASK_TIMEOUT), at most
 /// one paid request per feed per ASK_MIN_INTERVAL, a price ceiling per request, and the Treasury's

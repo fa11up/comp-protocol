@@ -386,7 +386,10 @@ abstract contract SwarmFeedTest is Test {
         vm.warp(block.timestamp + 1 hours);
         a = _attestation();
         a.requestId = keccak256("request-4");
-        a.figure = back + back * cap / 10_000 + 1;
+        // Refused: beyond the cap of the current value AND of the level the expired epoch held its values to
+        // (its first value, `widest`): the way back (SwarmFeed._returnAnchor, final sweep panel 4) reaches no
+        // further than the expired epoch already allowed.
+        a.figure = widest + widest * cap / 10_000 + 1;
         sig = _sign(a, SIGNER_KEY);
         vm.expectRevert(SwarmFeed.ExcessDeviation.selector);
         feed.submitAttestation(a, sig);
