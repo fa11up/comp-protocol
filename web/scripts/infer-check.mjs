@@ -74,6 +74,13 @@ for (const a of JSON.stringify(launch).match(/0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g
   if (!/^0x0{40}$/.test(a) && !rpcAllow.includes(a.toLowerCase())) fail(`rpc-allow.json lacks ${a}`);
 if (!rpcAllow.includes("0xca11bde05977b3631167028862be2a173976ca11")) fail("rpc-allow.json lacks Multicall3");
 if (!/connect-src [^;]*'self'/.test(csp)) fail("connect-src must admit 'self' for /rpc");
+// Cloudflare Web Analytics: the zone injects its beacon, so the policy admits that one script origin (and
+// no other) and the report's destination.
+const scriptOrigins = csp.match(/script-src ([^;]*)/)?.[1].split(/\s+/).filter((s) => s && !s.startsWith("'")) ?? [];
+if (scriptOrigins.join(" ") !== "https://static.cloudflareinsights.com")
+  fail(`script-src must admit exactly Cloudflare Web Analytics' beacon, not: ${scriptOrigins.join(" ")}`);
+if (!/connect-src [^;]*https:\/\/cloudflareinsights\.com/.test(csp))
+  fail("connect-src lacks Cloudflare Web Analytics' report (https://cloudflareinsights.com)");
 const connect = csp.match(/connect-src ([^;]*)/)?.[1] ?? "";
 for (const url of [...launch.rpc, ...launch.claims.origins]) {
   if (!connect.includes(new URL(url).origin))

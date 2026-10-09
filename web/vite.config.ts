@@ -312,9 +312,11 @@ function inferSite(): Plugin {
         resolve(dir, "_headers"),
         publicHeaders(
           [...hashes],
-          ["'self'", ...origins],
+          // Cloudflare Web Analytics, injected by the zone here too: its beacon and its report.
+          ["'self'", ...origins, CF_ANALYTICS.report],
           wc.projectId ? WALLETCONNECT_FRAMES : [],
           true, // /97/ plays its film from the site itself
+          [CF_ANALYTICS.script],
         ),
       );
     },
