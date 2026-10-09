@@ -20,15 +20,17 @@ Redeem (`cash`) burns imdUSD from your wallet and pays you sIMD, staked IMD. It 
 
 For each imdUSD burned, the vault pays sIMD worth $1, or the backing per imdUSD if that is lower, less the fee:
 
-> sIMD out = imdUSD burned × min($1, backing per imdUSD) × (1 − fee) ÷ sIMD price in dollars
+> sIMD out = imdUSD burned × min($1, backing per imdUSD) × (1 − fee) ÷ payout price
+
+The payout price is the higher of the attested sIMD price and a paced price that falls at most 1% an hour and rises at once (`payoutPrice()`). In normal markets the two are the same.
 
 - **Backing per imdUSD** is the reserve plus the collateral standing behind debt, divided by imdUSD supply, never above $1. Read it with `backingPerUnit()`; the terminal shows it.
-- **The fee** has a floor and a cap. It rises with the share of the fee base your burn represents (the warm imdUSD supply, never counted as less than 100,000) and falls back as time passes, halving every twelve hours. Quote it before you send with `redemptionFeeBps(amount)`.
+- **The fee** has a floor and a cap. It rises with the share of the fee base your burn represents (imdUSD supply as it was paced, following the real supply by at most 10% an hour, never counted as less than 100,000) and falls back as time passes, halving every twelve hours. Quote it before you send with `redemptionFeeBps(amount)`.
 - If backing is below $1, you are paid less than $1 per imdUSD. Redemption stays open, but it still needs live prices (fresh, and the main and spot prices agreeing), a valid candidate when the reserve is short, and a payout above zero.
 
-### New capital counts gradually
+### Backing and the payout price move slowly upward and fast downward
 
-Backing counts new collateral and new debt only as they age: what is still new halves every six hours and new capital left untouched for a day counts in full, while anything leaving counts at once. So someone cannot deposit and borrow, redeem at a better rate against that fresh capital and withdraw it again a few blocks later. Fresh debt and the imdUSD minted against it are left out together, so this mostly leaves your payout where it would be. The reserve counts toward the aged supply only in proportion, so you may see backing read lower for some hours right after a large new position opens, or after a sharp price fall.
+Backing per imdUSD falls at once but rises by at most two points of par an hour, so someone cannot deposit and borrow, redeem at a better rate against that fresh capital and withdraw it again a few blocks later. The payout price works the other way round for the same reason: it rises at once but falls at most 1% an hour, so a price pushed down for an hour cannot pay you extra IMD. Both can read conservatively for some hours after a sharp move: right after a crash you are paid at the higher, paced price until it has followed the market down. Quote your payout before you send; `minGemOut` refuses a payout below the figure you set.
 
 ## Who funds the payout
 

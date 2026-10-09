@@ -21,6 +21,7 @@ sources:
   - docs/AUDIT-FINAL-SWEEP-2-2026-10-09.md
   - docs/AUDIT-PAYOUT-VAULT-PANEL-2026-10-09.md
   - docs/AUDIT-FINAL-SWEEP-3-2026-10-09.md
+  - docs/AUDIT-FINAL-SWEEP-4-2026-10-09.md
 ---
 
 # Audit history
@@ -72,6 +73,7 @@ Severity counts (C/H/M/L/I) are critical, high, medium, low and info, as the rou
 | 25 | 2026-10-09 | Final sweep 2: the whole system, after the paced figures | Panel, job [`a69e204e`](https://explorer.imd.fun/jobs/a69e204e-d047-4c2f-9944-f37a69dd2796) | `a3aa9e4` | 0/1/0/2/4 | `92b873b` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-2-2026-10-09.md) |
 | 26 | 2026-10-09 | Payout vault panel: the vault on the sweep's fix (the paced payout price, the clamp, the seed, the price read once, the transient guard) | Panel, job [`f936eafb`](https://explorer.imd.fun/jobs/f936eafb-0bfb-4584-95be-9113b9d451ad) | `c90e8d9` | 0/1/0/3/1 | `73191e0` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-PAYOUT-VAULT-PANEL-2026-10-09.md) |
 | 27 | 2026-10-09 | Final sweep 3: the whole system, after the payout price | Panel, job [`ed4f7f6d`](https://explorer.imd.fun/jobs/ed4f7f6d-0b24-4762-91b5-3f1d61657d68) | `e4baedf` | 0/1/0/3/2 | `dba2cb3` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-3-2026-10-09.md) |
+| 28 | 2026-10-09 | Final sweep 4: the whole protocol, every mechanism, after the premise was corrected | Panel, job [`6229d0fc`](https://explorer.imd.fun/jobs/6229d0fc-c6a5-4c3e-bb56-64461d50b1cb) | `c7d50ee` | 0/0/1/2/4 | `df82607` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-4-2026-10-09.md) |
 
 ## What the chain shows
 

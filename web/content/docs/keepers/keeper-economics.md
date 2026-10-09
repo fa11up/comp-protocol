@@ -15,7 +15,7 @@ sources:
 
 # Keeper economics
 
-A keeper does three jobs: relays price updates, marks unsafe positions and liquidates them. This page covers what you are paid, what you must hold and what you risk. It explains how the pieces fit, not their size.
+A keeper does three paid jobs: relays price updates, marks unsafe positions and liquidates them. Two unpaid ones keep the vault's figures current: pacing it hourly and re-pricing positions after a price update ([Mark and liquidate](./mark-and-liquidate.md#pace-and-re-price)). This page covers what you are paid, what you must hold and what you risk. It explains how the pieces fit, not their size.
 
 ## The bonus and how it is split
 
@@ -76,4 +76,4 @@ If you liquidate through `SwarmRelay`, also approve the relay to spend at least 
 
 ## Operating notes
 
-Run the keeper from a hot wallet on its own machine; no privileged key is needed. The Treasury does not fund keepers, so top up the keeper from your own funds.
+Run the keeper from a hot wallet on its own machine; no privileged key is needed. Before paying for a price update, ask the feed whether it would take the value (`accepts(value)`): a refused update is still charged. Give every transaction a gas limit above the node's estimate; the vault's cost can rise slightly between estimate and inclusion. The Treasury does not fund keepers, so top up the keeper from your own funds.

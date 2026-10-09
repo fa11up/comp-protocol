@@ -42,7 +42,7 @@ Each entry gives the plain meaning first, then the contract name where there is 
 
 **duty.** The yearly stability fee rate, set by governance.
 
-**fee base.** The supply a redemption's fee increase is measured against: warm supply plus seasoned debt repaid in the last hours, never less than 100,000 imdUSD. See [Monetary policy](../economics/monetary-policy.md).
+**fee base.** The supply a redemption's fee increase is measured against: imdUSD supply as paced (following the real supply by at most 10% an hour), never less than 100,000 imdUSD. See [Monetary policy](../economics/monetary-policy.md).
 
 **grace (`lull`).** The wait between a mark and the first moment the position can be liquidated. Its length follows network health and is fixed when the mark is made.
 
@@ -60,7 +60,13 @@ Each entry gives the plain meaning first, then the contract name where there is 
 
 **network health index.** A signed figure about how well the IdentityMD network is running. It sets `mat` and the grace length. See [Network health](../governance/network-health.md).
 
+**paced figures (`pace`).** Slow-moving copies of backing per imdUSD, imdUSD supply and debt that redemption and the work ceiling read instead of the live figures. Backing rises at most two points of par an hour and falls at once; supply and debt follow the live figures by at most 10% an hour. Every call that moves capital paces them, and anyone may call `pace()`.
+
+**payout price.** The price a redemption pays IMD at: the higher of the attested price and a paced price that falls at most 1% an hour and rises at once (`payoutPrice()`).
+
 **question hash.** A fingerprint of the exact question a panel answered. Each feed refuses answers to any question but its own. See [Oracle and question binding](../reference/oracle-and-question-binding.md).
+
+**re-price (`resecure`).** Update a position's collateral term to the current price. Anyone may call it for any position; the keeper does after every price update.
 
 **redeem (`cash`).** Burn imdUSD and receive sIMD. See [Redeem](../guides/redeem.md).
 
@@ -79,7 +85,5 @@ Each entry gives the plain meaning first, then the contract name where there is 
 **wage.** The imdUSD earned per accepted swarm task, set by governance within a hard limit. At zero, minting from work is off.
 
 **work oracle.** The contract that turns the swarm's published task tally into minting rights. The vault creates one at deployment; governance may replace it, only while the wage is zero.
-
-**warm and cold capital.** Newly borrowed debt and newly added collateral are cold: they count toward backing per imdUSD and the fee base only as they warm, half of what is still cold every six hours, all of it once left untouched for a day (`BACKING_WARMUP`). Reductions count at once.
 
 **withdraw (`free`).** Take collateral back out. With debt open, it needs live prices and must leave you at or above `mat`.

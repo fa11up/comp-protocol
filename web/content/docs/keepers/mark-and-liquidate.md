@@ -72,3 +72,11 @@ If a feed is stale, or timing matters, send the price update and the action in o
 ## Clear marks you notice
 
 If the Keeper tab shows "Recovered, clearable", press Clear mark (`heel(owner)`). It costs gas and pays nothing, but it removes a mark that could otherwise skip grace if the position dips again. It reverts with `UnderwaterPosition` if the position is still unsafe.
+
+## Pace and re-price
+
+Two more calls keep the vault's figures current. Neither pays anything; both cost a little gas and are open to anyone.
+
+- **`pace()`** moves the vault's slow-moving figures (backing per imdUSD, the fee base, the work ceiling's debt and the payout price) forward from the state as it stands. Every call that moves capital paces first, so this only matters in a quiet spell: without it a recovery does not reach redeemers. Call it about once an hour; elapsed time beyond an hour between pacings is not counted.
+- **`resecure(owner)`** re-prices one position's collateral term at the current price. A term stays at the price the position was last touched at, so after each price update re-price the positions whose term is limited by their debt, largest first. It needs live, agreeing prices.
+

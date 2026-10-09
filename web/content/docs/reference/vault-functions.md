@@ -37,11 +37,11 @@ If the position already has a mark that has not expired, nothing changes and no 
 
 Liquidate. Needs a positive `debtToRepay`, live prices, an unsafe owner with a mark whose grace has passed and whose window has not closed (every position, a drained one too, must be marked first), enough debt to repay and enough collateral for the full payout, valid bonus shares, and enough imdUSD in the caller's wallet. No approval is needed.
 
-Charges the owner's accrued fees, cancels fees then principal, burns the caller's imdUSD and remints the fee part to the Treasury. Takes the collateral and pays the marker, the Treasury and the caller (see [Keeper economics](../keepers/keeper-economics.md) for the split). Collateral too small for any further liquidation goes to the caller. If the collateral runs out with debt left, records the rest as bad debt. Clears the mark if the position is now safe. Emits `Bite`, and `Heel` if a mark was cleared.
+Charges the owner's accrued fees, cancels fees then principal, burns the caller's imdUSD and remints the fee part to the Treasury. Takes the collateral and pays the marker, the Treasury and the caller (see [Keeper economics](../keepers/keeper-economics.md) for the split). Collateral too small for any further liquidation goes to the caller. If the collateral runs out with debt left, records the rest as bad debt. Clears the mark if the position is now safe. Emits `Bite`, and `Heel` if a mark was cleared. The seizure is priced at the attested price, not paced: a pool held below the market through the grace makes the liquidator's take larger at the real price ([Risks and open questions](../economics/risks-and-open-questions.md)).
 
 ### `cash(uint256 amount, uint256 minGemOut, address candidate)`
 
-Redeem imdUSD for sIMD. Needs a positive `amount` no larger than total supply, enough imdUSD in the caller's wallet, live prices, and a payout above zero and at least `minGemOut`. The payout is `amount` at the dollar price, times `backingPerUnit()` (so less than $1 a unit while backing is below $1), less the fee. If the Treasury cannot cover the payout, `candidate` must have debt, a ratio strictly below `mat() + gap()`, enough debt for the shortfall, and must not end up with a worse collateral-to-debt ratio.
+Redeem imdUSD for sIMD. Needs a positive `amount` no larger than total supply, enough imdUSD in the caller's wallet, live prices, and a payout above zero and at least `minGemOut`. The payout is `amount` at the payout price (`payoutPrice()`: the higher of the dollar price and a paced price that falls at most 1% an hour), times `backingPerUnit()` (so less than $1 a unit while backing is below $1), less the fee. If the Treasury cannot cover the payout, `candidate` must have debt, a ratio strictly below `mat() + gap()`, enough debt for the shortfall, and must not end up with a worse collateral-to-debt ratio.
 
 Burns all of `amount`, pays from the Treasury's sIMD first and from the candidate's collateral for the rest, cancelling the candidate's fees before principal (fees are not reminted). Stores the new redemption base rate and the redemption time; the part of the burn that cancelled the candidate's principal from the last twelve hours is charged in full but does not raise the stored rate. Emits `Cash`, and `Heel` if a mark was cleared. Returns `gemOut`, the sIMD paid. No partial fills and no approval.
 
@@ -93,6 +93,14 @@ Deposit IMD, which the vault stakes for you. Needs a positive `assets`, enough I
 
 Pulls the IMD, stakes it on the caller's behalf, and credits the sIMD that actually arrives (measured by balance). Otherwise the same as `lock`. Emits `Lock` with the sIMD credited, and `Heel` if a mark was cleared. The vault never unstakes; all payouts are in sIMD.
 
+### `pace()`
+
+Pace the vault's slow-moving figures (`paced()`) from the state as it stands. Anyone may call it; every call that moves capital does so first, so this matters only to let a recovery reach redeemers through a quiet spell. Moves nothing else and needs no price: through a stale or disagreeing window it holds the backing and the payout price where they were.
+
+### `resecure(address owner)`
+
+Re-price `owner`'s collateral term (how much of its collateral counts as backing) at the current price. Anyone may call it for any position. Needs live, agreeing prices. The keeper calls it after every price update, so no position's term stays at a stale price.
+
 ### `wipe(uint256 amount)`
 
 Repay debt. Needs a positive `amount` no larger than the caller's debt and enough imdUSD in the wallet. No approval or price checks.
@@ -103,13 +111,25 @@ Charges accrued fees, burns the imdUSD, cancels fees before principal and remint
 
 None of these change anything. Reads that depend on a feed can still revert if the feed or arithmetic fails.
 
-### `BACKING_WARMUP()`
+### `BACKING_RISE_PER_HOUR()`
 
-Returns `uint256`. One day, in seconds. New debt and collateral are cold: they are left out of the lagged figures, and what is still cold halves every six hours, tracked position by position. Cold capital left untouched for a whole day counts in full; a touch restarts that day, so activity can slow warming but never speed it. Decreases count at once and take the position's own cold first. A position's own warm capital that left (a repayment, a withdrawal, a liquidation or redemption against it) can come back and count at once, less what it would have cooled while away, and nothing after a day.
+Returns `uint256`. How far the paced backing may rise per hour of elapsed time: 0.02e18, two points of par. It falls at once. Fixed.
 
 ### `CHOP_PERCENT()`
 
 Returns `uint256`. The liquidation bonus, as a percent of debt repaid: —. Fixed.
+
+### `FOLLOW_BPS_PER_HOUR()`
+
+Returns `uint256`. How far the paced supply (the fee base) and the paced debt (what the work ceiling counts) may move toward the live figures per hour of elapsed time, in basis points of themselves or of the 100,000 imdUSD floor when larger: 1,000. The paced debt falls at once. Fixed.
+
+### `PACE_INTERVAL()`
+
+Returns `uint256`. One hour, in seconds: the most elapsed time one pacing counts, so a quiet day cannot bank a day's movement. Fixed.
+
+### `PAYOUT_PRICE_FALL_BPS_PER_HOUR()`
+
+Returns `uint256`. How fast the price a redemption is paid at may fall, per hour of elapsed time: 100 (1%). It rises at once. Fixed.
 
 ### `REDEMPTION_FEE_CAP_BPS()`
 
@@ -121,11 +141,11 @@ Returns `uint256`. The lowest redemption fee, in basis points: —. Fixed.
 
 ### `backedDebt()`
 
-Returns `uint256`. The principal that counts toward the work-minting ceiling: total principal, leaving out principal added in this transaction (and, while minting from work is on, principal that is still warming up), minus recorded bad debt, never below zero. In imdUSD raw units.
+Returns `uint256`. The principal that counts toward the work-minting ceiling: total principal, capped at the principal this transaction began with and at the paced debt (which follows principal up by at most 10% an hour and falls at once), minus recorded bad debt, never below zero. In imdUSD raw units.
 
 ### `backingPerUnit()`
 
-Returns `uint256`. Dollar backing per imdUSD, scaled by 1e18 and capped at $1: the Treasury's sIMD, other listed reserve assets and collateral that secures debt, divided by supply (plus any imdUSD repaid earlier in the same transaction). It is the lower of the live figure and a lagged one in which newly added debt and collateral leave both sides until they warm up (`BACKING_WARMUP`); in the lagged figure the reserve counts per unit of the whole supply, so only the warm supply's share of it stands behind warm units. Redemption pays against this. Needs a nonzero dollar price but does not check freshness. See [Monetary policy](../economics/monetary-policy.md).
+Returns `uint256`. Dollar backing per imdUSD, scaled by 1e18 and capped at $1: the Treasury's sIMD, other listed reserve assets and collateral that secures debt, divided by supply (plus any imdUSD repaid earlier in the same transaction). It is the lower of the live figure and the paced backing, which falls at once and rises at most two points of par an hour (`BACKING_RISE_PER_HOUR`). Redemption pays against this. Needs a nonzero dollar price but does not check freshness. See [Monetary policy](../economics/monetary-policy.md).
 
 ### `badDebtOf(address owner)`
 
@@ -199,10 +219,6 @@ Returns `uint256`. The last saved stability-fee index, scaled by 1e18. Changed b
 
 Returns `uint256`. When `drip()` last saved the index; starts at deployment.
 
-### `laggedNow()`
-
-Returns `uint256 debt, uint256 secured`. The lagged principal and secured collateral as of now: the live figures less what is still new, tracked position by position. These are what backing per imdUSD counts while new capital warms up.
-
 ### `lastRedemptionAt()`
 
 Returns `uint256`. When the last redemption happened; starts at deployment.
@@ -235,6 +251,14 @@ Returns `address`. The work oracle in use: a replacement applied through `Parame
 
 Returns `address`. The vault's `Parameters` (waiting for mainnet launch).
 
+### `paced()`
+
+Returns `uint256 backing, uint256 supply, uint256 debt, uint256 at, uint256 backingAt, uint256 price`. The paced figures as last written: backing per imdUSD (1e18-scaled), supply, debt, when supply and debt were paced, when the backing and payout price were last paced at a usable price, and the paced payout price. See [Monetary policy](../economics/monetary-policy.md).
+
+### `payoutPrice()`
+
+Returns `uint256`. The price a redemption pays IMD at now: the higher of the collateral's dollar price and the paced payout price, which falls at most `PAYOUT_PRICE_FALL_BPS_PER_HOUR` an hour and rises at once. Quote a redemption with this, not the feed's price.
+
 ### `positions(address owner)`
 
 Returns `uint256 collateral, uint256 debt`. Collateral in raw sIMD units and debt including fees in imdUSD raw units.
@@ -253,7 +277,7 @@ Returns `uint256`. `mat() + gap()`, in whole percentage points. A candidate must
 
 ### `redemptionDivisor()`
 
-Returns `uint256`. How fast the redemption fee climbs: each redemption adds redeemed ÷ fee base ÷ this to the base rate, where the fee base is the warm supply (see [Monetary policy](../economics/monetary-policy.md)), never less than 100,000 imdUSD. Governed: —.
+Returns `uint256`. How fast the redemption fee climbs: each redemption adds redeemed ÷ fee base ÷ this to the base rate, where the fee base is the paced supply (see [Monetary policy](../economics/monetary-policy.md)), never less than 100,000 imdUSD. Governed: —.
 
 ### `redemptionFeeBps(uint256 amount)`
 
