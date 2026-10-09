@@ -343,12 +343,15 @@ could).
    stale level was refused by a panel when IMD moved 44.6% in a day.
 2. **Verify on chain** that each feed's value is the attested figure, that `usedRequests[requestId]` is
    true, and that divergence between primary and spot is inside `SKEW_BPS`. Then run
-   `REFERENCE_IMD_ETH_WEI=<market> forge script script/DeployMainnet.s.sol --sig "verifySeeded()"
+   `REFERENCE_IMD_ETH_WEI=<market> REFERENCE_NHI=<index> forge script script/DeployMainnet.s.sol --sig "verifySeeded()"
    --rpc-url $MAINNET_RPC_URL`, where `<market>` is IMD's price in wei of ETH per 1e18 IMD taken from
-   somewhere the pool cannot be held against (the day's observed market, the explorer's history): a
+   somewhere the pool cannot be held against (the day's observed market, the explorer's history) and
+   `<index>` is the live network health index as you read it (`api.imd.fun/swarm`, 1e18-scaled): a
    feed's first value is bounded by nothing on chain and the relay is permissionless, and the pool itself
    can be held at a pumped level through the check. It refuses a pool more than 5% from the reference,
-   and a price or spot value more than 5% from the pool. **If it fails, do not deploy the vault**: the
+   a price or spot value more than 5% from the pool, and an NHI more than 5% from the index or at or
+   under 0.6 (the vault would open at mat 200 with no grace, and the feed's daily epoch would take days
+   to walk it back: payout vault panel 2026-10-09, low). **If it fails, do not deploy the vault**: the
    feed follows the market once its allowance has widened (two hours of silence for 40%, longer for
    more), so relay honest values and run it again. Then `runVault()` (same environment plus the
    reference and `VAULT_SALT`) deploys the vault and runs `verify`. Make the salt fresh and random
@@ -410,9 +413,13 @@ no agent's tasks are spent for nothing). Turning it on later is a governance act
 2. ~~The deferred audit finding needs code.~~ **DONE.** D1 is closed by the paced figures
    (`paced()`, `BACKING_RISE_PER_HOUR`, `FOLLOW_BPS_PER_HOUR`, `PACE_INTERVAL`, since 2026-10-08; the per-position
    lag before them is gone): the redemption cap reads the paced backing, the fee base the paced supply, `backedDebt`
-   the paced debt, at every wage; and the price a redemption is PAID at falls at most 5% an hour (`payoutPrice()`,
+   the paced debt, at every wage; and the price a redemption is PAID at falls at most 1% an hour (`payoutPrice()`,
    `PAYOUT_PRICE_FALL_BPS_PER_HOUR`), so a one-step fall of the attested price, honest or a held-down pool,
-   reaches the payout only at that rate (final sweep panel 2026-10-09, high). Anyone may `pace()` and `resecure(owner)`; the keeper paces hourly and
+   reaches the payout only at that rate: the whole 20% after about 22 paced hours (final sweep panel 2026-10-09,
+   high; the rate bounds the speed of the fall, not its size, so at the 5% an hour first set a pool held down
+   for five paced hours was paid the whole step: payout vault panel 2026-10-09, high). A pool pushed UP through
+   one window writes the rise at once and underpays redeemers until it has decayed, about 18 hours for 20%
+   (accepted: nobody is forced to redeem). Anyone may `pace()` and `resecure(owner)`; the keeper paces hourly and
    re-prices every open position after each price update, so a recovery reaches redeemers through a quiet spell
    and no position's collateral term stays fixed at a stale price (paced vault panel 2026-10-08, medium).
    Three rules keep the accepted dip rare (a position leaving and returning across two transactions paces the

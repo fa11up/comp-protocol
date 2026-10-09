@@ -347,11 +347,21 @@ contract CDPVault is TransientReentrancyGuard {
     uint256 public constant FOLLOW_BPS_PER_HOUR = 1000;
     uint256 public constant PACE_INTERVAL = 1 hours;
     /// @dev How fast the price a redemption is PAID at may fall, per hour of elapsed time (compounding per
-    /// pacing), for at most PACE_INTERVAL between pacings; it rises at once. A one-step fall of the attested
-    /// price (the feed's allowance, 20% fresh, 40% after two silent hours) reaches the payout only at this
-    /// rate, so holding IMD's pool down through the median window no longer pays a redeemer the fall in
-    /// extra IMD (final sweep panel 2026-10-09, high).
-    uint256 public constant PAYOUT_PRICE_FALL_BPS_PER_HOUR = 500;
+    /// pacing), for at most PACE_INTERVAL between pacings; it rises at once. THE RATE BOUNDS THE SPEED OF A FALL,
+    /// NOT ITS SIZE: a one-step fall of the attested price (the feed's allowance, 20% fresh, 40% after two silent
+    /// hours) reaches the payout in full after 1/rate paced hours, so a pool held down pays a redeemer the gain of
+    /// however many hours it is held (1% an hour here, after the fee has eaten the first five), the whole 20% after
+    /// about 22 paced hours and the whole 40% after about 51. The rate was 5% an hour, which paid the whole step
+    /// after five paced hours (payout vault panel 2026-10-09, high: the final sweep panel's high, delayed, not
+    /// closed). It is set so that the hold a profitable push needs runs through the better part of a day on IMD's
+    /// only market, against every dip-buyer that day, rather than through one feed window. The cost is the lag's
+    /// length: after an honest 20% fall redeemers are paid at the higher figure, falling 1% an hour, for that
+    /// long; and a pool PUSHED UP through one window writes the rise at once (a rise written slowly would leave
+    /// the paid price under the market after a real rally, the way in) and underpays every redemption by the
+    /// push, less 1% a paced hour, until it has decayed: about 18 hours for 20%, for the cost of the push
+    /// (payout vault panel, low, accepted: nobody is forced to redeem, `minGemOut` lets a redeemer wait, and
+    /// the direction never overpays).
+    uint256 public constant PAYOUT_PRICE_FALL_BPS_PER_HOUR = 100;
     /// @dev Backing per imdUSD as last paced, 1e18-scaled (par at deployment, when there is no supply).
     uint128 private _backingPaced = 1e18;
     /// @dev When the supply and debt were last paced.
@@ -423,7 +433,7 @@ contract CDPVault is TransientReentrancyGuard {
         } else if (oracle_ == WORK_ORACLE_SENTINEL) {
             // Ask the pre-deployed factory for a real attested work oracle. It is a factory and not
             // a `new` here only because of a size limit: SwarmWorkOracle's creation code is 16,464
-            // bytes and this vault's subclass is already within about 2 KB of the 49,152 EIP-3860 permits.
+            // bytes and this vault's subclass is already within about 1 KB of the 49,152 EIP-3860 permits.
             // See WorkOracleFactory for why a binding transaction and CREATE2 are both worse.
             // No silent downgrade: an absent factory reverts rather than quietly leaving the vault on
             // the grantRights faucet, which is the shape of the $owner substitution that bricked
@@ -703,8 +713,9 @@ contract CDPVault is TransientReentrancyGuard {
         return Math.mulDiv(slice > 1 ? slice : 1, (100 + CHOP_PERCENT) * 1e16, price);
     }
 
-    /// @notice Burn exactly `amount` caller imdUSD for feed-priced IMD, less the capped fee, scaled down by
-    /// `backingPerUnit` while the protocol is backed below par.
+    /// @notice Burn exactly `amount` caller imdUSD for IMD at the higher of the attested price and the paced
+    /// payout price (`payoutPrice`), less the capped fee, scaled down by `backingPerUnit` while the protocol is
+    /// backed below par.
     /// @dev Treasury IMD is spent first; only the shortfall cancels the named candidate's debt.
     /// No approval, partial fill or fee transfer. All checks and both payouts are atomic.
     function cash(uint256 amount, uint256 minGemOut, address candidate) external nonReentrant returns (uint256 gemOut) {
@@ -722,8 +733,10 @@ contract CDPVault is TransientReentrancyGuard {
             // the median window paid a redeemer the whole fall in extra IMD, from candidates and the reserve.
             // IMD is paid at the higher of the price and the paced price, which falls at most
             // PAYOUT_PRICE_FALL_BPS_PER_HOUR an hour (`_pacedPrice`); eligibility, health and the term stay at
-            // the attested price. After an honest fall redeemers are paid at the higher figure until the paced
-            // price has followed it down: the direction that pays less.
+            // the attested price. The rate bounds the speed of a fall, not its size (see the constant): a pool
+            // held down is paid the hours it is held, a pool pushed up underpays redeemers until the push has
+            // decayed, and after an honest fall redeemers are paid at the higher figure until the paced price
+            // has followed it down, about 22 paced hours for 20%: the direction that pays less.
             payPrice = _payoutPrice(price);
         }
         // The fee base is read once, before the candidate is touched, so the quote and the stored rate agree
@@ -898,8 +911,8 @@ contract CDPVault is TransientReentrancyGuard {
     /// @dev keccak256("comp.CDPVault.preexistingPrincipalCancelledThisTransaction"): pre-existing principal cancelled
     /// by a redemption, a liquidation or cover in this transaction. The paced debt may not exceed what it was at
     /// the transaction's start less this (`_clampPacedDebt`), so cancelling seasoned debt lowers it at once however
-    /// the transaction is ordered, while cancelling the transaction's own fresh draw moves nothing (final sweep
-    /// panel 2026-10-09, low).
+    /// the transaction is ordered, while cancelling the transaction's own fresh draw, or principal minted within
+    /// FRESH_DEBT_WINDOW, moves nothing (final sweep panel 2026-10-09, low; payout vault panel 2026-10-09, low).
     uint256 private constant CANCELLED_PRE_SLOT = 0x017d720555494c1e7627124a9367b025ef616e2c06f28e766961d9a3f3b87be1;
     /// @dev keccak256("comp.CDPVault.pacedDebtAtTransactionStart"): the paced debt as this transaction's pacing wrote
     /// it, plus one so that zero means "not paced".
@@ -915,8 +928,15 @@ contract CDPVault is TransientReentrancyGuard {
     }
 
     /// @dev Books `principalPaid` retired from `owner`: the part this transaction minted for the position comes
-    /// out of the minted tallies (it was never counted); the rest is pre-existing principal, cancelled (cash,
-    /// bite, cover) or wiped by its owner.
+    /// out of the minted tallies (it was never counted); the part minted within FRESH_DEBT_WINDOW (the position's
+    /// own record, `_recentlyMinted`) is, when cancelled, booked nowhere, since the paced debt has had at most
+    /// that long to follow it (a draw one block old, cancelled by its owner against itself the next block, was
+    /// booked as pre-existing and clamped the paced debt by the whole amount, to zero every block for gas: payout
+    /// vault panel 2026-10-09, low); the rest is pre-existing principal, cancelled (cash, bite, cover). A wipe
+    /// books everything but this transaction's own mint as wiped, whatever its age: that tally only restores the
+    /// debt the transaction began with, which a repayment of young debt is part of. Netting out cancelled
+    /// principal the paced debt had already followed is harmless: the clamp and the next pacing both hold the
+    /// paced debt at or under the live debt, which the cancellation has lowered.
     function _tallyPrincipalRetired(address owner, uint256 principalPaid, bool cancellation) private {
         uint256 bySlot = _mintedBySlot(owner);
         uint256 own = Math.min(principalPaid, _transient(bySlot));
@@ -925,7 +945,13 @@ contract CDPVault is TransientReentrancyGuard {
             _transientSub(MINTED_THIS_TX_SLOT, own);
         }
         uint256 rest = principalPaid - own;
-        if (rest != 0) _transientAdd(cancellation ? CANCELLED_PRE_SLOT : WIPED_THIS_TX_SLOT, rest);
+        if (!cancellation) {
+            if (rest != 0) _transientAdd(WIPED_THIS_TX_SLOT, rest);
+            return;
+        }
+        uint256 recent = _recentlyMinted(_positions[owner]);
+        if (recent > own) rest -= Math.min(rest, recent - own);
+        if (rest != 0) _transientAdd(CANCELLED_PRE_SLOT, rest);
     }
 
     /// @notice Pace the three figures from the state as it stands. Anyone may call it; every call that moves
@@ -973,7 +999,8 @@ contract CDPVault is TransientReentrancyGuard {
     /// less what it cancelled (`_pacedDebt`'s live figure). So cancelling seasoned debt lowers it at once in any
     /// order and in any transaction, however fresh the debt drawn against it (sweep panel audit 2026-10-07, vault,
     /// high; paced vault panel 2026-10-08, medium; final sweep panel 2026-10-09, low: a draw one block earlier
-    /// and a cancellation the next, and a self-redemption of the transaction's own fresh draw).
+    /// and a cancellation the next, and a self-redemption of the transaction's own fresh draw; payout vault panel
+    /// 2026-10-09, low: a self-redemption of a draw one block old, which `_tallyPrincipalRetired` now nets out).
     function _clampPacedDebt() private {
         if (!_followRateLimited()) return;
         uint256 recorded = _transient(PACED_DEBT_AT_START_SLOT);

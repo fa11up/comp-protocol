@@ -211,8 +211,12 @@ contract DeployMainnet is Script, DeployPreflight {
 
         verifyFeeds(p, true);
         _record(p);
-        console2.log("\nStage one deployed and verified. Next: runbook 7.1 (buy and relay the first attestations), then");
-        console2.log("`--sig verifySeeded()` with REFERENCE_IMD_ETH_WEI set, then `--sig runVault()` to deploy the vault.");
+        console2.log(
+            "\nStage one deployed and verified. Next: runbook 7.1 (buy and relay the first attestations), then"
+        );
+        console2.log(
+            "`--sig verifySeeded()` with REFERENCE_IMD_ETH_WEI and REFERENCE_NHI set, then `--sig runVault()` to deploy the vault."
+        );
     }
 
     /// @notice STAGE TWO: the vault, once the feeds hold their first values and `verifySeeded` passes.
@@ -221,7 +225,10 @@ contract DeployMainnet is Script, DeployPreflight {
         _refuseUnlessReady(p);
         verifySeeded(p);
         bytes32 salt = vm.envBytes32("VAULT_SALT");
-        require(salt != bytes32(0) && salt != PUBLIC_VAULT_SALT, "VAULT_SALT: set the operator's secret salt, not the public one");
+        require(
+            salt != bytes32(0) && salt != PUBLIC_VAULT_SALT,
+            "VAULT_SALT: set the operator's secret salt, not the public one"
+        );
         _refuseAnotherVault(p);
 
         vm.startBroadcast();
@@ -289,7 +296,9 @@ contract DeployMainnet is Script, DeployPreflight {
         uint256 before = gasleft();
         (bool ok, bytes memory ret) = CREATE2_FACTORY.call(bytes.concat(salt, initcode));
         require(before - gasleft() < TX_GAS_CAP, "a deployment exceeds the EIP-7825 per-transaction gas cap");
-        require(ok && ret.length == 20 && address(bytes20(ret)) == expected, "CREATE2 did not land at the planned address");
+        require(
+            ok && ret.length == 20 && address(bytes20(ret)) == expected, "CREATE2 did not land at the planned address"
+        );
         console2.log("deployed          ", expected);
     }
 
@@ -353,13 +362,19 @@ contract DeployMainnet is Script, DeployPreflight {
             require(tracksPool == tracks[i] && keepAlive == alive[i], "asker: wrong trigger policy");
             // The trigger is a property of the feed's cap, not of the policy: a quarter of it on a fall, never a rise.
             (uint256 fall, uint256 rise) = asker.triggerBps(feeds[i]);
-            require(fall == FEED_MAX_DEVIATION_BPS * DRIFT_FALL_TRIGGER_OF_CAP_BPS / 10_000 && rise == 0, "asker: wrong drift trigger (falls only, a quarter of the cap)");
+            require(
+                fall == FEED_MAX_DEVIATION_BPS * DRIFT_FALL_TRIGGER_OF_CAP_BPS / 10_000 && rise == 0,
+                "asker: wrong drift trigger (falls only, a quarter of the cap)"
+            );
         }
         // The two external links the Treasury-paid path hangs on, which no contract this script deploys
         // can vouch for (final review 2026-10-07, low): the Intake must sell oracle.request for IMD at or
         // under ASK_MAX_PRICE, or every ask() reverts and the NHI keep-alive never fires; and the pool slot
         // must read a price, or drift reads as zero and the Treasury never pays for a fall.
-        require(asker.price() != 0 && asker.price() <= ASK_MAX_PRICE, "asker: the Intake does not sell oracle.request for IMD at or under ASK_MAX_PRICE");
+        require(
+            asker.price() != 0 && asker.price() <= ASK_MAX_PRICE,
+            "asker: the Intake does not sell oracle.request for IMD at or under ASK_MAX_PRICE"
+        );
         require(asker.poolPrice() != 0, "asker: the pool slot reads empty (POOL_MANAGER or IMD_POOL_ID wrong)");
         require(WIDE_ALLOWANCE_BPS > FEED_MAX_DEVIATION_BPS * 2, "wide allowance must exceed the stale base");
         require(parameters.workOracle() == address(0), "work-oracle slot is not empty");
@@ -368,10 +383,17 @@ contract DeployMainnet is Script, DeployPreflight {
         // against must be the one the pinned price and spot bodies name in their text, or the Treasury
         // pays for falls that did not happen and never for ones that did (second-half review, info).
         bytes memory poolId = bytes(vm.toString(IMD_POOL_ID));
-        require(_contains(p.priceBody, poolId) && _contains(p.spotBody, poolId), "asker: IMD_POOL_ID is not the pool the price and spot bodies name");
+        require(
+            _contains(p.priceBody, poolId) && _contains(p.spotBody, poolId),
+            "asker: IMD_POOL_ID is not the pool the price and spot bodies name"
+        );
         // The fourth SwarmFeed, read back like the other three (same review).
         require(work.expectedQuestionHash(1, 2) != bytes32(0), "work oracle: binds no question");
-        require(work.attestationChainId() == ATTESTATION_CHAIN_ID && work.attestationAnswerType() == ATTESTATION_ANSWER_TYPE, "work oracle: wrong data chain or answer type");
+        require(
+            work.attestationChainId() == ATTESTATION_CHAIN_ID
+                && work.attestationAnswerType() == ATTESTATION_ANSWER_TYPE,
+            "work oracle: wrong data chain or answer type"
+        );
         // The Chainlink leg: the broadcast preflight checks it, and a later `--sig verify(...)` must too, or
         // a dead ETH/USD aggregator (every price action StaleFeed) reads as verified (same review).
         _preflightPriceLeg();
@@ -398,7 +420,10 @@ contract DeployMainnet is Script, DeployPreflight {
         OracleAsker asker = OracleAsker(p.asker);
         require(address(asker.payToken()) == IMD, "asker: not paid in IMD");
         if (unseeded) {
-            require(asker.wideOpen(p.price) && asker.wideOpen(p.nhi) && asker.wideOpen(p.spot), "asker: an unseeded feed must read wide open");
+            require(
+                asker.wideOpen(p.price) && asker.wideOpen(p.nhi) && asker.wideOpen(p.spot),
+                "asker: an unseeded feed must read wide open"
+            );
         }
     }
 
@@ -407,12 +432,15 @@ contract DeployMainnet is Script, DeployPreflight {
     /// relay is permissionless, so whoever relays first anchors the feed; a pumped pool attested honestly
     /// is a valid first value two times the market (final panel audit, oracle, low). Every feed must
     /// hold a fresh value, the price and spot feeds within a quarter of the cap (5% at launch) of IMD's
-    /// pool as the asker reads it, and of each other within SKEW_BPS, and NHI must lie in (0, 1e18]. If
-    /// this fails, do not deploy the vault: wait for the allowance to widen and relay honest values, then
-    /// run it again. The pool itself can be held at the attested level through the check, so the values are
-    /// also checked against REFERENCE_IMD_ETH_WEI, a price the operator takes from somewhere the attacker
-    /// does not control (the day's observed market, in wei of ETH per 1e18 IMD), and the stage-two deploy
-    /// refuses to run without it. `forge script script/DeployMainnet.s.sol --sig "verifySeeded()"
+    /// pool as the asker reads it, and of each other within SKEW_BPS, and NHI must lie within the same band
+    /// of REFERENCE_NHI (the live index as the operator reads it, 1e18-scaled) and above 0.6e18: a first NHI
+    /// at or under 0.6 would open an immutable vault at mat 200 with no grace, and the feed's daily epoch and
+    /// 20% allowance would take days to walk it back (payout vault panel 2026-10-09, low). If this fails, do
+    /// not deploy the vault: wait for the allowance to widen and relay honest values, then run it again. The
+    /// pool itself can be held at the attested level through the check, so the values are also checked
+    /// against REFERENCE_IMD_ETH_WEI, a price the operator takes from somewhere the attacker does not control
+    /// (the day's observed market, in wei of ETH per 1e18 IMD), and the stage-two deploy refuses to run
+    /// without either reference. `forge script script/DeployMainnet.s.sol --sig "verifySeeded()"
     /// --rpc-url <mainnet>` rebuilds the plan from source and checks it.
     function verifySeeded() external view {
         verifySeeded(plan());
@@ -423,15 +451,34 @@ contract DeployMainnet is Script, DeployPreflight {
         uint256 pool = asker.poolPrice();
         require(pool != 0, "seeded: the pool slot reads empty");
         uint256 referencePrice = vm.envOr("REFERENCE_IMD_ETH_WEI", uint256(0));
-        require(referencePrice != 0, "seeded: set REFERENCE_IMD_ETH_WEI to the market price from a source the pool cannot be held against");
+        require(
+            referencePrice != 0,
+            "seeded: set REFERENCE_IMD_ETH_WEI to the market price from a source the pool cannot be held against"
+        );
         uint256 band = FEED_MAX_DEVIATION_BPS * DRIFT_FALL_TRIGGER_OF_CAP_BPS / 10_000;
         (uint256 price, uint256 spot, uint256 nhi) = (_seeded(p.price), _seeded(p.spot), _seeded(p.nhi));
         require(_within(pool, referencePrice, band), "seeded: the pool itself is off the reference price: wait");
-        require(_within(price, pool, band), "seeded: the price feed's first value is off the pool: do not deploy the vault");
-        require(_within(spot, pool, band), "seeded: the spot feed's first value is off the pool: do not deploy the vault");
+        require(
+            _within(price, pool, band), "seeded: the price feed's first value is off the pool: do not deploy the vault"
+        );
+        require(
+            _within(spot, pool, band), "seeded: the spot feed's first value is off the pool: do not deploy the vault"
+        );
         require(_within(spot, price, SKEW_BPS), "seeded: price and spot disagree beyond SKEW_BPS");
+        uint256 referenceNhi = vm.envOr("REFERENCE_NHI", uint256(0));
+        require(referenceNhi != 0, "seeded: set REFERENCE_NHI to the live index, 1e18-scaled, as you read it");
         require(nhi <= 1e18, "seeded: NHI above one");
-        console2.log("Seeded and verified: price, spot and NHI hold fresh values, price and spot on the pool.");
+        require(
+            nhi > 0.6e18,
+            "seeded: NHI at or under 0.6 would open the vault at mat 200 with no grace: do not deploy the vault"
+        );
+        require(
+            _within(nhi, referenceNhi, band),
+            "seeded: the NHI feed's first value is off the live index: do not deploy the vault"
+        );
+        console2.log(
+            "Seeded and verified: price, spot and NHI hold fresh values, price and spot on the pool, NHI on the index."
+        );
     }
 
     function _seeded(address feed) internal view returns (uint256 value) {

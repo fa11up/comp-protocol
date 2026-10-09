@@ -85,7 +85,12 @@ contract RedemptionLagAtLaunchTest is Test {
         imd = new MockIMD();
         primary = new DFeed(uint256(1 ether) * 1e18 / 2000 ether); // $1 per IMD
         vault = new ParameterizedVault(
-            address(imd), address(0), address(0), address(primary), address(new DFeed(0.85 ether)), address(new DMirror(primary))
+            address(imd),
+            address(0),
+            address(0),
+            address(primary),
+            address(new DFeed(0.85 ether)),
+            address(new DMirror(primary))
         );
         stable = vault.stablecoin();
         assertEq(vault.parameters().wage(), 0, "launch configuration: lag dormant");
@@ -105,10 +110,11 @@ contract RedemptionLagAtLaunchTest is Test {
         // Three days: the paced figures have long caught up with the honest capital.
         vm.warp(block.timestamp + 3 days);
         vm.roll(block.number + 21_600);
-        // IMD falls 70%; the honest position is underwater and not yet liquidated (grace). A day of hourly pacing
-        // lets the paid price follow the fall (PAYOUT_PRICE_FALL_BPS_PER_HOUR), so the test reads payouts at $0.30.
+        // IMD falls 70%; the honest position is underwater and not yet liquidated (grace). Five days of hourly
+        // pacing let the paid price follow the fall (PAYOUT_PRICE_FALL_BPS_PER_HOUR, 1% an hour: 0.99^121 < 0.3),
+        // so the test reads payouts at $0.30.
         primary.set(uint256(0.3 ether) * 1e18 / 2000 ether);
-        for (uint256 i; i < 24; ++i) {
+        for (uint256 i; i < 121; ++i) {
             vm.warp(block.timestamp + 1 hours);
             primary.set(uint256(0.3 ether) * 1e18 / 2000 ether);
             vault.pace();
@@ -165,7 +171,12 @@ contract RedemptionLagHonestTest is Test {
         imd = new MockIMD();
         primary = new DFeed(uint256(1 ether) * 1e18 / 2000 ether);
         vault = new ParameterizedVault(
-            address(imd), address(0), address(0), address(primary), address(new DFeed(0.85 ether)), address(new DMirror(primary))
+            address(imd),
+            address(0),
+            address(0),
+            address(primary),
+            address(new DFeed(0.85 ether)),
+            address(new DMirror(primary))
         );
         stable = vault.stablecoin();
         vm.prank(APPROVED_OPERATOR);
