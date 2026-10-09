@@ -29,17 +29,23 @@ KB=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a   # borrow
 AB=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
 IMD=0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7; PM=0x000000000004444c5dc75cB358380D2e3dE08A90
 CL=0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419
-c() { cast "$@" --rpc-url $RPC 2>/dev/null | tail -1 | awk '{print $1}'; }
-c1() { cast "$@" --rpc-url $RPC 2>/dev/null | grep -v Warning | sed -n 1p | awk '{print $1}'; }
+# Reads retry: the fork's upstream rate-limits now and then, and a read that came back empty once sized a draw at zero.
+c() { local out; for i in 1 2 3 4 5; do out=$(cast "$@" --rpc-url $RPC 2>/dev/null | tail -1 | awk '{print $1}'); [ -n "$out" ] && { echo "$out"; return; }; sleep 2; done; }
+c1() { local out; for i in 1 2 3 4 5; do out=$(cast "$@" --rpc-url $RPC 2>/dev/null | grep -v Warning | sed -n 1p | awk '{print $1}'); [ -n "$out" ] && { echo "$out"; return; }; sleep 2; done; }
 
 say() { echo; echo "=== $*"; }
+# Vault calls carry an explicit gas limit. anvil's estimate is the consumption at the LATEST block's timestamp with
+# no margin, the mined block sits a second or more later, and the vault's pacing writes cost a few thousand gas
+# more once the clock has moved: a bare estimate ran out of gas in the last store (ReentrancySentryOOG, run 14).
+# The keeper carries the same margin itself (GAS_MARGIN_BPS, lib/tx.mjs); cast has none.
+vsend() { cast send "$@" --gas-limit 1500000 --rpc-url $RPC >/dev/null; }
 say "fork + deploy"
 # ANVIL_ARGS passes extra flags to anvil. BASE_FEE_WEI pins the fork's base fee by mining one block at it
 # (anvil's own --base-fee does not take on a fork): use it when mainnet's base fee at the fork block would
 # trip the deploy's gas ceiling. A rehearsal is about the deployment, not the price of gas that minute;
 # the real deploy still waits for a cheaper block.
 anvil --fork-url "$FORK_URL" --port ${PORT:-8546} --silent ${ANVIL_ARGS:-} > "$R/../anvil.log" 2>&1 &
-ANVIL=$!; trap 'kill $ANVIL 2>/dev/null' EXIT
+ANVIL=$!; [ -n "${KEEP_ANVIL:-}" ] || trap 'kill $ANVIL 2>/dev/null' EXIT  # KEEP_ANVIL=1 leaves the fork up for a post-mortem
 for i in $(seq 1 60); do cast chain-id --rpc-url $RPC >/dev/null 2>&1 && break; sleep 1; done
 if [ -n "${BASE_FEE_WEI:-}" ]; then cast rpc anvil_setNextBlockBaseFeePerGas $(cast to-hex $BASE_FEE_WEI) --rpc-url $RPC >/dev/null; cast rpc evm_mine --rpc-url $RPC >/dev/null; fi
 cd $R
@@ -79,11 +85,12 @@ cast rpc anvil_impersonateAccount $PM --rpc-url $RPC >/dev/null
 cast rpc anvil_setBalance $PM 0x56BC75E2D63100000 --rpc-url $RPC >/dev/null
 cast send $IMD "transfer(address,uint256)" $AB 10000000000000000000000 --from $PM --unlocked --rpc-url $RPC >/dev/null
 cast send $IMD "approve(address,uint256)" $VAULT 10000000000000000000000 --private-key $KB --rpc-url $RPC >/dev/null
-cast send $VAULT "lockIMD(uint256)" 10000000000000000000000 --private-key $KB --rpc-url $RPC >/dev/null
+vsend $VAULT "lockIMD(uint256)" 10000000000000000000000 --private-key $KB
 COLLP=$(c1 call $(j collateralPriceFeed) "latestValue()(uint256,uint64)")
 COLL=$(c1 call $VAULT "positions(address)(uint256,uint256)" $AB)
+if [ -z "$COLLP" ] || [ "$COLLP" = "0" ] || [ -z "$COLL" ] || [ "$COLL" = "0" ]; then echo "collateral price '$COLLP' / collateral '$COLL' read empty or zero (an RPC hiccup, or the share-price leg is down): cannot size the draw"; exit 1; fi
 DRAW=$(python3 -c "print($COLL*$COLLP//10**18*100//175)")
-cast send $VAULT "draw(uint256)" $DRAW --private-key $KB --rpc-url $RPC >/dev/null
+vsend $VAULT "draw(uint256)" $DRAW --private-key $KB
 echo "collateral $COLL raw sIMD at $COLLP  drew $DRAW  CR $(c call $VAULT 'collateralRatio(address)(uint256)' $AB)%"
 cast send $STABLE "transfer(address,uint256)" $A0 $(python3 -c "print($DRAW//2)") --private-key $KB --rpc-url $RPC >/dev/null
 echo "keeper imdUSD inventory $(c call $STABLE 'balanceOf(address)(uint256)' $A0)"
@@ -94,6 +101,7 @@ cd $K
 # The keeper's own-IMD ledger is per UTC day: a second rehearsal the same day would start over budget,
 # and a rehearsal must not leave its spending in a real keeper's ledger. Set aside, restored at the end.
 [ -f state/spend.json ] && mv state/spend.json state/spend.json.before-rehearsal
+[ -f state/pace.json ] && mv state/pace.json state/pace.json.before-rehearsal
 cat > config.js <<EOF
 export default {
   API_BASE: "https://api.imd.fun",
@@ -102,7 +110,8 @@ export default {
   INDEXER: "rpc",
   POOL: { poolManager: "0x000000000004444c5dc75cb358380d2e3de08a90", poolId: "0xb07d640fd9e2eb9dc81b953c8e4fd006bdfeaf276010fb5418eb763ca15abfb3", invert: false },
   MAX_GAS_GWEI: 1000, MIN_ETH: 0.02, ASK_PAID_IMD_PER_DAY: 50, KEEPER_ORACLE_FALLBACK: true,
-  INTERVALS: { watchSeconds: 60, relaySeconds: 120, positionsSeconds: 300 },
+  INTERVALS: { watchSeconds: 60, relaySeconds: 120, positionsSeconds: 300, paceSeconds: 300 },
+  PACE: { marginSeconds: 300, repriceMoveBps: 100, resecureMaxPerRun: 20 },
 };
 EOF
 export KEEPER_MNEMONIC="test test test test test test test test test test test junk"
@@ -124,6 +133,19 @@ say "keeper --execute: expect a bite"
 node positions.mjs --execute | sed 's/^/  /'
 GEM1=$(c call $(j gem) "balanceOf(address)(uint256)" $A0)
 echo; echo "keeper sIMD received: $(( GEM1 - GEM0 )) raw   position now $(c call $VAULT 'positions(address)(uint256,uint256)' $AB)"
+# The pacer. The bite paced the vault itself (every state-changing call does), so right after it nothing is due;
+# an hour on, pace() is due on both clocks, and with no re-price on record the pacer re-prices every debt-bound
+# term once at the fallen price (a bitten position is collateral-bound after the bite and needs none).
+say "an hour passes (nothing touches the vault); feeds re-dated: pace() is due on both clocks"
+cast rpc evm_increaseTime 3600 --rpc-url $RPC >/dev/null; cast rpc evm_mine --rpc-url $RPC >/dev/null
+seed $PRICE $DOWN; seed $SPOT $DOWN; seed $NHI 900000000000000000
+say "keeper --execute: the pacer (expect pace() sent, then one re-price)"
+PACED0=$(cast call $VAULT 'paced()(uint256,uint256,uint256,uint256,uint256,uint256)' --rpc-url $RPC 2>/dev/null | sed -n 4p | awk '{print $1}')
+node pace.mjs --execute | sed 's/^/  /' || true
+PACED1=$(cast call $VAULT 'paced()(uint256,uint256,uint256,uint256,uint256,uint256)' --rpc-url $RPC 2>/dev/null | sed -n 4p | awk '{print $1}')
+echo "paced clock before $PACED0 after $PACED1 (expect after > before: the pacer paced)"
+say "keeper --execute: the pacer again (expect nothing due, nothing moved)"
+node pace.mjs --execute | sed 's/^/  /' || true
 say "IMD falls ~11% below the feeds: the Treasury pays (fundOracle, arm, then ask 5 blocks later); a rise would not"
 cast send 0x0000000000000000000000000000000000000F06 "setPrice(bytes32,address,uint256)" 0x6f7261636c652e72657175657374406f7261636c652d31000000000000000000 $IMD 500000000000000000 --private-key $K0 --rpc-url $RPC >/dev/null
 HIGH=$(python3 -c "print($POOLP*112//100)"); seed $PRICE $HIGH; seed $SPOT $HIGH
@@ -176,3 +198,4 @@ echo "intake IMD received on the second pass: $(python3 -c "print(($I_IMD2-$I_IM
 
 [ -f config.js.before-rehearsal ] && mv config.js.before-rehearsal config.js || rm -f config.js
 [ -f state/spend.json.before-rehearsal ] && mv state/spend.json.before-rehearsal state/spend.json || rm -f state/spend.json
+[ -f state/pace.json.before-rehearsal ] && mv state/pace.json.before-rehearsal state/pace.json || rm -f state/pace.json
