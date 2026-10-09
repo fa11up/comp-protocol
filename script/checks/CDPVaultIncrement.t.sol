@@ -273,12 +273,14 @@ contract CDPVaultIncrementTest is Test {
         uint256 beforeBalance = imd.balanceOf(BOB);
         vm.prank(BOB);
         vault.bite(ALICE, 20 ether);
-        uint256 payout = 55 ether;
-        uint256 markerCut = 5 ether * CHIP_BPS / 10_000;
+        // 20 imdUSD at 0.4 seizes 20 * (100 + CHOP_PERCENT)% / 0.4; the bonus over the 50 of principal is split:
+        // CHIP_BPS to the marker, cut() to the protocol, the rest of the seizure to the liquidator.
+        (uint256 seized, uint256 markerCut, uint256 protocolCut) = _split(20 ether, 0.4 ether);
         assertEq(imd.balanceOf(MARKER), markerCut);
-        assertEq(imd.balanceOf(BOB) - beforeBalance, payout - markerCut);
-        _position(vault, 245 ether, 80 ether);
-        assertEq(imd.balanceOf(address(vault)), 245 ether);
+        assertEq(imd.balanceOf(BOB) - beforeBalance, seized - markerCut - protocolCut);
+        assertEq(imd.balanceOf(FEE_RECIPIENT), protocolCut);
+        _position(vault, 300 ether - seized, 80 ether);
+        assertEq(imd.balanceOf(address(vault)), 300 ether - seized);
     }
 
     function test_markerEqualsLiquidatorReceivesOneCombinedTransfer() public {
@@ -293,17 +295,28 @@ contract CDPVaultIncrementTest is Test {
         vm.prank(BOB);
         vault.bite(ALICE, 20 ether);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 collateralTransfers;
+        // The marker's share and the liquidator's arrive as ONE transfer; the protocol's cut is a separate one.
+        (uint256 seized,, uint256 protocolCut) = _split(20 ether, 0.4 ether);
+        uint256 toBob;
+        uint256 toProtocol;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter == address(imd) && logs[i].topics[0] == keccak256("Transfer(address,address,uint256)"))
             {
-                ++collateralTransfers;
-                assertEq(address(uint160(uint256(logs[i].topics[2]))), BOB);
-                assertEq(abi.decode(logs[i].data, (uint256)), 55 ether);
+                address to = address(uint160(uint256(logs[i].topics[2])));
+                uint256 amount = abi.decode(logs[i].data, (uint256));
+                if (to == BOB) {
+                    ++toBob;
+                    assertEq(amount, seized - protocolCut);
+                } else {
+                    ++toProtocol;
+                    assertEq(to, FEE_RECIPIENT);
+                    assertEq(amount, protocolCut);
+                }
             }
         }
-        assertEq(collateralTransfers, 1);
-        assertEq(imd.balanceOf(BOB) - beforeBalance, 55 ether);
+        assertEq(toBob, 1);
+        assertEq(toProtocol, protocolCut == 0 ? 0 : 1);
+        assertEq(imd.balanceOf(BOB) - beforeBalance, seized - protocolCut);
     }
 
     function test_protocolAndMarkerSharesLeaveBorrowerLossUnchanged() public {
@@ -580,6 +593,14 @@ contract CDPVaultIncrementTest is Test {
         assertEq(vault.totalBadDebt(), 15 ether);
         assertEq(vault.badDebtOf(ALICE), 15 ether);
         assertEq(vault.totalFeesMinted(), fee);
+    }
+
+    /// @dev The seizure for `debt` at `price` and the bonus's two shares, as CDPVault.bite computes them.
+    function _split(uint256 debt, uint256 price) private view returns (uint256 seized, uint256 markerCut, uint256 protocolCut) {
+        seized = Math.mulDiv(debt, (100 + vault.CHOP_PERCENT()) * 1e16, price);
+        uint256 bonus = seized - Math.mulDiv(debt, 1e18, price);
+        markerCut = Math.mulDiv(bonus, vault.chip(), 10_000);
+        protocolCut = Math.mulDiv(bonus, vault.cut(), 10_000);
     }
 
     function _open(uint256 collateral, uint256 debt) private {

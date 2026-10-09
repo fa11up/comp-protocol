@@ -171,8 +171,9 @@ contract RoundTripper {
 /// FOUNDRY_TEST=script/checks forge test --offline --match-contract ComputeBackingTest
 /// Prices are chosen so the arithmetic is legible: the primary feed says 1 IMD = 1 COMP, the ETH/USD
 /// mock says $2, so IMD is $2. Chainlink is stood in for by code etched at the pinned address.
-/// The vault's unit is the primary feed's (one COMP of debt is one ETH-worth of IMD), so a USD
-/// reserve figure is halved on its way into `earnLine`: `reserveValueUsd` 200 is `reserveValue` 100.
+/// The vault's unit is USD (`_price()` is the primary feed times ETH/USD), so collateral, debt and the
+/// reserve term are all dollars: `reserveValueUsd` 200 is `reserveValue` 200, and 300 IMD is $600 of
+/// collateral. (Until the USD revision the unit was the primary feed's and the reserve was halved.)
 contract ComputeBackingTest is Test {
     address private constant BORROWER = address(0xB0B);
     address private constant KEEPER = address(0xCAFE);
@@ -292,13 +293,14 @@ contract ComputeBackingTest is Test {
     function test_aLiquidationRoutesTheProtocolCutAndTheFeeToTheTreasury() public {
         assertEq(vault.cut(), CUT_BPS);
         assertEq(vault.duty(), DUTY_BPS);
-        _borrow(300 ether, 150 ether); // CR 200 exactly
+        _borrow(300 ether, 300 ether); // $600 of collateral against 300: CR 200 exactly
         vm.prank(BORROWER);
-        comp.transfer(KEEPER, 150 ether);
+        comp.transfer(KEEPER, 300 ether);
 
         vm.warp(block.timestamp + 365 days);
+        ethUsd.set(2e8, block.timestamp);
         uint256 fee = vault.stabilityFeeOf(BORROWER);
-        assertEq(fee, 3 ether, "150 COMP for a year at 200 bps");
+        assertEq(fee, Math.mulDiv(300 ether, DUTY_BPS, 10_000), "300 COMP for a year at DUTY_BPS");
 
         price.setValue(0.9 ether);
         spot.setValue(0.9 ether);
@@ -307,8 +309,9 @@ contract ComputeBackingTest is Test {
         vault.bite(BORROWER, 50 ether);
         vm.stopPrank();
 
-        uint256 seized = Math.mulDiv(50 ether, 1.1e18, 0.9 ether);
-        uint256 bonus = seized - Math.mulDiv(50 ether, 1e18, 0.9 ether);
+        (uint256 px,) = usd.latestValue(); // 0.9 ETH per IMD at $2: $1.80
+        uint256 seized = Math.mulDiv(50 ether, (100 + vault.CHOP_PERCENT()) * 1e16, px);
+        uint256 bonus = seized - Math.mulDiv(50 ether, 1e18, px);
         uint256 protocolCut = Math.mulDiv(bonus, CUT_BPS, 10_000);
         assertGt(protocolCut, 0);
 
@@ -457,12 +460,12 @@ contract ComputeBackingTest is Test {
         _listImd(10_000);
         _fundTreasury(100 ether);
         assertEq(treasury.reserveValueUsd(), 200e18);
-        assertEq(vault.reserveValue(), 100e18, "100 IMD at a primary price of 1, in the vault's unit");
-        assertEq(vault.earnLine(), 100e18);
+        assertEq(vault.reserveValue(), 200e18, "100 IMD at $2, in the vault's unit (USD)");
+        assertEq(vault.earnLine(), 200e18);
 
         vm.startPrank(KEEPER);
-        vault.earn(100e18);
-        assertEq(vault.totalEarned(), 100e18);
+        vault.earn(200e18);
+        assertEq(vault.totalEarned(), 200e18);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         vault.earn(1);
         vm.stopPrank();
@@ -474,64 +477,64 @@ contract ComputeBackingTest is Test {
         _fundTreasury(100 ether);
         uint256 expected = 200e18 * haircutBps / 10_000;
         assertEq(treasury.reserveValueUsd(), expected);
-        assertEq(vault.reserveValue(), expected / 2);
-        assertEq(vault.earnLine(), expected / 2);
+        assertEq(vault.reserveValue(), expected);
+        assertEq(vault.earnLine(), expected);
     }
 
-    // --- the reserve term is in the vault's unit (revision, finding 9366455) ----------------------
+    // --- the reserve term is in the vault's unit, USD (finding 9366455, then the USD revision) ------
 
-    /// @dev The register answers in USD; the vault's debt is in the primary feed's unit, wei of ETH
-    /// per IMD. The ceiling converts the reserve at the ETH/USD leg, so for IMD that leg cancels and
-    /// 100 IMD in the Treasury backs exactly what 100 IMD of collateral is worth to the vault — not
-    /// ETH/USD times that, which is what adding the USD figure to debt unconverted did.
-    function test_theReserveTermIsConvertedIntoTheVaultsUnit() public {
+    /// @dev Finding 9366455 was a USD reserve added to debt in another unit. The vault now prices in USD
+    /// itself, so the reserve term needs no conversion: it moves with ETH/USD exactly as collateral does,
+    /// and 100 IMD in the Treasury backs what 100 IMD of collateral is worth to the vault.
+    function test_theReserveTermIsInTheVaultsUnit() public {
         _listImd(10_000);
         _fundTreasury(100 ether);
-        assertEq(treasury.reserveValueUsd(), 200e18, "the register still answers in USD");
+        assertEq(treasury.reserveValueUsd(), 200e18, "the register answers in USD");
         assertEq(usd.ethUsdPrice(), 2e18);
-        assertEq(vault.reserveValue(), 100e18);
-        assertEq(vault.earnLine(), 100e18);
+        assertEq(vault.reserveValue(), 200e18, "and that is the vault's unit: no conversion");
+        assertEq(vault.earnLine(), 200e18);
 
-        // ETH at $2000 instead of $2 moves the USD figure a thousandfold and the ceiling not at all.
+        // ETH at $2000 instead of $2 moves the reserve a thousandfold, as it moves the collateral.
         ethUsd.set(2000e8, block.timestamp);
         assertEq(treasury.reserveValueUsd(), 200_000e18);
-        assertEq(vault.reserveValue(), 100e18, "the ETH/USD leg cancels for IMD");
+        assertEq(vault.reserveValue(), 200_000e18);
 
-        // A primary move does: at 0.5 ETH per IMD the same 100 IMD is worth 50 to the vault.
+        // A primary move does too: at 0.5 ETH per IMD and $2 the same 100 IMD is worth $100.
+        ethUsd.set(2e8, block.timestamp);
         price.setValue(0.5 ether);
         spot.setValue(0.5 ether);
-        assertEq(vault.reserveValue(), 50e18);
+        assertEq(vault.reserveValue(), 100e18);
 
         // And the reserve never authorises more than the vault itself would lend against the same
-        // IMD at 100% CR: a borrower posting 100 IMD can mint at most 50 COMP at mat 200 here.
+        // IMD at 100% CR: a borrower posting 100 IMD ($200) can mint at most 100 COMP at mat 200.
         price.setValue(1 ether);
         spot.setValue(1 ether);
-        _borrow(100 ether, 50 ether);
+        _borrow(100 ether, 100 ether);
         vm.prank(BORROWER);
         vm.expectRevert(CDPVault.UnsafeCollateralRatio.selector);
         vault.draw(1);
-        assertLe(vault.reserveValue(), 100e18);
+        assertLe(vault.reserveValue(), 200e18);
     }
 
-    /// @dev A reserve asset priced straight in USD converts at ETH/USD: a $1 token is half an
-    /// ETH-unit when ETH is $2. Without a fresh ETH/USD price the USD figure cannot be brought into
-    /// the vault's unit and counts for nothing, even though the asset's own feed is fine.
-    function test_aDollarAssetIsWorthItsEthValueToTheCeiling() public {
+    /// @dev A reserve asset priced straight in USD counts at its dollar value, with no conversion. The
+    /// ETH/USD leg prices only IMD, so a stale leg leaves the dollar asset's value standing.
+    function test_aDollarAssetCountsAtItsDollarValue() public {
         SixDecimalToken six = new SixDecimalToken();
         CheckFeed dollar = new CheckFeed(1 ether);
         _setReserve(IERC20(address(six)), dollar, 10_000);
         six.mint(address(treasury), 10_000_000); // $10
         assertEq(treasury.reserveValueUsd(), 10e18);
-        assertEq(vault.reserveValue(), 5e18);
-        assertEq(vault.earnLine(), 5e18);
+        assertEq(vault.reserveValue(), 10e18);
+        assertEq(vault.earnLine(), 10e18);
 
         ethUsd.set(2e8, block.timestamp - ETH_USD_MAX_AGE - 1);
         assertEq(treasury.reserveValueUsd(), 10e18, "the dollar feed itself is unaffected");
         assertEq(usd.ethUsdPrice(), 0, "no fresh ETH/USD price");
-        assertEq(vault.reserveValue(), 0, "so the USD figure cannot be converted and counts for nothing");
-        assertEq(vault.earnLine(), 0);
+        assertEq(vault.reserveValue(), 10e18, "needing no conversion, the dollar asset still counts");
+        // But the vault's own price is IMD/ETH times ETH/USD, so a stale leg halts every priced action,
+        // the work mint included (UsdPriceFeed, final sweep panel 4).
         vm.prank(KEEPER);
-        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
+        vm.expectRevert(CDPVault.StaleFeed.selector);
         vault.earn(1);
     }
 
@@ -596,25 +599,30 @@ contract ComputeBackingTest is Test {
     /// but two wei of it, which a second one-wei liquidation takes (the remainder is then swept),
     /// leaving about 9 COMP of principal and no collateral.
     function _drainBorrower() private returns (uint256 residualPrincipal) {
-        _borrow(200 ether, 100 ether);
+        _borrow(200 ether, 200 ether); // $400 against 200: CR 200
         vm.prank(BORROWER);
-        comp.transfer(KEEPER, 100 ether);
+        comp.transfer(KEEPER, 200 ether);
         vm.warp(block.timestamp + 30 days);
         ethUsd.set(2e8, block.timestamp);
-        price.setValue(0.5 ether);
+        price.setValue(0.5 ether); // $1 per IMD: $200 of collateral against 200 plus fees
         spot.setValue(0.5 ether);
-        uint256 repay = Math.mulDiv(200 ether, 0.5e18, 1.1e18);
+        (uint256 px,) = usd.latestValue();
+        // The largest coverable bite: all 200 IMD at the bonus. Whatever it leaves is taken by one-wei bites
+        // (a remainder too small for any later bite is swept into the last one).
+        uint256 repay = Math.mulDiv(200 ether, px, (100 + vault.CHOP_PERCENT()) * 1e16);
         vm.startPrank(KEEPER);
         vault.bark(BORROWER);
         vault.bite(BORROWER, repay);
-        (uint256 left,) = vault.positions(BORROWER);
-        assertEq(left, 2, "two wei, too small to sweep, large enough to seize for one wei of debt");
-        vault.bite(BORROWER, 1);
+        for (uint256 i; i < 4; ++i) {
+            (uint256 left,) = vault.positions(BORROWER);
+            if (left == 0) break;
+            vault.bite(BORROWER, 1);
+        }
         vm.stopPrank();
         (uint256 collateral,) = vault.positions(BORROWER);
         assertEq(collateral, 0, "drained");
         residualPrincipal = vault.totalDebt();
-        assertGt(residualPrincipal, 9e18);
+        assertGt(residualPrincipal, 30e18, "about 34 of principal outlives its collateral");
         assertGe(vault.totalBadDebt(), residualPrincipal, "recorded with its accrued fee");
     }
 
@@ -654,7 +662,7 @@ contract ComputeBackingTest is Test {
         vm.startPrank(other);
         imd.approve(address(vault), type(uint256).max);
         vault.lock(1_000 ether);
-        vault.draw(100 ether); // 500 IMD-worth at 0.5 against 100: CR 500
+        vault.draw(100 ether); // $1000 of IMD at $1 against 100: CR 1000
         vm.stopPrank();
 
         assertEq(vault.totalDebt(), residual + 100e18);
@@ -676,7 +684,7 @@ contract ComputeBackingTest is Test {
     function test_mintFromWorkIsRefusedWhileTheFeedsDisagreeOrSpotIsStale() public {
         _listImd(10_000);
         _fundTreasury(100 ether);
-        assertEq(vault.earnLine(), 100e18);
+        assertEq(vault.earnLine(), 200e18);
 
         spot.setValue(0.5 ether); // 50% off, against a 5% bound
         vm.prank(KEEPER);
@@ -723,15 +731,18 @@ contract ComputeBackingTest is Test {
     }
 
     function test_aListedSourceThatStopsAnsweringCountsForNothingInsteadOfReverting() public {
+        // Another asset: the vault's own collateral may be listed only against its own price feed
+        // (Treasury.validateReserveAsset, launch audit), so IMD cannot be given a breakable source.
+        SixDecimalToken six = new SixDecimalToken();
         BreakableFeed feed = new BreakableFeed(2 ether);
-        _setReserve(IERC20(address(imd)), feed, 10_000);
-        _fundTreasury(100 ether);
+        _setReserve(IERC20(address(six)), feed, 10_000);
+        six.mint(address(treasury), 100e6); // 100 tokens at $2
         _borrow(1_000 ether, 100 ether);
         assertEq(treasury.reserveValueUsd(), 200e18);
-        assertEq(vault.earnLine(), 100e18 + 25e18);
+        assertEq(vault.earnLine(), 200e18 + 25e18, "$200 of reserve + 25% of 100");
 
         feed.setBroken(true);
-        assertEq(treasury.reserveValueOf(IERC20(address(imd))), 0, "a source that reverts counts for nothing");
+        assertEq(treasury.reserveValueOf(IERC20(address(six))), 0, "a source that reverts counts for nothing");
         assertEq(treasury.reserveValueUsd(), 0);
         assertEq(vault.earnLine(), 25e18, "only the ratio term remains, and the view still answers");
         vm.prank(KEEPER);
@@ -789,53 +800,61 @@ contract ComputeBackingTest is Test {
         assertEq(at, 0);
     }
 
-    function test_aStaleUsdPriceValuesTheReserveAtNothingAndOnlyTightensTheCeiling() public {
+    function test_aStaleUsdPriceValuesTheReserveAtNothingAndHaltsTheWorkMint() public {
         _listImd(5_000);
         _fundTreasury(100 ether);
         _borrow(1_000 ether, 400 ether);
-        assertEq(vault.earnLine(), 50e18 + 100e18, "reserve 50 (100 IMD at half factor) + 25% of 400");
+        assertEq(vault.earnLine(), 100e18 + 100e18, "reserve $100 (100 IMD at $2, half factor) + 25% of 400");
 
         ethUsd.set(2e8, block.timestamp - ETH_USD_MAX_AGE - 1);
         assertEq(treasury.reserveValueUsd(), 0, "a stale price counts for nothing");
-        assertEq(vault.earnLine(), 100e18, "only the ratio term remains");
+        assertEq(vault.earnLine(), 100e18, "only the ratio term remains, and the view still answers");
+        // The vault's price is IMD/ETH times ETH/USD: with that leg stale, no amount can be minted from work
+        // (UsdPriceFeed, final sweep panel 4). It used to mint up to the ratio term.
         vm.prank(KEEPER);
-        vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        vault.earn(100e18 + 1);
+        vm.expectRevert(CDPVault.StaleFeed.selector);
+        vault.earn(1);
+
+        // A fresh leg restores both terms.
+        ethUsd.set(2e8, block.timestamp);
+        assertEq(vault.earnLine(), 200e18);
         vm.prank(KEEPER);
-        vault.earn(100e18);
+        vault.earn(200e18);
     }
 
     // --- the work ceiling -------------------------------------------------------------------------
 
     function test_workCeilingIsTheReservePlusARatioOfDebtAndMintFromWorkStopsAtIt() public {
         _listImd(5_000);
-        _fundTreasury(100 ether); // $200 at a 50% factor = $100 = 50 in the vault's unit
+        _fundTreasury(100 ether); // $200 at a 50% factor = $100, already the vault's unit
         _borrow(1_000 ether, 400 ether); // 25% of 400 = 100
-        assertEq(vault.earnLine(), 150e18);
+        assertEq(vault.earnLine(), 200e18);
         assertEq(vault.earnLine(), vault.reserveValue() + vault.backedDebt() * vault.earnMat() / 10_000);
-        assertEq(vault.reserveValue(), treasury.reserveValueUsd() * 1e18 / usd.ethUsdPrice());
+        assertEq(vault.reserveValue(), treasury.reserveValueUsd());
         assertEq(vault.backedDebt(), vault.totalDebt());
 
         vm.startPrank(KEEPER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
-        vault.earn(150e18 + 1);
+        vault.earn(200e18 + 1);
         vault.earn(100e18);
-        vault.earn(50e18); // exactly to the ceiling
-        assertEq(vault.totalEarned(), 150e18);
+        vault.earn(100e18); // exactly to the ceiling
+        assertEq(vault.totalEarned(), 200e18);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         vault.earn(1);
         vm.stopPrank();
-        assertEq(oracle.mintingRights(KEEPER), type(uint128).max - 150e18, "a refused mint consumes no rights");
+        assertEq(oracle.mintingRights(KEEPER), type(uint128).max - 200e18, "a refused mint consumes no rights");
 
-        // Both terms are live. Repayment shrinks the ratio term; a withdrawal from the reserve shrinks
-        // the other. What was already minted stays minted — the ceiling gates new supply only.
+        // Both terms are live. Repayment shrinks the ratio term; a lower factor shrinks the reserve term
+        // (the operator cannot withdraw the collateral asset from the Treasury, so the governed factor is the
+        // lever). What was already minted stays minted: the ceiling gates new supply only.
         vm.prank(BORROWER);
         vault.wipe(200 ether);
-        assertEq(vault.earnLine(), 100e18);
-        vm.prank(APPROVED_OPERATOR);
-        treasury.withdraw(IERC20(address(imd)), STRANGER, 50 ether);
-        assertEq(vault.earnLine(), 75e18);
-        assertEq(vault.totalEarned(), 150e18);
+        assertEq(vault.earnLine(), 100e18 + 50e18, "reserve $100 + 25% of the 200 left");
+        _listImd(2_500);
+        assertEq(vault.reserveValue(), 50e18, "100 IMD at $2 at a quarter");
+        assertEq(vault.earnLine(), vault.reserveValue() + vault.backedDebt() * vault.earnMat() / 10_000);
+        assertLt(vault.earnLine(), vault.totalEarned());
+        assertEq(vault.totalEarned(), 200e18);
         vm.prank(KEEPER);
         vm.expectRevert(CDPVault.WorkCeilingReached.selector);
         vault.earn(1);
