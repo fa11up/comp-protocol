@@ -6,18 +6,18 @@ pragma solidity 0.8.26;
 /// the Treasury's withdraw, withdrawNative and handOffLaunchFees, and nothing else. The vault creates a bound
 /// ImdUSD and its work oracle in its constructor, so there are no one-time links and no faucet (those were the
 /// testnet release's). Neither msg.sender nor tx.origin selects authority.
-address constant APPROVED_OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+address constant APPROVED_OPERATOR = 0xbeFd108085613662356aa26A2466Ad3426DA9C32;
 
 /// @dev Receives the protocol's share of liquidation bonuses, when a deployment turns that share on.
 /// Pinned in source for the same reason APPROVED_OPERATOR is: a manifest placeholder resolved to the
 /// platform's own address on launch 519, not to the requester.
 /// Read only by the plain CDPVault: ParameterizedVault creates a Treasury in its constructor and
 /// routes both the bonus share and the minted stability fees there instead (`feeRecipient()`).
-address constant FEE_RECIPIENT = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+address constant FEE_RECIPIENT = 0xbeFd108085613662356aa26A2466Ad3426DA9C32;
 
 /// @dev Chainlink ETH/USD (8 decimals), the USD leg of UsdPriceFeed; plan.py --write sets the mainnet aggregator. A price authority, so
 /// it is pinned in source like the attester and the feeds rather than supplied by a deployer.
-address constant CHAINLINK_ETH_USD = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
+address constant CHAINLINK_ETH_USD = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
 
 /// @dev Oldest ETH/USD answer UsdPriceFeed treats as fresh. Chainlink publishes mainnet ETH/USD at least
 /// hourly and whenever it moves 0.5%, so while the aggregator is healthy its answer is never more than
@@ -73,7 +73,7 @@ address constant ORACLE_ATTESTER = 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982;
 /// The feeds live on Sepolia TODAY still pin the old W0 account, because their bytecode was fixed at
 /// deployment. Only a redeployment picks this up. deploy/relay-attestation.js therefore still relays
 /// straight to those feeds, and must go through the relay once they are replaced.
-address constant ATTESTATION_RELAYER = 0xe36FFc2688Bf5974f2187AC9086492e372926D40;
+address constant ATTESTATION_RELAYER = 0x9AEb55c7A16C11B37DC96BD22a33906D1668e20B;
 
 // THE REPORTER FALLBACK IS GONE. `SwarmFeed.report()` let an allowlisted key set a feed's value
 // directly, bounded by maxDeviationBps only while the current value was fresh; past maxAge the bound
@@ -187,13 +187,13 @@ uint256 constant WAGE_WAD = 0;
 // chain and this line names it. Deliberately not the zero address: zero is indistinguishable from an
 // unset field, and a nonzero placeholder with no code fails exactly as loudly while being something
 // a test can etch over.
-address constant WORK_ORACLE_FACTORY = 0x0000000000000000000000000000000000000f05;
+address constant WORK_ORACLE_FACTORY = 0x851B2972b3151fDd969d3128b8357e0Af5476f7E;
 
 /// @dev The contract every ParameterizedVault creates its Treasury through, for the same EIP-3860
 /// reason as WORK_ORACLE_FACTORY. Holds nothing and has no authority: the Treasury it creates serves
 /// its caller. A deployment prerequisite with no dependencies, so its CREATE2 address is computable
 /// up front. NOT YET DEPLOYED: a placeholder; a vault cannot be constructed until it has code.
-address constant TREASURY_FACTORY = 0x0000000000000000000000000000000000000f09;
+address constant TREASURY_FACTORY = 0x5aF5f12285045Aed0D3F4Acd23153D45aBdb1053;
 address constant WORK_ORACLE_SENTINEL = 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
 
 // How long an attested work tally stays usable. A day, matching the daily cadence of the receipts the
@@ -216,7 +216,7 @@ uint256 constant WORK_ORACLE_MAX_AGE = 1 days;
 // built against an Intake with no code, and fundOracle refuses to send to an asker with no code, so a
 // placeholder fails loudly instead of streaming IMD into an empty address.
 address constant INTAKE = 0x1397434cd35e8a9C8aC312A61D3A285EB31dea56;
-address constant ORACLE_ASKER = 0x0000000000000000000000000000000000000f07;
+address constant ORACLE_ASKER = 0x9061252d5DcC7fE9cc49D45875Cf36a656E5eD8F;
 // The Intake's action id: the action, an at sign and its version, right-padded to 32 bytes.
 bytes32 constant ORACLE_ACTION = "oracle.request@oracle-1";
 // The plane's mainnet ProjectFactory: the only contract the Treasury will ever ask to move a launch's
