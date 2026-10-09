@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {APPROVED_OPERATOR} from "../src/DeploymentConfig.sol";
 import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -125,7 +126,7 @@ contract AdversarialTest is LegacyWorkBacking {
             address(collateral), address(comp), address(oracle), address(priceFeed), address(nhiFeed), address(spotFeed)
         );
         assertEq(address(vault), predictedVault);
-        vm.startPrank(0x5167D014a056E43883e1BBEa5530c3c0dC993281);
+        vm.startPrank(APPROVED_OPERATOR);
         comp.setVault(address(vault));
         vm.stopPrank();
         vm.prank(alice);

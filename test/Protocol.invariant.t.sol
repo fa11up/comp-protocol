@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {APPROVED_OPERATOR} from "../src/DeploymentConfig.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {ImdUSD} from "../src/ImdUSD.sol";
@@ -12,7 +13,7 @@ import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
 contract ProtocolHandler is Test {
-    address private constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+    address private constant OPERATOR = APPROVED_OPERATOR;
     uint256 public constant INITIAL_BALANCE = 1e30;
     uint256 public constant INITIAL_RIGHTS = 1e30;
     MockIMD public imd;
