@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {APPROVED_OPERATOR} from "../src/DeploymentConfig.sol";
 import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {ImdUSD} from "../src/ImdUSD.sol";
@@ -12,7 +13,7 @@ import {MirroredSwarmFeed} from "./helpers/MirroredSwarmFeed.sol";
 import {TestSwarmFeed} from "./helpers/TestSwarmFeed.sol";
 
 abstract contract ProtocolFixture is LegacyWorkBacking {
-    address internal constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+    address internal constant OPERATOR = APPROVED_OPERATOR;
     MockIMD internal imd;
     ImdUSD internal comp;
     MockWorkOracle internal oracle;

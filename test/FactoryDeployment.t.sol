@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {APPROVED_OPERATOR} from "../src/DeploymentConfig.sol";
 import {LegacyWorkBacking} from "./helpers/LegacyWorkBacking.sol";
 import {MockIMD} from "../src/MockIMD.sol";
 import {ImdUSD} from "../src/ImdUSD.sol";
@@ -33,7 +34,7 @@ contract ApplicationConstructionFactory {
 }
 
 contract FactoryDeploymentTest is LegacyWorkBacking {
-    address private constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+    address private constant OPERATOR = APPROVED_OPERATOR;
     address private constant RELAYER = address(0x1001);
     address private constant ORIGIN = address(0x1002);
     address private constant BORROWER = address(0x1003);
@@ -171,7 +172,7 @@ contract FactoryDeploymentTest is LegacyWorkBacking {
 
 /// @dev Exercises the launch's zero/zero constructor path independently of deferred-token fixtures.
 contract SelfContainedFactoryDeploymentTest is LegacyWorkBacking {
-    address private constant OPERATOR = 0x5167D014a056E43883e1BBEa5530c3c0dC993281;
+    address private constant OPERATOR = APPROVED_OPERATOR;
     address private constant RELAYER = address(0x2001);
     address private constant ORIGIN = address(0x2002);
     address private constant BORROWER = address(0x2003);
