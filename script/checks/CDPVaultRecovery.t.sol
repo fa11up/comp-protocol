@@ -31,6 +31,10 @@ contract CDPVaultRecoveryTest is Test {
     address private constant MARKER = address(0xCA11);
     uint256 private markedAt;
     uint256 private grace;
+    /// The recovered price. The stability fee (DUTY_BPS) accrues through the grace period, so at exactly 1 the
+    /// 170 of collateral sits a hair under mat against 100 of debt plus fee; 1.01 leaves the injected fault as
+    /// the only thing that can stop a recovery.
+    uint256 private constant RECOVERED = 1.01 ether;
 
     function setUp() public {
         vm.warp(2 days);
@@ -40,8 +44,16 @@ contract CDPVaultRecoveryTest is Test {
         nhi = new IncrementFeed(0.85 ether);
         vault = new CDPVault(address(imd), address(0), address(0), address(primary), address(nhi), address(spot));
         comp = vault.stablecoin();
-        vm.prank(APPROVED_OPERATOR);
+        vm.startPrank(APPROVED_OPERATOR);
         imd.mint(ALICE, 171 ether);
+        imd.mint(BOB, 20 ether);
+        vm.stopPrank();
+        // BOB borrows a little of his own, so he can lend ALICE the stability fee her debt accrues.
+        vm.startPrank(BOB);
+        imd.approve(address(vault), type(uint256).max);
+        vault.lock(20 ether);
+        vault.draw(1 ether);
+        vm.stopPrank();
         vm.startPrank(ALICE);
         imd.approve(address(vault), type(uint256).max);
         vault.lock(170 ether);
@@ -88,33 +100,36 @@ contract CDPVaultRecoveryTest is Test {
         spot.setStale(true);
         nhi.setStale(true);
         vm.prank(BOB);
-        comp.transfer(ALICE, 10 ether);
+        comp.transfer(ALICE, 11 ether);
+        uint256 owed = vault.debtOf(ALICE); // principal plus the fee accrued through the grace period
+        assertGt(owed, 100 ether);
         vm.startPrank(ALICE);
-        vault.wipe(100 ether);
+        vault.wipe(owed);
         _assertCleared();
         vault.free(170 ether);
         vm.stopPrank();
         assertEq(vault.debtOf(ALICE), 0);
         assertEq(imd.balanceOf(ALICE), 171 ether);
+        assertEq(comp.balanceOf(ALICE), 101 ether - owed, "90 kept + 11 from BOB, less everything owed");
     }
 
     function test_freshAgreedRecoveryClearsOnAllRoutes() public {
-        _checkValidRecovery(1 ether);
+        _checkValidRecovery(RECOVERED);
     }
 
     function test_recoveryAcceptsExactUpperPrimaryRelativeBoundary() public {
-        _checkValidRecovery(1 ether + 1 ether * SKEW_BPS / 10_000);
+        _checkValidRecovery(RECOVERED + RECOVERED * SKEW_BPS / 10_000);
     }
 
     function test_recoveryAcceptsExactLowerPrimaryRelativeBoundary() public {
-        _checkValidRecovery(1 ether - 1 ether * SKEW_BPS / 10_000);
+        _checkValidRecovery(RECOVERED - RECOVERED * SKEW_BPS / 10_000);
     }
 
     function _checkInvalidRecovery(InvalidObservation observation) private {
         for (uint256 route; route < 3; ++route) {
             uint256 snapshot = vm.snapshotState();
-            primary.set(1 ether);
-            spot.set(1 ether);
+            primary.set(RECOVERED);
+            spot.set(RECOVERED);
             bytes4 expectedError = CDPVault.StaleFeed.selector;
             if (observation == InvalidObservation.Divergence) {
                 spot.set(0.9 ether);
@@ -138,10 +153,11 @@ contract CDPVaultRecoveryTest is Test {
                     address(vault).call(abi.encodeCall(vault.heel, (ALICE)));
                 if (!accepted) assertEq(reason, abi.encodeWithSelector(expectedError));
             } else {
+                uint256 owedBefore = vault.debtOf(ALICE); // principal plus the fee accrued so far
                 _recover(route);
-                (uint256 collateral, uint256 debt) = vault.positions(ALICE);
+                (uint256 collateral,) = vault.positions(ALICE);
                 assertEq(collateral, 170 ether + (route == 1 ? 1 : 0));
-                assertEq(debt, 100 ether - (route == 2 ? 1 : 0));
+                assertEq(vault.debtOf(ALICE), owedBefore - (route == 2 ? 1 : 0));
             }
             _assertOriginalMark();
             primary.set(0.9 ether);
@@ -152,9 +168,10 @@ contract CDPVaultRecoveryTest is Test {
             vm.prank(BOB);
             vault.bark(ALICE);
             _assertOriginalMark();
+            uint256 owed = vault.debtOf(ALICE); // principal plus the fee accrued through the grace period
             vm.prank(BOB);
             vault.bite(ALICE, 10 ether);
-            assertEq(vault.debtOf(ALICE), 90 ether - (route == 2 ? 1 : 0));
+            assertEq(vault.debtOf(ALICE), owed - 10 ether);
             assertGt(imd.balanceOf(MARKER), 0, "original marker receives its bonus share");
             assertTrue(vm.revertToStateAndDelete(snapshot));
         }
@@ -163,7 +180,7 @@ contract CDPVaultRecoveryTest is Test {
     function _checkValidRecovery(uint256 spotPrice) private {
         for (uint256 route; route < 3; ++route) {
             uint256 snapshot = vm.snapshotState();
-            primary.set(1 ether);
+            primary.set(RECOVERED);
             spot.set(spotPrice);
             _recover(route);
             _assertCleared();
