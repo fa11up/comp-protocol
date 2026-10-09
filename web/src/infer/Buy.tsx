@@ -22,6 +22,22 @@ export function Buy() {
   const m = useInferMarket();
   const w = useWallet();
   const sheet = useRef<HTMLDialogElement>(null);
+  const go = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const close = () => {
+    sheet.current?.close();
+    go.current?.focus();
+  };
+  // Not modal, so the masthead (theme, background, sound) stays in use while the sheet is open; what a
+  // modal gave for free is done here: Escape closes it, and so does a click on the scrim around it.
+  useEffect(() => {
+    if (!open) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !w.choosing) close();
+    };
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, [open, w.choosing]);
   const [framed, setFramed] = useState(false);
   const [tick, setTick] = useState(0);
   const refresh = () => setTick((t) => t + 1);
@@ -79,7 +95,12 @@ export function Buy() {
             type="button"
             className="infer-buy-go"
             aria-haspopup="dialog"
-            onClick={() => sheet.current?.showModal()}
+            aria-expanded={open}
+            ref={go}
+            onClick={() => {
+              sheet.current?.show();
+              setOpen(true);
+            }}
           >
             Buy $INFER
           </button>
@@ -87,13 +108,14 @@ export function Buy() {
       </main>
       <footer className="infer-buy-foot">infer.imdusd.com</footer>
 
-      {/* A modal dialog: Escape and the close button dismiss it, focus stays inside while it is open
-          and returns to the button after, and a click on the backdrop closes it too. */}
+      {/* A dialog over a scrim that dims the page but not the masthead. Escape or a click on the scrim
+          closes it and focus returns to the button. */}
+      {open && <div className="infer-buy-scrim" aria-hidden="true" onClick={close} />}
       <dialog
         ref={sheet}
         className="infer-buy-sheet"
         aria-label="Buy INFER"
-        onClick={(e) => e.target === e.currentTarget && sheet.current?.close()}
+        onClose={() => setOpen(false)}
       >
         {/* Connected, the sheet shows no address and no disconnect; the one thing it adds is, on a
             phone paired by WalletConnect, the way back into the wallet app to approve each trade. */}

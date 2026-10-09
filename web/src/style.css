@@ -3900,8 +3900,23 @@ html.app-terminal body:has(> .vibe-canvas:not([hidden])) :is(input, textarea) {
   color: var(--text);
   overflow: auto;
 }
-.infer-buy-sheet::backdrop {
+/* Shown without a modal (Buy.tsx), so it is placed here rather than in the top layer: over the scrim,
+   which sits over the page and under the masthead, so the masthead's buttons stay in reach. */
+.infer-buy-sheet[open] {
+  position: fixed;
+  inset: 0;
+  height: fit-content;
+  z-index: 3;
+}
+.infer-buy-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
   background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+.infer-buy-top {
+  position: relative;
+  z-index: 4;
 }
 /* The sheet is see-through, so while it is open the page's own words step aside (they are inert under
    a modal anyway) and only the engraving shows through it. */
