@@ -12,9 +12,11 @@
 // function of the wall clock alone (seeded, never Math.random), so moving between pages, or two people
 // in a room, stay in time. The same schedule renders offline (renderScore), which is how it is checked.
 //
-// Off by default. The choice is remembered, but a browser lets a page make sound only after the
-// visitor touches it, so a remembered "on" starts at the first click or key. Silent in a hidden tab.
-import { useSyncExternalStore } from "react";
+// Off by default. The choice is remembered, and moving to another page carries the piece on: it starts at
+// once, in time with the last page (every note is placed by the wall clock), as the background does. A
+// browser that holds sound until the visitor touches the page (Safari, a first visit) starts it at the
+// first click or key instead. Silent in a hidden tab.
+import { useEffect, useSyncExternalStore } from "react";
 import { vibeStore, type Suite } from "./vibe";
 
 /** What the bed under the notes sounds like. Each scene has its own, to match the picture. */
@@ -225,8 +227,14 @@ function pageWeather(): Weather | undefined {
   return WEATHERS.find((w) => w === asked);
 }
 
-type State = "off" | "armed" | "on"; // armed: remembered on, waiting for the first touch
-type Player = { state: State; toggle: () => void; subscribe: (fn: () => void) => () => void };
+type State = "off" | "armed" | "on"; // armed: remembered on, waiting for the browser to allow sound
+type Player = {
+  state: State;
+  toggle: () => void;
+  /** Called once the page is up: a remembered "on" picks the piece up where the last page left it. */
+  carry: () => void;
+  subscribe: (fn: () => void) => () => void;
+};
 const players = new Map<string, Player>();
 
 function player(score: Score): Player {
@@ -257,7 +265,9 @@ function player(score: Score): Player {
   const choice = vibeStore(score.vibe);
 
   const tick = () => {
-    if (!ac || !live || document.hidden) return;
+    // Nothing is scheduled while the context is held: its clock is stopped, so the notes would all land
+    // together when it starts.
+    if (!ac || !live || document.hidden || ac.state !== "running") return;
     const horizon = now() + 2;
     if (until < now()) until = now();
     live.schedule(until, horizon);
@@ -268,10 +278,33 @@ function player(score: Score): Player {
     live.master.gain.cancelScheduledValues(ac.currentTime);
     live.master.gain.setTargetAtTime(to, ac.currentTime, tau);
   };
-  const start = () => {
+  const start = (tau = 1.2) => {
     if (!ac) {
       ac = new AudioContext();
       const ctx = ac;
+      ctx.addEventListener("statechange", () => {
+        if (ctx.state !== "running") return;
+        if (state === "armed") {
+          // The browser let this page play without a touch (Chrome does after a click on the same site).
+          state = "on";
+          disarm();
+          emit();
+        }
+        if (state === "on") {
+          until = now();
+          tick();
+        }
+      });
+      // Leaving for another page: a quick fade rather than a cut. The next page starts in time with this
+      // one, since every note is placed by the wall clock.
+      window.addEventListener("pagehide", () => fade(0, 0.03));
+      window.addEventListener("pageshow", (e) => {
+        if (e.persisted && state === "on") {
+          void ctx.resume();
+          until = now();
+          fade(1, 0.3);
+        }
+      });
       // Context time 0 is "now" on the wall clock, corrected for however far the context has run.
       live = build(ctx, score, choice.get, night, () => now() - ctx.currentTime, pageWeather());
       choice.subscribe(() => live?.revoice(ctx.currentTime));
@@ -297,7 +330,7 @@ function player(score: Score): Player {
     tick();
     clearInterval(timer);
     timer = window.setInterval(tick, 1000);
-    fade(1, 1.2);
+    fade(1, tau);
   };
   const stop = () => {
     clearInterval(timer);
@@ -313,9 +346,15 @@ function player(score: Score): Player {
     toggle: () => {
       state = state === "on" ? "off" : "on";
       remember(state === "on");
+      disarm();
       if (state === "on") start();
       else stop();
       emit();
+    },
+    carry: () => {
+      // Moving between pages with the sound on: start straight away with a short fade, so the music
+      // carries on as the background does. If the browser holds it until a touch, the first touch starts it.
+      if (state === "armed" && !ac) start(0.15);
     },
     subscribe: (fn) => {
       listeners.add(fn);
@@ -324,21 +363,21 @@ function player(score: Score): Player {
       };
     },
   };
+  // Remembered on but not yet allowed to play: the first touch anywhere starts it. A touch on the button
+  // itself is handled by toggle (armed counts as off there, so the click turns it on rather than off).
+  const wake = (e: Event) => {
+    if ((e.target as Element | null)?.closest?.(".score-toggle")) return;
+    disarm();
+    if (state !== "armed") return;
+    state = "on";
+    start();
+    emit();
+  };
+  function disarm() {
+    window.removeEventListener("pointerdown", wake, true);
+    window.removeEventListener("keydown", wake, true);
+  }
   if (state === "armed") {
-    // The first touch anywhere starts it. A touch on the button itself is handled by toggle (armed
-    // counts as off there, so the click turns it on rather than off).
-    const wake = (e: Event) => {
-      if ((e.target as Element | null)?.closest?.(".score-toggle")) return;
-      off();
-      if (state !== "armed") return;
-      state = "on";
-      start();
-      emit();
-    };
-    const off = () => {
-      window.removeEventListener("pointerdown", wake, true);
-      window.removeEventListener("keydown", wake, true);
-    };
     window.addEventListener("pointerdown", wake, true);
     window.addEventListener("keydown", wake, true);
   }
@@ -349,6 +388,7 @@ function player(score: Score): Player {
 /** The header button: a speaker, sounding when on. */
 export function Sound({ score }: { score: Score }) {
   const p = player(score);
+  useEffect(() => p.carry(), [p]);
   const state = useSyncExternalStore(p.subscribe, () => p.state);
   const on = state === "on";
   const label = on ? "Sound on. Turn sound off." : "Sound off. Turn sound on.";
