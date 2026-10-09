@@ -27,15 +27,30 @@ import {
   type Notice,
 } from "./ui";
 
-const ZERO_ROOT = `0x${"0".repeat(64)}`;
+/** One opened season as the vault reports it (seasons are opened by the governor, not on a clock). */
 type SeasonView = {
   index: number;
+  start: bigint;
   end: bigint;
   hasRoot: boolean;
+  /** Last moment to claim (register); 0 before the season's list is set. */
+  deadline: bigint;
+  expired: boolean;
   amount: bigint;
   paid: bigint;
   releasable: bigint;
 };
+
+const day = (t: bigint) => new Date(Number(t) * 1000).toISOString().slice(0, 10);
+
+/** A season's line, from the chain's clock: announced, running, awaiting its list, claimable, paying, or closed. */
+function seasonState(s: SeasonView, now: bigint): string {
+  if (now < s.start) return `opens ${day(s.start)}`;
+  if (now < s.end) return `running until ${day(s.end)}`;
+  if (!s.hasRoot) return s.expired ? "closed" : "list pending";
+  if (s.amount !== 0n) return `${tokens(s.paid)} of ${tokens(s.amount)} released`;
+  return s.expired || now >= s.deadline ? "closed" : `claim by ${day(s.deadline)}`;
+}
 
 export function Claim() {
   const w = useWallet();
@@ -71,29 +86,19 @@ export function Claim() {
     let stale = false;
     (async () => {
       const { timestamp } = await client.getBlock({ blockTag: "latest" });
-      const count = Number(
-        await client.readContract({
-          address: vault,
-          abi: SEASON_VAULT,
-          functionName: "SEASONS",
-        }),
+      const [count, length, registration] = await Promise.all(
+        (["opened", "SEASON", "REGISTRATION"] as const).map((functionName) =>
+          client.readContract({ address: vault, abi: SEASON_VAULT, functionName }),
+        ),
       );
       const views: SeasonView[] = [];
-      for (let s = 0; s < count; s++) {
-        const [end, season] = await Promise.all([
-          client.readContract({
-            address: vault,
-            abi: SEASON_VAULT,
-            functionName: "endOf",
-            args: [BigInt(s)],
-          }),
-          client.readContract({
-            address: vault,
-            abi: SEASON_VAULT,
-            functionName: "season",
-            args: [BigInt(s)],
-          }),
-        ]);
+      for (let s = 0; s < Number(count); s++) {
+        const season = await client.readContract({
+          address: vault,
+          abi: SEASON_VAULT,
+          functionName: "season",
+          args: [BigInt(s)],
+        });
         let amount = 0n,
           paid = 0n,
           releasable = 0n;
@@ -113,10 +118,14 @@ export function Claim() {
             }),
           ]);
         }
+        const hasRoot = season.rootSetAt !== 0n;
         views.push({
           index: s,
-          end,
-          hasRoot: season.root !== ZERO_ROOT,
+          start: season.start,
+          end: season.start + length,
+          hasRoot,
+          deadline: hasRoot ? season.rootSetAt + registration : 0n,
+          expired: season.expired,
           amount,
           paid,
           releasable,
@@ -260,7 +269,8 @@ export function Claim() {
         <h1>Claim</h1>
         <p className="infer-lede">
           What INFER is yours, and the one button that gives it. Season points
-          vest over the season after the claim; redemptions pay at once.
+          vest over 13 weeks from when the season's list is published;
+          redemptions pay at once.
         </p>
 
         <section
@@ -269,11 +279,13 @@ export function Claim() {
         >
           <h2 id="seasons-h">Season points</h2>
           {!LIVE || !c.seasonVault ? (
-            <p className="infer-fine">Season 1 opens with the token.</p>
+            <p className="infer-fine">Seasons are announced here.</p>
           ) : !toAddress ? (
             <p className="infer-fine">Connect a wallet to see your seasons.</p>
           ) : seasons === null ? (
             <p className="infer-fine">Reading…</p>
+          ) : seasons.length === 0 ? (
+            <p className="infer-fine">No season has been announced yet.</p>
           ) : (
             <dl className="infer-lines">
               {seasons.map((s) => (
@@ -285,13 +297,7 @@ export function Claim() {
                       <small>
                         {" "}
                         ·{" "}
-                        {s.hasRoot
-                          ? s.amount === 0n
-                            ? "claimable"
-                            : `${tokens(s.paid)} of ${tokens(s.amount)} released`
-                          : now < s.end
-                            ? "running"
-                            : "root pending"}
+                        {seasonState(s, now)}
                       </small>
                     </>
                   }
@@ -300,8 +306,8 @@ export function Claim() {
                       className="infer-small"
                       disabled={
                         !s.hasRoot ||
-                        now < s.end ||
                         tx.status === "pending" ||
+                        (s.amount === 0n && (s.expired || now >= s.deadline)) ||
                         (s.amount !== 0n && s.releasable === 0n)
                       }
                       onClick={() => claimSeason(s)}

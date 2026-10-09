@@ -26,13 +26,12 @@ export const ERC20 = parseAbi([
 ]);
 
 export const SEASON_VAULT = parseAbi([
-  "function start() view returns (uint64)",
   "function SEASON() view returns (uint256)",
   "function SEASONS() view returns (uint256)",
-  "function potOf(uint256 s) view returns (uint256)",
+  "function REGISTRATION() view returns (uint256)",
+  "function opened() view returns (uint256)",
   "function endOf(uint256 s) view returns (uint256)",
-  "function deadlineOf(uint256 s) view returns (uint256)",
-  "function season(uint256 s) view returns ((bytes32 root, uint256 total, uint256 rolledIn, uint256 registered, bool rolled, bytes32 pendingRoot, uint256 pendingTotal, uint64 pendingEta))",
+  "function season(uint256 s) view returns ((uint64 start, uint64 rootSetAt, bool expired, uint256 pot, bytes32 formula, bytes32 root, uint256 total, uint256 registered, uint256 paid, bytes32 pendingRoot, uint256 pendingTotal, uint64 pendingEta))",
   "function entitlements(uint256 s, address account) view returns (uint256 amount, uint256 paid)",
   "function releasable(uint256 s, address account) view returns (uint256)",
   "function claim(uint256 s, address account, uint256 amount, bytes32[] proof) returns (uint256)",

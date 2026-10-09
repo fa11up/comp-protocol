@@ -62,6 +62,10 @@ const launch = JSON.parse(
 );
 if (launch.chainId !== 1)
   fail(`launch.json names chain ${launch.chainId}; the page is mainnet only`);
+// Season pots are not published (decided 2026-10-09): the whole config is bundled into the page, so a figure in
+// it ships to every visitor whatever the page shows. Refuse one at the source.
+for (const key of ["amounts", "decay", "pots"])
+  if (launch.seasons && key in launch.seasons) fail(`launch.json seasons.${key}: season figures are not published`);
 const headers = await readFile(`${dir}/_headers`, "utf8");
 const csp = headers.match(/Content-Security-Policy: (.*)/)?.[1] ?? "";
 if (!/'sha256-[A-Za-z0-9+/=]+'/.test(csp))

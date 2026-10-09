@@ -1,17 +1,10 @@
 // /tokenomics: the supply, where it goes, how each bucket pays, and what INFER is.
 import { LAUNCH, bucketAmount, compact, pct, whole } from "./config";
-import { Fig, Line, SITE, Shell, WHITEPAPER, useWallet } from "./ui";
+import { Fig, Line, SITE, Shell, Undisclosed, WHITEPAPER, useWallet } from "./ui";
 
 export function Tokenomics() {
   const w = useWallet();
-  const seasonsTotal = LAUNCH.seasons.amounts.every((a) => a !== null)
-    ? LAUNCH.seasons.amounts.reduce((s, a) => s + BigInt(a!), 0n)
-    : null;
   const largest = Math.max(...LAUNCH.allocation.map((a) => a.bps ?? 0), 1);
-  const largestSeason = LAUNCH.seasons.amounts.reduce(
-    (m, a) => (a && BigInt(a) > m ? BigInt(a) : m),
-    1n,
-  );
   const share = (key: string) =>
     LAUNCH.allocation.find((a) => a.key === key)?.bps ?? null;
   return (
@@ -111,17 +104,15 @@ export function Tokenomics() {
             <section aria-labelledby="seasons-h">
               <h2 id="seasons-h">Seasons</h2>
               <p>
-                {LAUNCH.seasons.count} seasons of {LAUNCH.seasons.weeks} weeks,
-                front-loaded: each pot is about{" "}
-                <Fig
-                  v={LAUNCH.seasons.decay ? `${LAUNCH.seasons.decay}×` : null}
-                />{" "}
-                the one before, because the earliest depositors take the most
-                risk. {LAUNCH.seasons.pointsRule} A season's root is set only
-                after a swarm panel attests the published points file; a claim
-                vests over the following season, so staying keeps earning while
-                last season's claim pays out. Unclaimed INFER rolls into the
-                next season; after the last, to the Treasury.
+                Up to {LAUNCH.seasons.count} seasons of {LAUNCH.seasons.weeks}{" "}
+                weeks. Each is announced at least 48 hours ahead with its pot
+                and its rules, and neither can change once announced; there
+                may be pauses between seasons. {LAUNCH.seasons.pointsRule}{" "}
+                After a season, its rules are published and a swarm panel
+                checks the points file against them before the season's root
+                is set. A claim then vests over {LAUNCH.seasons.vestWeeks}{" "}
+                weeks. What a season does not pay returns to the program; when
+                the program ends, to the Treasury.
               </p>
               <table className="infer-table infer-seasons">
                 <thead>
@@ -131,40 +122,17 @@ export function Tokenomics() {
                   </tr>
                 </thead>
                 <tbody>
-                  {LAUNCH.seasons.amounts.map((amt, i) => (
+                  {Array.from({ length: LAUNCH.seasons.count }, (_, i) => (
                     <tr key={i}>
                       <td data-label="Season">{i + 1}</td>
-                      <td data-label="INFER" className="infer-barcell">
-                        <span className="infer-bar" aria-hidden="true">
-                          <span
-                            style={{
-                              width: `${amt ? Number((BigInt(amt) * 1000n) / largestSeason) / 10 : 0}%`,
-                            }}
-                          />
-                        </span>
-                        <span className="infer-barvalue">
-                          <Fig v={compact(amt)} />
-                        </span>
+                      <td data-label="INFER">
+                        <Undisclosed seed={`season-${i}`} />
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               <dl className="infer-lines">
-                <Line
-                  k="All seasons"
-                  v={
-                    <Fig
-                      v={
-                        seasonsTotal === null
-                          ? null
-                          : compact(seasonsTotal.toString())
-                      }
-                      unit="INFER"
-                    />
-                  }
-                  strong
-                />
                 <Line
                   k="Share of supply"
                   v={<Fig v={pct(share("seasons"))} />}

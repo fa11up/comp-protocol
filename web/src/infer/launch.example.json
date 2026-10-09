@@ -57,9 +57,7 @@
   "seasons": {
     "count": 5,
     "weeks": 13,
-    "amounts": [null, null, null, null, null],
     "vestWeeks": 13,
-    "decay": null,
     "pointsRule": "1 point = 1 imdUSD held for 1 day. Liquidity in the imdUSD pool earns more; liquidators and oracle payers earn credit; stakers earn a multiplier."
   },
   "redemptions": [

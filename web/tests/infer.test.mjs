@@ -60,26 +60,8 @@ test(
     const bucket = (key) =>
       (supply * BigInt(launch.allocation.find((a) => a.key === key).bps)) /
       10_000n;
-    const seasons = launch.seasons.amounts.reduce((s, a) => s + BigInt(a), 0n);
-    assert.equal(
-      seasons,
-      bucket("seasons"),
-      "the five seasons add up to the seasons bucket",
-    );
-    assert.equal(launch.seasons.amounts.length, launch.seasons.count);
-    for (let i = 1; i < launch.seasons.amounts.length - 1; i++) {
-      // Each season is `decay` times the one before (to within rounding to 500 INFER); the last season is
-      // whatever makes the bucket exact, so it is checked by the sum above rather than by the ratio.
-      const expected =
-        (BigInt(launch.seasons.amounts[i - 1]) *
-          BigInt(Math.round(Number(launch.seasons.decay) * 1000))) /
-        1000n;
-      const diff = expected - BigInt(launch.seasons.amounts[i]);
-      assert.ok(
-        diff < 500n && diff > -500n,
-        `season ${i + 1} decays by ${launch.seasons.decay}`,
-      );
-    }
+    // Season pots are not in the config at all (set when each season is opened, not published).
+    for (const k of ["amounts", "decay"]) assert.ok(!(k in launch.seasons), `seasons.${k} must not be in launch.json`);
     for (const r of launch.redemptions)
       assert.equal(
         BigInt(r.allocation),

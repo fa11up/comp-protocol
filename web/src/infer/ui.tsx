@@ -79,6 +79,26 @@ export function Fig({
   );
 }
 
+/**
+ * A figure deliberately not published: random braille in its place, the same style as the redacted docs. The
+ * pattern is seeded by `seed` so it is stable from render to render, and its length is fixed, never the real
+ * figure's, which is never given to the page at all.
+ */
+export function Undisclosed({ seed, length = 5 }: { seed: string; length?: number }) {
+  let h = 2166136261;
+  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    h = Math.imul(h ^ (h >>> 15), 2246822507) ^ i;
+    out += String.fromCodePoint(0x2801 + ((h >>> 0) % 255));
+  }
+  return (
+    <span className="redacted" role="img" aria-label="Undisclosed">
+      <span aria-hidden="true">{out}</span>
+    </span>
+  );
+}
+
 /** Whole tokens from wei, grouped, at most `places` decimals; "…" while loading. */
 export const tokens = (
   v: bigint | undefined | null,

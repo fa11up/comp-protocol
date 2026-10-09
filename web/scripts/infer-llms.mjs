@@ -13,6 +13,8 @@ const whole = (wei) => {
   const n = BigInt(wei) / 10n ** 18n;
   return `${n.toLocaleString("en-US")}`;
 };
+/** A figure already in whole tokens, possibly with decimals (openingMarketCapImd): rounded, grouped. */
+const plain = (v) => (v === null || v === undefined ? dash : Math.round(Number(v)).toLocaleString("en-US"));
 const addr = (a) => (a ? `\`${a}\`` : "published at launch");
 
 const poolId = (key) =>
@@ -42,7 +44,6 @@ export function inferLlms(L) {
   const pair = L.pair;
   const seasons = L.seasons;
   const founder = L.founder;
-  const amounts = seasons.amounts.map((a, i) => `season ${i + 1}: ${a === null ? dash : `${whole(a)} INFER`}`).join("; ");
 
   return `# INFER
 
@@ -67,7 +68,7 @@ Ethereum mainnet, chain id ${L.chainId}. Every INFER bucket is a contract whose 
 | Contract | Address | What it does |
 |---|---|---|
 | INFER | ${addr(c.infer)} | The ERC-20 token. Fixed supply, no owner, no mint, no tax. |
-| SeasonVault | ${addr(c.seasonVault)} | Holds the points-season pots; pays claims against each season's Merkle root, vesting over the following season. |
+| SeasonVault | ${addr(c.seasonVault)} | Holds the points-season allocation; pays claims against each season's Merkle root, vesting over 13 weeks from the root. |
 | LegacyRedeemer | ${addr(c.legacyRedeemer)} | Burns MIYA or MXXN for INFER at fixed rates, for one year from launch. |
 | sINFER (StakedInfer) | ${addr(c.stakedInfer)} | The staking vault: deposit INFER for sINFER shares, redeem shares for INFER. |
 | Dripper | ${addr(c.dripper)} | Releases the INFER the Treasury buys into sINFER over about a week. |
@@ -87,13 +88,13 @@ Launch pool key: ${
 ## Tokenomics
 
 - Supply: ${L.supply === null ? dash : `${whole(L.supply)} INFER`}, fixed.
-- The launch: a custom-token launch on Ethereum mainnet by the IdentityMD swarm, which writes, reviews and deploys the contracts. The factory keeps a fixed share for the agents that build it, seeds the ${pair}/INFER pool on one side from the opening price upward and holds that liquidity for good, and sends the rest to the splitter that pays the buckets. The opening market cap (${L.openingMarketCapImd === null ? dash : `${whole(L.openingMarketCapImd)} ${pair}`}) is therefore also the pool's floor.
+- The launch: a custom-token launch on Ethereum mainnet by the IdentityMD swarm, which writes, reviews and deploys the contracts. The factory keeps a fixed share for the agents that build it, seeds the ${pair}/INFER pool on one side from the opening price upward and holds that liquidity for good, and sends the rest to the splitter that pays the buckets. The opening market cap (${L.openingMarketCapImd === null ? dash : `${plain(L.openingMarketCapImd)} ${pair}`}) is therefore also the pool's floor.
 
 | Bucket | Share of supply | Notes |
 |---|---|---|
 ${L.allocation.map((a) => `| ${a.label} | ${pct(a.bps)} | ${a.note} |`).join("\n")}
 
-- Seasons: ${seasons.count} seasons of ${seasons.weeks} weeks, front-loaded: each pot is about ${val(seasons.decay, "×")} the one before, because the earliest depositors take the most risk (${amounts}). ${seasons.pointsRule} A season's Merkle root is set only after a swarm panel attests the published points file. A claim vests over the following season (${seasons.vestWeeks} weeks), so staying keeps earning while last season's claim pays out. Unclaimed INFER rolls into the next season; after the last, to the Treasury.
+- Seasons: up to ${seasons.count} seasons of ${seasons.weeks} weeks. Each is announced at least 48 hours ahead with its pot and its rules, and neither can change once announced; there may be pauses between seasons. Season pots are not published in advance. ${seasons.pointsRule} After a season, its rules are published and a swarm panel checks the points file against them before the season's Merkle root is set. A claim then vests over ${seasons.vestWeeks} weeks. What a season does not pay returns to the program; when the program ends, to the Treasury.
 - Legacy redemptions: holders of the community's earlier tokens burn them for INFER at rates fixed from the redeemable supply on launch day, so neither allocation can be over-claimed. ${L.redemptions.map((r) => `${r.symbol} (${addr(r.token)}): ${val(r.rate)} INFER per ${r.symbol}, ${r.window}, allocation ${r.allocation === null ? dash : `${r.allocation} INFER`}.`).join(" ")} What is left after a year goes to the Treasury.
 - Founder: a stream, not a grant: linear to miyagod.eth over ${val(founder.months, " months")} with a ${val(founder.cliffDays, "-day")} cliff, ${founder.amount === null ? dash : `${whole(founder.amount)} INFER`} in all. Nothing on day one.
 - Treasury: the reserve is spent only by governance, every change public for 48 hours first. It also receives ${pct(L.fees.treasuryBps)} of the launch pool's trading fees, in ${pair} and INFER. That revenue funds the imdUSD oracle and buys the INFER that is dripped into sINFER: no emission, only what the protocol earns. Staked INFER also earns a points multiplier in the seasons.

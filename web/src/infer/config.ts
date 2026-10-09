@@ -28,12 +28,11 @@ export type Launch = {
   openingMarketCapImd: string | null;
   pair: string;
   allocation: Allocation[];
+  /** No season figures: each season's pot is set when it is opened, and the plan is not published. */
   seasons: {
     count: number;
     weeks: number;
-    amounts: (string | null)[];
     vestWeeks: number;
-    decay: string | null;
     pointsRule: string;
   };
   redemptions: Redemption[];
