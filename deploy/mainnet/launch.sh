@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # The mainnet deploy, run by hand, with the deployer's key kept on a RAM disk that is ejected at the end.
 #
+#   deploy/mainnet/launch.sh go         EVERYTHING, in order, pausing only where you are needed (key, SEND, seeding,
+#                                       references); resumes where it stopped; ejects the RAM disk once the vault lands
+#
+#   The single steps, for a resume by hand or a closer look:
 #   deploy/mainnet/launch.sh ramdisk    make the RAM disk and a key file template on it (nothing touches the SSD)
 #   deploy/mainnet/launch.sh status     who signs, who governs, what is deployed so far (never prints the key)
 #   deploy/mainnet/launch.sh stage1     relay, factories, the three feeds, the oracle asker (runbook 6)
@@ -57,7 +61,7 @@ load() {
   set -a; . "$ENVF"; set +a
   [[ "${PRIVATE_KEY:-}" =~ ^(0x)?[0-9a-fA-F]{64}$ ]] || die "PRIVATE_KEY is missing or not 32 bytes of hex."
   [[ "$PRIVATE_KEY" == 0x* ]] || PRIVATE_KEY=0x$PRIVATE_KEY
-  SIGNER=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null | tail -1)
+  SIGNER=$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null </dev/null | tail -1)
   [ "$(lc "$SIGNER")" = "$(lc "$DEPLOYER")" ] || die "the key signs as $SIGNER, not the deployer $DEPLOYER."
   [ -n "${OPERATOR:-}" ] || die "OPERATOR is empty."
   [ "$(lc "$OPERATOR")" != "$(lc "$SIGNER")" ] || die "OPERATOR is the deployer. Governance must be a different (cold) address."
@@ -72,7 +76,7 @@ load() {
     [ $local_rpc = 0 ] || die "MAINNET_RPC_URL is local. Set FORK=1 for a rehearsal."
     VAULT_RPC=$PRIVATE_RPC; MODE="MAINNET"
   fi
-  [ "$(cast chain-id --rpc-url "$MAINNET_RPC_URL" 2>/dev/null)" = 1 ] || die "the RPC is not chain 1."
+  [ "$(cast chain-id --rpc-url "$MAINNET_RPC_URL" 2>/dev/null </dev/null)" = 1 ] || die "the RPC is not chain 1."
   export OPERATOR FOUNDRY_PROFILE=deploy
 }
 
@@ -82,7 +86,7 @@ confirm() {
 }
 
 basefee() {
-  local wei; wei=$(cast base-fee --rpc-url "$MAINNET_RPC_URL" 2>/dev/null | tail -1)
+  local wei; wei=$(cast base-fee --rpc-url "$MAINNET_RPC_URL" 2>/dev/null </dev/null | tail -1)
   echo "base fee: $(python3 -c "print(f'{$wei/1e9:.3f}')") gwei (the script refuses above ~1.7)"
 }
 
@@ -96,7 +100,7 @@ case "${1:-}" in
   ramdisk) ramdisk ;;
   status)
     load
-    echo "mode      $MODE"; echo "deployer  $SIGNER  ($(cast balance "$SIGNER" --ether --rpc-url "$MAINNET_RPC_URL") ETH)"
+    echo "mode      $MODE"; echo "deployer  $SIGNER  ($(cast balance "$SIGNER" --ether --rpc-url "$MAINNET_RPC_URL" </dev/null) ETH)"
     echo "operator  $OPERATOR"
     if git rev-parse --git-dir >/dev/null 2>&1; then
       echo "commit    $(git rev-parse --short HEAD)$(git diff --quiet -- src script || echo ' + UNCOMMITTED src/script changes')"
@@ -106,14 +110,14 @@ case "${1:-}" in
   stage1)
     load; basefee
     echo "simulating stage one..."
-    forge script $SCRIPT --rpc-url "$MAINNET_RPC_URL" --private-key "$PRIVATE_KEY" 2>&1 | grep -vE 'Warning|^$' | tail -25
+    forge script $SCRIPT --rpc-url "$MAINNET_RPC_URL" --private-key "$PRIVATE_KEY" 2>&1 </dev/null | grep -vE 'Warning|^$' | tail -25
     confirm "Stage one from $SIGNER."
-    forge script $SCRIPT --rpc-url "$MAINNET_RPC_URL" --private-key "$PRIVATE_KEY" --broadcast --slow --priority-gas-price 100000000
+    forge script $SCRIPT --rpc-url "$MAINNET_RPC_URL" --private-key "$PRIVATE_KEY" --broadcast --slow --priority-gas-price 100000000 </dev/null
     echo; echo "Next: seed the three feeds (buy + relay), then: launch.sh check"
     ;;
   check)
     load; refs
-    forge script $SCRIPT --sig "verifySeeded()" --rpc-url "$MAINNET_RPC_URL"
+    forge script $SCRIPT --sig "verifySeeded()" --rpc-url "$MAINNET_RPC_URL" </dev/null
     echo; echo "Passed. Next: launch.sh vault"
     ;;
   vault)
@@ -124,11 +128,44 @@ case "${1:-}" in
       echo "fresh vault salt written to the RAM disk (not shown)"
     fi
     export VAULT_SALT
-    forge script $SCRIPT --sig "verifySeeded()" --rpc-url "$MAINNET_RPC_URL" >/dev/null || die "verifySeeded refuses. Do not deploy the vault."
+    forge script $SCRIPT --sig "verifySeeded()" --rpc-url "$MAINNET_RPC_URL" >/dev/null </dev/null || die "verifySeeded refuses. Do not deploy the vault."
     echo "verifySeeded passes. Stage two goes through $VAULT_RPC (simulation included)."
     confirm "Stage two (the vault) from $SIGNER."
-    forge script $SCRIPT --sig "runVault()" --rpc-url "$VAULT_RPC" --private-key "$PRIVATE_KEY" --broadcast --slow --priority-gas-price 100000000
+    forge script $SCRIPT --sig "runVault()" --rpc-url "$VAULT_RPC" --private-key "$PRIVATE_KEY" --broadcast --slow --priority-gas-price 100000000 </dev/null
     echo; echo "Next: Claude reads everything back; you send 5 IMD to the OracleAsker; then launch.sh wipe"
+    ;;
+  go)
+    [ -d "$RD" ] || "$0" ramdisk
+    if ! grep -qE '^PRIVATE_KEY=.+' "$ENVF"; then
+      echo; echo "Opening the key file. Fill in PRIVATE_KEY, OPERATOR and MAINNET_RPC_URL, save (ctrl-O, Enter) and exit (ctrl-X)."
+      read -r -p "Press Enter to open it: " _; ${EDITOR:-nano} "$ENVF"
+    fi
+    "$0" status
+    rec() { python3 -c "import json,sys; d=json.load(open('$REC')); print(d.get('$1') or '')" 2>/dev/null || true; }
+    # Stage one, unless its record is here and its contracts have code on this chain.
+    PF=$(rec priceFeed)
+    if [ -n "$PF" ] && [ "$(cast code "$PF" --rpc-url "$(. "$ENVF"; echo "$MAINNET_RPC_URL")" 2>/dev/null </dev/null | wc -c)" -gt 10 ]; then
+      echo; echo "stage one: already deployed (price feed $PF), skipping"
+    else
+      "$0" stage1
+    fi
+    if [ -z "$(rec vault)" ]; then
+      echo
+      if [ -n "${SEED_HOOK:-}" ]; then
+        echo "seeding with: $SEED_HOOK"; $SEED_HOOK </dev/null
+      else
+        echo "SEED THE FEEDS NOW: buy the three first answers (price, spot, NHI) in the payment page; Claude relays them"
+        echo "and confirms each landed. Then put REFERENCE_IMD_ETH_WEI and REFERENCE_NHI (Claude gives you both) in the"
+        echo "key file, or type them at the prompt that follows."
+        read -r -p "Press Enter once Claude confirms all three landed: " _
+      fi
+      "$0" check
+      "$0" vault
+    else
+      echo; echo "stage two: the vault is already deployed ($(rec vault)), skipping"
+    fi
+    "$0" wipe
+    echo; echo "Done. Next (runbook step 6): keeper install + execute, 5 IMD to the OracleAsker, propose the reserve asset."
     ;;
   wipe)
     [ -d "$RD" ] || { echo "no RAM disk mounted: nothing to wipe"; exit 0; }
@@ -136,5 +173,5 @@ case "${1:-}" in
     # forge keeps the RPC URL of every broadcast in cache/ ("sensitive values"); a provider URL can carry an API key.
     rm -f cache/DeployMainnet.s.sol/*/run-*.json && echo "removed forge's cached RPC URLs"
     ;;
-  *) sed -n 2,9p "$0"; exit 1 ;;
+  *) sed -n 2,13p "$0"; exit 1 ;;
 esac
