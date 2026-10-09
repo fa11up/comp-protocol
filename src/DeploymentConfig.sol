@@ -204,14 +204,18 @@ uint256 constant WORK_ORACLE_MAX_AGE = 1 days;
 
 // --- The oracle budget: price updates bought on chain through the Intake, paid from the Treasury ---
 //
-// The Intake (upstream Identity-md/protocol PR #66) sells swarm work for one transaction and calls back
-// with the result. OracleAsker buys this protocol's feed updates through it and hands each attestation
-// to SwarmRelay, so the feeds keep their single relayer and keepers keep relayAndBite. The Treasury
-// streams it IMD, unwrapped from its sIMD, under a daily budget governed through Parameters.
-// NOT YET DEPLOYED: INTAKE and ORACLE_ASKER are placeholders with no code. The asker refuses to be
+// The Intake (upstream Identity-md/protocol PR #66, merged 2026-10-07) sells swarm work for one transaction
+// and calls back with the result. OracleAsker buys this protocol's feed updates through it and hands each
+// attestation to SwarmRelay, so the feeds keep their single relayer and keepers keep relayAndBite. The
+// Treasury streams it IMD, unwrapped from its sIMD, under a daily budget governed through Parameters.
+// INTAKE is the developer's live Intake, at the same address on Ethereum, Sepolia and Robinhood Chain
+// (plane `packages/contracts/deployments/mainnet.json`); on Ethereum it sells oracle.request@oracle-1 for
+// 0.5 IMD. Its owner can change that price and the 200,000-gas callback stipend at any time: ASK_MAX_PRICE
+// bounds the first, and our heaviest delivery (146,871 gas) is what the second must stay above.
+// ORACLE_ASKER is still a placeholder until plan.py converges the deployment. The asker refuses to be
 // built against an Intake with no code, and fundOracle refuses to send to an asker with no code, so a
 // placeholder fails loudly instead of streaming IMD into an empty address.
-address constant INTAKE = 0x0000000000000000000000000000000000000F06;
+address constant INTAKE = 0x1397434cd35e8a9C8aC312A61D3A285EB31dea56;
 address constant ORACLE_ASKER = 0x0000000000000000000000000000000000000f07;
 // The Intake's action id: the action, an at sign and its version, right-padded to 32 bytes.
 bytes32 constant ORACLE_ACTION = "oracle.request@oracle-1";
