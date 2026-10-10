@@ -6,7 +6,12 @@ import { useEffect, useState } from "react";
  * header, a pen traces the frame clockwise from the top-left, then the × in two strokes. On disconnect it
  * runs backwards, the × lifting, the frame unwinding, and the slot closing so nothing takes its place.
  * With reduced motion it simply appears and goes. Connecting is the amount boxes' "Disconnected" label.
+ *
+ * Drawn once per document: a page switch (soft.tsx) mounts a new header, and a box that was already on screen
+ * appears there fully drawn ("shown") instead of drawing itself again. It draws again only after it has gone.
  */
+let onScreen = false;
+
 export function DisconnectBox({
   connected,
   label,
@@ -17,9 +22,16 @@ export function DisconnectBox({
   label: string;
   onDisconnect: () => void;
 }) {
-  const [phase, setPhase] = useState<"gone" | "in" | "out">(connected ? "in" : "gone");
+  const [phase, setPhase] = useState<"gone" | "in" | "shown" | "out">(() =>
+    connected ? (onScreen ? "shown" : "in") : "gone",
+  );
   useEffect(() => {
-    if (connected) return setPhase("in");
+    if (connected) {
+      setPhase((p) => (p === "in" || p === "shown" ? p : onScreen ? "shown" : "in"));
+      onScreen = true;
+      return;
+    }
+    onScreen = false; // leaving: the next connect draws it, whether or not the unwind finishes here
     let still = false;
     try {
       still = matchMedia("(prefers-reduced-motion: reduce)").matches;
