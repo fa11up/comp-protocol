@@ -8,6 +8,8 @@
 #   deploy/mainnet/launch.sh ramdisk    make the RAM disk and a key file template on it (nothing touches the SSD)
 #   deploy/mainnet/launch.sh status     who signs, who governs, what is deployed so far (never prints the key)
 #   deploy/mainnet/launch.sh stage1     relay, factories, the three feeds, the oracle asker (runbook 6)
+#   deploy/mainnet/launch.sh seed       buy the three first answers through the OracleAsker (1.5 IMD from the deployer
+#                                       key) and wait for the Intake to deliver them; skips what is seeded or in flight
 #   deploy/mainnet/launch.sh check      verifySeeded: the first values against the pool and an outside reference (runbook 7.2)
 #   deploy/mainnet/launch.sh vault      stage two, through MEV Blocker's full-privacy RPC, with a fresh secret salt
 #   deploy/mainnet/launch.sh wipe       eject the RAM disk: the key, the salt and the file are gone
@@ -154,10 +156,7 @@ case "${1:-}" in
       if [ -n "${SEED_HOOK:-}" ]; then
         echo "seeding with: $SEED_HOOK"; $SEED_HOOK </dev/null
       else
-        echo "SEED THE FEEDS NOW: buy the three first answers (price, spot, NHI) in the payment page; Claude relays them"
-        echo "and confirms each landed. Then put REFERENCE_IMD_ETH_WEI and REFERENCE_NHI (Claude gives you both) in the"
-        echo "key file, or type them at the prompt that follows."
-        read -r -p "Press Enter once Claude confirms all three landed: " _
+        "$0" seed
       fi
       "$0" check
       "$0" vault
@@ -166,6 +165,48 @@ case "${1:-}" in
     fi
     "$0" wipe
     echo; echo "Done. Next (runbook step 6): keeper install + execute, 5 IMD to the OracleAsker, propose the reserve asset."
+    ;;
+  seed)
+    # The first answers, bought by the deployer key through the OracleAsker stage one deployed: askPaidMany pays the
+    # Intake for every feed that has no value and nothing in flight, and the Intake's callback relays each answer into
+    # its feed. A request the plane refuses comes back through onOracleFailure, which frees the feed to be bought again.
+    load
+    [ -f "$REC" ] || die "no deployment record: run stage one first"
+    rec() { python3 -c "import json; print(json.load(open('$REC'))['$1'])"; }
+    ASK=$(rec oracleAsker); IMD=$(rec imd 2>/dev/null || echo 0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7)
+    [ "$(cast code "$ASK" --rpc-url "$MAINNET_RPC_URL" </dev/null 2>/dev/null | wc -c)" -gt 10 ] || die "no OracleAsker at $ASK: run stage one first"
+    c() { cast call "$@" --rpc-url "$MAINNET_RPC_URL" </dev/null 2>/dev/null | head -1 | awk '{print $1}'; }
+    FEEDS=(); BODIES=(); ROLES=()
+    for role in price nhi spot; do
+      f=$(rec ${role}Feed); body="deploy/mainnet/out/bodies/$role.json"
+      [ -f "$body" ] || die "no $body: stage one writes it"
+      v=$(c "$f" "latestValue()(uint256,uint64)")
+      inflight=$(cast call "$ASK" "feeds(address)(bytes32,bool,bool,uint64,uint64,uint64,bool,bytes32)" "$f" --rpc-url "$MAINNET_RPC_URL" </dev/null 2>/dev/null | tail -1)
+      if [ "$v" != "0" ]; then echo "  $role: seeded ($v)"; continue; fi
+      if [ "$inflight" != "0x0000000000000000000000000000000000000000000000000000000000000000" ]; then echo "  $role: request in flight ($inflight)"; continue; fi
+      FEEDS+=("$f"); BODIES+=("$(cast from-utf8 "$(cat "$body")")"); ROLES+=("$role")
+    done
+    if [ ${#FEEDS[@]} -gt 0 ]; then
+      EACH=$(c "$ASK" "price()(uint256)"); NEED=$((${#FEEDS[@]})); TOTAL=$(python3 -c "print($EACH*$NEED)")
+      HAVE=$(c "$IMD" "balanceOf(address)(uint256)" "$SIGNER")
+      python3 -c "import sys; sys.exit(0 if $HAVE >= $TOTAL else 1)" || die "the deployer holds $(python3 -c "print($HAVE/1e18)") IMD; seeding needs $(python3 -c "print($TOTAL/1e18)")"
+      echo; echo "seed: ${ROLES[*]} for $(python3 -c "print($TOTAL/1e18)") IMD ($(python3 -c "print($EACH/1e18)") each) through the OracleAsker $ASK"
+      confirm "Approve $(python3 -c "print($TOTAL/1e18)") IMD to the OracleAsker and buy the first answers."
+      cast send "$IMD" "approve(address,uint256)" "$ASK" "$TOTAL" --private-key "$PRIVATE_KEY" --rpc-url "$MAINNET_RPC_URL" </dev/null >/dev/null || die "approve failed"
+      FL="[$(IFS=,; echo "${FEEDS[*]}")]"; BL="[$(IFS=,; echo "${BODIES[*]}")]"
+      cast send "$ASK" "askPaidMany(address[],bytes[],uint256)" "$FL" "$BL" "$EACH" --private-key "$PRIVATE_KEY" --rpc-url "$MAINNET_RPC_URL" </dev/null >/dev/null || die "askPaidMany failed"
+      cast send "$IMD" "approve(address,uint256)" "$ASK" 0 --private-key "$PRIVATE_KEY" --rpc-url "$MAINNET_RPC_URL" </dev/null >/dev/null || true
+      echo "  bought: the panels answer in minutes; the Intake relays each answer into its feed"
+    fi
+    # Wait for every feed to hold a value. SEED_WAIT_MINUTES=0 returns at once (a rehearsal, where no plane delivers).
+    WAIT=${SEED_WAIT_MINUTES:-90}; start=$(date +%s)
+    while :; do
+      left=""; for role in price nhi spot; do [ "$(c "$(rec ${role}Feed)" "latestValue()(uint256,uint64)")" = "0" ] && left="$left $role"; done
+      [ -z "$left" ] && { echo "  all three feeds hold their first answers"; break; }
+      [ "$WAIT" = 0 ] && { echo "  still waiting on:$left (not waiting: SEED_WAIT_MINUTES=0)"; break; }
+      [ $(( $(date +%s) - start )) -ge $(( WAIT * 60 )) ] && die "still waiting on:$left after $WAIT minutes. Run 'launch.sh seed' again: it waits on what is in flight and re-buys what the plane refused"
+      echo "  waiting on:$left ($(( ($(date +%s) - start) / 60 )) min)"; sleep 30
+    done
     ;;
   wipe)
     [ -d "$RD" ] || { echo "no RAM disk mounted: nothing to wipe"; exit 0; }
