@@ -10,6 +10,7 @@ import {IIntake} from "src/interfaces/IIntake.sol";
 contract MockIntake {
     mapping(bytes32 action => mapping(address asset => uint256 amount)) public priceOf;
     mapping(bytes32 requestId => IIntake.Callback) public callbackOf;
+    mapping(bytes32 requestId => bytes4 selector) public failureSelectorOf;
     mapping(bytes32 requestId => bytes) public bodyOf;
     uint256 public nonce;
     uint64 public constant CALLBACK_GAS = 200_000;
@@ -24,12 +25,49 @@ contract MockIntake {
         payable
         returns (bytes32 requestId)
     {
+        return _request(action, body, callback, asset, amount);
+    }
+
+    function _request(bytes32 action, bytes calldata body, IIntake.Callback calldata callback, address asset, uint256 amount)
+        private
+        returns (bytes32 requestId)
+    {
         uint256 price = priceOf[action][asset];
         require(price != 0 && amount >= price, "not sold");
         IERC20(asset).transferFrom(msg.sender, address(this), amount);
         requestId = keccak256(abi.encode(block.chainid, address(this), ++nonce));
         callbackOf[requestId] = callback;
         bodyOf[requestId] = body;
+    }
+
+    /// @dev Version 2: the same request naming a function for a refusal or a failure.
+    function requestWithFailure(
+        bytes32 action,
+        bytes calldata body,
+        IIntake.Callback calldata callback,
+        bytes4 onFailure,
+        address asset,
+        uint256 amount
+    ) external payable returns (bytes32 requestId) {
+        require(onFailure == bytes4(0) || callback.target != address(0), "failure hook without target");
+        requestId = _request(action, body, callback, asset, amount); // not an external self-call: the payer is msg.sender
+        if (onFailure != bytes4(0)) failureSelectorOf[requestId] = onFailure;
+    }
+
+    /// @dev Version 2's close without an answer: calls the failure function with the arguments the plane's
+    /// writer supplies, which must name this request and this status, under the same stipend.
+    function fail(bytes32 requestId, uint8 status, bytes32 reason, uint16 agreed, uint16 answered)
+        external
+        returns (bool delivered)
+    {
+        bytes4 selector = failureSelectorOf[requestId];
+        require(selector != bytes4(0) && status != 0, "no failure hook");
+        bytes memory args = abi.encode(requestId, status, reason, agreed, answered, bytes(""));
+        require(bytes32(args) == requestId, "args name the request");
+        IIntake.Callback memory c = callbackOf[requestId];
+        uint256 before = gasleft();
+        (delivered,) = c.target.call{gas: CALLBACK_GAS}(bytes.concat(selector, args));
+        lastCallbackGasUsed = before - gasleft();
     }
 
     function complete(bytes32 requestId, bytes calldata args) external returns (bool delivered) {

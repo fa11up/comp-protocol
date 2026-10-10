@@ -9,6 +9,8 @@ import {OracleAsker} from "src/OracleAsker.sol";
 import {ConfigurableSwarmFeed} from "../helpers/ConfigurableSwarmFeed.sol";
 import {INTAKE, ORACLE_ACTION, ATTESTATION_RELAYER} from "src/DeploymentConfig.sol";
 
+error FailureArgsMismatch(bytes32 requestId, uint8 status);
+
 interface IIntakeV2 {
     function writer() external view returns (address);
     function priceOf(bytes32 action, address asset) external view returns (uint256);
@@ -52,7 +54,7 @@ contract IntakeV2ForkTest is Test {
         id = asker.askPaid(address(feed), BODY, price);
     }
 
-    function test_theAskerPaysV2ThroughTheUnchangedRequest() public {
+    function test_theAskerPaysV2AndNamesBothCallbacks() public {
         uint256 before = IMD.balanceOf(INTAKE) + IMD.balanceOf(0x4e0fA57Bde726079356537E2F34d671E9F41ADbc);
         (bytes32 id, uint256 price) = _ask();
         (address payer, address target, bytes4 selector, bool completed) = IIntakeV2(INTAKE).requests(id);
@@ -60,7 +62,7 @@ contract IntakeV2ForkTest is Test {
         assertEq(target, address(asker));
         assertEq(selector, OracleAsker.onOracleResult.selector);
         assertFalse(completed);
-        assertEq(IIntakeV2(INTAKE).failureSelectorOf(id), bytes4(0), "plain request: no failure hook");
+        assertEq(IIntakeV2(INTAKE).failureSelectorOf(id), OracleAsker.onOracleFailure.selector, "and names the failure hook");
         assertEq(IMD.balanceOf(INTAKE) + IMD.balanceOf(0x4e0fA57Bde726079356537E2F34d671E9F41ADbc) - before, price, "paid");
         assertEq(IMD.balanceOf(address(asker)), 0, "the asker keeps nothing, and its approval is reset");
         assertEq(IMD.allowance(address(asker), INTAKE), 0);
@@ -81,14 +83,46 @@ contract IntakeV2ForkTest is Test {
         assertEq(_inFlight(), bytes32(0), "the asker took v2's callback and cleared the slot");
     }
 
-    /// @dev A refusal (status 1) on a plain request calls nothing, as on v1; the asker's slot then times out.
-    function test_aRefusalCallsNothingAsOnV1() public {
-        (bytes32 id,) = _ask();
-        vm.expectEmit(true, false, false, true, INTAKE);
-        emit Completed(id, 1, bytes32(0), "", false);
-        vm.prank(IIntakeV2(INTAKE).writer());
-        IIntakeV2(INTAKE).complete(id, 1, bytes32(0), "", abi.encode(id, uint256(1)));
+    /// @dev The failure path on the REAL v2: the writer closes the request with status 1 or 2 and the arguments v2
+    /// requires; v2 calls the asker's failure function from its own address; the asker clears the slot at once, and
+    /// a caller may pay for a fresh answer in the next transaction instead of after ASK_TIMEOUT.
+    function test_v2CallsTheFailureFunctionAndTheSlotClearsAtOnce() public {
+        for (uint8 status = 1; status <= 2; ++status) {
+            (bytes32 id, uint256 price) = _ask();
+            assertEq(IIntakeV2(INTAKE).failureSelectorOf(id), OracleAsker.onOracleFailure.selector, "v2 recorded the hook");
+            assertEq(_inFlight(), id);
+            bytes memory args = abi.encode(id, uint256(status), keccak256("why"), uint16(3), uint16(20), bytes(""));
+            vm.expectEmit(true, false, false, true, INTAKE);
+            emit Completed(id, status, bytes32(0), "", true);
+            vm.prank(IIntakeV2(INTAKE).writer());
+            IIntakeV2(INTAKE).complete(id, status, bytes32(0), "", args);
+            assertEq(_inFlight(), bytes32(0), "cleared by v2's callback, not by the timeout");
+            // The next purchase of this feed goes through at once (a caller's; the Treasury's own is backed off).
+            deal(address(IMD), address(this), price);
+            IMD.approve(address(asker), price);
+            bytes32 next = asker.askPaid(address(feed), BODY, price);
+            assertEq(_inFlight(), next);
+            // Read before the prank: a view's external call would consume it.
+            bytes memory answer = abi.encode(next, _dummy(), bytes(""));
+            address writer = IIntakeV2(INTAKE).writer();
+            vm.prank(writer);
+            IIntakeV2(INTAKE).complete(next, 0, bytes32(0), "", answer);
+            assertEq(_inFlight(), bytes32(0));
+        }
     }
+
+    /// @dev v2 refuses to aim the hook with arguments that do not name this request and status (its check, our
+    /// safety): the writer cannot make the asker clear another feed's slot.
+    function test_v2RefusesFailureArgumentsThatNameAnotherRequest() public {
+        (bytes32 id,) = _ask();
+        bytes memory wrong = abi.encode(keccak256("other"), uint256(1), bytes32(0), uint16(0), uint16(0), bytes(""));
+        vm.prank(IIntakeV2(INTAKE).writer());
+        vm.expectRevert(abi.encodeWithSelector(FailureArgsMismatch.selector, id, uint8(1)));
+        IIntakeV2(INTAKE).complete(id, 1, bytes32(0), "", wrong);
+        assertEq(_inFlight(), id, "untouched");
+    }
+
+    function _dummy() private pure returns (SwarmFeed.OracleAttestation memory a) {}
 
     function test_onlyTheIntakeMayDeliver() public {
         (bytes32 id,) = _ask();

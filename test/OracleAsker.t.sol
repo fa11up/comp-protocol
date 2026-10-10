@@ -413,6 +413,103 @@ contract OracleAskerTest is Test {
         asker.ask(address(healthFeed), HEALTH_BODY);
     }
 
+    // --- Intake v2's failure callback: a request closed without an answer -------------------------
+
+    function test_everyRequestNamesTheFailureCallback() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        assertEq(intake.failureSelectorOf(id), OracleAsker.onOracleFailure.selector);
+        (address target, bytes4 selector) = intake.callbackOf(id);
+        assertEq(target, address(asker));
+        assertEq(selector, OracleAsker.onOracleResult.selector);
+    }
+
+    /// @dev The point of the hook: a refused Treasury purchase no longer holds the feed's slot for ASK_TIMEOUT.
+    /// The slot clears at once, a caller may pay straight away, and the Treasury itself backs off as it does
+    /// after a refused relay (the request was not refunded).
+    function test_aRefusalClearsTheSlotAtOnceAndBacksTheTreasuryOff() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        vm.expectEmit(true, true, false, true, address(asker));
+        emit OracleAsker.AskFailed(address(healthFeed), id, 1, keccak256("refused"), 0, 0);
+        assertTrue(intake.fail(id, 1, keccak256("refused"), 0, 0), "the callback completes");
+        emit log_named_uint("failure callback gas (stipend 200000)", intake.lastCallbackGasUsed());
+        assertLt(intake.lastCallbackGasUsed(), 60_000, "a few writes: well inside the stipend");
+        (,,, uint64 lastAsk,, uint64 inFlightAt,, bytes32 inFlight) = asker.feeds(address(healthFeed));
+        assertEq(inFlight, bytes32(0), "cleared now, not at ASK_TIMEOUT");
+        assertEq(inFlightAt, 0);
+        assertEq(asker.feedOf(id), address(0));
+        uint256 until = block.timestamp + ASK_TIMEOUT;
+        assertEq(lastAsk + ASK_MIN_INTERVAL, until, "the Treasury waits the timeout before buying this feed again");
+        // Anyone else may pay for a fresh answer immediately, and that purchase's own failure (caller-paid)
+        // neither extends nor shortens the Treasury's back-off.
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(STRANGER, 1 ether);
+        vm.startPrank(STRANGER);
+        imd.approve(address(asker), PRICE);
+        bytes32 theirs = asker.askPaid(address(healthFeed), HEALTH_BODY, PRICE);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1 hours); // later, so a wrongful second back-off would show as a later timestamp
+        assertTrue(intake.fail(theirs, 2, keccak256("disagreed"), 9, 20));
+        (,,, lastAsk,,,, inFlight) = asker.feeds(address(healthFeed));
+        assertEq(inFlight, bytes32(0));
+        assertEq(lastAsk + ASK_MIN_INTERVAL, until, "unchanged by the caller's failure: askPaid cleared treasuryPaid");
+        // The Treasury may not buy until the back-off ends.
+        vm.warp(until - 1);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.TooSoon.selector, until));
+        asker.ask(address(healthFeed), HEALTH_BODY);
+        vm.warp(until);
+        asker.ask(address(healthFeed), HEALTH_BODY);
+    }
+
+    /// @dev A panel that did not agree (status 2) on a CALLER's purchase: the slot clears, the Treasury is not
+    /// held back (its money was not spent), exactly as a refused relay of a caller-paid answer is treated.
+    function test_aCallerPaidFailureClearsTheSlotAndDoesNotHoldTheTreasuryBack() public {
+        vm.prank(APPROVED_OPERATOR);
+        imd.mint(STRANGER, 1 ether);
+        vm.startPrank(STRANGER);
+        imd.approve(address(asker), PRICE);
+        bytes32 id = asker.askPaid(address(priceFeed), PRICE_BODY, PRICE);
+        vm.stopPrank();
+        (,,, uint64 lastAskBefore,,,,) = asker.feeds(address(priceFeed));
+        assertTrue(intake.fail(id, 2, keccak256("disagreed"), 7, 20));
+        (,,, uint64 lastAsk,,,, bytes32 inFlight) = asker.feeds(address(priceFeed));
+        assertEq(inFlight, bytes32(0));
+        assertEq(lastAsk, lastAskBefore, "no back-off for a purchase that cost the Treasury nothing");
+    }
+
+    /// @dev A request that timed out and was replaced fails late: nothing to clear, no back-off, no revert.
+    function test_aSupersededFailureClearsNothingAndHoldsNothingBack() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 r1 = asker.ask(address(healthFeed), HEALTH_BODY);
+        vm.warp(block.timestamp + ASK_TIMEOUT);
+        bytes32 r2 = asker.ask(address(healthFeed), HEALTH_BODY);
+        uint64 askedAt = uint64(block.timestamp);
+        assertTrue(intake.fail(r1, 1, bytes32(0), 0, 0), "completes");
+        (,,, uint64 lastAsk,,,, bytes32 inFlight) = asker.feeds(address(healthFeed));
+        assertEq(inFlight, r2, "the live request keeps its slot");
+        assertEq(lastAsk, askedAt, "no back-off written for a superseded request");
+        assertEq(asker.feedOf(r1), address(0), "the stale entry is gone");
+        assertEq(asker.feedOf(r2), address(healthFeed));
+    }
+
+    function test_onlyTheIntakeMayReportAFailureAndOnlyForAKnownRequest() public {
+        vm.warp(block.timestamp + 20 hours);
+        bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
+        vm.prank(STRANGER);
+        vm.expectRevert(OracleAsker.NotTheIntake.selector);
+        asker.onOracleFailure(id, 1, bytes32(0), 0, 0, "");
+        vm.prank(INTAKE);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.UnknownRequest.selector, keccak256("never")));
+        asker.onOracleFailure(keccak256("never"), 1, bytes32(0), 0, 0, "");
+        // A failure after the answer (or the answer after the failure) finds nothing: the Intake calls once, but
+        // the second path must not roll anything back either way.
+        assertTrue(intake.fail(id, 1, bytes32(0), 0, 0));
+        vm.prank(INTAKE);
+        vm.expectRevert(abi.encodeWithSelector(OracleAsker.UnknownRequest.selector, id));
+        asker.onOracleFailure(id, 1, bytes32(0), 0, 0, "");
+    }
+
     function test_aRefusedDeliveryDoesNotHoldBackACallerWhoPays() public {
         vm.warp(block.timestamp + 20 hours);
         bytes32 id = asker.ask(address(healthFeed), HEALTH_BODY);
