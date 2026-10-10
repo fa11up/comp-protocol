@@ -85,18 +85,20 @@ function PublicLanding() {
 
 export function Page({
   network,
+  mainnet,
   panel,
   contracts,
   contractsHeading = "Contracts",
 }: {
   network?: string;
+  mainnet?: boolean;
   panel: ReactNode;
   contracts: ReactNode;
   contractsHeading?: string;
 }) {
   return (
     <div className="site">
-      <SiteHeader page="home" network={network}>
+      <SiteHeader page="home" network={network} mainnet={mainnet}>
         {TERMINAL && (
           <a className="button primary" href={href("terminal/")}>
             Open terminal

@@ -49,10 +49,13 @@ type Page = "home" | "terminal" | "docs";
 export function SiteHeader({
   page,
   network,
+  mainnet = false,
   children,
 }: {
   page: Page;
   network?: string;
+  /** True on a mainnet deployment: the chip then reads "Mainnet · live". */
+  mainnet?: boolean;
   children?: ReactNode;
 }) {
   const link = (to: Page, path: string, text: string) => (
@@ -79,7 +82,11 @@ export function SiteHeader({
       </div>
       <div className="wallet-bar">
         {TERMINAL ? (
-          <span className="chip">{`${network ?? "Sepolia"} · testnet`}</span>
+          mainnet ? (
+            <span className="chip">Mainnet · live</span>
+          ) : (
+            <span className="chip">{`${network ?? "Sepolia"} · testnet`}</span>
+          )
         ) : (
           <StagingChip />
         )}

@@ -31,6 +31,7 @@ export type Deployment = {
     name: string;
     rpcUrls: string[];
     explorer: string;
+    testnet?: boolean;
     nativeCurrency: { name: string; symbol: string; decimals: number };
   };
   walletAddChain?: object;
@@ -205,8 +206,11 @@ export const pointsConfig = {
 };
 
 export const historyConfig = {
-  blockscoutApi: "https://eth-sepolia.blockscout.com/api/v2/",
-  chainId: 11155111,
+  /** Blockscout's v2 API per chain: the log fallback when an RPC refuses or silently empties a range. */
+  blockscoutApis: {
+    1: "https://eth.blockscout.com/api/v2/",
+    11155111: "https://eth-sepolia.blockscout.com/api/v2/",
+  } as Record<number, string>,
   chunkSize: 2000n,
   maxChunks: 10000,
   maxPages: 2000,

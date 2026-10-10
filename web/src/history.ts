@@ -74,9 +74,9 @@ function normalize(log: any, target: Address): ChainLog {
   };
 }
 async function explorer(r: Runtime, path: string) {
-  if (r.config.chainId !== historyConfig.chainId)
-    throw Error("No history fallback configured for this chain");
-  const response = await fetch(new URL(path, historyConfig.blockscoutApi), {
+  const api = historyConfig.blockscoutApis[r.config.chainId];
+  if (!api) throw Error("No history fallback configured for this chain");
+  const response = await fetch(new URL(path, api), {
     signal: AbortSignal.timeout(12000),
   });
   if (!response.ok) throw Error(`Blockscout returned ${response.status}`);

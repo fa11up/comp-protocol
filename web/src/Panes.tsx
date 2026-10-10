@@ -527,7 +527,7 @@ export function Work({
         )}
         {faucet && (
           <p className="notice">
-            This vault uses MockWorkOracle. Credits are granted by the testnet
+            This vault uses MockWorkOracle. Credits are granted by its
             operator; no task count is attested.
           </p>
         )}
@@ -1484,7 +1484,7 @@ function Reporter({
         target={s?.targets[selected]}
         fn="report"
         fields={[amt("Value (18-decimal units)")]}
-        summary="Publish through the testnet reporter fallback."
+        summary="Publish through the feed\u2019s reporter fallback."
         disabled={!reporter}
         reason="Only a configured reporter can report. Simulation rechecks permission."
       />

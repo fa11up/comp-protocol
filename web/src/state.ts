@@ -147,7 +147,11 @@ export async function snapshot(
     ...jobs.map((fn) => safe(fn, () => read(r, vault, fn, [], bn))),
     safe("fee", () => read(r, vault, "redemptionFeeBps", [0n], bn)),
     safe("supply", () => read(r, targets.stablecoin, "totalSupply", [], bn)),
-    safe("imdDeployer", () => read(r, targets.gem, "deployer", [], bn)),
+    // Only the testnet faucet token answers deployer(); real collateral (sIMD) does not, and that is no failure.
+    read(r, targets.gem, "deployer", [], bn).then(
+      (d) => (v.imdDeployer = d),
+      () => undefined,
+    ),
     safe("gemDecimals", () => read(r, targets.gem, "decimals", [], bn)),
     safe("gemSymbol", () => read(r, targets.gem, "symbol", [], bn)),
     safe("compDecimals", () => read(r, targets.stablecoin, "decimals", [], bn)),

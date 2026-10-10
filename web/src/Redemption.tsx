@@ -27,6 +27,8 @@ type Quote = ReturnType<typeof payout> & {
   candidate: Address;
   cr?: bigint;
   block: bigint;
+  /** How far the paced payout price sits above the attested one, in bps; 0 when they agree. */
+  pacedBps: bigint;
 };
 export function Redemption({
   r,
@@ -48,10 +50,16 @@ export function Redemption({
   const [curve, setCurve] = useState<
     { size: bigint; fee: bigint; pct: number }[]
   >([]);
+  // Edited inputs or another account void any quote, including one still being computed.
   useEffect(() => {
     version.current++;
     setQ(undefined);
-  }, [input, candidate, slippage, s, actions.account]);
+  }, [input, candidate, slippage, actions.account]);
+  // A new snapshot (every 15 s) clears a quote already shown, which names an older block, but lets one in
+  // flight land: voiding that too meant a quote slower than the refresh never appeared, with no error.
+  useEffect(() => {
+    setQ(undefined);
+  }, [s]);
   useEffect(() => {
     let active = true;
     setCurve([]);
@@ -189,10 +197,21 @@ export function Redemption({
                 [n],
                 s.block,
               )) as bigint;
+              // IMD is paid at the higher of the attested price and the vault's paced payout price, which
+              // follows a fall slowly; quoting at the attested price overstated every payout after a fall
+              // and the redemption then failed its own minimum. A vault without payoutPrice() pays at the
+              // attested price.
+              const payPrice = (await read(
+                r,
+                s.targets.ParameterizedVault,
+                "payoutPrice",
+                [],
+                s.block,
+              ).catch(() => s.feeds.Collateral.value)) as bigint;
               const result = payout(
                 n,
                 fee,
-                s.feeds.Collateral.value,
+                payPrice > s.feeds.Collateral.value ? payPrice : s.feeds.Collateral.value,
                 s.v.redemptionReserve,
                 s.v.backingPerUnit,
               );
@@ -265,6 +284,10 @@ export function Redemption({
                   candidate: c,
                   cr,
                   block: s.block,
+                  pacedBps:
+                    payPrice > s.feeds.Collateral.value
+                      ? ((payPrice - s.feeds.Collateral.value) * 10000n) / s.feeds.Collateral.value
+                      : 0n,
                 });
             } catch (e) {
               setError(message(e));
@@ -373,6 +396,14 @@ export function Redemption({
             {q.reserveOut > 0n && q.positionOut > 0n && (
               <Row label="Reserve / position">
                 {fmtGem(q.reserveOut)} / {fmtGem(q.positionOut)} {gemUnit()}
+              </Row>
+            )}
+            {q.pacedBps > 0n && (
+              <Row
+                label="Priced at"
+                info={`After a price fall the vault pays IMD at a paced price that follows the fall over hours, so a pushed-down pool cannot be redeemed against at once.`}
+              >
+                Paced price, {percent(q.pacedBps)} above the feed
               </Row>
             )}
             {q.cr !== undefined && (

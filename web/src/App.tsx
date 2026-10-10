@@ -402,7 +402,11 @@ function Terminal({ r }: { r: Runtime }) {
       <a href="#terminal-main" className="skip">
         Skip to terminal panes
       </a>
-      <SiteHeader page="terminal" network={r.config.network.name}>
+      <SiteHeader
+        page="terminal"
+        network={r.config.network.name}
+        mainnet={r.config.network.testnet === false}
+      >
         {account ? (
           <>
             {!correctChain && (

@@ -127,15 +127,18 @@ export function LiveLanding() {
   return (
     <Page
       network={r?.config.network.name}
+      mainnet={r?.config.network.testnet === false}
       panel={<LivePanel s={s} error={error} />}
       contractsHeading={`On ${r?.config.network.name ?? "testnet"}`}
       contracts={
         <>
-          <p className="note">
-            The testnet deployment. The token is deployed there under its
-            testnet name, COMP; contracts and parameters will change before
-            mainnet.
-          </p>
+          {r?.config.network.testnet !== false && (
+            <p className="note">
+              The testnet deployment. The token is deployed there under its
+              testnet name, COMP; contracts and parameters will change before
+              mainnet.
+            </p>
+          )}
           <div className="contract-list">
             {r ? (
               r.config.contracts.map((c) => (
