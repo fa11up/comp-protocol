@@ -112,7 +112,7 @@ case "${1:-}" in
     echo "simulating stage one..."
     forge script $SCRIPT --rpc-url "$MAINNET_RPC_URL" --private-key "$PRIVATE_KEY" 2>&1 </dev/null | grep -vE 'Warning|^$' | tail -25
     confirm "Stage one from $SIGNER."
-    forge script $SCRIPT --rpc-url "$MAINNET_RPC_URL" --private-key "$PRIVATE_KEY" --broadcast --slow --priority-gas-price 100000000 </dev/null
+    forge script $SCRIPT --rpc-url "$MAINNET_RPC_URL" --private-key "$PRIVATE_KEY" --broadcast --slow --priority-gas-price 100000000 --timeout 900 </dev/null
     echo; echo "Next: seed the three feeds (buy + relay), then: launch.sh check"
     ;;
   check)
@@ -131,7 +131,7 @@ case "${1:-}" in
     forge script $SCRIPT --sig "verifySeeded()" --rpc-url "$MAINNET_RPC_URL" >/dev/null </dev/null || die "verifySeeded refuses. Do not deploy the vault."
     echo "verifySeeded passes. Stage two goes through $VAULT_RPC (simulation included)."
     confirm "Stage two (the vault) from $SIGNER."
-    forge script $SCRIPT --sig "runVault()" --rpc-url "$VAULT_RPC" --private-key "$PRIVATE_KEY" --broadcast --slow --priority-gas-price 100000000 </dev/null
+    forge script $SCRIPT --sig "runVault()" --rpc-url "$VAULT_RPC" --private-key "$PRIVATE_KEY" --broadcast --slow --priority-gas-price 100000000 --timeout 900 </dev/null
     echo; echo "Next: Claude reads everything back; you send 5 IMD to the OracleAsker; then launch.sh wipe"
     ;;
   go)
