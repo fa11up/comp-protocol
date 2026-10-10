@@ -475,8 +475,8 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// @notice Whether this feed would accept `value` now, by the same rule a delivery is checked against: the
     /// current epoch's allowance or, once it has expired, the way back to the level it held (`_returnAnchor`).
     /// `epoch()` reports only the first, so a buyer deciding whether an update would be refused asks this (an
-    /// honest value returning after a late push fits only the second). A subclass that overrides
-    /// `_checkValue` for a value with no magnitude does not use these bounds and must not be read through this.
+    /// honest value returning after a late push fits only the second). A feed whose values have no magnitude
+    /// (`_hasMagnitude` false: the work oracle's roots) keeps no epoch, so for it this is only the zero check.
     function accepts(uint256 value) external view returns (bool) {
         return value != 0 && (!_hasValue || !_hasMagnitude() || _fitsEpoch(value) || _returnAnchor(value) != 0);
     }
