@@ -193,7 +193,7 @@ address constant WORK_ORACLE_FACTORY = 0x2ACB4BdF44f20DC7F83Df795cc2D259FC8070F3
 /// reason as WORK_ORACLE_FACTORY. Holds nothing and has no authority: the Treasury it creates serves
 /// its caller. A deployment prerequisite with no dependencies, so its CREATE2 address is computable
 /// up front. NOT YET DEPLOYED: a placeholder; a vault cannot be constructed until it has code.
-address constant TREASURY_FACTORY = 0x48952ab2081F8071eb0ABa5c04DB07b45698d5a4;
+address constant TREASURY_FACTORY = 0x32f46B9C6818F46CDfC5d79efD3bDfE8999d8846;
 address constant WORK_ORACLE_SENTINEL = 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
 
 // How long an attested work tally stays usable. A day, matching the daily cadence of the receipts the
@@ -215,8 +215,8 @@ uint256 constant WORK_ORACLE_MAX_AGE = 1 days;
 // ORACLE_ASKER is still a placeholder until plan.py converges the deployment. The asker refuses to be
 // built against an Intake with no code, and fundOracle refuses to send to an asker with no code, so a
 // placeholder fails loudly instead of streaming IMD into an empty address.
-address constant INTAKE = 0x1397434cd35e8a9C8aC312A61D3A285EB31dea56;
-address constant ORACLE_ASKER = 0x1b7A21d7C665e3783720B9dBF8963bf6b1F3A8b9;
+address constant INTAKE = 0xa43e6F75ee006411F79Ac1C84120606C2330DE82;
+address constant ORACLE_ASKER = 0x255295eF2873B2592f13D2C95F749c8C6402d244;
 // The Intake's action id: the action, an at sign and its version, right-padded to 32 bytes.
 bytes32 constant ORACLE_ACTION = "oracle.request@oracle-1";
 // The plane's mainnet ProjectFactory: the only contract the Treasury will ever ask to move a launch's
