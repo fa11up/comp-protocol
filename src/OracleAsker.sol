@@ -61,6 +61,13 @@ interface IPoolManagerExtsload {
 /// a relay with a liquidation. The callback never reverts on a refused or duplicate relay: it clears the
 /// feed's in-flight slot either way and reports whether it relayed. An answer it could not deliver stays
 /// public, and anyone can relay it by hand.
+///
+/// A request that ends WITHOUT an answer (the plane refused it, or the panel did not agree) reaches
+/// `onOracleFailure` the moment the plane closes it (Intake v2's failure callback, named in the request).
+/// It clears the feed's in-flight slot at once, so the chain says the truth and anyone may pay for a fresh
+/// update straight away, instead of every purchase of that feed waiting out ASK_TIMEOUT. A failed request
+/// is not refunded, so the Treasury's own purchase of that feed backs off for the timeout as a refused
+/// relay does; a caller's purchase holds the Treasury back no more than its answer would have.
 contract OracleAsker {
     using SafeERC20 for IERC20;
 
@@ -84,6 +91,10 @@ contract OracleAsker {
     event Asked(address indexed feed, bytes32 indexed requestId, uint256 price, bool forStaleness);
     event AskedPaid(address indexed feed, bytes32 indexed requestId, address indexed payer, uint256 price);
     event Delivered(address indexed feed, bytes32 indexed requestId, bool relayed);
+    /// @notice The plane closed a request without an answer: status 1 refused, 2 ended without a result.
+    event AskFailed(
+        address indexed feed, bytes32 indexed requestId, uint8 status, bytes32 reason, uint16 agreed, uint16 answered
+    );
 
     error UnknownFeed(address feed);
     error WrongBody();
@@ -246,8 +257,13 @@ contract OracleAsker {
         // review 2026-10-07, low). The in-flight slot below is what a superseded request no longer holds.
         f.inFlightAt = uint64(block.timestamp);
         payToken.forceApprove(INTAKE, price);
-        requestId = IIntake(INTAKE).request(
-            ORACLE_ACTION, body, IIntake.Callback(address(this), this.onOracleResult.selector), address(payToken), price
+        requestId = IIntake(INTAKE).requestWithFailure(
+            ORACLE_ACTION,
+            body,
+            IIntake.Callback(address(this), this.onOracleResult.selector),
+            this.onOracleFailure.selector,
+            address(payToken),
+            price
         );
         payToken.forceApprove(INTAKE, 0);
         f.inFlight = requestId;
@@ -299,6 +315,38 @@ contract OracleAsker {
             if (live && treasuryPaid) f.lastAsk = uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL);
         }
         emit Delivered(feed, requestId, relayed);
+    }
+
+    /// @notice The Intake's failure callback for an `oracle.request` this contract made: the plane refused
+    /// the ask (status 1) or the work ended without a result (status 2). Nothing is relayed; the feed's
+    /// in-flight slot is cleared now rather than at ASK_TIMEOUT, and the Treasury's own purchase backs off.
+    /// @dev The Intake has already checked that `requestId` and `status` are this request's and this
+    /// outcome's, and that the call comes from its writer; `reason`, `agreed`, `answered` and `signature`
+    /// are the plane's account of it, recorded in the event and otherwise unused. Never reverts past the
+    /// two checks the result callback also makes, for the same reason it does not.
+    function onOracleFailure(
+        bytes32 requestId,
+        uint8 status,
+        bytes32 reason,
+        uint16 agreed,
+        uint16 answered,
+        bytes calldata signature
+    ) external {
+        signature;
+        if (msg.sender != INTAKE) revert NotTheIntake();
+        address feed = feedOf[requestId];
+        if (feed == address(0)) revert UnknownRequest(requestId);
+        delete feedOf[requestId];
+        Feed storage f = feeds[feed];
+        bool live = f.inFlight == requestId;
+        if (live) {
+            // Only the Treasury's own live purchase holds the Treasury back (as for a refused relay above): a
+            // superseded request's failure says nothing about the feed now, and a caller's cost the Treasury nothing.
+            if (f.treasuryPaid) f.lastAsk = uint64(block.timestamp + ASK_TIMEOUT - ASK_MIN_INTERVAL);
+            f.inFlight = bytes32(0);
+            f.inFlightAt = 0;
+        }
+        emit AskFailed(feed, requestId, status, reason, agreed, answered);
     }
 
     // --- what the chain says ----------------------------------------------------------------------
