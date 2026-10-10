@@ -142,6 +142,11 @@ contract SwarmWorkOracle is SwarmFeed, IWorkOracle {
         if (value == 0) revert ZeroValue();
     }
 
+    /// @dev A root is an identifier, not a quantity: no epoch is kept for it (`SwarmFeed._hasMagnitude`).
+    function _hasMagnitude() internal pure override returns (bool) {
+        return false;
+    }
+
     /// @notice Claim an agent's published tally. Caller must control the agent.
     /// @param agentId The agent the leaf is about.
     /// @param accepted That day's count. Signed into the leaf but not used here; `cumulative` is.
