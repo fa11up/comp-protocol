@@ -478,7 +478,7 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// honest value returning after a late push fits only the second). A subclass that overrides
     /// `_checkValue` for a value with no magnitude does not use these bounds and must not be read through this.
     function accepts(uint256 value) external view returns (bool) {
-        return value != 0 && (!_hasValue || _fitsEpoch(value) || _returnAnchor(value) != 0);
+        return value != 0 && (!_hasValue || !_hasMagnitude() || _fitsEpoch(value) || _returnAnchor(value) != 0);
     }
 
     /// @notice The current bounding epoch: its anchor value, when it opened, and the allowance in bps that
@@ -504,6 +504,27 @@ abstract contract SwarmFeed is ISwarmFeed {
     /// transaction. Any new subclass under src/ must be read with that in mind.
     function _accept(uint256 value, uint64 updatedAt) internal {
         _checkValue(value);
+        // A value with no magnitude keeps no epoch: there is nothing to anchor, and the epoch rule's
+        // `mulDiv(anchor, allowance, 10_000)` overflows on a root above 2^256 / (allowance / 10_000).
+        if (_hasMagnitude()) _openEpoch(value);
+        _value = value;
+        _updatedAt = updatedAt;
+        _acceptedAt = uint40(block.timestamp);
+        _hasValue = true;
+        emit ValueUpdated(value, updatedAt);
+    }
+
+    /// @dev Whether this feed's values are quantities the epoch rule can bound. True for every price;
+    /// a feed whose value is an identifier (a Merkle root) overrides it to false, and with it overrides
+    /// `_checkValue`. Without this a root feed silent for a lifetime and one STALE_GROWTH_PERIOD widened
+    /// its allowance past 100%, and from then `_accept` reverted on almost every root, for good: silence
+    /// only widens it further (found 2026-10-10, test/WorkRootAfterSilence.t.sol).
+    function _hasMagnitude() internal pure virtual returns (bool) {
+        return true;
+    }
+
+    /// @dev The epoch bookkeeping `_accept` does for a value with magnitude, before `_value` moves.
+    function _openEpoch(uint256 value) private {
         // Open a new epoch from the value being replaced once the old one has run its maxAge. Written
         // before `_value` moves, so the anchor is where the feed stood, never where the new value puts it.
         // Bounds are at most MAX_ALLOWANCE_BPS, so uint24 is exact; uint40 holds a timestamp to year 36812.
@@ -522,11 +543,6 @@ abstract contract SwarmFeed is ISwarmFeed {
         } else if (_anchorValue == 0) {
             _anchorValue = _value; // the first epoch's anchor, materialised before the value moves
         }
-        _value = value;
-        _updatedAt = updatedAt;
-        _acceptedAt = uint40(block.timestamp);
-        _hasValue = true;
-        emit ValueUpdated(value, updatedAt);
     }
 
     function _tooOld(uint64 timestamp) private view returns (bool) {
