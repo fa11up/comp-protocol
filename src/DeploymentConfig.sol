@@ -215,7 +215,7 @@ uint256 constant WORK_ORACLE_MAX_AGE = 1 days;
 // ORACLE_ASKER is still a placeholder until plan.py converges the deployment. The asker refuses to be
 // built against an Intake with no code, and fundOracle refuses to send to an asker with no code, so a
 // placeholder fails loudly instead of streaming IMD into an empty address.
-address constant INTAKE = 0x1397434cd35e8a9C8aC312A61D3A285EB31dea56;
+address constant INTAKE = 0xa43e6F75ee006411F79Ac1C84120606C2330DE82;
 address constant ORACLE_ASKER = 0x0000000000000000000000000000000000000f07;
 // The Intake's action id: the action, an at sign and its version, right-padded to 32 bytes.
 bytes32 constant ORACLE_ACTION = "oracle.request@oracle-1";
