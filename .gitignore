@@ -34,3 +34,4 @@ test/scratch/
 # The Etherscan API key for launch.sh verify: local only, never committed (this repo is public).
 deploy/mainnet/.etherscan.local
 __pycache__/
+deploy/mainnet/out/safe/
