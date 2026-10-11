@@ -83,8 +83,9 @@ Three separate balances, and they are not interchangeable:
 * **ETH** for gas.
 * **imdUSD inventory** — `bite` burns the *caller's* stablecoin. A keeper with no imdUSD cannot
   bite anything. This is working capital, not an expense.
-* **IMD** for oracle requests, 0.5 IMD each — on day one the keeper is the oracle's budget (below and
-  section 7 step 4), capped by `ASK_PAID_IMD_PER_DAY`.
+* **No IMD.** The launch keeper never pays for an oracle request itself (`KEEPER_ORACLE_FALLBACK = false`,
+  `ASK_PAID_IMD_PER_DAY = 0`, decided 2026-10-09): it triggers the Treasury-paid updates the OracleAsker
+  already allows, funded by the IMD sent to the asker at deploy (section 7 step 4).
 
 Oracle requests are no longer the keeper's to fund: `Treasury.fundOracle()` streams up to
 `Parameters.oracleBudget` IMD a day to `OracleAsker`, which pays the Intake (prereq 2b). That is the
@@ -371,8 +372,17 @@ could).
 3. **List the reserve assets** through `Parameters.proposeReserveAsset` — each needs a price source
    and a haircut, and each waits 48 hours. Until the register is non-empty, `reserveValueUsd()` is
    zero and so is the first term of `earnLine`.
-4. **Start the keeper** before announcing, **funded with IMD, because on day one it IS the oracle's
-   budget.** `Treasury.fundOracle` pays from the Treasury's plain IMD and sIMD, and until revenue lands
+4. **Start the keeper and fund the OracleAsker** before announcing. **Decided 2026-10-09:** send **5 IMD
+   straight to `ORACLE_ASKER`** right after the vault, and run the keeper with `KEEPER_ORACLE_FALLBACK = false`
+   and `ASK_PAID_IMD_PER_DAY = 0`: it calls `fundOracle`, arms and asks on falls of 5% or more, keeps NHI alive
+   at 75% of its age and refreshes a wide-open feed, all paid from the asker's balance, and never spends its
+   own IMD. The feeds are seeded once, by `launch.sh seed` inside `go`. A quiet market costs about 3 IMD a day
+   (NHI every ~18 h, price and spot wide-open refreshes every ~9 h), so 5 IMD covers the hold before INFER's
+   launch fees reach the Treasury; watch the asker's balance (the ops dashboard alerts below 1 IMD) and top it up.
+   The paragraphs below are the 2026-10-07 reasoning that preceded this; the keeper-pays fallback they describe
+   exists in the keeper and is switched off.
+
+   *2026-10-07:* `Treasury.fundOracle` pays from the Treasury's plain IMD and sIMD, and until revenue lands
    (launch-pool fees, liquidation cuts) it holds neither — so it cannot fund the asker, and nothing in this
    sequence would keep NHI alive: 24 hours after the hand-seeded value every price action would refuse
    `StaleFeed` (final review 2026-10-07, medium). The keeper covers that gap with its own IMD
@@ -392,7 +402,7 @@ could).
    live index (`api.imd.fun/swarm`, the NHI body's own formula) against `NhiFeed.epoch()` before every
    NHI purchase and waits, saying how long, rather than buying an answer the feed will refuse; it holds
    its budget for the first purchase that lands. (b) Transfer IMD straight to `ORACLE_ASKER` right
-   after the deploy (one day's budget, `ORACLE_BUDGET_PER_DAY` = 15 IMD, is a reasonable seed), so the
+   after the deploy (5 IMD as of 2026-10-09; one day's budget, `ORACLE_BUDGET_PER_DAY` = 15 IMD, is the ceiling), so the
    Treasury-paid path is not dead on day one and the keeper's own IMD is the second line, not the only
    one. `fundOracle` tops the asker up only to the budget, so prefunding it is harmless.
 5. **Only then** announce. Nothing gates deposits: the vault takes `lock` and `draw` from the block it lands, so

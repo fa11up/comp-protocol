@@ -248,7 +248,12 @@ with its own IMD while the Treasury cannot pay.
 model above is the one to re-run before any `proposeLine`, and the epoch bound is what keeps the answer
 "five hours in the open".
 
-### The keeper and the oracle — decided 2026-10-06
+### The keeper and the oracle — decided 2026-10-06, superseded 2026-10-09
+
+**2026-10-09:** the launch keeper never pays from its own IMD (`KEEPER_ORACLE_FALLBACK = false`,
+`ASK_PAID_IMD_PER_DAY = 0`). 5 IMD goes straight to the OracleAsker at deploy, and the keeper only triggers the
+updates the asker pays for (falls, NHI keep-alive, wide-open refresh). The 2026-10-06 design below remains in
+the keeper, switched off.
 
 The Treasury pays for falls only. The keeper buys an update with its own IMD only as the Treasury's fallback:
 a fall past the trigger, armed and still present five blocks later, when the asker cannot cover one update
