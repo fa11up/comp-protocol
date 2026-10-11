@@ -18,7 +18,9 @@ export const href = (path = "") => new URL(path, appRoot()).href;
  * imdusd.com: the homepage and docs only, with every terminal link replaced, so nothing links to a page
  * that is not served.
  */
-export const TERMINAL = import.meta.env.MODE !== "public";
+// The public site gains the terminal in the launch build (VITE_TERMINAL=1; vite.config.ts LAUNCH).
+export const TERMINAL =
+  import.meta.env.MODE !== "public" || import.meta.env.VITE_TERMINAL === "1";
 export const WHITEPAPER = "https://whitepaper.imdusd.com";
 export const INFER_SITE = "https://infer.imdusd.com";
 export const X_ACCOUNT = "https://x.com/imdusd";

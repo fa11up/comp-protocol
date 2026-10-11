@@ -20,6 +20,25 @@ import { resolve } from "node:path";
 // not built, every link to it is replaced (site.tsx TERMINAL), the install manifest opens the homepage,
 // and Cloudflare gets security headers, a not-found page and a redirect for any old /terminal link.
 const SITE = "https://imdusd.com";
+// THE LAUNCH BUILD: the same public site with the terminal in it. `VITE_TERMINAL=1 vite build --mode public`
+// (npm run build:launch) ships the terminal page, its deployment file and ABIs, the docs unredacted, and no
+// /terminal redirect; the Content-Security-Policy then admits exactly the hosts the terminal reads from
+// (launchConnect below), and public-check --launch verifies all of it.
+const LAUNCH = process.env.VITE_TERMINAL === "1";
+/** Blockscout's API origin per chain, as the terminal's history fallback uses it (src/config.ts). */
+const BLOCKSCOUT: Record<number, string> = {
+  1: "https://eth.blockscout.com",
+  11155111: "https://eth-sepolia.blockscout.com",
+};
+/** Every origin the terminal connects to: the deployment's RPCs, the mainnet readers' RPCs (market price,
+ * ENS) and the chain's Blockscout. Read from the same files the terminal reads, so they cannot disagree. */
+function launchConnect(): string[] {
+  const deployment = JSON.parse(readFileSync(resolve(import.meta.dirname, "deployment-source.json"), "utf8"));
+  const ens: string[] = JSON.parse(readFileSync(resolve(import.meta.dirname, "src/ens-rpc.json"), "utf8"));
+  const origins = [...deployment.network.rpcUrls, ...ens].map((u: string) => new URL(u).origin);
+  if (BLOCKSCOUT[deployment.chainId]) origins.push(BLOCKSCOUT[deployment.chainId]);
+  return [...new Set(origins)];
+}
 const PUBLIC_REDIRECTS = `/terminal / 302
 /terminal/* / 302
 `;
@@ -80,17 +99,19 @@ function publicSite(): Plugin {
     name: "imdusd-public-site",
     apply: "build",
     generateBundle() {
-      this.emitFile({
-        type: "asset",
-        fileName: "_redirects",
-        source: PUBLIC_REDIRECTS,
-      });
+      // The launch build serves the terminal, so old /terminal links are no longer sent home.
+      if (!LAUNCH)
+        this.emitFile({
+          type: "asset",
+          fileName: "_redirects",
+          source: PUBLIC_REDIRECTS,
+        });
       this.emitFile({ type: "asset", fileName: "robots.txt", source: ROBOTS });
     },
     writeBundle(options) {
       const dir = options.dir!;
-      // The public homepage reads no chain, so the testnet deployment's ABIs are not shipped.
-      rmSync(resolve(dir, "abi"), { recursive: true, force: true });
+      // The public homepage reads no chain, so the deployment's ABIs are not shipped (the terminal needs them).
+      if (!LAUNCH) rmSync(resolve(dir, "abi"), { recursive: true, force: true });
       // public/manifest.webmanifest describes the terminal; this site has none, so it is the site.
       const file = resolve(dir, "manifest.webmanifest");
       const manifest = JSON.parse(readFileSync(file, "utf8"));
@@ -141,7 +162,13 @@ function publicSite(): Plugin {
         );
       writeFileSync(
         resolve(dir, "_headers"),
-        publicHeaders([...hashes], ["'self'", CF_ANALYTICS.report], [], false, [CF_ANALYTICS.script]),
+        publicHeaders(
+          [...hashes],
+          ["'self'", CF_ANALYTICS.report, ...(LAUNCH ? launchConnect() : [])],
+          [],
+          false,
+          [CF_ANALYTICS.script],
+        ),
       );
     },
   };
@@ -358,7 +385,7 @@ function renderBlocking(): Plugin {
   };
 }
 
-function docsPages(terminal: boolean): Plugin {
+function docsPages(terminal: boolean, site?: string): Plugin {
   return {
     name: "imdusd-docs-pages",
     apply: "build",
@@ -367,7 +394,7 @@ function docsPages(terminal: boolean): Plugin {
         outDir: options.dir!,
         contentDir: resolve(import.meta.dirname, "content/docs"),
         terminal,
-        site: terminal ? undefined : SITE,
+        site,
       });
       this.info(`rendered ${count} docs pages`);
     },
@@ -405,7 +432,7 @@ export default defineConfig(({ mode }) => {
   }
   return {
     plugins: site
-      ? [react(), renderBlocking(), publicSite(), docsPages(false)]
+      ? [react(), renderBlocking(), publicSite(), docsPages(LAUNCH, SITE)]
       : [react(), renderBlocking(), docsPages(true)],
     // The public site reads no chain: swap the live homepage for a stub so viem and the RPC layer
     // are not bundled at all.
@@ -432,11 +459,10 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           home: resolve(import.meta.dirname, "index.html"),
-          ...(site
-            ? { notfound: resolve(import.meta.dirname, "404.html") }
-            : {
-                terminal: resolve(import.meta.dirname, "terminal/index.html"),
-              }),
+          ...(site ? { notfound: resolve(import.meta.dirname, "404.html") } : {}),
+          ...(!site || LAUNCH
+            ? { terminal: resolve(import.meta.dirname, "terminal/index.html") }
+            : {}),
           docs: resolve(import.meta.dirname, "docs/index.html"),
         },
       },

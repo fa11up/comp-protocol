@@ -1,5 +1,8 @@
 // Fails the public build if the export would serve or link to the terminal. imdusd.com serves the
 // homepage and docs only; a link to a page that is not served is a broken site.
+//
+// `--launch` checks the launch build (npm run build:launch) instead: the terminal IS served, against a
+// mainnet deployment, and the page may connect to exactly the hosts the terminal reads from and no others.
 import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,17 +19,18 @@ async function walk(d, prefix = "") {
   }
 }
 await walk(dir);
+const LAUNCH = process.argv.includes("--launch");
 const fail = (m) => {
   console.error(`public-check: ${m}`);
   process.exit(1);
 };
 for (const need of [
+  ...(LAUNCH ? ["terminal/index.html", "imd-deployment.json"] : ["_redirects"]),
   "index.html",
   "docs/index.html",
   "docs/overview/what-is-imdusd/index.html",
   "404.html",
   "_headers",
-  "_redirects",
   "manifest.webmanifest",
   "robots.txt",
   "sitemap.xml",
@@ -44,7 +48,22 @@ const headers = await readFile(`${dir}/_headers`, "utf8");
 if (!/Content-Security-Policy: .*'sha256-[A-Za-z0-9+/=]+'/.test(headers))
   fail("_headers has no hashed Content-Security-Policy");
 const connect = headers.match(/connect-src ([^;]*);/)?.[1].trim();
-if (connect !== "'self' https://cloudflareinsights.com")
+let deployment;
+if (LAUNCH) {
+  deployment = JSON.parse(await readFile(`${dir}/imd-deployment.json`, "utf8"));
+  if (deployment.chainId !== 1 || deployment.network?.testnet !== false || deployment.interface !== "maker")
+    fail(`the terminal's deployment is not the mainnet one (chain ${deployment.chainId}, ${deployment.interface})`);
+  if (!deployment.oracleAsker?.address) fail("the deployment names no OracleAsker");
+  const ens = JSON.parse(await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "../src/ens-rpc.json"), "utf8"));
+  const want = [
+    "'self'",
+    "https://cloudflareinsights.com",
+    ...new Set([...deployment.network.rpcUrls, ...ens].map((u) => new URL(u).origin).concat("https://eth.blockscout.com")),
+  ].join(" ");
+  if (connect !== want) fail(`connect-src is "${connect}", expected "${want}"`);
+  if (/terminal/.test(await readFile(`${dir}/_redirects`, "utf8").catch(() => "")))
+    fail("_redirects still sends /terminal home");
+} else if (connect !== "'self' https://cloudflareinsights.com")
   fail(`the Content-Security-Policy allows network connections beyond Cloudflare Web Analytics: ${connect}`);
 const scripts = headers.match(/script-src ([^;]*);/)?.[1].split(/\s+/).filter((s) => !s.startsWith("'")) ?? [];
 if (scripts.join(" ") !== "https://static.cloudflareinsights.com")
@@ -54,16 +73,18 @@ const builds = new Set();
 for (const f of files.filter((f) => f.endsWith(".html")))
   builds.add((await readFile(`${dir}/${f}`, "utf8")).match(/<meta name="build" content="([^"]+)"/)?.[1]);
 if (builds.size !== 1 || builds.has(undefined)) fail(`pages disagree on <meta name="build">: ${[...builds]}`);
-if (files.some((f) => f.startsWith("terminal/")))
+if (!LAUNCH && files.some((f) => f.startsWith("terminal/")))
   fail("the terminal was built into the public site");
 // The public site connects to no chain: no deployment file, no ABIs.
-for (const f of files)
+for (const f of LAUNCH ? [] : files)
   if (f === "imd-deployment.json" || f.startsWith("abi/"))
     fail(`${f} ships a chain deployment`);
-for (const f of files.filter((f) => /\.(html|js|css|webmanifest|txt)$/.test(f))) {
+// At launch the terminal's code legitimately reads chains (and keeps its testnet branches for other
+// deployments); its pages and every non-script file are still held to the rule.
+for (const f of files.filter((f) => /\.(html|js|css|webmanifest|txt)$/.test(f) && !(LAUNCH && f.endsWith(".js")))) {
   const text = await readFile(`${dir}/${f}`, "utf8");
   // A link to the terminal, in any of the forms the site writes one.
-  if (/["'`(]\.{0,2}\/?terminal\//.test(text))
+  if (!LAUNCH && /["'`(]\.{0,2}\/?terminal\//.test(text))
     fail(`${f} still links to the terminal`);
   // Nothing about the testnet, and no way to reach a chain: no explorer, no RPC endpoint.
   // Nothing about the testnet anywhere; and no way to reach a chain from the site's code (docs prose
@@ -95,7 +116,7 @@ if (!mark || !bundle.includes(mark))
 // The terminal is not public yet: in every docs page, the content and the title must not name it
 // (the docs build redacts it). The page shell is exempt: it carries a theme storage key.
 for (const f of files.filter(
-  (f) => f.startsWith("docs/") && f.endsWith(".html"),
+  (f) => !LAUNCH && f.startsWith("docs/") && f.endsWith(".html"),
 )) {
   const html = await readFile(`${dir}/${f}`, "utf8");
   const main = html.match(/<main[\s\S]*?<\/main>/)?.[0] ?? "";
@@ -111,5 +132,7 @@ const manifest = JSON.parse(
 if (manifest.start_url !== "./")
   fail(`manifest start_url is ${manifest.start_url}`);
 console.log(
-  `public-check: ${files.length} files; homepage and docs only; no terminal links, no testnet, no chain connection.`,
+  LAUNCH
+    ? `public-check --launch: ${files.length} files; homepage, docs and the terminal on chain 1; connect-src ${connect}.`
+    : `public-check: ${files.length} files; homepage and docs only; no terminal links, no testnet, no chain connection.`,
 );

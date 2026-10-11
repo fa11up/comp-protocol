@@ -18,7 +18,20 @@ const RPC = process.env.E2E_RPC ?? "http://127.0.0.1:8546";
 if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(RPC))
   throw Error("E2E_RPC must be a local fork");
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
-const dist = resolve(root, "dist");
+// E2E_DIST=dist-public tests the launch build (npm run build:launch) instead of the staging one, served with
+// the Content-Security-Policy from its own _headers, so a host the policy forgets fails here, not in production.
+const dist = resolve(root, process.env.E2E_DIST || "dist");
+const csp = await readFile(resolve(dist, "_headers"), "utf8")
+  .then((h) => h.match(/Content-Security-Policy: (.*)/)?.[1])
+  .catch(() => undefined);
+// Served over http on this machine: upgrade-insecure-requests would turn the fork's http RPC into https.
+// The fork's origin stands in for the deployment's RPCs, which it replaces in the deployment file.
+const servedCsp = csp
+  ?.replace(/;\s*upgrade-insecure-requests/, "")
+  .replace(
+    /connect-src ([^;]*)/,
+    (_, list) => `connect-src ${list} ${new URL(RPC).origin}`,
+  );
 const source = JSON.parse(
   await readFile(resolve(root, "web/deployment-source.json")),
 );
@@ -146,6 +159,8 @@ const server = createServer(async (req, res) => {
       "Content-Type",
       types[extname(path)] || "application/octet-stream",
     );
+    if (servedCsp && extname(path) === ".html")
+      res.setHeader("Content-Security-Policy", servedCsp);
     res.end(await readFile(path));
   } catch {
     res.writeHead(404).end();
@@ -208,6 +223,12 @@ async function open(account) {
   const page = await context.newPage();
   page.setDefaultTimeout(20_000);
   page.on("pageerror", (e) => errors.push(e.message));
+  page.on(
+    "console",
+    (m) =>
+      /Content.Security.Policy|Refused to/i.test(m.text()) &&
+      errors.push(`CSP: ${m.text()}`),
+  );
   // The page's clock follows the fork's: a warp moves block time, and the desk times grace by Date.now.
   await page.addInitScript(() => {
     const real = Date.now.bind(Date);
@@ -612,6 +633,16 @@ try {
 } finally {
   if (remote.size) console.log("refused remote hosts:", [...remote].join(", "));
   if (errors.length) console.log("page errors:", errors.slice(0, 5));
+  const cspErrors = errors.filter((e) => e.startsWith("CSP:"));
+  if (!exit && cspErrors.length) {
+    exit = 1;
+    console.error(
+      "FAIL the Content-Security-Policy refused:",
+      cspErrors.slice(0, 5),
+    );
+  }
+  if (servedCsp)
+    console.log(`served with ${dist.split("/").pop()}/_headers CSP`);
   console.log(`${results.length} passed${exit ? ", 1 failed" : ""}`);
   await mkdir(resolve(root, "web/test-results"), { recursive: true }).catch(
     () => {},
