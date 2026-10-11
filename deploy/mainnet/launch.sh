@@ -12,7 +12,12 @@
 #                                       key) and wait for the Intake to deliver them; skips what is seeded or in flight
 #   deploy/mainnet/launch.sh check      verifySeeded: the first values against the pool and an outside reference (runbook 7.2)
 #   deploy/mainnet/launch.sh vault      stage two, through MEV Blocker's full-privacy RPC, with a fresh secret salt
+#   deploy/mainnet/launch.sh verify     source-verify every contract on Etherscan and Sourcify (deploy/mainnet/verify.py):
+#                                       constructor arguments rebuilt from the record and proven first; read-only, no key
 #   deploy/mainnet/launch.sh wipe       eject the RAM disk: the key, the salt and the file are gone
+#
+# The Etherscan API key is read from ETHERSCAN_API_KEY, else the RAM disk's launch.env, else deploy/mainnet/.etherscan.local
+# (gitignored: a line ETHERSCAN_API_KEY=...). This repo is public: the key never goes in a tracked file.
 #
 # The key file is /Volumes/INFERLAUNCH/launch.env. Edit it with `nano` (TextEdit keeps versions; never paste the key
 # into a shell prompt, where it would land in history). Every broadcast is simulated first and waits for you to type SEND.
@@ -163,6 +168,9 @@ case "${1:-}" in
     else
       echo; echo "stage two: the vault is already deployed ($(rec vault)), skipping"
     fi
+    # Source verification while the vault's salt is still on the RAM disk. It never blocks the wipe: a failure is
+    # printed and `launch.sh verify` can be run again at any time.
+    echo; "$0" verify || echo "launch: verification did not finish; run 'deploy/mainnet/launch.sh verify' again later"
     "$0" wipe
     echo; echo "Done. Next (runbook step 6): keeper install + execute, 5 IMD to the OracleAsker, propose the reserve asset."
     ;;
@@ -207,6 +215,21 @@ case "${1:-}" in
       [ $(( $(date +%s) - start )) -ge $(( WAIT * 60 )) ] && die "still waiting on:$left after $WAIT minutes. Run 'launch.sh seed' again: it waits on what is in flight and re-buys what the plane refused"
       echo "  waiting on:$left ($(( ($(date +%s) - start) / 60 )) min)"; sleep 30
     done
+    ;;
+  verify)
+    # Read-only: the RPC from launch.env when the RAM disk is up, else VERIFY_RPC_URL, else a public one. The vault's
+    # secret salt (still on the RAM disk inside `go`) lets its address be re-derived too; without it that one proof
+    # is skipped and Etherscan still checks the arguments itself.
+    [ -f "$ENVF" ] && { set -a; . "$ENVF"; set +a; }
+    [ -f deploy/mainnet/.etherscan.local ] && [ -z "${ETHERSCAN_API_KEY:-}" ] && { set -a; . deploy/mainnet/.etherscan.local; set +a; }
+    RPC=${VERIFY_RPC_URL:-${MAINNET_RPC_URL:-https://ethereum-rpc.publicnode.com}}
+    [ -f "$REC" ] || die "no deployment record"
+    if [ "${FORK:-0}" = 1 ]; then
+      python3 deploy/mainnet/verify.py --rpc "$RPC"                       # a rehearsal proves the arguments only
+    else
+      [ -n "${ETHERSCAN_API_KEY:-}" ] || die "no ETHERSCAN_API_KEY (deploy/mainnet/.etherscan.local or launch.env)"
+      python3 deploy/mainnet/verify.py --rpc "$RPC" --submit
+    fi
     ;;
   wipe)
     [ -d "$RD" ] || { echo "no RAM disk mounted: nothing to wipe"; exit 0; }
