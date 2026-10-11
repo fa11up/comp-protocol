@@ -45,7 +45,7 @@ An explorer is one more service that can be down or wrong, not a proof of comple
 
 ## Backing and supply
 
-`totalDebt()` is principal. `totalBadDebt()` is the debt left on drained positions, recorded when it happens; it is not the sum of `badDebtOf(owner)` across positions. `backedDebt()` subtracts recorded bad debt and leaves out principal added in the current transaction (and, once minting from work is on, principal that is still warming up).
+`totalDebt()` is principal. `totalBadDebt()` is the debt left on drained positions, recorded when it happens; it is not the sum of `badDebtOf(owner)` across positions. `backedDebt()` subtracts recorded bad debt and leaves out principal added in the current transaction, and never counts more than the paced debt, which follows principal up by at most 10% an hour and falls at once.
 
 To explain the reserve, read `reserveValue()`, `treasury.reserveAssets()`, and `reserveAsset(asset)` and `reserveValueOf(asset)` for each. `haircutBps` is the share of value kept, not the share removed. Unlisted or unreadable assets count for nothing. `totalReceived` is a running total of receipts, not a balance; use the token's `balanceOf(treasury)` for holdings.
 

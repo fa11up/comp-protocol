@@ -30,7 +30,7 @@ imdUSD is created two ways, by borrowing (`draw`) and by minting against atteste
 
 > `earnLine` = discounted reserve value + backed debt × `earnMat`
 
-Backed debt is principal less recorded bad debt; principal borrowed in the same transaction does not count, and while work minting is on, new debt counts only as it warms up (see below). The ceiling limits new minting only: if it later falls below what has been minted, nothing is burned. Whether work issuance is open at launch is not yet decided.
+Backed debt is principal less recorded bad debt; principal borrowed in the same transaction does not count, and new debt counts only as the paced debt follows it up, by at most 10% an hour (see below). The ceiling limits new minting only: if it later falls below what has been minted, nothing is burned. Work issuance is off at launch: the wage is zero until governance proposes one.
 
 ## The stability fee
 

@@ -18,7 +18,7 @@ Each entry gives the plain meaning first, then the contract name where there is 
 
 **attestation.** A signed answer from an IdentityMD agent panel. A price feed changes only when it receives a valid one. See [Relay oracle updates](../keepers/relay-oracle-updates.md).
 
-**backing per imdUSD.** The reserve plus the collateral standing behind debt, divided by imdUSD supply, never above $1. New capital counts toward it gradually: half of what is still new every six hours, all of it once left untouched for a day. Read with `backingPerUnit()`. Redemption pays against it.
+**backing per imdUSD.** The reserve plus the collateral standing behind debt, divided by imdUSD supply, never above $1. What a redemption is paid against is the lower of this figure and its paced copy, which falls at once but rises at most two points of par an hour, so capital brought in just before a redemption cannot lift it faster than that. Read with `backingPerUnit()`.
 
 **bonus.** The extra collateral a liquidator receives on top of the debt they repay (`CHOP_PERCENT`). It is shared between the marker (`chip`), the protocol (`cut`) and the liquidator. See [Keeper economics](../keepers/keeper-economics.md).
 
@@ -40,7 +40,7 @@ Each entry gives the plain meaning first, then the contract name where there is 
 
 **deposit (`lock`, `lockIMD`).** Add collateral: sIMD with `lock`, or IMD with `lockIMD`, which stakes it for you.
 
-**duty.** The yearly stability fee rate, set by governance.
+**duty.** The yearly stability fee rate, set by governance: 4.44% at launch.
 
 **fee base.** The supply a redemption's fee increase is measured against: imdUSD supply as paced (following the real supply by at most 10% an hour), never less than 100,000 imdUSD. See [Monetary policy](../economics/monetary-policy.md).
 
@@ -54,7 +54,7 @@ Each entry gives the plain meaning first, then the contract name where there is 
 
 **mark (`bark`).** Flag a position that is below the minimum ratio so it can be liquidated after grace. `barkFor(owner, beneficiary)` credits someone else as the marker. The mark is stored in `liquidationMarks(owner)`.
 
-**mat.** The minimum collateral ratio, set by network health. Read with `mat()`.
+**mat.** The minimum collateral ratio, set by network health: 170% when the network is healthy, up to 200% when it is not. Read with `mat()`.
 
 **mint from work (`earn`).** Mint imdUSD against swarm work credited to you by the work oracle, up to a ceiling (`earnLine`, scaled by `earnMat`).
 
@@ -82,7 +82,7 @@ Each entry gives the plain meaning first, then the contract name where there is 
 
 **stability fee.** Interest on debt at the rate `duty`. It is paid first when you repay.
 
-**wage.** The imdUSD earned per accepted swarm task, set by governance within a hard limit. At zero, minting from work is off.
+**wage.** The imdUSD earned per accepted swarm task, set by governance within a hard limit of one imdUSD. At zero, minting from work is off, and it is zero at launch.
 
 **work oracle.** The contract that turns the swarm's published task tally into minting rights. The vault creates one at deployment; governance may replace it, only while the wage is zero.
 

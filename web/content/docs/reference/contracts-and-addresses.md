@@ -3,7 +3,6 @@ title: Contracts and addresses
 section: reference
 order: 1
 audience: integrators
-pending: true
 sources:
   - docs/MAINNET-RUNBOOK.md:194-360
   - script/DeployMainnet.s.sol:1
@@ -30,18 +29,18 @@ Some contracts are deployed on their own; the vault creates the rest in its cons
 |---|---|---|
 | `SwarmRelay` | (waiting for mainnet launch) | No owner, settings or upgrade path. Each call names its own targets. |
 | `WorkOracleFactory` | (waiting for mainnet launch) | Anyone may call it; no governor or settings. The vault's copy of its address is written into the contract. |
-| `PriceFeed` | (waiting for mainnet launch) | Inherits `SwarmFeed`. Signer, relayer, data chain, answer type and question are written into the contract. Maximum age (—) and deviation bound (—) are set once at deployment. |
-| `NhiFeed` | (waiting for mainnet launch) | Same setup as `PriceFeed`, with its own question. Maximum age (—) and deviation bound (—) are set once at deployment. |
-| `SpotFeed` | (waiting for mainnet launch) | Same setup, with its own question. Maximum age (—) and deviation bound (—) are set once at deployment. |
-| `OracleAsker` | (waiting for mainnet launch) | No owner or settings. Its feeds and their request bodies are fixed at deployment. Pays only when the health feed is close to stale, when any feed has been silent a whole lifetime with its allowance wide open, or when IMD's pool has fallen below a price feed (never for a rise); see [How updates are paid for](./oracle-and-question-binding.md#how-updates-are-paid-for). |
+| `PriceFeed` | (waiting for mainnet launch) | Inherits `SwarmFeed`. Signer, relayer, data chain, answer type and question are written into the contract. Maximum age (one hour) and deviation bound (2,000 basis points, 20%) are set once at deployment. |
+| `NhiFeed` | (waiting for mainnet launch) | Same setup as `PriceFeed`, with its own question. Maximum age (one day) and deviation bound (20%) are set once at deployment. |
+| `SpotFeed` | (waiting for mainnet launch) | Same setup, with its own question. Maximum age (one hour) and deviation bound (20%) are set once at deployment. |
+| `OracleAsker` | (waiting for mainnet launch) | No owner or settings. Its feeds and their request bodies are fixed at deployment. Pays only when the health feed is close to stale, when any feed has been silent a whole lifetime with its allowance wide open, or when IMD's pool has fallen below a price feed (never for a rise); see [How updates are paid for](./oracle-and-question-binding.md#how-updates-are-paid-for). The Intake reports a request that ends without an answer straight back to it, which frees the feed for the next purchase at once. |
 | `ParameterizedVault` | (waiting for mainnet launch) | Collateral (sIMD), stablecoin, the three feeds, `parameters`, `treasury`, `usdPriceFeed` and `collateralPriceFeed` are all fixed. Economic settings come from its own `Parameters`. No upgrade path and no way to swap a feed. The work oracle it creates can be replaced through `Parameters`, only while minting from work is off; `oracle()` returns whichever is in use. |
 | `ImdUSD` | (waiting for mainnet launch) | Bound to the vault for good; only the vault mints and burns. No governor, pause or upgrade. |
 | `Parameters` | (waiting for mainnet launch) | Its vault cannot be changed. The governor and every hard limit are written into the contract; changes go through the delay in [Parameters](../governance/parameters.md). |
 | `Treasury` | (waiting for mainnet launch) | Serves only its vault; that vault's `Parameters` governs which reserve assets are listed and how they are priced. `feeRecipient()` returns it. The operator can never withdraw the collateral (sIMD) or a listed reserve asset, and can withdraw imdUSD only above what outstanding bad debt still needs. Anyone may call `payStream()` (a governed daily imdUSD payment to a governed payee) and `fundOracle()` (a governed daily IMD budget for price updates). |
 | `TreasuryFactory` | (waiting for mainnet launch) | No owner or settings. It exists so the vault's deployment code stays under the network's size limit. |
-| `UsdPriceFeed` | (waiting for mainnet launch) | Its IMD/ETH feed is fixed; the Chainlink address and its maximum age (—) are written into the contract. No settings or governor. |
+| `UsdPriceFeed` | (waiting for mainnet launch) | Its IMD/ETH feed is fixed; the Chainlink address and its maximum age (two hours) are written into the contract. No settings or governor. |
 | `SharePriceFeed` | (waiting for mainnet launch) | Fixed to sIMD and to the vault's `UsdPriceFeed`. No settings. Quotes USD per 1e18 raw sIMD units. |
-| `SwarmWorkOracle` | (waiting for mainnet launch) | Vault, signer, relayer, question and identity adapter are fixed; maximum age (—) is set once. `wage()` reads the vault's governed settings. |
+| `SwarmWorkOracle` | (waiting for mainnet launch) | Vault, signer, relayer, question and identity adapter are fixed; maximum age (one day) is set once. It has no move limit, since its value is a Merkle root. `wage()` reads the vault's governed settings. |
 
 ## Constructor and read-back checks
 

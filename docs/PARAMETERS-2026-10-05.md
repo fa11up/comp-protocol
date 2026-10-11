@@ -263,3 +263,18 @@ The vault knows only `IWorkOracle` (rights in imdUSD units). The wage is 0 at la
 design (a governed tariff per skill with a default for skills that do not exist yet) is a later deployment,
 not a launch decision. Its one dependency is evidence that carries the job type: an upstream per-skill leaf
 in the daily receipt (the same shape as the agent tally already merged in PR #332).
+
+### At the freeze — 2026-10-10
+
+Every value above ships unchanged in the deploy commit (`release/mainnet` `9e37405`, tag
+`mainnet-freeze-2026-10-10c`). Two things this record predates:
+
+- **The redemption fee base.** The analysis above divides by supply; the shipped fee divides by the *fee
+  base*, the supply as paced (following the live supply by at most 10% an hour) and never less than
+  100,000 imdUSD (`CDPVault._feeBase`), so a small supply right after launch cannot set everyone's fee at the cap.
+- **Requests that end without an answer.** `OracleAsker` buys through Intake v2
+  (`0xa43e6F75ee006411F79Ac1C84120606C2330DE82`) with `requestWithFailure`. A request the plane refuses
+  (status 1) or that ends without a result (status 2) calls `onOracleFailure` at once: the feed's in-flight
+  slot clears then rather than at `ASK_TIMEOUT`, `AskFailed` is emitted, and, because a failed request is
+  not refunded, the Treasury's own purchase of that feed backs off for `ASK_TIMEOUT` as after a refused relay.
+  Record: `docs/AUDIT-INTERNAL-2026-10-10-INTAKE-V2.md`.

@@ -1,14 +1,18 @@
 # imdUSD Protocol
 
-A compute-backed CDP stablecoin on Sepolia whose risk parameters come from IdentityMD swarm oracle
-attestations. IMD is the collateral, the vault mints imdUSD against it, and the swarm's answers decide
-what a position is worth and how harshly it is liquidated.
+A compute-backed CDP stablecoin whose prices and risk parameters come from IdentityMD swarm oracle
+attestations. sIMD (staked IMD, `StakedIMD` `0x9Efa934D9fAd4AE28c998a40195646b965a97247`) is the collateral,
+the vault mints imdUSD against it, and the swarm's answers decide what a position is worth and how harshly it
+is liquidated. Built and proven on Sepolia; the mainnet deploy commit is frozen on `release/mainnet` at
+`9e37405` (tag `mainnet-freeze-2026-10-10c`), which differs from `main` only in `src/DeploymentConfig.sol`.
+Public docs: https://imdusd.com/docs/.
 
 Forked from `identity-md-launches/launch-519-mockimd-pricefeed-nhifeed-cdpvault`, so the history below
 the fork point is the swarm's own build across launches 458 → 493 → 517 → 519 → 586. Everything above
 it is ours.
 
-**362 tests pass** on a plain `forge test`, plus 14 fork tests against live Sepolia state.
+At the freeze: **654 tests pass** on a plain `forge test` (4 skipped), 655 with `AUDIT_PROOFS=true`, 116 in
+`script/checks`, and the mainnet fork tests (including `test/fork/IntakeV2.t.sol` against the live Intake).
 
 ## Contracts
 
@@ -19,7 +23,9 @@ it is ours.
 | `SwarmFeed` | attestation verification; `PriceFeed` / `NhiFeed` / `SpotFeed` are its three leaves |
 | `SwarmRelay` | permissionless relay, and keeper bundling: relay-and-mark, relay-and-bite |
 | `Parameters` / `Governed` | the governed economics and the reserve register, behind a 48-hour delay |
-| `Treasury` | where the protocol's own revenue lands |
+| `Treasury` | where the protocol's own revenue lands; pays redemptions from its sIMD first, funds the oracle budget |
+| `TreasuryFactory` | creates the vault's Treasury, so the vault's initcode stays under EIP-3860 |
+| `OracleAsker` | buys feed updates through the IdentityMD Intake (v2) with the Treasury's IMD, only when the chain shows a need; anyone may also buy one with their own IMD |
 | `Registry` | replaceable counterparties — **written, not yet wired to anything** |
 | `UsdPriceFeed` | the IMD/ETH feed × Chainlink ETH/USD, so one imdUSD of debt is one **dollar** of collateral |
 | `SharePriceFeed` | prices any ERC-4626 share from a feed for its asset, in USD per 1e18 raw units — built for sIMD |
@@ -62,12 +68,15 @@ reverts** rather than silently leaving the vault on the faucet.
 
 | input | what it decides |
 |---|---|
-| **price** | `collateralRatio = collateral * price * 100 / (debt * 1e18)`, from a window median. On `ParameterizedVault` the price is `UsdPriceFeed`, so **one imdUSD of debt is one USD-worth of collateral**; the base vault prices in ETH |
-| **NHI** | `mat()` 150 at ≥0.85 rising to 200 at ≤0.60; `lull()` 6h falling to 0 |
+| **price** | `collateralRatio = collateral * price * 100 / (debt * 1e18)`, from a window median. On `ParameterizedVault` the price is `collateralPriceFeed()`, a `SharePriceFeed` over `UsdPriceFeed` (sIMD's exchange rate × IMD/ETH × ETH/USD), so **one imdUSD of debt is one USD-worth of collateral**; the base vault prices in ETH |
+| **NHI** | `mat()` 170 at ≥0.85 rising to 200 at ≤0.60; `lull()` 6h falling to 0 |
 | **spot** | not a price — a sanity bound. A gap over `SKEW_BPS` (500) halts borrowing, redemption, marking and liquidation, and any withdrawal while debt is open; deposits, repayments and withdrawals from a debt-free position stay open |
 
-Shipped economics: stability fee 200 bps, marker share 1000 bps of the liquidation bonus, protocol
-share 3333 bps of it, divergence bound 500 bps, work ratio 2500 bps, 0.01 imdUSD per accepted task.
+Shipped economics: liquidation bonus 20%, stability fee 444 bps, marker share 1000 bps of the bonus,
+protocol share 1000 bps of it, divergence bound 500 bps, debt ceiling 1,000,000 imdUSD, redemption fee
+50–500 bps with divisor 2, redemption spread `gap` 50, work ratio 2500 bps, wage 0 (minting from work off at
+launch), oracle budget 15 IMD a day. Feeds: price and spot live one hour, NHI one day, each moving at most
+2000 bps per epoch. The full table is in `web/content/docs/governance/parameters.md`.
 
 The divergence guard deliberately reads the **raw** primary feed rather than the denominated price:
 both legs quote IMD in ETH, so the ETH/USD factor cancels, and comparing a denominated price against
@@ -119,9 +128,11 @@ hashed.
 
 ## Governance
 
-`Parameters` holds seven numbers — debt ceiling, protocol bonus share, stability fee, divergence
-bound, marker share, the work ceiling's ratio term, and the imdUSD an accepted task earns — plus the
-Treasury's reserve register, all behind a 48-hour delay. One proposal at a time, readable by anyone for the whole
+`Parameters` holds the governed economics — debt ceiling, protocol bonus share, stability fee, divergence
+bound, marker share, the work ceiling's ratio term, the imdUSD an accepted task earns, the redemption spread
+and fee divisor, the operator stream, the daily oracle budget and the work-oracle slot — plus the
+Treasury's reserve register, all behind a 48-hour delay. The governor is a 2-of-3 Safe pinned in source
+(`APPROVED_OPERATOR`). One proposal at a time, readable by anyone for the whole
 window, then applied by **anyone**: a governor who could also withhold application could hold a
 validated change over the protocol and choose its moment. Cancelling is the only instant action,
 because abandoning a change can only return things to what borrowers already priced.
@@ -137,7 +148,7 @@ the current rate, so raising the rate repriced history and *cutting* it made the
 borrower's stored index — reverting `stabilityFeeOf`, which is on every entry point. A rate cut would
 have frozen every position.
 
-## Live on Sepolia
+## Live on Sepolia (historical)
 
 | | |
 |---|---|
@@ -206,7 +217,11 @@ live state. Most public Sepolia RPCs are not archive nodes.
 
 ## Audits
 
-**Two independent reviews, both bought from the swarm, both read-only.**
+Thirty reviews through 2026-10-10: single audits, panel audits, adversarial reviews, a gas review and four
+in-house reviews. The full chain, with every job, pinned commit and record, is in
+`web/content/docs/reference/audit-history.md`. The first two are summarised here.
+
+**The first two independent reviews, both bought from the swarm, both read-only.**
 
 `docs/AUDIT-2026-10-03.md` reviewed the contracts written outside the swarm and returned
 **11 findings: 1 high, 2 medium, 4 low, 4 info**, each with a Foundry proof test. All four supplied proofs were re-run and all four failed exactly as described.
@@ -245,20 +260,18 @@ the written reproductions. Archive the record immediately.
 - `Registry` is written and governed but **nothing reads it**, so a rotation recorded there changes
   nothing. Wiring it means a feed resolving its relayer through a pinned registry instead of an
   immutable, which trades an immutable authority check for an external call on the attestation path.
-- **Redemption is channel A only.** `cash` burns imdUSD for IMD at the lesser of $1 and
-  `backingPerUnit()`, less a size-dependent fee, paid from the Treasury reserve first and then from a
-  named under-collateralised position. Channel B in `docs/COMPUTE-BACKING-DESIGN.md` §5 is not built.
-- `SwarmWorkOracle` is built but **not yet answerable**. Its question reads the swarm's daily oracle
-  receipts, and the control plane records no agent tally for this seat so far — historical days are
-  deliberately not reconstructed — so a panel must report inability today. It costs nothing to wait:
-  `earnLine()` is zero on a fresh stack whatever the oracle says.
-- `WORK_ORACLE_FACTORY` is a **placeholder with no code**, so a vault asking for a real work oracle
-  cannot be deployed until `script/DeployPrereqs.s.sol` runs and that constant names the result. The
-  launch manifest therefore still passes zero, which is the faucet, deliberately.
+- **Redemption is channel A only.** `cash` burns imdUSD for sIMD at the lesser of $1 and
+  `backingPerUnit()`, less a size-dependent fee, at `payoutPrice()`, paid from the Treasury reserve first and
+  then from a named position below `mat + gap`. Channel B in `docs/COMPUTE-BACKING-DESIGN.md` §5 is not built.
+- **Minting from work ships off** (`WAGE_WAD = 0`): `earn` and work claims are refused until governance
+  proposes a wage behind the 48-hour delay. The mainnet vault is deployed with the real `SwarmWorkOracle`
+  (through `WorkOracleFactory`, whose address `release/mainnet` pins); on `main` `WORK_ORACLE_FACTORY` is
+  still a placeholder, and the testnet manifests pass zero, which is the faucet, deliberately.
 - `cut` is bounded but the bound is economically empty at its top: at 10000 a
   liquidator who did not mark receives exactly the principal back, so liquidations stop.
-- There is no insurance and no write-off path. A liquidation can leave bad debt; `bite` sweeps an
-  unreachable remainder so the position closes rather than freezing, but the loss is realised.
+- There is no insurance fund. A liquidation can leave bad debt; `bite` sweeps an unreachable remainder so
+  the position closes rather than freezing, and anyone may `cover` recorded bad debt with imdUSD the
+  Treasury holds, but only as far as the Treasury has it.
 
 ## Documents
 

@@ -23,15 +23,15 @@ The feed's fixed question asks the panel to read `https://api.imd.fun/swarm` whe
 - **Service availability:** the share of the verifier, publisher and deployer services that are up.
 - **Reliability:** completed jobs divided by completed plus blocked plus cancelled jobs. Jobs still running are left out, and with no finished jobs at all reliability counts as full.
 
-The question fixes the arithmetic (whole-number maths, rounding down at each division) and takes a weighted average of the three. It is a live reading of the swarm's published counters, not something measured on chain. The feed checks the signature and the question; it cannot re-fetch the counters itself.
+The question fixes the arithmetic (whole-number maths, rounding down at each division) and takes a weighted average of the three: 40% participation, 30% service availability and 30% reliability. It is a live reading of the swarm's published counters, not something measured on chain. The feed checks the signature and the question; it cannot re-fetch the counters itself.
 
 ## How `mat` and `lull` move
 
 | Network health | `mat` (required ratio) | `lull` (grace) |
 |---|---|---|
-| At or below the lower breakpoint | Highest | Shortest |
-| Between the breakpoints | Falls steadily as health rises, rounded up to a whole percent | Grows steadily as health rises, rounded down to a whole second |
-| At or above the upper breakpoint | Lowest | Longest |
+| 0.60 or below | 200% | None |
+| Between 0.60 and 0.85 | Falls steadily from 200% to 170% as health rises, rounded up to a whole percent | Grows steadily from none to six hours as health rises, rounded down to a whole second |
+| 0.85 or above | 170% | Six hours |
 
 Outside the breakpoints both values stay at their end points. The feed rejects a zero figure; a figure above one is treated as the top of the range.
 

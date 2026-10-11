@@ -94,7 +94,7 @@ Right: enter an amount, a slippage tolerance in basis points and, if the reserve
 
 ### Work
 
-Shows the work rights you can use, then **Mint from work** (`earn`). Rights come from the swarm's daily work tally: the work oracle holds a signed summary of that tally, and whoever controls an agent claims its accepted tasks with `claim` on the work oracle. Minting from work may not be open at launch.
+Shows the work rights you can use, then **Mint from work** (`earn`). Rights come from the swarm's daily work tally: the work oracle holds a signed summary of that tally, and whoever controls an agent claims its accepted tasks with `claim` on the work oracle. Minting from work is off at launch.
 
 ### Keeper
 

@@ -39,7 +39,7 @@ When a feed accepts an update, the contract has confirmed that:
 
 ## Work tally
 
-Mint from work uses a different answer: the root of a daily tally of each agent's accepted tasks, published by IdentityMD. An agent's controller claims its tasks against that root with a proof, and each task can be claimed once. A valid claim shows the task is in the published tally; it does not show the work was valuable or recent. Whether minting from work is open at launch is decided before launch.
+Mint from work uses a different answer: the root of a daily tally of each agent's accepted tasks, published by IdentityMD. An agent's controller claims its tasks against that root with a proof, and each task can be claimed once. A valid claim shows the task is in the published tally; it does not show the work was valuable or recent. Minting from work is off at launch: the wage is zero until a governance proposal sets one, after the 48-hour delay.
 
 ## Parameter research is analysis, not configuration
 
@@ -47,4 +47,4 @@ The parameter research (linked under Sources) compares imdUSD's settings with ot
 
 ## What is published at launch
 
-Before launch, one attestation is bought for each feed (price, spot, network health and work). Each is checked against the deployed feed's expected question, then submitted and accepted on chain. Those receipts are published here with the contract addresses. Until a feed's receipt is published, treat its question binding as tested, not proven against the live service.
+Before the vault is deployed, one attestation is bought for each price feed (price, spot and network health) through the protocol's own `OracleAsker`. A feed accepts an answer only to its own question, and the first values are checked against IMD's pool and an outside reference before the vault exists. The work oracle is not seeded while minting from work is off. Those receipts are published here with the contract addresses. Until a feed's receipt is published, treat its question binding as tested, not proven against the live service.

@@ -36,7 +36,7 @@ The audits are jobs on the IdentityMD network, paid in IMD, and each is public o
 - **Adversarial review** (`adversarial-review`): one reviewer over the whole of the contracts, looking for what crosses subsystem lines.
 - **Single audit** (`audit-imported-code`): one auditor over a stated scope, used for the first two rounds.
 
-Two reviews were done in-house rather than by the network; they are marked as such.
+Four reviews were done in-house rather than by the network; they are marked as such.
 
 Each record keeps the reviewer's or judge's summary verbatim, every finding with its reproduction, the raw submission beside it (with its sha256), and, for the later rounds, a resolution table saying how each finding was answered. A proof that came with a finding is kept as a regression test, so a fixed finding stays fixed.
 
@@ -74,6 +74,8 @@ Severity counts (C/H/M/L/I) are critical, high, medium, low and info, as the rou
 | 26 | 2026-10-09 | Payout vault panel: the vault on the sweep's fix (the paced payout price, the clamp, the seed, the price read once, the transient guard) | Panel, job [`f936eafb`](https://explorer.imd.fun/jobs/f936eafb-0bfb-4584-95be-9113b9d451ad) | `c90e8d9` | 0/1/0/3/1 | `73191e0` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-PAYOUT-VAULT-PANEL-2026-10-09.md) |
 | 27 | 2026-10-09 | Final sweep 3: the whole system, after the payout price | Panel, job [`ed4f7f6d`](https://explorer.imd.fun/jobs/ed4f7f6d-0b24-4762-91b5-3f1d61657d68) | `e4baedf` | 0/1/0/3/2 | `dba2cb3` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-3-2026-10-09.md) |
 | 28 | 2026-10-09 | Final sweep 4: the whole protocol, every mechanism, after the premise was corrected | Panel, job [`6229d0fc`](https://explorer.imd.fun/jobs/6229d0fc-c6a5-4c3e-bb56-64461d50b1cb) | `c7d50ee` | 0/0/1/2/4 | `df82607` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-FINAL-SWEEP-4-2026-10-09.md) |
+| 29 | 2026-10-10 | The work-root fix: the work oracle keeps no epoch, so a missed day no longer stops it accepting roots | In-house | `549dfdd` | no findings; one comment corrected | `c1381eb` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-INTERNAL-2026-10-10-WORK-ROOT.md) |
+| 30 | 2026-10-10 | Intake v2 and the oracle purchases' failure callback | In-house | `79d0b82` | no findings | `79d0b82` | [Record](https://github.com/fa11up/infer-protocol/blob/main/docs/AUDIT-INTERNAL-2026-10-10-INTAKE-V2.md) |
 
 ## What the chain shows
 

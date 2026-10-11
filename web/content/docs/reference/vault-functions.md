@@ -3,7 +3,6 @@ title: Vault functions
 section: reference
 order: 2
 audience: integrators
-pending: true
 sources:
   - src/CDPVault.sol:32-1602
   - src/ParameterizedVault.sol:25-309
@@ -67,7 +66,7 @@ Stores `chi()` and the time, and emits `IndexCheckpointed`. Collects no fees and
 
 Mint imdUSD against work rights. Needs a positive `amount`, live prices, the stablecoin linked to this vault, enough `oracle.mintingRights(msg.sender)`, and `totalEarned + amount` within `earnLine()`.
 
-Uses up the caller's rights and mints imdUSD to them. Adds no debt or collateral. Emits `Earn`. Refused with `WorkMintingOff` while the governed wage is zero. Whether this is open at launch: —.
+Uses up the caller's rights and mints imdUSD to them. Adds no debt or collateral. Emits `Earn`. Refused with `WorkMintingOff` while the governed wage is zero. Minting from work is off at launch: the wage is zero until governance proposes one.
 
 ### `free(uint256 amount)`
 
@@ -117,7 +116,7 @@ Returns `uint256`. How far the paced backing may rise per hour of elapsed time: 
 
 ### `CHOP_PERCENT()`
 
-Returns `uint256`. The liquidation bonus, as a percent of debt repaid: —. Fixed.
+Returns `uint256`. The liquidation bonus, as a percent of debt repaid: 20. Fixed.
 
 ### `FOLLOW_BPS_PER_HOUR()`
 
@@ -133,11 +132,11 @@ Returns `uint256`. How fast the price a redemption is paid at may fall, per hour
 
 ### `REDEMPTION_FEE_CAP_BPS()`
 
-Returns `uint256`. The highest redemption fee, in basis points: —. Fixed.
+Returns `uint256`. The highest redemption fee, in basis points: 500 (5%). Fixed.
 
 ### `REDEMPTION_FEE_FLOOR_BPS()`
 
-Returns `uint256`. The lowest redemption fee, in basis points: —. Fixed.
+Returns `uint256`. The lowest redemption fee, in basis points: 50 (0.5%). Fixed.
 
 ### `backedDebt()`
 
@@ -161,7 +160,7 @@ Returns `uint256 index`. The index value when this account's fees were last char
 
 ### `chip()`
 
-Returns `uint256`. The marker's share of the liquidation bonus, in basis points: —. Governed.
+Returns `uint256`. The marker's share of the liquidation bonus, in basis points: 1,000 at launch. Governed.
 
 ### `collateralPriceFeed()`
 
@@ -173,7 +172,7 @@ Returns `uint256`. Collateral value divided by debt, as a whole percentage. Debt
 
 ### `cut()`
 
-Returns `uint256`. The protocol's share of the liquidation bonus, in basis points: —. Governed.
+Returns `uint256`. The protocol's share of the liquidation bonus, in basis points: 1,000 at launch. Governed.
 
 ### `debtOf(address owner)`
 
@@ -189,7 +188,7 @@ Returns `uint256`. When the vault was deployed. Fees are not measured from it.
 
 ### `duty()`
 
-Returns `uint256`. The yearly stability fee, in basis points: —. Governed.
+Returns `uint256`. The yearly stability fee, in basis points: 444 at launch. Governed.
 
 ### `earnLine()`
 
@@ -197,7 +196,7 @@ Returns `uint256`. The ceiling on total work minting, in imdUSD raw units: `rese
 
 ### `earnMat()`
 
-Returns `uint256`. How much of `backedDebt()` counts toward the work ceiling, in basis points: —. Governed.
+Returns `uint256`. How much of `backedDebt()` counts toward the work ceiling, in basis points: 2,500 at launch, which is also its upper limit. Governed.
 
 ### `feeRecipient()`
 
@@ -205,7 +204,7 @@ Returns `address`. The vault's Treasury (waiting for mainnet launch). Receives t
 
 ### `gap()`
 
-Returns `uint256`. How far above `mat()` a position can be redeemed against, in whole percentage points: —. Governed.
+Returns `uint256`. How far above `mat()` a position can be redeemed against, in whole percentage points: 50 at launch. Governed.
 
 ### `gem()`
 
@@ -225,7 +224,7 @@ Returns `uint256`. When the last redemption happened; starts at deployment.
 
 ### `line()`
 
-Returns `uint256`. The ceiling on outstanding borrowed principal, in imdUSD raw units: —. Governed. Fees and work minting do not count against it.
+Returns `uint256`. The ceiling on outstanding borrowed principal, in imdUSD raw units: 1,000,000 imdUSD at launch. Governed. Fees and work minting do not count against it.
 
 ### `liquidationMarks(address account)`
 
@@ -233,11 +232,11 @@ Returns `uint256 markedAt, uint256 grace, bool marked, address marker`. The stor
 
 ### `lull()`
 
-Returns `uint256`. The grace a new mark would get, in seconds, from the last accepted network health value. No freshness check.
+Returns `uint256`. The grace a new mark would get, in seconds, from the last accepted network health value: none at 0.60 or below, six hours at 0.85 or above, linear between. No freshness check.
 
 ### `mat()`
 
-Returns `uint256`. The minimum collateral ratio as a whole percentage, from the last accepted network health value. No freshness check.
+Returns `uint256`. The minimum collateral ratio as a whole percentage, from the last accepted network health value: 200 at 0.60 or below, 170 at 0.85 or above, linear between and rounded up. No freshness check.
 
 ### `nhiFeed()`
 
@@ -277,7 +276,7 @@ Returns `uint256`. `mat() + gap()`, in whole percentage points. A candidate must
 
 ### `redemptionDivisor()`
 
-Returns `uint256`. How fast the redemption fee climbs: each redemption adds redeemed ÷ fee base ÷ this to the base rate, where the fee base is the paced supply (see [Monetary policy](../economics/monetary-policy.md)), never less than 100,000 imdUSD. Governed: —.
+Returns `uint256`. How fast the redemption fee climbs: each redemption adds redeemed ÷ fee base ÷ this to the base rate, where the fee base is the paced supply (see [Monetary policy](../economics/monetary-policy.md)), never less than 100,000 imdUSD. Governed: 2 at launch.
 
 ### `redemptionFeeBps(uint256 amount)`
 
@@ -297,7 +296,7 @@ Returns `uint256`. Total collateral that counts as securing debt, in raw sIMD un
 
 ### `skew()`
 
-Returns `uint256`. How far primary and spot may differ, as basis points of the primary: —. Governed.
+Returns `uint256`. How far primary and spot may differ, as basis points of the primary: 500 at launch. Governed.
 
 ### `spotFeed()`
 
@@ -313,7 +312,7 @@ Returns `address`. The `ImdUSD` token (waiting for mainnet launch).
 
 ### `tail()`
 
-Returns `uint256`. How long a mark stays usable after its grace, in seconds: the shorter of `priceFeed.maxAge()` and `nhiFeed.maxAge()`.
+Returns `uint256`. How long a mark stays usable after its grace, in seconds: the shorter of `priceFeed.maxAge()` and `nhiFeed.maxAge()`: one hour.
 
 ### `totalBadDebt()`
 

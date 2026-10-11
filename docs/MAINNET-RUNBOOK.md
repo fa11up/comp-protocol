@@ -3,6 +3,12 @@
 *Drafted 2026-10-04, while the tenth testnet increment was still executing. Nothing here has been
 run on mainnet.*
 
+**The deploy commit is frozen** (2026-10-10): branch `release/mainnet` at `9e37405`, tag
+`mainnet-freeze-2026-10-10c`, which supersedes the earlier freezes `cc98431` and `42bb580`. It differs
+from `main` in `src/DeploymentConfig.sol` only: the release carries the converged mainnet addresses, `main`
+keeps the Sepolia values and placeholders. Any further contract change means replan, re-freeze and rerun
+the rehearsals.
+
 This is the operational document for moving this protocol from Sepolia to Ethereum mainnet: what has
 to be true before the first transaction, which keys exist and what each can do, the deployment
 sequence, and what to read back off chain after each step. It exists partly to be **audited** — the
@@ -37,11 +43,11 @@ Each step assumes the previous one is merged and green. Steps 2 and 3 are indepe
 |---|---|---|
 | 1 | Rename COMP → imdUSD | the token's identity is immutable once deployed |
 | 2 | sIMD as the collateral token (wrap on deposit) — **built** | decides what collateral *is*. Deploy the vault with `StakedIMD` `0x9Efa934D9fAd4AE28c998a40195646b965a97247` as its collateral token: it then prices collateral through a `SharePriceFeed` it creates, and `lockIMD` wraps plain IMD on deposit. Fork-tested against the live vault (`test/ShareCollateralFork.t.sol`). |
-| 2b | Oracle paid from the Treasury (`OracleAsker` + `Treasury.fundOracle`) — **built; the Intake is live** | without it every price update is bought by hand in a browser. `OracleAsker` buys through the IdentityMD Intake only when the chain shows a need (a feed 75% of the way to stale, or IMD's v4 pool armed-and-still a quarter of the deviation cap BELOW it, or any feed whose allowance has widened with staleness) and delivers through SwarmRelay inside the Intake's 200k-gas callback stipend (measured 76,807). `fundOracle` streams at most `Parameters.oracleBudget` IMD per UTC day to it — keyless, unwrapping sIMD on the way. **Unblocked 2026-10-07:** PR #66 merged and the Intake went live at `0x1397434cd35e8a9C8aC312A61D3A285EB31dea56`. **Since 2026-10-10 `INTAKE` is Intake v2, `0xa43e6F75ee006411F79Ac1C84120606C2330DE82`** (plane `f5c0d20b`; same owner, writer, signer, 200,000-gas callback stipend and 0.5 IMD price as v1; v1 stays served). v2 keeps every v1 function, event and getter unchanged and adds a failure callback (`requestWithFailure`), **which `OracleAsker` now uses**: every request names `onOracleFailure`, and when the plane refuses the ask (status 1) or the panel ends without a result (status 2) the Intake calls it at once. The feed's in-flight slot clears then rather than at `ASK_TIMEOUT` (two hours during which nobody, keeper or borrower, could buy that feed an update), `AskFailed(feed, requestId, status, reason, agreed, answered)` says so on chain, and the Treasury's own purchase backs off for the timeout as after a refused relay (a failed request is not refunded; a caller's failed purchase holds the Treasury back no more than its answer would have). Measured 22,815 gas against the 200,000 stipend. It had to change with the address because `OracleAsker` accepts deliveries only from `INTAKE`. Proven against the live contract in `test/fork/IntakeV2.t.sol`: payment through `requestWithFailure`, the answer callback, the failure callback for both statuses with the slot clearing and a purchase landing in the next transaction, and v2 refusing failure arguments that name another request. `ORACLE_ASKER` stays a placeholder (`0x…f07`) until `plan.py` converges it; the asker's constructor still refuses an `INTAKE` with no code. |
-| 3 | **Delete the reporter fallback** | a single key can otherwise re-anchor the price — see §4 |
+| 2b | Oracle paid from the Treasury (`OracleAsker` + `Treasury.fundOracle`) — **built; the Intake is live** | without it every price update is bought by hand in a browser. `OracleAsker` buys through the IdentityMD Intake only when the chain shows a need (a keep-alive feed, which is NHI only, 75% of the way to stale; IMD's v4 pool armed-and-still a quarter of the deviation cap BELOW a price feed; or any feed silent a whole lifetime whose allowance has widened to `WIDE_ALLOWANCE_BPS`, 60%) and delivers through SwarmRelay inside the Intake's 200k-gas callback stipend (heaviest delivery measured 147,114 gas; the failure callback 22,815). `fundOracle` streams at most `Parameters.oracleBudget` IMD per UTC day to it — keyless, unwrapping sIMD on the way. **Unblocked 2026-10-07:** PR #66 merged and the Intake went live at `0x1397434cd35e8a9C8aC312A61D3A285EB31dea56`. **Since 2026-10-10 `INTAKE` is Intake v2, `0xa43e6F75ee006411F79Ac1C84120606C2330DE82`** (plane `f5c0d20b`; same owner, writer, signer, 200,000-gas callback stipend and 0.5 IMD price as v1; v1 stays served). v2 keeps every v1 function, event and getter unchanged and adds a failure callback (`requestWithFailure`), **which `OracleAsker` now uses**: every request names `onOracleFailure`, and when the plane refuses the ask (status 1) or the panel ends without a result (status 2) the Intake calls it at once. The feed's in-flight slot clears then rather than at `ASK_TIMEOUT` (two hours during which nobody, keeper or borrower, could buy that feed an update), `AskFailed(feed, requestId, status, reason, agreed, answered)` says so on chain, and the Treasury's own purchase backs off for the timeout as after a refused relay (a failed request is not refunded; a caller's failed purchase holds the Treasury back no more than its answer would have). Measured 22,815 gas against the 200,000 stipend. It had to change with the address because `OracleAsker` accepts deliveries only from `INTAKE`. Proven against the live contract in `test/fork/IntakeV2.t.sol`: payment through `requestWithFailure`, the answer callback, the failure callback for both statuses with the slot clearing and a purchase landing in the next transaction, and v2 refusing failure arguments that name another request. On `main`, `ORACLE_ASKER` stays a placeholder (`0x…f07`); on `release/mainnet` `plan.py` has converged it to `0x4B1c81141dC3755f24c7c227C0368383Ba2AB43B` (and `TREASURY_FACTORY` to `0xEB2Bc6C3f05eeeFf436201E11f4c455c974772E9`), which supersede the plans `0x255295…`, `0x1b7A21…` and `0x9061…` made before the Intake and failure-callback changes. The asker's constructor still refuses an `INTAKE` with no code. |
+| 3 | **Delete the reporter fallback** — **done** (`SwarmFeed` has no `report`; attestations are the only way a value is set) | a single key can otherwise re-anchor the price — see §4 |
 | 4 | CREATE2 deployment script with address assertions — **built** (`script/DeployMainnet.s.sol`, `deploy/mainnet/`), rehearsed on a fork | removes the silent-misconfiguration failure mode — see §6 |
-| 5 | Independent audit of this configuration — **done** (three panels + adversarial + gas, `docs/AUDIT-*-2026-10-05.md`, fixes through `9dd2149`). **Still owed, by decision (2026-10-05): one scoped `adversarial-review` of everything after `03e8d0c`, sent right before the deploy commit is frozen** | the phase-2 fixes (notably the paced redemption cap) have had no outside review |
-| 6 | Keeper / watcher daemon — **mainnet-ready** (`fa11up/imd-keeper@c9b8eaa`), rehearsed bark → bite → Treasury-paid ask on a fork | the protocol is not operable without it — see §7 |
+| 5 | Independent audit of this configuration — **done** (three panels + adversarial + gas, `docs/AUDIT-*-2026-10-05.md`, fixes through `9dd2149`). The scoped review owed after `03e8d0c` is **done** too: two final adversarial reviews, then panel rounds through the fourth final sweep (job `6229d0fc`, no high), then two in-house reviews of the last changes (`docs/AUDIT-INTERNAL-2026-10-10-*.md`); the chain is in `web/content/docs/reference/audit-history.md` | the configuration and every fix after it have had outside review |
+| 6 | Keeper / watcher daemon — **mainnet-ready** (`fa11up/imd-keeper@7888e46` at the freeze), rehearsed bark → bite → Treasury-paid ask on a fork | the protocol is not operable without it — see §7 |
 
 ---
 
@@ -52,7 +58,7 @@ point: an authority held by a contract with no owner cannot be lost, stolen or m
 
 | name | what it can do | where it lives |
 |---|---|---|
-| `APPROVED_OPERATOR` | propose parameter changes (48 h timelock), list and delist reserve assets, withdraw from the Treasury anything that is not the collateral or a listed reserve asset, and imdUSD only down to outstanding bad debt (for governor-managed LP) | **cold / multisig. Never on a server.** |
+| `APPROVED_OPERATOR` | propose parameter changes (48 h timelock), list and delist reserve assets, withdraw from the Treasury anything that is not the collateral or a listed reserve asset, and imdUSD only down to outstanding bad debt (for governor-managed LP) | **a 2-of-3 Safe, `0xbeFd108085613662356aa26A2466Ad3426DA9C32` on `release/mainnet`. Never on a server.** It is a constant, so the address can never change; signers and threshold rotate inside the Safe. |
 | keeper daemon | relay attestations, bite, mark, buy oracle requests | **hot, on its own machine.** Never the swarm worker box: tasks from strangers execute as that user. |
 | deployer | one-time broadcast; needs ETH only | throwaway, discard after §6 |
 
@@ -98,8 +104,8 @@ is immutable and silent** — this is exactly how launch 519 shipped two dead fe
 | constant | now (Sepolia) | mainnet |
 |---|---|---|
 | `CHAINLINK_ETH_USD` | `0x694AA176…` (Sepolia) | **`0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419`** |
-| `APPROVED_OPERATOR` | miyagod.eth EOA | the cold governance address |
-| `FEE_RECIPIENT` | miyagod.eth EOA | unused by `ParameterizedVault`; set it to the cold governance address so nothing names a hot wallet |
+| `APPROVED_OPERATOR` | miyagod.eth EOA | the governance Safe (set on `release/mainnet`) |
+| `FEE_RECIPIENT` | miyagod.eth EOA | unused by `ParameterizedVault`; set to the governance Safe so nothing names a hot wallet |
 | `ATTESTATION_RELAYER` | the Sepolia SwarmRelay | the mainnet SwarmRelay (CREATE2, §6) |
 | `WORK_ORACLE_FACTORY` | `0x…0f05` placeholder, no code | the mainnet factory (CREATE2, §6) |
 
@@ -124,22 +130,17 @@ authoritative; this list is checked against it, not the other way round):
 `SKEW_BPS` 500 · `CHIP_BPS` 1000 · `CUT_BPS` 1000 · `DUTY_BPS` 444 · `LINE` $1M · `REDEMPTION_DIVISOR` 2 ·
 `ETH_USD_MAX_AGE` 2 hours · `PRICE_MAX_AGE` / `SPOT_MAX_AGE` 1 hour · `NHI_MAX_AGE` 1 day ·
 feed `maxDeviationBps` 2000 (stale: 2x, `SwarmFeed.STALE_DEVIATION_MULTIPLE`) · `ORACLE_BUDGET_PER_DAY` 15 IMD.
+Unchanged at the freeze (`9e37405`), with `EARN_MAT_BPS` 2500 · `WAGE_WAD` 0 · stream off · `CHOP_PERCENT` 20 ·
+redemption fee 50–500 bps · `gap` 50.
 
-### The compute channel does not ship in this deployment
+### The compute channel ships off
 
-`EARN_MAT_BPS`, `WAGE_WAD`, `WORK_ORACLE_MAX_AGE` and the work oracle's own constants are
-**out of scope for a mainnet launch**, and the reason is not readiness. `SwarmWorkOracle` as built
-credits **one** agent named in source, which is a private faucet wearing a protocol's clothes, not a
-compute-backed currency. A protocol that mints for its author's own seat cannot be launched as one
-that mints for work.
+`EARN_MAT_BPS`, `WAGE_WAD` and `WORK_ORACLE_MAX_AGE` ship in the deployment, with minting from work OFF
+(`WAGE_WAD = 0`). The work oracle no longer names one agent: it asks the ERC-8004 adapter who controls each
+agent (`isController`), so every agent's controller claims its own credit. Turning minting on is a governed
+wage proposal, not a redeploy; see §7b.
 
-Launch with the work ceiling in place and the channel unused — a vault whose `earnLine()` binds and
-whose work oracle grants nothing is sound and honest. The channel opens when it can serve agents in
-general, which needs the per-day tally root rather than a pinned claimant (§5b of
-`docs/COMPUTE-BACKING-DESIGN.md`). Until then nothing about anyone's agent identity belongs in this
-deployment's configuration.
-
-All but the last two are governable through `Parameters` under a 48-hour delay, so a wrong value here
+The economic values above are governable through `Parameters` under a 48-hour delay, so a wrong value here
 is a correctable mistake rather than a permanent one. That asymmetry is the design: economics are
 governable, authority never is.
 
@@ -181,7 +182,9 @@ Run every one of these. Each has failed for real at least once in this project's
 
 ```bash
 # 1. the suite, under the runner test/README.md documents
-forge test                                   # expect 599+ pass, 0 fail
+forge test                                   # at the freeze: 654 pass, 0 fail, 4 skipped
+AUDIT_PROOFS=true forge test                 # 655 pass
+forge test --match-path 'script/checks/*.t.sol'   # 116 pass
 
 # 2. the fork suite against LIVE mainnet state, not Sepolia
 forge test --match-path test/InHouse.t.sol         --fork-url $MAINNET_RPC_URL

@@ -15,11 +15,11 @@ sources:
 
 # Keeper economics
 
-A keeper does three paid jobs: relays price updates, marks unsafe positions and liquidates them. Two unpaid ones keep the vault's figures current: pacing it hourly and re-pricing positions after a price update ([Mark and liquidate](./mark-and-liquidate.md#pace-and-re-price)). This page covers what you are paid, what you must hold and what you risk. It explains how the pieces fit, not their size.
+A keeper does three paid jobs: relays price updates, marks unsafe positions and liquidates them. Two unpaid ones keep the vault's figures current: pacing it hourly and re-pricing positions after a price update ([Mark and liquidate](./mark-and-liquidate.md#pace-and-re-price)). This page covers what you are paid, what you must hold and what you risk.
 
 ## The bonus and how it is split
 
-When you liquidate (`bite`), you repay part of a borrower's debt and receive sIMD worth that amount plus a bonus. The bonus rate is `CHOP_PERCENT`, written into the contract.
+When you liquidate (`bite`), you repay part of a borrower's debt and receive sIMD worth that amount plus a bonus. The bonus rate is `CHOP_PERCENT`, 20% of the debt repaid, written into the contract.
 
 > bonus = sIMD seized − the debt repaid, valued in sIMD
 
@@ -31,7 +31,7 @@ The bonus is divided three ways:
 | Protocol's share | `cut` | The Treasury (`feeRecipient()`) |
 | The rest | | The liquidator, along with the full value of the debt repaid |
 
-`chip` and `cut` are fractions of the bonus, in basis points, set by governance. Together they cannot exceed the whole bonus: `Parameters` refuses such a proposal (`SharesExceedBonus`), and the vault refuses a liquidation with `InvalidBonusShares` if it ever happened.
+`chip` and `cut` are fractions of the bonus, in basis points, set by governance; both are 1,000 (10% of the bonus) at launch. So on $100 of debt repaid the bonus is $20: $2 to the marker, $2 to the Treasury, and a liquidator who did not mark keeps $16 on top of the $100. Together they cannot exceed the whole bonus: `Parameters` refuses such a proposal (`SharesExceedBonus`), and the vault refuses a liquidation with `InvalidBonusShares` if it ever happened.
 
 The split only divides a bonus that already exists. The borrower loses the same amount however it is split.
 

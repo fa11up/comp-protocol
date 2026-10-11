@@ -1,4 +1,9 @@
-# Launch readiness (2026-10-05)
+# Launch readiness (2026-10-05, status updated at the freeze 2026-10-10)
+
+**Frozen:** the deploy commit is `release/mainnet` at `9e37405` (tag `mainnet-freeze-2026-10-10c`). Its contracts
+equal `main`'s except `src/DeploymentConfig.sol`, which carries the converged mainnet plan: governance Safe
+`0xbeFd108085613662356aa26A2466Ad3426DA9C32`, Intake v2 `0xa43e6F75ee006411F79Ac1C84120606C2330DE82`, `OracleAsker`
+`0x4B1c81141dC3755f24c7c227C0368383Ba2AB43B`, `TreasuryFactory` `0xEB2Bc6C3f05eeeFf436201E11f4c455c974772E9`.
 
 The goal: deployable on short notice. Each area says what is done, the evidence, and what is still owed.
 **Blocking** = cannot deploy without it. **Before freeze** = must be decided before the deploy commit is
@@ -10,9 +15,9 @@ frozen, because the contracts are immutable. **After deploy** = first operationa
 |---|---|---|
 | External audit, three panels (vault, governance + Treasury, oracle) | done, all fixed or accepted | `AUDIT-{VAULT,GOVERNANCE,ORACLE}-2026-10-05.md`, `AUDIT-FIX-PLAN-2026-10-05.md` |
 | Adversarial review of the fixes + gas review | done, merged `9dd2149` | `AUDIT-ADVERSARIAL-2026-10-05.md`, `AUDIT-GAS-2026-10-05.md` |
-| Internal suites | green: forge 528/0; `script/checks` failure set unchanged by name (23/116, stale assertions); AUDIT_PROOFS 1 known demonstration (an unbound test feed — every shipped feed binds its question and `DeployMainnet.verify` checks it) | |
+| Internal suites | green at the freeze: forge 654/0 (4 skipped); `AUDIT_PROOFS` 655/0; `script/checks` 116/116 (the 23 stale assertions were recomputed from the shipped rules); fork 6/6 incl. `test/fork/IntakeV2.t.sol` against the live Intake v2 | `docs/AUDIT-INTERNAL-2026-10-10-INTAKE-V2.md` |
 | Redemption invariant, the 1-wei rounding note | **closed**: 40 fresh seeds, 0 failures, after the handler model was corrected to the vault's payout scale (`9dd2149`) | |
-| **Scoped pre-deploy review** (everything after `03e8d0c`: phase-2 fixes, the `SwarmWorkOracle` creator change, `DeployMainnet` + `plan.py`, the asymmetric asker trigger and the governed work-oracle slot) | **owed — blocking**, sent when the deploy commit is frozen | payload built by `whitepaper/requests/audit/build_audits.py` |
+| **Scoped pre-deploy review** (everything after `03e8d0c`: phase-2 fixes, the `SwarmWorkOracle` creator change, `DeployMainnet` + `plan.py`, the asymmetric asker trigger and the governed work-oracle slot) | **done**: final adversarial reviews (`AUDIT-FINAL-2026-10-07.md`, `AUDIT-FINAL-2-2026-10-07.md`), panel rounds through the fourth final sweep (`AUDIT-FINAL-SWEEP-4-2026-10-09.md`, no high), and in-house reviews of the work-root fix and the Intake v2 failure callback (`AUDIT-INTERNAL-2026-10-10-*.md`) | `web/content/docs/reference/audit-history.md` |
 | Accepted residuals | D2 chunked-redemption fee, D3 non-monotone backing figure, D4 two-push drift arming, D5 sIMD same-block hold griefing, D6 self-mark 18% penalty, D9 recapitalised drained borrower | `AUDIT-FIX-PLAN-2026-10-05.md` |
 
 ## 2. Deployment
@@ -23,8 +28,8 @@ frozen, because the contracts are immutable. **After deploy** = first operationa
 | `deploy/mainnet/plan.py` converges the config (4 passes) | built |
 | Fork rehearsal `deploy/mainnet/rehearse-fork.sh` | **passing** end to end, incl. the keeper |
 | Intake bodies match the feeds' pinned questions | `node deploy/mainnet/check-bodies.mjs` passes |
-| **Intake deployed by the dev, address known** | **blocking** (upstream) |
-| Cold governance address, throwaway deployer (~0.05 ETH) | **blocking** — user |
+| **Intake deployed by the dev, address known** | **done**: live since 2026-10-07 (v1 `0x1397…ea56`); `INTAKE` is v2 `0xa43e…de82` since 2026-10-10, and `OracleAsker` buys through its `requestWithFailure`, so a refused or unanswered request clears the feed's in-flight slot at once (`onOracleFailure`, `AskFailed`) |
+| Cold governance address, throwaway deployer (~0.05 ETH) | governance: **done**, the 2-of-3 Safe above (also `FEE_RECIPIENT`); deployer: at deploy time |
 | Live attestations for NHI and SPOT with the frozen payloads | user: proven on testnet (request ids not in this repo's record; only PRICE `e2c85027` is archived) |
 
 ## 3. Oracle operations
@@ -41,7 +46,7 @@ frozen, because the contracts are immutable. **After deploy** = first operationa
 
 | item | status |
 |---|---|
-| Mainnet mode (deployment record, asker path, sIMD pricing, inventory-capped bites, guarded sends, one-at-a-time loops) | done `fa11up/imd-keeper@c9b8eaa`, rehearsed on the fork |
+| Mainnet mode (deployment record, asker path, sIMD pricing, inventory-capped bites, guarded sends, one-at-a-time loops) | done, `fa11up/imd-keeper@7888e46` at the freeze, rehearsed on the fork |
 | Review | internal only (private repo; the swarm cannot read it). Its failure modes cost the keeper's own funds, not the protocol's solvency |
 | Host (NOT the swarm worker box), hot key, three balances (ETH gas, imdUSD inventory, IMD for `askPaid`), Blockscout API key | **after deploy** — user |
 
@@ -52,7 +57,7 @@ frozen, because the contracts are immutable. **After deploy** = first operationa
 | Public site (homepage + docs) live on imdusd.com, terminal gated off | done |
 | QA + accessibility review | done on the terminal before the sIMD / maker changes (`QA-REVIEW-2026-10-05.md`) |
 | Browser suite against the **maker** ABIs | **owed**: now runnable — point `web/deployment-source.json` at the fork rehearsal's deployment |
-| Launch values on the homepage and docs read "Pending" | **after deploy**: fill `LAUNCH` in `web/src/Landing.tsx` from `deployment.json`, publish addresses |
+| Launch values on the homepage and docs | docs: **filled** from the frozen code (2026-10-10); homepage `LAUNCH` in `web/src/Landing.tsx` still reads "Pending". Addresses: **after deploy**, from `deployment.json` |
 
 ## 6. Governance, first acts (runbook §7)
 
@@ -88,5 +93,5 @@ panel audit, 2026-10-07). It is a governed power, not a neutral one: together wi
 lets the governor mint, which Parameters states as a trust assumption.
 `Parameters.proposeWorkOracle` (48h); `vault.oracle()` now returns the governed replacement or the created
 oracle. Refused while the wage is nonzero (at proposal and at application); once anything has been minted
-from work the replacement must name the current oracle as `predecessor()`. Vault initcode 44,210 / 49,152.
+from work the replacement must name the current oracle as `predecessor()`. Vault initcode 44,210 / 49,152 when built; 47,946 at the freeze (margin 1,206 B).
 `test/WorkOracleGovernance.t.sol` (7 tests). It removes the only known forced migration.

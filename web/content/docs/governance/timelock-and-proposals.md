@@ -14,7 +14,7 @@ sources:
 
 # Timelock and proposals
 
-Every parameter change is proposed, waits out a fixed delay (`TIMELOCK`), and is then applied. Only the governor, `governor()`, may propose or cancel; anyone may apply a proposal once its delay has passed. The governor is a single account written into the contract: (waiting for mainnet launch). There is one pending slot at a time.
+Every parameter change is proposed, waits out a fixed delay (`TIMELOCK`), and is then applied. Only the governor, `governor()`, may propose or cancel; anyone may apply a proposal once its delay has passed. The governor is a single address written into the contract: a multisig wallet that needs two of its three signers to act. Its address is published at mainnet launch. `TIMELOCK` is 48 hours. There is one pending slot at a time.
 
 ## Propose, wait, apply or cancel
 
@@ -49,4 +49,4 @@ Applying an economics change first calls `vault.drip()` under the old `duty`, so
 
 A proposal whose delay has passed never expires. The delay guarantees a minimum notice period, not that the change lands at ETA: watch pending changes until they are applied or cancelled, and note that nobody is obliged to pay the gas to apply one.
 
-There is no voting, delegation or way to rotate the governor. No proposal can replace the vault's feeds, the price signer, the collateral or the Treasury. The one replaceable dependency is the work oracle, and only while minting from work is off (see [Parameters](./parameters.md)). The same operator can withdraw from the Treasury without a delay, but not sIMD, not a listed reserve asset, and not imdUSD that outstanding bad debt needs; removing backing takes a delisting proposal like any other change. See [Risks and open questions](../economics/risks-and-open-questions.md).
+There is no voting, delegation or way to rotate the governor address; the multisig's own signers can change inside it. No proposal can replace the vault's feeds, the price signer, the collateral or the Treasury. The one replaceable dependency is the work oracle, and only while minting from work is off (see [Parameters](./parameters.md)). The same operator can withdraw from the Treasury without a delay, but not sIMD, not a listed reserve asset, and not imdUSD that outstanding bad debt needs; removing backing takes a delisting proposal like any other change. See [Risks and open questions](../economics/risks-and-open-questions.md).
