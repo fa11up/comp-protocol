@@ -187,13 +187,13 @@ uint256 constant WAGE_WAD = 0;
 // chain and this line names it. Deliberately not the zero address: zero is indistinguishable from an
 // unset field, and a nonzero placeholder with no code fails exactly as loudly while being something
 // a test can etch over.
-address constant WORK_ORACLE_FACTORY = 0x2ACB4BdF44f20DC7F83Df795cc2D259FC8070F32;
+address constant WORK_ORACLE_FACTORY = 0x24458aeF6cf074C7FB09B6734b1247508f137409;
 
 /// @dev The contract every ParameterizedVault creates its Treasury through, for the same EIP-3860
 /// reason as WORK_ORACLE_FACTORY. Holds nothing and has no authority: the Treasury it creates serves
 /// its caller. A deployment prerequisite with no dependencies, so its CREATE2 address is computable
 /// up front. NOT YET DEPLOYED: a placeholder; a vault cannot be constructed until it has code.
-address constant TREASURY_FACTORY = 0xEB2Bc6C3f05eeeFf436201E11f4c455c974772E9;
+address constant TREASURY_FACTORY = 0xbF6410aD823F49D24935135EE230db89faBca6B2;
 address constant WORK_ORACLE_SENTINEL = 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
 
 // How long an attested work tally stays usable. A day, matching the daily cadence of the receipts the
@@ -216,7 +216,7 @@ uint256 constant WORK_ORACLE_MAX_AGE = 1 days;
 // built against an Intake with no code, and fundOracle refuses to send to an asker with no code, so a
 // placeholder fails loudly instead of streaming IMD into an empty address.
 address constant INTAKE = 0xa43e6F75ee006411F79Ac1C84120606C2330DE82;
-address constant ORACLE_ASKER = 0x4B1c81141dC3755f24c7c227C0368383Ba2AB43B;
+address constant ORACLE_ASKER = 0x00856Bd495941f3b95dA5b7e374c76d822C9059E;
 // The Intake's action id: the action, an at sign and its version, right-padded to 32 bytes.
 bytes32 constant ORACLE_ACTION = "oracle.request@oracle-1";
 // The plane's mainnet ProjectFactory: the only contract the Treasury will ever ask to move a launch's
